@@ -95,7 +95,7 @@ For every class at `durable: local`, shipping SHALL run off the ack paths: a slo
 - **THEN** throughput and ack latency are unchanged, shipping retries with backoff, and the RPO alarm (below) fires when the target is exceeded
 
 ### Requirement: Recovery hydrates from the manifest into the existing restore path
-Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When a relay arrives on a controller, its local copy SHALL be replaced by the shipped one only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged by the WAL-owner epoch and then the highest seq covered, a tie going to the shipped copy. The local copy SHALL be set aside whole while the shipped one is hydrated, a reference only the local copy holds SHALL be kept, never deleted, and the local copy SHALL come back whole when any reference of the shipped one does not land. Hydration SHALL run only before the relay's runner starts, and a whole copy SHALL come in only through that replacement: on arrival and, while the controller holds none of the relay's references, at each bind, where a controller that lost its own disk adopts its own shipped cut the same way. Otherwise a bind SHALL hydrate, one by one, only the references this controller shipped and no longer holds. A restore after the runner started SHALL only list the Cells on disk.
+Recovery SHALL rebuild local durable files from the manifest and then run the existing restore-and-replay path unchanged. A reference with local durable files SHALL NOT be overwritten by that hydration. When a relay arrives on a controller, its local copy SHALL be replaced by the shipped one only when another controller wrote it and it is the newer copy: on every reference both hold the shipped cut is at least as new, judged first by lineage and then by the WAL-owner epoch and the highest seq covered, a tie going to the shipped copy, as the `relay-state-persistence` requirement "A Cell's lineage id SHALL be minted at its first record after its files land" states. Every manifest entry of a Cell SHALL carry the Cell's lineage id and trail; an entry without them SHALL be read as carrying no lineage. The local copy SHALL be set aside whole while the shipped one is hydrated, a reference only the local copy holds SHALL be kept, never deleted, and the local copy SHALL come back whole when any reference of the shipped one does not land. Hydration SHALL run only before the relay's runner starts, and a whole copy SHALL come in only through that replacement: on arrival and, while the controller holds none of the relay's references, at each bind, where a controller that lost its own disk adopts its own shipped cut the same way. Otherwise a bind SHALL hydrate, one by one, only the references this controller shipped and no longer holds. A restore after the runner started SHALL only list the Cells on disk.
 
 A manifest that references an artifact the backend does not hold SHALL be reported as an alarm-grade event naming the reference and the missing artifact. It SHALL NOT be degraded into a silent cold start, because a corrupt lineage and an unreachable backend are different conditions calling for different user responses.
 
@@ -115,13 +115,18 @@ A manifest that references an artifact the backend does not hold SHALL be report
 - **WHEN** a controller still holding other references of a relay binds it after losing one Cell it shipped
 - **THEN** that Cell is hydrated from its shipped cut before the runner starts, so its next ship never replaces the cut
 
+#### Scenario: A longer copy of an abandoned history yields to the continued one
+
+- **WHEN** a controller kept turns past the cut it shipped, and another controller hydrated that cut, took fewer turns under a new lineage id and shipped them
+- **THEN** the first controller, when the relay returns, replaces its copy with the shipped one
+
 #### Scenario: Partial hydration by cell key
 - **WHEN** hydration is requested for named cell keys of one tasklet
 - **THEN** only those cells' artifacts are fetched
 
 #### Scenario: Hydration restores the local facts, not only the data
 - **WHEN** a Cell is hydrated from the manifest
-- **THEN** its consumed offset, epoch and compensation markers are seeded alongside its records
+- **THEN** its consumed offset, epoch, lineage id and trail and compensation markers are seeded once its records have landed, the lineage record before the dedup file, marked as landed only when another controller wrote the entry, and no new lineage id is minted until its writer takes a record
 
 #### Scenario: A manifest naming a missing artifact is alarmed
 - **WHEN** hydration fetches a manifest that references an artifact the backend no longer holds
@@ -132,7 +137,7 @@ Every manifest write SHALL be applied conditionally against a claim counter held
 
 The fencing token SHALL NOT be any value that travels with the local state it protects. The WAL-owner epoch does travel — it is copied when state is transferred between controllers and restored verbatim by hydration — and therefore SHALL NOT be used as the guard; it remains in the manifest as the supersession fact recovery reads.
 
-Taking over a reference's lineage SHALL require that the relay runs on the controller now, adopted when it binds there and released when it leaves, not merely that the controller holds local state for it or once ran it. A relay that moves away SHALL be released when its move begins, as the controller it leaves prepares its handover, not when its process there ends; one stopped on the controller SHALL be released after its writers' final flush, once every reference of it that has unshipped progress has shipped or been claimed by another writer: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
+Taking over a reference's lineage SHALL require that the relay runs on the controller now, adopted when it binds there and released when it leaves, not merely that the controller holds local state for it or once ran it. A relay that moves away SHALL be released when its move begins, as the controller it leaves prepares its handover, not when its process there ends; one stopped on the controller SHALL be released after its writers' final flush, once every reference of it that has unshipped progress has shipped or been claimed by another writer: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. A controller SHALL extend its own entry only while it holds the relay's adoption (adopted, or releasing a stopped relay); without it the reference waits, neither shipped nor counted as owed, until a bind adopts it again. A reference shipped as a whole payload (parked failures, kept effect results, a controller's own registry and control-store replicas) carries no turns and SHALL extend its entry as before. A controller SHALL NOT claim a reference whose entry's lineage trail holds the controller's own lineage id for it: that entry continues the controller's copy, which a move or a takeover has left behind. A ship from a lineage that continues the entry's SHALL first drop the entry's ranges above the seq it continued from. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
 
 #### Scenario: Split-brain claimant is fenced
 - **WHEN** two controllers both attempt to ship manifests for the same cell and one does not hold the claim
@@ -155,7 +160,7 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 - **THEN** the returning controller adopts the relay, takes the lineage over with one claim and ships it again, rather than reading itself as superseded
 
 #### Scenario: A restart extends rather than bids
-- **WHEN** a controller restarts and ships a reference it already owned
+- **WHEN** a controller restarts, its relay binds there again, and it ships a reference it already owned
 - **THEN** it extends its own lineage without consuming a claim, and is never refused against itself
 
 #### Scenario: A handover does not raise an RPO breach
@@ -165,6 +170,16 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 #### Scenario: A controller a relay is moving from does not bid during the move
 - **WHEN** a relay's handover has been prepared on the controller it leaves, the controller it moves to has claimed a reference, and the leaving controller's backstop sweep reaches a reference it never shipped before its process ends
 - **THEN** the leaving controller SHALL NOT bid for it, and the manifest SHALL keep naming the controller the relay moves to
+
+#### Scenario: A controller whose lineage was continued cannot claim it back
+
+- **WHEN** a relay's adoption on the controller it left was not withdrawn (its bind task was killed after the release), and the controller it moved to minted a new lineage id from that controller's copy and shipped
+- **THEN** the left controller's sweep SHALL NOT bid for the reference, SHALL report it as superseded without an RPO breach, and the manifest SHALL keep naming the controller the relay moved to
+
+#### Scenario: A controller a relay left does not extend its own entry
+
+- **WHEN** a relay leaves a controller that owns a reference's entry and kept turns past it, and the controller it moved to has not yet claimed the reference
+- **THEN** the left controller's sweep SHALL NOT extend the entry with those turns, and the controller the relay moved to SHALL claim it from the cut the entry held
 
 ### Requirement: RPO breach is loud
 The tier SHALL track per-cell time since last successful ship against the RPO target and SHALL emit an alarm-grade telemetry event when breached, surfaced in `flz controller status` and `/healthz`. A shipping stall SHALL never be observable only by inspecting the backend.
@@ -300,7 +315,12 @@ resolves to `none` and warns, neither of which is a refusal.
 A class declaring `durable: remote` SHALL have each commit point's acknowledgement gated on
 the remote ship of what that commit point made durable, on every run: a stage of a steps
 instance, and for a flow instance the input under `ack: per_input` or `at_least_once` and
-the checkpoint under `ack: checkpoint`. The ship SHALL carry the cell records the commit
+the checkpoint under `ack: checkpoint`. After a controller restart, the fence a new stream
+raises before its first marker confirms anything SHALL also wait until every gated Cell (a flow
+Cell committing per record) of a `remote` class of that runner identity that has no writer
+running, and whose last record lies above the cut its manifest entry names, has shipped; it SHALL
+list those Cells from disk before it lists the running writers, and SHALL NOT start a Cell's
+writer. The ship SHALL carry the cell records the commit
 point produced, the effect record and outbox cursor where the tier is on, and the input
 log's floor. `topology.remote_on_flow` SHALL not exist. `local` SHALL ship asynchronously
 and SHALL never touch an acknowledgement path.
@@ -319,6 +339,16 @@ and SHALL never touch an acknowledgement path.
 
 - **WHEN** the backend is unreachable and a `remote` flow instance and a `local` flow instance run on the same controller
 - **THEN** the `remote` instance's acknowledgements SHALL wait and the RPO alarm SHALL fire, and the `local` instance SHALL process and acknowledge inputs unaffected
+
+#### Scenario: A marker after a restart waits for a Cell no writer holds
+
+- **WHEN** a controller restarts while a `remote` flow Cell's last records are on its disk unshipped, its writer has not started again, and a new stream of the same runner identity sends its first marker
+- **THEN** the marker SHALL confirm nothing until a ship of that Cell's records has landed, and no writer of that Cell SHALL have been started by the fence
+
+#### Scenario: A fully shipped Cell holds no fence
+
+- **WHEN** a controller restarts holding writer-less `remote` Cells whose last records its manifest entries already name
+- **THEN** the fence SHALL ship none of them and SHALL answer once the running writers' held ships are done
 
 ### Requirement: The loss statement SHALL cover every level and every commit point
 

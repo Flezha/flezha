@@ -184,7 +184,7 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 
 ### Requirement: State-directory cleanup ONLY on explicit relay stop
 
-State files under `app_data/state/{relay_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.RelayManager.stop_relay/2` is called by a user. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
+State files under `app_data/state/{relay_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup,lineage}` SHALL be removed ONLY when `Flezha.Service.RelayManager.stop_relay/2` is called by a user. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
 
 `stop_relay/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{relay_class}/{tasklet_id}/` for each tasklet. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
 

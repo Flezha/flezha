@@ -189,9 +189,9 @@ Restore SHALL be:
 
 ### Requirement: Time-travel queries via WAL retention beyond latest snapshot
 
-The agent SHALL retain pre-compaction WAL records for `time_travel_retention_hours` beyond the latest snapshot, configurable per-Relay-class via runtime config `time_travel_retention_hours.<RelayClass>` (default `6` hours globally; setting to `0` disables time travel for that Relay class). The retention sweeper (`Flezha.State.Retention`) SHALL run on `time_travel_retention_check_interval_ms` (default 60_000), iterate Cells, and rewrite each Cell's WAL dropping records older than the cutoff.
+The agent SHALL retain pre-compaction WAL records for `time_travel_retention_hours` beyond the latest snapshot, configurable per-Relay-class via runtime config `time_travel_retention_hours.<RelayClass>` (default `6` hours globally; setting to `0` disables time travel for that Relay class). The retention sweeper (`Flezha.State.Retention`) SHALL run on `time_travel_retention_check_interval_ms` (default 60_000), iterate Cells, and rewrite each Cell's WAL dropping records older than the cutoff. A Cell whose writer runs SHALL be cut by that writer; a Cell with none SHALL be cut by the same cut function under a per-Cell lock that a writer starting meanwhile SHALL wait for, so no record that writer appends is lost and no output is dispatched by the sweep. Either cut SHALL first write the consumed offsets of the records it drops into the Cell's lineage record as its folded offset; behind the remote gate the offline cut SHALL count only the records at or below the Cell's persisted flush cursor, never past what the gate has acknowledged.
 
-The agent SHALL expose a query interface `Flezha.State.TimeTravel.query(cell_id, target)` where `target = {:seq, u64} | {:timestamp, datetime}`. The query SHALL: (1) locate the latest snapshot at-or-before the target; (2) read the tail-WAL records up to the target; (3) ship `RestoreInitState` to a transient SDK-side replay relay; (4) receive a `cell_state_snapshot` carrying JSON-encoded terminal state; (5) return the JSON to the caller.
+The agent SHALL expose a query interface `Flezha.State.TimeTravel.query(cell_id, target)` where `target = {:seq, u64} | {:timestamp, datetime}`. The query SHALL: (1) locate the latest snapshot at-or-before the target; (2) read the tail-WAL records above that snapshot and up to the target, through the one payload function the bind's restore uses, so a Cell with no snapshot includes its record 0, and return the snapshot's header with its bytes; (3) ship `RestoreInitState` to a transient SDK-side replay relay; (4) receive a `cell_state_snapshot` carrying JSON-encoded terminal state; (5) return the JSON to the caller.
 
 The query SHALL be exposed via the `flz state at <relay/tasklet/cell> <seq | timestamp>` CLI subcommand.
 
@@ -224,6 +224,26 @@ The query SHALL be exposed via the `flz state at <relay/tasklet/cell> <seq | tim
 
 - **WHEN** the runner runs `flz state retention MarketRelay 12` and the prior value was `6`
 - **THEN** the runtime config SHALL be updated to 12 hours; the next retention-sweeper tick SHALL apply the new value (records older than 12 hours are deleted; records younger SHALL be retained going forward)
+
+#### Scenario: A Cell with no snapshot keeps its first record
+
+- **WHEN** `flz state at <relay/tasklet/cell> 3` targets a Cell whose WAL holds records 0..5 and no snapshot
+- **THEN** the change log returned SHALL hold records 0 to 3, the same bytes the bind's restore would ship for them
+
+#### Scenario: A writer started during an offline cut keeps its record
+
+- **WHEN** the sweeper cuts a Cell that has no writer, and a record for that Cell arrives while the cut runs
+- **THEN** the writer started for it SHALL open the file only after the cut ends, and the record SHALL be in the WAL afterwards
+
+#### Scenario: An offline cut folds what it drops
+
+- **WHEN** the sweeper cuts records carrying consumed offsets up to 41 from a Cell that has no writer
+- **THEN** the Cell's lineage record SHALL hold a folded offset of at least 41 before the cut file is renamed into place, and the Cell's floor read afterwards SHALL be what it was before the cut
+
+#### Scenario: An offline cut behind the remote gate folds only what was acknowledged
+
+- **WHEN** the sweeper cuts a writer-less Cell of a `durable: remote` class whose persisted flush cursor is 5 and whose dropped records 0..7 carry consumed offsets up to 41, the record at 5 carrying 30
+- **THEN** the folded offset written SHALL be 30, not 41
 
 ### Requirement: Fsync batching at configurable cadence
 
@@ -546,9 +566,9 @@ On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.Sta
 - For each `cell_key.snap.{seq}` file (latest): record the `snapshot_seq` counter.
 - For each `cell_key.snap.{seq}.tmp` file: unlink (orphaned mid-write).
 - For each `cell_key.wal.rewriting` file: unlink (orphaned retention rewrite).
-- For each `cell_key.outbox.dedup` file: read the persisted `last_persisted_seq` for the dedup cache (recovered from the WAL scan as a cross-check).
+- For each Cell's `cell_key.lineage` and `cell_key.outbox.dedup` pair: read both (`last_persisted_seq` recovered from the WAL scan as a cross-check); the epoch SHALL be the higher of the two records'; a dedup file at an older epoch than the lineage record SHALL complete the lineage record's pending cut before the writer serves anything, and a dedup file at an epoch at or above it SHALL make that pending cut void.
 
-`Flezha.State.Outbox` SHALL persist `last_persisted_seq` per Cell into `cell_key.outbox.dedup` (8-byte u64 BE) on every WAL append via a write-then-rename atomic update; this allows fast dedup-cache priming on boot without re-scanning the entire WAL.
+`Flezha.State.Lineage` SHALL persist each Cell's dedup file `cell_key.outbox.dedup` in its existing layout (four 8-byte big-endian integers: `last_persisted_seq`, `outbox_flushed_seq`, `epoch`, `folded_offset`), so a build that predates the lineage record reads it unchanged, at the cadence the requirement "Dedup-file writes are amortized off the append hot path" states, via a write-then-rename atomic update, and the Cell's lineage record into `cell_key.lineage` before any dedup file that depends on it, the lineage install followed by an fsync of its directory; this allows fast dedup-cache priming on boot without re-scanning the entire WAL.
 
 #### Scenario: Boot recovers from clean shutdown
 
@@ -569,6 +589,16 @@ On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.Sta
 
 - **WHEN** the agent boots after a crash during the retention sweeper's WAL rewrite, leaving `cell_key.wal.rewriting`
 - **THEN** boot SHALL unlink the `.rewriting` file; the original WAL is intact; the next sweeper tick re-runs the rewrite idempotently
+
+#### Scenario: A dedup file ahead of the lineage record wins the epoch
+
+- **WHEN** the agent boots with a dedup file at epoch 7 and a lineage record at epoch 6 holding a pending cut (a build that predates the lineage record ran in between, or the lineage install was lost)
+- **THEN** the writer SHALL serve at epoch 7 with the dedup file's folded offset, SHALL ignore the pending cut, and SHALL write the lineage record at epoch 7 before its next dedup file
+
+#### Scenario: Boot completes a bump a crash interrupted
+
+- **WHEN** the agent boots after a crash between a realign's lineage write and its WAL truncation, leaving a lineage record at epoch 5 with a pending whole cut and a dedup file at epoch 4
+- **THEN** boot SHALL truncate the WAL, remove the Cell's snapshots and write a dedup file at epoch 5 before the writer serves, and SHALL re-drive no output of the discarded records
 
 ### Requirement: flz state CLI subcommand surface
 
@@ -1003,7 +1033,9 @@ retain existing coalescing behaviour.
 ### Requirement: Dedup-file writes are amortized off the append hot path
 
 The per-record WAL append SHALL NOT perform a separate dedup-file write: the
-WAL append is the only per-record durable write. The dedup file's cursors
+WAL append is the only per-record durable write, except that the first record
+a writer takes for a Cell whose files landed from elsewhere, or whose lineage
+record holds no id, SHALL first write that Cell's lineage record once. The dedup file's cursors
 (`last_persisted_seq` and `outbox_flushed_seq`) are a rebuildable cache and
 SHALL be advanced at most at fsync-batch cadence, and on snapshot, rotation,
 and clean shutdown. On boot, a missing or stale dedup file SHALL be repaired
@@ -1014,7 +1046,8 @@ re-drive rule (never skip ahead).
 
 - **WHEN** N changes are appended within one fsync batch
 - **THEN** exactly N WAL appends and at most one dedup-file update occur — no
-  per-record tmp+rename
+  per-record tmp+rename; the first append after a Cell's files landed also
+  writes its lineage record, once
 
 #### Scenario: Stale dedup file is rebuilt from the WAL
 
@@ -1027,7 +1060,10 @@ re-drive rule (never skip ahead).
 
 The per-Cell dedup file SHALL carry both the existing `last_persisted_seq`
 watermark and the new `outbox_flushed_seq` cursor, updated with the same
-atomic tmp+rename discipline. On restart, a missing or stale cursor SHALL be
+atomic tmp+rename discipline. Its epoch and folded offset SHALL be copies of
+the Cell's lineage record's, kept in their existing positions so a build that
+predates the lineage record reads the file unchanged; a reader SHALL take the
+higher epoch of the two records. On restart, a missing or stale cursor SHALL be
 treated as "re-drive from the last known value" (never as "skip ahead").
 
 #### Scenario: Stale cursor re-drives, never skips
@@ -1036,6 +1072,16 @@ treated as "re-drive from the last known value" (never as "skip ahead").
   effect record after a crash
 - **THEN** the controller re-drives all effect-record outputs above the cursor
   and never advances the cursor past undelivered entries
+
+#### Scenario: A Cell with no lineage record yet keeps its dedup facts
+
+- **WHEN** a writer opens a Cell whose only small file is a dedup file holding epoch 2 and folded offset 17
+- **THEN** the writer SHALL serve with epoch 2 and folded offset 17, SHALL write the Cell's lineage record before its next dedup file, and that dedup file SHALL keep the same 32-byte layout
+
+#### Scenario: A rolled-back build reads the dedup file
+
+- **WHEN** a build that predates the lineage record opens a Cell this change wrote
+- **THEN** it SHALL read the same `last_persisted_seq`, `outbox_flushed_seq`, epoch and folded offset the newer build wrote, and SHALL re-drive only what lies above that flush cursor
 
 ### Requirement: The restore contract SHALL state the fate of queued input
 
@@ -1359,7 +1405,7 @@ An ownership marker that shares a directory with durable data — a fencing clai
 
 ### Requirement: A Cell's durable cursors SHALL be one record with one stated ordering
 
-The four cursors a Cell's writer carries — the last persisted seq, the outbox durable seq, the outbox flush cursor and the realign epoch they are counted under — SHALL be read through one accessor that returns them together, and a reader SHALL NOT copy the individual fields out of the writer's state.
+The four cursors a Cell's writer carries — the last persisted seq, the outbox durable seq, the outbox flush cursor and the realign epoch they are counted under — SHALL be read through one accessor that returns them together, and a reader SHALL NOT copy the individual fields out of the writer's state. The epoch is the higher of the Cell's lineage record's and its dedup file's; the accessor SHALL read both, from disk when no writer runs.
 
 The ordering the cursors assume SHALL be stated once at the value and asked before the record is written, not restated by each reader: an output is confirmed only after its record is fsynced and a record is fsynced only after it is appended, so the flush cursor SHALL NOT exceed the durable seq and the durable seq SHALL NOT exceed the last persisted seq. Advance SHALL be monotone; a rewind SHALL happen only under an epoch realign.
 
@@ -1506,4 +1552,98 @@ SHALL drop a delivered value at or below its own floor.
 
 - **WHEN** a bound Cell has taken offset 12 and the same record at offset 12 reaches it again from a second bind
 - **THEN** the Cell SHALL drop it, and its state and outputs SHALL be as if it arrived once
+
+### Requirement: A Cell's lineage record SHALL be written before the cursors that count under it
+
+Each persistent Cell SHALL keep a lineage record, `cell_key.lineage`, installed by the
+crash-atomic ceremony with an fsync of the file and then of its directory: the Cell's lineage id
+(or none), the trail of the lineage ids it continues each with the seq it continued from (at most
+16, newest first), the epoch, the folded offset, whether its files landed from another
+controller's copy, and the cut a bump has not yet completed. It SHALL be written only by a bump (a
+realign, a rewind, a correction), a mint, a prefix cut, a landing, or the first write of a Cell
+that has none, always before the dedup file or the WAL change that depends on it, and by a
+landing only after the Cell's data files landed. It SHALL be written by the Cell's running
+writer, or with none running under the Cell's file lock, which the offline cut and a landing
+hold and a starting writer waits for. A writer SHALL write
+neither record from state it did not load: a writer that refused its file at open SHALL leave
+both files as it found them. A crash between the lineage write and the writes after it SHALL
+leave a Cell that boots to the state the operation was making, and SHALL NOT re-drive an output
+of a record a bump discarded.
+
+#### Scenario: A refused writer leaves both records untouched
+
+- **WHEN** a writer refuses its WAL at open because a record failed its crc with complete records behind it, and is then closed
+- **THEN** the Cell's lineage record and dedup file SHALL be byte for byte what they were before the writer started
+
+#### Scenario: A rewind interrupted after its lineage write completes at boot
+
+- **WHEN** the controller crashes after a rewind to seq 3 under epoch 6 wrote its lineage record and before it cut the WAL holding records 0..7
+- **THEN** the next boot SHALL cut the records above 3 and the snapshots above 3, lower the instance's input-log floor as the live rewind does, and write a dedup file at epoch 6, and a correction re-run at epoch 6 SHALL change nothing
+
+#### Scenario: A prefix cut interrupted after its lineage write loses nothing
+
+- **WHEN** the controller crashes after a prefix cut wrote the folded offset and before it renamed the cut file
+- **THEN** the WAL SHALL hold every record it held before, and the Cell's floor SHALL be what it was before the cut
+
+#### Scenario: A mint interrupted before its record is kept
+
+- **WHEN** the controller crashes after a mint wrote the new lineage id and before the record that caused it was appended
+- **THEN** the Cell SHALL boot with the new id and no record past its fork, the record SHALL be appended when it arrives again, and no second id SHALL be minted for it
+
+#### Scenario: A failed mint fails the append
+
+- **WHEN** the lineage install of a mint fails
+- **THEN** the record SHALL NOT be appended, the writer SHALL exit under its supervisor, and the record SHALL reach the restarted writer by the path any failed append takes
+
+#### Scenario: A hydration that fails writes no lineage record
+
+- **WHEN** a hydration of a Cell fails to fetch one of its artifacts
+- **THEN** no lineage record and no folded offset SHALL be written for that Cell
+
+### Requirement: A Cell's lineage id SHALL be minted at its first record after its files land
+
+A landed Cell SHALL keep the lineage id and trail its files carried, and SHALL mint a new one at
+its first record: a Cell whose files landed on a controller from elsewhere (a hydration from the
+durability backend of an entry another controller wrote, or a pull from another controller)
+SHALL mint a new lineage id, continuing the old one in its trail, when its writer takes its
+first record there; a hydration or a pull alone SHALL NOT mint, and a Cell hydrated from an entry
+this controller wrote SHALL NOT be marked landed. A Cell whose lineage record holds no id SHALL
+mint one at its first record. A restart, a rebind, a realign or a rewind on the same
+controller SHALL NOT mint. Minting SHALL change neither the epoch nor any output's `flz.epoch` or
+`flz.seq`. When a relay arrives and its local copy is compared with the newest copy (the one on
+the controller it moves from, else the backend's), on every reference both hold the newest copy
+SHALL replace the local one when its lineage continues the local one, or when the two lineages
+differ and the local one does not continue the newest copy from a seq at or above that copy's
+top, whatever their lengths; two copies of one lineage, or a copy with no id, SHALL be compared
+by epoch and then the highest seq, as before.
+
+#### Scenario: A continued history wins over a longer abandoned one
+
+- **WHEN** controller A shipped a Cell through seq 3 and kept records 4..7 unshipped, and controller B hydrated the cut at 3, took records 4 and 5 and shipped them, and the relay returns to A
+- **THEN** A SHALL replace its copy with B's, whose WAL holds B's records 4 and 5, and A's records 4..7 SHALL be gone with the set-aside copy
+
+#### Scenario: A hydration that takes no turn does not fork the lineage
+
+- **WHEN** controller B hydrated a Cell's cut at 3 and the relay moved on before B took a record, and the relay returns to A, which kept records 4..7 past that cut
+- **THEN** both copies SHALL carry the same lineage id, and A SHALL keep its longer copy
+
+#### Scenario: A node keeps the turns it took past the cut it continued
+
+- **WHEN** controller B hydrated a cut at 3, minted a lineage at its first record, took records 4 and 5, and binds the relay again before any of them was shipped
+- **THEN** B SHALL keep its copy over the backend's cut at 3
+
+#### Scenario: A restart of a fully shipped relay mints nothing
+
+- **WHEN** a relay whose Cells this controller shipped whole restarts on it twice, and each bind adopts its own shipped cut
+- **THEN** no lineage id SHALL be minted and no trail entry added
+
+#### Scenario: An older peer is compared as before
+
+- **WHEN** a relay moves from a controller whose build predates lineage ids
+- **THEN** the arriving controller SHALL compare the two copies by epoch and then the highest seq, and the older controller, adopting from a newer one, SHALL read the newer one's copy as it reads any copy today
+
+#### Scenario: Data from before lineage ids compares as before
+
+- **WHEN** neither copy of a Cell carries a lineage id
+- **THEN** the newer copy SHALL be the one with the higher epoch and then the higher seq, a tie going to the incoming copy
 

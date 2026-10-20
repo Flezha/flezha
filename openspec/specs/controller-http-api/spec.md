@@ -211,7 +211,10 @@ decoded answer with the content type of its format (`application/json`,
 `text/plain; charset=utf-8`, `application/octet-stream`), `202` with `{"accepted": true}` for a
 channel that does not answer, and the error object with its class status on failure. An optional
 `key` query parameter SHALL be passed as the call's `key`, so a partition group is answered by the
-member owning the key; a group called without one is refused `call.target_unkeyed`.
+member owning the key; a group called without one is refused `call.target_unkeyed`. The call SHALL
+carry a deadline below the listener's own `deadline_ms` by at least `call_grace_ms`, or half of
+that deadline when it is shorter, so a relay that does not answer in time is answered
+`call.timeout`, never `control.timeout`.
 
 #### Scenario: A JSON call
 
@@ -234,6 +237,11 @@ member owning the key; a group called without one is refused `call.target_unkeye
 - **WHEN** a client posts `x` to `/v1/relays/prices/in?key=EURUSD` and `prices` is a partition group
 - **THEN** the member owning `EURUSD` answers, and the same post without `?key=` is refused
   `call.target_unkeyed`
+
+#### Scenario: A relay that does not answer times out as a call
+
+- **WHEN** the listener's `deadline_ms` is 3000 and a client posts to a relay channel whose graph never answers
+- **THEN** the response SHALL carry `call.timeout` with the status of its class, before the listener's own deadline, and no `control.timeout` SHALL be answered
 
 ### Requirement: Relay tools SHALL be listed beside the catalogue tools
 

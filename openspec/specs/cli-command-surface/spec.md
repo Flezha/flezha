@@ -608,7 +608,8 @@ honour a `--json` or `--output json` written anywhere in it.
 `flz relay call <relay_id>` SHALL read `--text` / `-t` (required, the input's payload),
 `--channel` / `-c` (the entry channel, optional), `--answer-channel` (the channel whose output
 answers, optional, no short spelling), `--key` (a partition group's key, optional), `--timeout`
-(the deadline in milliseconds, no short spelling, default 30 000) and `--namespace`, declared in
+(the deadline in milliseconds, no short spelling; when absent the controller's
+`call_channel_deadline_ms`, 30 000 unless set) and `--namespace`, declared in
 its verb row like every verb's. It SHALL call the relay through the published
 `Flezha.Service.Relay.call/6`, print the answer's payload on stdout followed by one newline,
 and exit 0. A failure SHALL be rendered on stderr in the error model of `give-every-error-a-code`
@@ -634,6 +635,11 @@ and SHALL exit with the code of its class: `call.timeout` 7, a denied act 4,
 
 - **WHEN** `flz relay call echo -t hello` is run
 - **THEN** `-t` SHALL be read as `--text`, and the deadline SHALL be the default
+
+#### Scenario: The default deadline is the controller's
+
+- **WHEN** the controller runs with `call_channel_deadline_ms` set to 200 and `flz relay call slow --text x` is run without `--timeout` against a relay whose turn takes longer
+- **THEN** stderr SHALL carry `call.timeout` after about 200 ms and the exit code SHALL be 7
 
 ### Requirement: `flz relay send` and `flz relay call` SHALL reach a partition group's member by key
 

@@ -646,7 +646,7 @@ The sweep SHALL come due on a cadence derived as `min(ttl / 4, 30s)`, overridabl
 - **THEN** the sweep SHALL NOT evict it
 
 ### Requirement: Eviction is destructive; recreate is a cold start
-Eviction of a dynamic-mode Cell SHALL be destructive. When a Cell is evicted AND persistence is enabled for the Relay class, the SDK SHALL ship a `delete_cell_state{cell_id}` frame to the controller so its on-disk WAL/snapshot/outbox files are removed. The frame SHALL carry the durable guarantee class, so an eviction that falls inside a reconnect window holds the delete for the next bound stream rather than losing it, and a rebind replays it in write order behind that Cell's own records. The SDK SHALL NOT block the reaper on a response, and the controller writes none.
+Eviction of a dynamic-mode Cell SHALL be destructive. When a Cell is evicted AND persistence is enabled for the Relay class, the SDK SHALL ship a `delete_cell_state{cell_id}` frame to the controller so its on-disk WAL/snapshot/outbox/lineage files are removed. The frame SHALL carry the durable guarantee class, so an eviction that falls inside a reconnect window holds the delete for the next bound stream rather than losing it, and a rebind replays it in write order behind that Cell's own records. The SDK SHALL NOT block the reaper on a response, and the controller writes none.
 
 When a dynamic-mode Cell has been evicted and a subsequent input arrives for the same key, the runtime SHALL recreate the `CellSlot` synchronously (per "Dynamic-mode lazy cell creation") and SHALL call `Tasklet::init_state(Some(key), None)` — a fresh cold start. The runtime SHALL NOT restore the evicted Cell's state from disk on recreate. (This is a deliberate decision: it keeps the recreate path off any blocking controller round-trip, so a recreate can never stall a work-stealing pool worker.)
 
@@ -656,7 +656,7 @@ When a dynamic-mode Cell has been evicted and a subsequent input arrives for the
 
 #### Scenario: Eviction deletes persisted state
 - **WHEN** a persistence-enabled dynamic-mode Cell is evicted
-- **THEN** the SDK SHALL ship `delete_cell_state{cell_id}` to the controller, which SHALL remove the Cell's `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
+- **THEN** the SDK SHALL ship `delete_cell_state{cell_id}` to the controller, which SHALL remove the Cell's `{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` and `{key}.lineage` files
 
 #### Scenario: An eviction with no stream bound holds its delete
 - **WHEN** a persistence-enabled dynamic-mode Cell is evicted while no data stream is bound

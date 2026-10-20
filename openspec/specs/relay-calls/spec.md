@@ -135,7 +135,9 @@ alike:
 
 - no relay or member of that id in the namespace: `relay.not_found`;
 - the relay parked, not ready, or its durable append refused: `call.unavailable`, the reason in
-  details;
+  details; a relay with no channel that can take the input now, whose durable input log holds
+  it for the next bind, is not refused: the call waits for that bind's re-forward, or for its
+  deadline, as a call to an asleep instance does;
 - the input absorbed as a duplicate or filtered out by an `:on_input` hook: `call.absorbed`;
 - the relay already owing `call_pending_max` answers to the callers waiting on it (its own
   outbound calls do not count): `call.busy`, nothing ingested;
@@ -193,6 +195,11 @@ alike:
 
 - **WHEN** an effectively-once callee is stopped without ending while an outside caller and a relay caller wait on it
 - **THEN** the outside caller SHALL receive `call.callee_ended` carrying `stopped`, and the relay caller SHALL receive no answer until the callee runs again or the call's deadline passes
+
+#### Scenario: A journaled call waits for the next bind
+
+- **WHEN** an outside caller calls a relay that keeps a durable input log and has no channel, its runner not yet bound after a move
+- **THEN** the input SHALL be journaled, the call SHALL NOT be answered `call.unavailable`, and the caller SHALL receive the answer of the turn the next bind runs, or `call.timeout` at its deadline
 
 #### Scenario: A full table refuses
 
@@ -417,7 +424,11 @@ retry while a Cell still holds its call, so the answer is taken when it retries.
 call no Cell holds SHALL be absorbed. The callee SHALL hold its answer in its own outbox until the caller's Overwatch has taken
 it, and SHALL keep retrying it until then, until the call's deadline plus the margin has passed,
 or until the caller is no longer declared in its namespace. An answer whose delivery was lost
-while held SHALL be dispatched again by the callee's outbox and handed to the delivery again. An
+while held SHALL be dispatched again by the callee's outbox and handed to the delivery again. The
+answer's delivery worker SHALL be its one retry owner: while that worker lives, the callee's
+outbox SHALL NOT dispatch the answer again on its resettle tick; when the worker ends other than
+by an orderly stop, or the delivery restarts, the delivery SHALL tell the callee's writers, which
+SHALL dispatch again at once every answer to that caller whose delivery hold is still open. An
 output plugin's hold SHALL NOT make the outbox dispatch a call or an answer again: an entry whose
 call or answer delivery has answered its hold, or whose output answered no caller, SHALL wait for
 its output plugins like any other entry.
@@ -446,6 +457,16 @@ its output plugins like any other entry.
 
 - **WHEN** the caller's controller dies after a call's `Response` was durable in its input log and before its outbox cursor passed the call
 - **THEN** the recovered caller SHALL find the `Response` by its message id, SHALL settle the call without a second `Response`, and SHALL send nothing again
+
+#### Scenario: A caller that stays away is handed one copy of an answer
+
+- **WHEN** a durable callee's answer waits for a relay caller that is asleep for several resettle ticks, and its delivery worker lives
+- **THEN** the worker SHALL hold one copy of the answer, the callee's outbox SHALL dispatch it no second time, and when the deadline plus `call_retention_margin_ms` passes the answer SHALL be dropped once as `caller_gone`
+
+#### Scenario: A lost delivery worker is reported and its answer goes again
+
+- **WHEN** the delivery worker holding a durable callee's answer exits abnormally before its caller took the answer
+- **THEN** the callee's writer SHALL dispatch the answer again at once with the same identity, and the caller SHALL receive exactly one `Response`
 
 ### Requirement: A call SHALL be best effort when either side is off the durable tier
 
