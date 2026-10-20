@@ -1,20 +1,25 @@
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use crossbeam::channel;
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token, Waker};
 use quinn_proto::{
-    ClientConfig, ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, IdleTimeout,
-    StreamEvent, StreamId, Transmit,
+    ClientConfig, ConnectionHandle, Dir, EndpointConfig, Event, StreamEvent, StreamId,
 };
 
 use super::send_gate::SendGate;
+use super::Wire;
+
+#[path = "quic_endpoint.rs"]
+mod endpoint;
+pub use endpoint::{expire_timer, flush_transmits, pump_udp, send_transmit, transport_config};
+use endpoint::{poll_timeout, pump_endpoint_events};
 
 const UDP_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
@@ -152,24 +157,6 @@ impl Read for ChannelReader {
     }
 }
 
-/// The transport settings both ends of a Flezha QUIC connection run: a 5 s
-/// keep-alive and an idle timeout aligned to the control-liveness window, so
-/// a wedged peer is declared dead in the same window on QUIC as on UDS
-/// instead of inheriting the quinn default (keep-alive << idle, so a live
-/// connection never idles out), plus the receive/send windows. The server
-/// adds its stream limit on top.
-pub fn transport_config() -> quinn_proto::TransportConfig {
-    let mut transport = quinn_proto::TransportConfig::default();
-    transport.keep_alive_interval(Some(Duration::from_secs(5)));
-    if let Ok(idle) = IdleTimeout::try_from(crate::transport::liveness::control_idle_timeout()) {
-        transport.max_idle_timeout(Some(idle));
-    }
-    transport.stream_receive_window(8_388_608u32.into());
-    transport.receive_window(16_777_216u32.into());
-    transport.send_window(8_388_608);
-    transport
-}
-
 /// Holds a QUIC connection driven by a background I/O thread using quinn-proto.
 pub struct QuicClient {
     cmd_tx: channel::Sender<DriverCommand>,
@@ -270,7 +257,7 @@ impl Drop for QuicClient {
     }
 }
 
-/// A bidirectional QUIC stream that implements std::io::Read and Write.
+/// A bidirectional QUIC stream, read and written as a [`Wire`].
 ///
 /// All QUIC I/O is driven by a background driver thread using quinn-proto.
 /// App threads communicate with the driver via crossbeam channels.
@@ -282,30 +269,6 @@ pub struct QuicBidiStream {
 }
 
 impl QuicBidiStream {
-    /// Arm (or clear) the read deadline. Shared with all clones via the
-    /// `Arc<Mutex<ChannelReader>>`, so the control reader and any writer see
-    /// one deadline. Backs `FlezhaStream::set_read_timeout` on QUIC.
-    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        self.read_rx
-            .lock()
-            .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
-            .read_timeout = timeout;
-        Ok(())
-    }
-
-    /// One frame onto the stream, and the answer the driver sends back for it.
-    /// The two `Write` impls are one call here, so a writer holding an
-    /// `Arc<FlezhaStream>` and one holding the handle cannot drift.
-    fn write_frame(&self, buf: &[u8]) -> io::Result<usize> {
-        self.command_write(buf, false)
-    }
-
-    /// One frame the stream takes at once or refuses with `WouldBlock`: the
-    /// caller waits for the driver's turn, never for the peer.
-    pub fn try_write_frame(&self, buf: &[u8]) -> io::Result<usize> {
-        self.command_write(buf, true)
-    }
-
     fn command_write(&self, buf: &[u8], nowait: bool) -> io::Result<usize> {
         let (reply_tx, reply_rx) = channel::bounded(1);
         self.cmd_tx
@@ -321,54 +284,47 @@ impl QuicBidiStream {
             .recv()
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Driver reply dropped"))?
     }
+}
 
-    /// Clone by sharing the write channel and read channel. Infallible: the
-    /// handle shares channels, it opens nothing.
-    pub fn clone_handle(&self) -> QuicBidiStream {
-        QuicBidiStream {
+impl Wire for QuicBidiStream {
+    fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read_rx
+            .lock()
+            .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
+            .read(buf)
+    }
+
+    fn write(&self, buf: &[u8]) -> io::Result<usize> {
+        self.command_write(buf, false)
+    }
+
+    /// One command: the driver answers only once the whole frame is on the stream.
+    fn write_frame(&self, frame: &[u8]) -> io::Result<()> {
+        self.command_write(frame, false).map(drop)
+    }
+
+    /// The caller waits for the driver's turn, never for the peer.
+    fn try_write_frame(&self, frame: &[u8]) -> io::Result<()> {
+        self.command_write(frame, true).map(drop)
+    }
+
+    /// Shares the write and read channels: infallible, it opens nothing.
+    fn clone_handle(&self) -> io::Result<QuicBidiStream> {
+        Ok(QuicBidiStream {
             stream_id: self.stream_id,
             cmd_tx: self.cmd_tx.clone(),
             waker: Arc::clone(&self.waker),
             read_rx: Arc::clone(&self.read_rx),
-        }
+        })
     }
-}
 
-impl Read for QuicBidiStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    /// The deadline lives in the shared reader, so the control reader and
+    /// every clone see one; without it control liveness would not hold on QUIC.
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
         self.read_rx
             .lock()
             .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
-            .read(buf)
-    }
-}
-
-impl Write for QuicBidiStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.write_frame(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-// Read/Write for &QuicBidiStream (needed for Arc<FlezhaStream>)
-impl Read for &QuicBidiStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_rx
-            .lock()
-            .map_err(|e| io::Error::other(format!("Lock poisoned: {}", e)))?
-            .read(buf)
-    }
-}
-
-impl Write for &QuicBidiStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.write_frame(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
+            .read_timeout = timeout;
         Ok(())
     }
 }
@@ -450,59 +406,6 @@ fn driver_loop(
         }
         resume_suspended_streams(&mut connection, &mut streams);
         let _ = flush_transmits(&mut connection, &udp, &mut transmit_buf);
-    }
-}
-
-/// How long to poll: until the connection's next timer, 100 ms at most.
-fn poll_timeout(connection: &mut quinn_proto::Connection) -> Duration {
-    connection
-        .poll_timeout()
-        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
-        .unwrap_or(Duration::from_millis(100))
-}
-
-/// Fire the connection's timer if it has come due.
-pub fn expire_timer(connection: &mut quinn_proto::Connection, now: Instant) {
-    if let Some(deadline) = connection.poll_timeout() {
-        if now >= deadline {
-            connection.handle_timeout(now);
-        }
-    }
-}
-
-/// Read every datagram the socket holds into the endpoint, feeding this
-/// connection's events to it and answering stateless responses on the spot.
-/// Shared by the handshake and the steady-state loop.
-pub fn pump_udp(
-    udp: &UdpSocket,
-    udp_buf: &mut [u8],
-    endpoint: &mut quinn_proto::Endpoint,
-    conn_handle: ConnectionHandle,
-    connection: &mut quinn_proto::Connection,
-    now: Instant,
-) -> io::Result<()> {
-    loop {
-        match udp.recv_from(udp_buf) {
-            Ok((n, remote)) => {
-                let data = BytesMut::from(&udp_buf[..n]);
-                let mut resp_buf = Vec::new();
-                if let Some(event) = endpoint.handle(now, remote, None, None, data, &mut resp_buf) {
-                    match event {
-                        DatagramEvent::ConnectionEvent(ch, event) => {
-                            if ch == conn_handle {
-                                connection.handle_event(event);
-                            }
-                        }
-                        DatagramEvent::Response(transmit) => {
-                            send_transmit(udp, &transmit, &resp_buf)?;
-                        }
-                        DatagramEvent::NewConnection(_) => {}
-                    }
-                }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-            Err(e) => return Err(e),
-        }
     }
 }
 
@@ -786,43 +689,6 @@ fn flush_write_buffer(
                 let _ = reply.send(Err(write_failed(&e)));
             }
         }
-    }
-}
-
-/// Pump endpoint events back and forth between endpoint and connection.
-fn pump_endpoint_events(
-    endpoint: &mut quinn_proto::Endpoint,
-    conn_handle: ConnectionHandle,
-    connection: &mut quinn_proto::Connection,
-) {
-    while let Some(endpoint_event) = connection.poll_endpoint_events() {
-        if let Some(conn_event) = endpoint.handle_event(conn_handle, endpoint_event) {
-            connection.handle_event(conn_event);
-        }
-    }
-}
-
-/// Flush all pending transmits from the connection to the UDP socket.
-pub fn flush_transmits(
-    connection: &mut quinn_proto::Connection,
-    udp: &UdpSocket,
-    buf: &mut Vec<u8>,
-) -> io::Result<()> {
-    let now = Instant::now();
-    while let Some(transmit) = connection.poll_transmit(now, 1, buf) {
-        send_transmit(udp, &transmit, buf)?;
-        buf.clear();
-    }
-    Ok(())
-}
-
-/// Send a single transmit (datagram) on the UDP socket.
-pub fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Result<()> {
-    let data = &buf[..transmit.size];
-    match udp.send_to(data, transmit.destination) {
-        Ok(_) => Ok(()),
-        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(()),
-        Err(e) => Err(e),
     }
 }
 

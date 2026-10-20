@@ -19,8 +19,44 @@ use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, TryLockError};
+use std::time::Duration;
 
 use quic::QuicBidiStream;
+
+/// One client transport's stream, so a new transport is one impl. A knob a
+/// wire lacks keeps its no-op default: QUIC's driver owns blocking and closes a
+/// stream when its last handle drops, and a local run has no medium at all.
+pub trait Wire: Sized {
+    fn read(&self, buf: &mut [u8]) -> io::Result<usize>;
+    fn write(&self, buf: &[u8]) -> io::Result<usize>;
+
+    /// Write one whole frame, never interleaved with another writer's.
+    fn write_frame(&self, frame: &[u8]) -> io::Result<()>;
+
+    /// Write one whole frame only if the stream takes it without waiting for
+    /// the peer or another writer; `WouldBlock` otherwise, with nothing
+    /// written. A frame the medium took part of is finished with a blocking
+    /// write, since a partial frame would corrupt every frame behind it.
+    fn try_write_frame(&self, frame: &[u8]) -> io::Result<()>;
+
+    fn clone_handle(&self) -> io::Result<Self>;
+
+    fn set_nonblocking(&self, _nonblocking: bool) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn set_read_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn shutdown(&self, _how: Shutdown) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn raw_fd(&self) -> Option<i32> {
+        None
+    }
+}
 
 /// Where a frame written to a [`FlezhaStream::Local`] goes: the in-process
 /// owner of the run parses it and delivers it, instead of a socket carrying
@@ -28,6 +64,8 @@ use quic::QuicBidiStream;
 /// never builds one.
 pub type LocalFrameSink = Arc<dyn Fn(&[u8]) -> io::Result<()> + Send + Sync>;
 
+/// A stream on whichever wire the run uses. An enum rather than a boxed
+/// [`Wire`], so each call is one match and a direct call, never a virtual one.
 pub enum FlezhaStream {
     #[cfg(unix)]
     Unix(UnixWire),
@@ -36,6 +74,18 @@ pub enum FlezhaStream {
     /// and reads are at end of stream, so every writer on this seam keeps the
     /// one code path it has.
     Local(LocalFrameSink),
+}
+
+/// Call `$call` on the variant's wire, bound as `$wire`.
+macro_rules! on_wire {
+    ($stream:expr, $wire:ident => $call:expr) => {
+        match $stream {
+            #[cfg(unix)]
+            FlezhaStream::Unix($wire) => $call,
+            FlezhaStream::Quic($wire) => $call,
+            FlezhaStream::Local($wire) => $call,
+        }
+    };
 }
 
 /// A Unix socket and the lock its frames are written under, shared by every
@@ -47,27 +97,19 @@ pub struct UnixWire {
     frames: Arc<Mutex<()>>,
 }
 
-#[cfg(unix)]
-impl std::ops::Deref for UnixWire {
-    type Target = UnixStream;
-
-    fn deref(&self) -> &UnixStream {
-        &self.stream
-    }
-}
-
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const SEND_NOWAIT: libc::c_int = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 const SEND_NOWAIT: libc::c_int = libc::MSG_DONTWAIT;
 
 #[cfg(unix)]
-impl UnixWire {
-    fn clone_handle(&self) -> io::Result<UnixWire> {
-        Ok(UnixWire {
-            stream: self.stream.try_clone()?,
-            frames: Arc::clone(&self.frames),
-        })
+impl Wire for UnixWire {
+    fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        (&self.stream).read(buf)
+    }
+
+    fn write(&self, buf: &[u8]) -> io::Result<usize> {
+        (&self.stream).write(buf)
     }
 
     // The lock guards no data, so a writer that panicked holding it left
@@ -100,6 +142,51 @@ impl UnixWire {
             Err(_) => Err(io::Error::last_os_error()),
         }
     }
+
+    fn clone_handle(&self) -> io::Result<UnixWire> {
+        Ok(UnixWire {
+            stream: self.stream.try_clone()?,
+            frames: Arc::clone(&self.frames),
+        })
+    }
+
+    fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        self.stream.set_nonblocking(nonblocking)
+    }
+
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        self.stream.set_read_timeout(timeout)
+    }
+
+    fn shutdown(&self, how: Shutdown) -> io::Result<()> {
+        self.stream.shutdown(how)
+    }
+
+    fn raw_fd(&self) -> Option<i32> {
+        Some(self.stream.as_raw_fd())
+    }
+}
+
+impl Wire for LocalFrameSink {
+    fn read(&self, _buf: &mut [u8]) -> io::Result<usize> {
+        Ok(0)
+    }
+
+    fn write(&self, buf: &[u8]) -> io::Result<usize> {
+        self(buf).map(|()| buf.len())
+    }
+
+    fn write_frame(&self, frame: &[u8]) -> io::Result<()> {
+        self(frame)
+    }
+
+    fn try_write_frame(&self, frame: &[u8]) -> io::Result<()> {
+        self(frame)
+    }
+
+    fn clone_handle(&self) -> io::Result<Self> {
+        Ok(Arc::clone(self))
+    }
 }
 
 impl FlezhaStream {
@@ -112,141 +199,70 @@ impl FlezhaStream {
     }
 
     pub fn clone_handle(&self) -> io::Result<FlezhaStream> {
-        match self {
+        Ok(match self {
             #[cfg(unix)]
-            FlezhaStream::Unix(wire) => Ok(FlezhaStream::Unix(wire.clone_handle()?)),
-            FlezhaStream::Quic(stream) => Ok(FlezhaStream::Quic(stream.clone_handle())),
-            FlezhaStream::Local(sink) => Ok(FlezhaStream::Local(Arc::clone(sink))),
-        }
+            FlezhaStream::Unix(wire) => FlezhaStream::Unix(wire.clone_handle()?),
+            FlezhaStream::Quic(wire) => FlezhaStream::Quic(wire.clone_handle()?),
+            FlezhaStream::Local(wire) => FlezhaStream::Local(wire.clone_handle()?),
+        })
     }
 
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(stream) => stream.set_nonblocking(nonblocking),
-            FlezhaStream::Quic(_) => {
-                let _ = nonblocking;
-                Ok(()) // QUIC manages this internally
-            }
-            FlezhaStream::Local(_) => Ok(()),
-        }
+        on_wire!(self, wire => wire.set_nonblocking(nonblocking))
     }
 
-    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(stream) => stream.set_read_timeout(timeout),
-            // QUIC reads block on a crossbeam channel; honor the deadline
-            // there (a no-op here would silently skip control-channel liveness
-            // when FLEZHA_TRANSPORT=quic).
-            FlezhaStream::Quic(stream) => stream.set_read_timeout(timeout),
-            FlezhaStream::Local(_) => Ok(()),
-        }
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        on_wire!(self, wire => wire.set_read_timeout(timeout))
     }
 
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(stream) => stream.shutdown(how),
-            FlezhaStream::Quic(_) => {
-                let _ = how;
-                Ok(()) // QUIC streams are closed when dropped
-            }
-            FlezhaStream::Local(_) => Ok(()),
-        }
+        on_wire!(self, wire => wire.shutdown(how))
     }
 
-    /// Write one whole frame, never interleaved with another writer's.
     pub fn write_frame(&self, frame: &[u8]) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => wire.write_frame(frame),
-            FlezhaStream::Quic(stream) => (&*stream).write_all(frame),
-            FlezhaStream::Local(sink) => sink(frame),
-        }
+        on_wire!(self, wire => wire.write_frame(frame))
     }
 
-    /// Write one whole frame only if the stream takes it without waiting for
-    /// the peer or another writer; `WouldBlock` otherwise, with nothing
-    /// written. A frame the socket took part of is finished with a blocking
-    /// write, since a partial frame would corrupt every frame behind it.
     pub fn try_write_frame(&self, frame: &[u8]) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => wire.try_write_frame(frame),
-            FlezhaStream::Quic(stream) => stream.try_write_frame(frame).map(|_| ()),
-            FlezhaStream::Local(sink) => sink(frame),
-        }
+        on_wire!(self, wire => wire.try_write_frame(frame))
     }
 
     #[cfg(unix)]
     pub fn as_raw_fd(&self) -> Option<i32> {
-        match self {
-            FlezhaStream::Unix(stream) => Some(stream.as_raw_fd()),
-            FlezhaStream::Quic(_) | FlezhaStream::Local(_) => None,
-        }
+        on_wire!(self, wire => wire.raw_fd())
     }
 }
 
 impl Read for FlezhaStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => wire.stream.read(buf),
-            FlezhaStream::Quic(stream) => stream.read(buf),
-            FlezhaStream::Local(_) => Ok(0),
-        }
+        (&*self).read(buf)
     }
 }
 
 impl Write for FlezhaStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => wire.stream.write(buf),
-            FlezhaStream::Quic(stream) => stream.write(buf),
-            FlezhaStream::Local(sink) => sink(buf).map(|()| buf.len()),
-        }
+        (&*self).write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => wire.stream.flush(),
-            FlezhaStream::Quic(stream) => stream.flush(),
-            FlezhaStream::Local(_) => Ok(()),
-        }
+        Ok(())
     }
 }
 
-// Implement Read/Write for &FlezhaStream (needed for Arc<FlezhaStream>)
+// What an `Arc<FlezhaStream>` reads and writes through.
 impl Read for &FlezhaStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => (&wire.stream).read(buf),
-            FlezhaStream::Quic(stream) => (&*stream).read(buf),
-            FlezhaStream::Local(_) => Ok(0),
-        }
+        on_wire!(*self, wire => wire.read(buf))
     }
 }
 
+// No wire buffers in user space, so a flush has nothing to push.
 impl Write for &FlezhaStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => (&wire.stream).write(buf),
-            FlezhaStream::Quic(stream) => (&*stream).write(buf),
-            FlezhaStream::Local(sink) => sink(buf).map(|()| buf.len()),
-        }
+        on_wire!(*self, wire => wire.write(buf))
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        match self {
-            #[cfg(unix)]
-            FlezhaStream::Unix(wire) => (&wire.stream).flush(),
-            FlezhaStream::Quic(stream) => (&*stream).flush(),
-            FlezhaStream::Local(_) => Ok(()),
-        }
+        Ok(())
     }
 }

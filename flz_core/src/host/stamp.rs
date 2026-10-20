@@ -10,12 +10,12 @@ use crate::channel::{
     CALL_ANSWER_CHANNEL_KEY, CALL_CHANNEL_KEY, CALL_CREATE_KEY, CALL_RESPONSE_KEY, CALL_TARGET_KEY,
     DEADLINE_AT_KEY,
 };
-use crate::routing::CALL_KEY;
+use crate::routing::REPLY_TO_KEY;
 use crate::schema;
 
 /// The keys only the core writes on a plugin output.
 const CORE_KEYS: [&str; 7] = [
-    CALL_KEY,
+    REPLY_TO_KEY,
     CALL_TARGET_KEY,
     CALL_CREATE_KEY,
     CALL_RESPONSE_KEY,
@@ -52,7 +52,7 @@ pub(super) fn stamp_plugin_ends(
             if descriptor.sink {
                 output
                     .metadata
-                    .push((CALL_KEY.to_string(), token.to_string()));
+                    .push((REPLY_TO_KEY.to_string(), token.to_string()));
             }
         }
         if let Some(end) = &descriptor.call {

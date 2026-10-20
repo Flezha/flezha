@@ -205,14 +205,11 @@ fn a_full_stream_refuses_a_part_without_waiting() {
     let _g = serial();
     let slot = slot("part_full", "sink", &[]);
     let (stream, _peer) = crate::test_support::stream_pair();
-    let FlezhaStream::Unix(socket) = stream.as_ref() else {
-        unreachable!("the pair is a socket")
-    };
-    socket.set_nonblocking(true).unwrap();
+    stream.set_nonblocking(true).unwrap();
     for size in [4096, 1] {
-        while (&**socket).write(&vec![0u8; size]).is_ok() {}
+        while (&*stream).write(&vec![0u8; size]).is_ok() {}
     }
-    socket.set_nonblocking(false).unwrap();
+    stream.set_nonblocking(false).unwrap();
 
     let before = counter("parts_dropped_refused");
     let started = Instant::now();

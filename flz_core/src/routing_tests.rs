@@ -713,14 +713,14 @@ fn queued_call(slot: &CellSlot) -> Option<String> {
 fn an_inputs_call_rides_its_entry_item_and_every_value_derived_from_it() {
     let (instance, producer, consumer) = tier_edge("call_rides_the_edge");
     let mut called = journaled_metadata("in", 1);
-    called.insert(CALL_KEY.to_string(), "w:t".to_string());
+    called.insert(REPLY_TO_KEY.to_string(), "w:t".to_string());
     feed_with(&instance, &called, b"called");
     assert_eq!(queued_call(&producer).as_deref(), Some("w:t"));
 
     feed_with(&instance, &journaled_metadata("in", 2), b"sent");
     assert_eq!(queued_call(&producer), None);
     let mut empty = journaled_metadata("in", 3);
-    empty.insert(CALL_KEY.to_string(), String::new());
+    empty.insert(REPLY_TO_KEY.to_string(), String::new());
     feed_with(&instance, &empty, b"empty");
     assert_eq!(queued_call(&producer), None, "an empty token names no call");
 

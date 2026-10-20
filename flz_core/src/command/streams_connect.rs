@@ -5,7 +5,7 @@ use std::thread;
 
 use flz_transport::service::payloader;
 use flz_transport::transport::config::{get_transport_type, TransportType};
-use flz_transport::transport::quic::{QuicBidiStream, QuicClient};
+use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::{protocol, FlezhaStream};
 #[cfg(unix)]
 use flz_transport::utility::socket_dir;
@@ -80,7 +80,7 @@ fn connect_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Result<(), Stri
     connect_pairs(cmd, runner, "quic", |key| {
         let primary = open_quic(&client, "primary", protocol::STREAM_TYPE_PRIMARY, key)?;
         let secondary = open_quic(&client, "secondary", protocol::STREAM_TYPE_SECONDARY, key)?;
-        Ok((FlezhaStream::Quic(primary), FlezhaStream::Quic(secondary)))
+        Ok((primary, secondary))
     })
 }
 
@@ -89,9 +89,10 @@ fn open_quic(
     half: &str,
     stream_type: u8,
     key: u32,
-) -> Result<QuicBidiStream, String> {
+) -> Result<FlezhaStream, String> {
     let stream = client
         .open_bidi_stream()
+        .map(FlezhaStream::Quic)
         .map_err(|e| format!("{half} stream open failed: {e}"))?;
     write_stream_type(&stream, stream_type, key)
         .map_err(|e| format!("{half} stream type write failed: {e}"))?;
@@ -138,10 +139,10 @@ fn connect_pairs(
 
 /// The stream-type byte a fresh QUIC stream opens with, through the class so
 /// no writer on this wire chooses its own answer to a refusal.
-fn write_stream_type(stream: &QuicBidiStream, stream_type: u8, key: u32) -> std::io::Result<()> {
+fn write_stream_type(stream: &FlezhaStream, stream_type: u8, key: u32) -> std::io::Result<()> {
     state_sink::write(
         state_sink::Class::Control,
-        Some(&FlezhaStream::Quic(stream.clone_handle())),
+        Some(stream),
         vec![stream_type, key as u8],
     )
     .refused()
@@ -318,7 +319,8 @@ mod tests {
         // The driver drops every stream's chunk channel as it exits, so a
         // stream opened before the close reads end-of-stream once the driver
         // is gone. That is the wait, without opening streams to find out.
-        let mut probe = client.open_bidi_stream().expect("the connection is live");
+        let mut probe =
+            FlezhaStream::Quic(client.open_bidi_stream().expect("the connection is live"));
         probe
             .set_read_timeout(Some(Duration::from_secs(5)))
             .expect("arm the probe deadline");

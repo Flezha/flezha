@@ -627,7 +627,7 @@ fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, Option<Arc<s
         .get("flz.offset")
         .and_then(|s| s.parse::<u64>().ok());
     let call = metadata
-        .get(CALL_KEY)
+        .get(REPLY_TO_KEY)
         .filter(|token| !token.is_empty())
         .map(|token| Arc::from(token.as_str()));
     (consumed_offset, call, metadata.contains_key("flz.replay"))
@@ -635,7 +635,7 @@ fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, Option<Arc<s
 
 /// The metadata key a call's token rides: stamped by the controller on the
 /// input, and by the runner on every sink output that input caused.
-pub const CALL_KEY: &str = "flz.reply_to";
+pub const REPLY_TO_KEY: &str = "flz.reply_to";
 
 /// The reason a frame that named no channel did not enter: there was nothing
 /// to default to. Both cores report it in these words.
