@@ -2,26 +2,6 @@
 
 ## Unreleased
 
-### Changed: one operation per concept; only called operations in the catalogue
-
-- **BREAKING:** `Flezha.Service.Relay.list_relays/2` and `Flezha.Service.PluginManager.list/1`
-  are removed, with their MCP tools `relay_list_relays` and `plugin_manager_list`;
-  `Relay.list/2` and `PluginManager.enabled/2` answer the same reads as rows.
-- **BREAKING:** 14 operations leave the catalogue, the MCP tools and the HTTP API, and take no
-  caller context: `Controller.durability_backend`, `Controller.durability_posture`,
-  `Fleet.hub_nodes`, `Fleet.runners_on_this_node`, `Observability.subscribe`,
-  `Relay.partition_coverage`, `Relay.run_known?`, `Schedule.assert_entry`, `Schedule.next_fire`,
-  `Schedule.parse_cron`, `Schedule.retract`, `Schedule.statuses`, `Steps.relay_classes` and
-  `Steps.state_metrics`. The actions `schedule.assert` and `schedule.retract` are gone with them.
-- **BREAKING (Rust):** `Control::list_relays` answers one row per relay (`id`, health, runner,
-  node), not ids; `list_plugins` reads `PluginManager.enabled`.
-- **BREAKING (Java):** `Control.listRelays` answers one row per relay, not ids.
-- **BREAKING (Node):** `Control.listRelays` answers one row per relay, not ids.
-- **BREAKING (Python):** `Control.list_relays` answers one row per relay, not ids.
-- **BREAKING (Ruby):** `Control#list_relays` answers one row per relay, not ids.
-- **BREAKING (PHP):** `Control::listRelays` answers one row per relay, not ids.
-- **BREAKING (Elixir):** `Flezha.SDK.Control.list_relays/1` answers one row per relay, not ids.
-
 ### Changed: one spelling per concept, internals hidden
 
 - **BREAKING (Python):** `relay(id=)` is `relay(factory_id=)`; a tasklet's `state=`/`change=`
@@ -33,7 +13,7 @@
   `changes`/`outputs`/`timers` readers are private; `compact_after_bytes` is a tasklet setting.
 - **BREAKING (PHP):** `Runner::stop` is `Runner::close`; `Ctx::emitKeyed` is gone
   (`emit($value, key: ...)`); `Flezha\Timer` is `Flezha\TimerFiring`; `compactAfterBytes` is a
-  `#[Task]` argument, not a `Graph\Builder` call; the runner's thread bridge, `Dropped`, `Fanned`
+  `#[Tasklet\Spec]` argument, not a builder call; the runner's thread bridge, `Dropped`, `Fanned`
   and `Ctx::effectRecord` are `@internal`.
 - **BREAKING (Node):** `Runner.stop` is `Runner.close`; `start()` resolves once the runner serves,
   `awaitTermination()` once it has shut down, and `run()` is the two; `cells: { keys, cellsFor }`
@@ -54,9 +34,6 @@
 - **BREAKING (Elixir):** `Flezha.SDK.Local.stop/1` is `close/1`; `Ctx.replay/1` is new;
   `Call`, `Contract`, `Declaration`, `Dispatch`, `Knob`, `Native`, `Pool`, `SafeCall` and
   `Ctx.new/4` are no longer documented as public.
-- **BREAKING (Python, Ruby, PHP, Node, Java, Rust):** a control handle's `list_relays` and
-  `list_plugins` read `Relay.list` and `PluginManager.enabled` and answer one row per relay or
-  plugin, not ids.
 
 ### Changed: one timer cancel and one firing record
 
