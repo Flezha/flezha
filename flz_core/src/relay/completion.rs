@@ -5,7 +5,7 @@
 //! checked from one deadline on the poll core's deferred-wake list.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::cell::CellSlot;
@@ -24,7 +24,8 @@ pub struct FlowEnd {
     /// `max_duration`. A later `complete` replaces the result.
     asked: Mutex<Option<(&'static str, Vec<u8>)>>,
     reported: AtomicBool,
-    window_left: OnceLock<Duration>,
+    /// The latest bind's, so a repeated bind arms the window it was sent.
+    window_left: Mutex<Option<Duration>>,
     /// Due time of the armed `MaxDuration`, `0` when none is armed.
     max_due: AtomicU64,
 }
@@ -50,7 +51,7 @@ impl RelayInstance {
     /// counts from the run's first bind; `None` leaves the class's whole one.
     pub(crate) fn bind_window(&self, remaining_ms: Option<u64>) {
         if let Some(ms) = remaining_ms {
-            let _ = self.end.window_left.set(Duration::from_millis(ms));
+            *self.end.window_left.lock_recover() = Some(Duration::from_millis(ms));
         }
     }
 
@@ -58,7 +59,7 @@ impl RelayInstance {
     /// else the class's whole one; `None` for a class with no stop.
     pub(crate) fn max_duration(&self) -> Option<Duration> {
         let whole = self.topology.max_duration?;
-        Some(self.end.window_left.get().copied().unwrap_or(whole))
+        Some(self.end.window_left.lock_recover().unwrap_or(whole))
     }
 }
 

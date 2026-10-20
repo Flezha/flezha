@@ -54,6 +54,8 @@
   resume skipped the hook.
 - When every send fails, the Cell is left unmarked (a resume runs its hook again), the rest of
   the undo still runs, and the run ends `error` naming the tasklet and the controller's answer.
+- A refusal answered within the same millisecond as the entry's send no longer drops the
+  re-send's ack timeout, which left the undo, and the run, waiting forever on a lost ack.
 
 ### Changed: a steps class's DAG is built by one walk, and only the core's check refuses it
 

@@ -488,7 +488,9 @@ a Tasklet with a non-empty `cell_keys()` is refused
   deferred-wake list every `min(ttl / 4, 30 s)` (at least 1 ms;
   `FLEZHA_REAP_INTERVAL_MS` overrides), run by the poller that promotes it; a
   sweep with a host-run Cell to evict runs on a short-lived `flezha-leave`
-  thread. A sweep evicts any Cell idle longer than `ttl`. It takes the
+  thread. Any other sweep stays on the poller, so a state-keeping Cell's
+  delete frame can hold that poller while the state stream is
+  backpressured, as an inline flush before an emit does. A sweep evicts any Cell idle longer than `ttl`. It takes the
   Cell's drain gate and confirms an empty mailbox first, so it never
   interrupts a running `run`. **Eviction is destructive**: the slot, its
   pending timers and (when persistent) its on-disk WAL/snapshot go — a

@@ -507,13 +507,15 @@ impl BarrierFor {
         }
     }
 
-    /// The controller refused barrier `id`, whose entry is still on the
-    /// sheet. An undo's entry with sends left goes out again; any other
-    /// refusal drops the entry and fails the barrier.
+    /// The controller refused barrier `id`, whose entry and ack wait are
+    /// still on the sheet. An undo's entry with sends left goes out again,
+    /// its send re-arming the wait in place; any other refusal ends the wait,
+    /// drops the entry and fails the barrier.
     pub(super) fn on_refusal(self, d: &mut Decide<'_, '_, '_>, id: u64, error: String) {
         match self {
             BarrierFor::Undo if d.resend_refused(id) => {}
             target => {
+                d.disarm(Deadline::Ack(id));
                 d.s.barriers.remove(&id);
                 target.failed(d, error);
             }

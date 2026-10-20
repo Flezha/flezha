@@ -62,6 +62,42 @@ fn a_stale_steps_deadline_is_a_no_op() {
     crate::poll_core::global().disarm_instance(r.inst.seq, Deadline::RestoreGate, current);
 }
 
+#[test]
+fn a_refused_undo_resent_within_its_first_sends_millisecond_keeps_its_ack_wake() {
+    const ACK_TIMEOUT: &str = "FLEZHA_STEPS_ACK_TIMEOUT_MS";
+    let _env = crate::runner::env_test_guard();
+    // Every ack due saturates to one time, as two sends in one millisecond
+    // share theirs.
+    std::env::set_var(ACK_TIMEOUT, u64::MAX.to_string());
+    let inst = host_class::steps("undo_resend_ack", &["in"]);
+    let r = Run::of(&inst).expect("a steps instance");
+    let (id, reference_id) = (7, "undo_resend_ack-7".to_string());
+    r.decide(|d| {
+        let command = crate::pb::command_request::Command::TaskCommit(Default::default());
+        let barrier = Barrier {
+            target: BarrierFor::Undo,
+            reference_id: reference_id.clone(),
+            command: Some(command),
+            sends: 1,
+        };
+        d.s.barriers.insert(id, barrier);
+        d.arm(Deadline::Ack(id), ack_timeout());
+    });
+
+    crate::steps::events::barrier_acked(&Arc::downgrade(&inst), id, Err("refused".into()));
+    std::env::remove_var(ACK_TIMEOUT);
+
+    let due = armed(r.run, Deadline::Ack(id)).expect("the re-send's ack is armed");
+    let core = crate::poll_core::global();
+    assert_eq!(
+        core.instance_deadlines(r.inst.seq),
+        vec![(Deadline::Ack(id), due)],
+        "the re-send's ack wake survives the refusal's disarm"
+    );
+    crate::shutdown::drop_pending_ack(&reference_id);
+    core.disarm_instance(r.inst.seq, Deadline::Ack(id), due);
+}
+
 /// What `f` decides for a run bound expecting two restores, one landed
 /// carrying its Cell's saga markers so a gate that opened would compensate:
 /// checked to start no pass, run no undo and leave the run done with nothing

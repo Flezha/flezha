@@ -461,9 +461,9 @@ pub(super) fn barrier_acked(inst: &Weak<RelayInstance>, id: u64, result: Result<
         let Some(target) = d.s.barriers.get(&id).map(|barrier| barrier.target) else {
             return;
         };
-        d.disarm(Deadline::Ack(id));
         match result {
             Ok(()) => {
+                d.disarm(Deadline::Ack(id));
                 d.s.barriers.remove(&id);
                 target.on_ack(d);
             }

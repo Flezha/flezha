@@ -344,6 +344,17 @@ fn a_bind_arms_what_is_left_of_the_window_it_carries() {
 }
 
 #[test]
+fn a_repeated_bind_keeps_the_window_it_carried_last() {
+    let factory = format!("rebind_flow_{}", std::process::id());
+    stop_class(&factory, 60_000);
+    let instance = RelayInstance::of_class(&factory, "rebind-flow-1").expect("registered");
+    instance.bind_window(Some(50_000));
+    instance.bind_window(Some(5_000));
+    instance.bind_window(None);
+    assert_eq!(instance.max_duration(), Some(Duration::from_millis(5_000)));
+}
+
+#[test]
 fn a_spent_window_ends_the_flow_at_once() {
     let _env = crate::runner::env_test_guard();
     let factory = format!("spent_flow_{}", std::process::id());
