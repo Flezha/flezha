@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed: the core stamps every SDK's output identity
+
+- The `flz.cell`, `flz.seq` and `flz.key` stamps on a keyed output come from one function in
+  the core for all seven SDKs; the Python, Ruby, PHP, Node, Elixir and Java SDKs no longer write
+  them. A hosted SDK's `flz.seq` still reads the change sequence its activation carried.
+
 ### Changed: one frame decoder
 
 - **BREAKING:** the controller reads a frame's body with the runner's own decoder. A body that

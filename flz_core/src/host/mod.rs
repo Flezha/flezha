@@ -57,4 +57,4 @@ pub use register::{
     check, check_class_json, register_host_class, register_host_class_json, Derived, DerivedCall,
     DerivedChannel, DerivedEdge, MAX_MAILBOX_CAPACITY,
 };
-pub use stamp::end_stamps;
+pub use stamp::{end_stamps, output_identity};

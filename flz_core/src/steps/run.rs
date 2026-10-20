@@ -588,11 +588,12 @@ fn undo_answered(
     inst: &Weak<RelayInstance>,
     slot: &Arc<CellSlot>,
     outcome: crate::schema::ActivationOutcome,
+    change_seq: u64,
 ) {
     crate::poll_core::global().release_and_rearm(slot);
     let Some(inst) = inst.upgrade() else { return };
     let Some(r) = Run::of(&inst) else { return };
-    crate::host::settle_steps_undo(slot, outcome);
+    crate::host::settle_steps_undo(slot, outcome, change_seq);
     let Some((node, cell)) = r.locate(slot) else {
         return;
     };
@@ -2462,16 +2463,12 @@ impl Run<'_> {
         if slot.drain_active.swap(true, Ordering::AcqRel) {
             return self.decide(|d| d.arm(Deadline::UndoGate, UNDO_GATE_RETRY));
         }
-        let weak = self.weak();
-        let answered = Arc::clone(&slot);
-        crate::poll_core::global().submit_undo(
-            &slot,
-            outputs,
-            offset,
-            crate::poll_core::CommandReply::new(move |outcome| {
-                undo_answered(&weak, &answered, outcome)
-            }),
-        );
+        let (weak, answered) = (self.weak(), Arc::clone(&slot));
+        // The seq the undo runs at, and its outputs are stamped at.
+        let seq = slot.change_seq.load(Ordering::Acquire);
+        let answer = move |outcome| undo_answered(&weak, &answered, outcome, seq);
+        let reply = crate::poll_core::CommandReply::new(answer);
+        crate::poll_core::global().submit_undo(&slot, outputs, offset, seq, reply);
     }
 
     /// A message into the dead-letter queue, held by the park owner as every

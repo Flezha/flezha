@@ -1,7 +1,8 @@
 //! The metadata a host's plugin outputs leave with, stamped by the core
 //! whatever the host put there: the answer token on a called input's sink
-//! outputs, the call facts on a `call(...)` end's. No other output carries
-//! either, so neither can be written by a tasklet.
+//! outputs, the call facts on a `call(...)` end's, the identity on a keyed
+//! channel's. No other output carries the first two, so neither can be
+//! written by a tasklet.
 
 use std::sync::Arc;
 
@@ -28,14 +29,17 @@ const CORE_KEYS: [&str; 7] = [
 /// `flz.reply_to` with that token; a batch with none stamps nothing. Every
 /// output of a call end carries the end's stamps, its deadline taken from
 /// `clock`, read once and only for a batch with a call end, and its `flz.key`
-/// from the key the host computed, on both routes.
+/// from the key the host computed, on both routes. A keyed output of a Cell
+/// that records no effects carries its identity at `change_seq`, read once.
 pub(super) fn stamp_plugin_ends(
     slot: &CellSlot,
     call: Option<&Arc<str>>,
     outputs: &mut [schema::Output],
+    change_seq: impl Fn() -> u64,
     mut clock: impl FnMut() -> u64,
 ) {
-    let mut now_ms = None;
+    let (mut now_ms, mut seq_read, mut ordinal) = (None, None, 0);
+    let identity = !slot.topology.records_effects(slot.keeps_state);
     for output in outputs {
         let schema::OutputTarget::Plugin { channel } = &output.target else {
             continue;
@@ -54,6 +58,12 @@ pub(super) fn stamp_plugin_ends(
         let key = output.key.as_deref();
         let read_once = || *now_ms.get_or_insert_with(&mut clock);
         end_stamps(descriptor, call, key, read_once, &mut output.metadata);
+        if identity {
+            let seq = || *seq_read.get_or_insert_with(&change_seq);
+            let label = slot.dispatcher.cell_label();
+            let keyed = descriptor.keyed;
+            output_identity(label, keyed, seq, &mut ordinal, key, &mut output.metadata);
+        }
     }
 }
 
@@ -73,6 +83,29 @@ pub fn end_stamps(
     if let Some(end) = &descriptor.call {
         metadata.extend(end.stamps(key, now_ms()));
     }
+}
+
+/// The identity a keyed plugin output leaves with where its Cell records no
+/// effects (the controller stamps those at flush): the Cell, its place
+/// `<change_seq>.<ordinal>` and its key. Every plugin output of the
+/// invocation takes the next ordinal, stamped or not.
+pub fn output_identity(
+    cell_label: &str,
+    keyed: bool,
+    change_seq: impl FnOnce() -> u64,
+    ordinal: &mut u32,
+    key: Option<&str>,
+    metadata: &mut impl Extend<(String, String)>,
+) {
+    if keyed {
+        let seq = format!("{}.{ordinal}", change_seq());
+        metadata.extend([
+            ("flz.cell".to_string(), cell_label.to_string()),
+            ("flz.seq".to_string(), seq),
+        ]);
+        metadata.extend(key.map(|key| ("flz.key".to_string(), key.to_string())));
+    }
+    *ordinal += 1;
 }
 
 /// One prefix test settles every key a host may freely write.

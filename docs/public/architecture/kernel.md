@@ -418,7 +418,7 @@ channel and the tier:
 | Channel | Who stamps | Stamps |
 | --- | --- | --- |
 | plain (not keyed) | nobody | none |
-| keyed, tier off | the runner | `flz.cell` (class/tasklet/cell key), `flz.seq` = change seq . emit number, `flz.key` |
+| keyed, tier off | the core, in every SDK | `flz.cell` (class/tasklet/cell key), `flz.seq` = change seq . emit number, `flz.key` |
 | keyed, tier on | the controller, when it releases the output after the fsync | `flz.cell`, `flz.seq` = WAL record seq . emit number, `flz.key`, `flz.epoch` |
 
 The difference matters:

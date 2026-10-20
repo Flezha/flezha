@@ -31,7 +31,7 @@ pub fn apply_result(
     result: schema::ActivationResult,
 ) -> Result<(), Error> {
     let EngineActivation { token, payload } = act;
-    let (slot, items) = match payload {
+    let (slot, items, change_seq) = match payload {
         EnginePayload::Command { reply, slot, .. } => {
             // Whoever enqueued it validates the outcome; this side lets go of
             // the Cell first, for an eviction that counts who holds it.
@@ -46,10 +46,15 @@ pub fn apply_result(
         EnginePayload::Prepare(crossing) => {
             return apply_prepare_outcome(crossing, result.outcome);
         }
-        EnginePayload::Work { slot, items } => (slot, items),
+        EnginePayload::Work {
+            slot,
+            items,
+            change_seq,
+        } => (slot, items, change_seq),
     };
     match result.outcome {
-        schema::ActivationOutcome::Work(effects) => {
+        schema::ActivationOutcome::Work(mut effects) => {
+            stamp_items(&slot, &items, &mut effects, change_seq);
             settle_items(core, token, &slot, items, effects)
         }
         schema::ActivationOutcome::Failed(err) => {
@@ -159,6 +164,28 @@ fn settle_items(
     Ok(())
 }
 
+/// Each item's plugin outputs stamped at the activation's `change_seq`, with
+/// the call its input carried, or its steps pass's.
+pub(super) fn stamp_items(
+    slot: &CellSlot,
+    items: &[ItemAttempt],
+    effects: &mut [schema::ItemEffect],
+    change_seq: u64,
+) {
+    let steps = slot.topology.steps.is_some();
+    let pass = steps.then(|| crate::steps::pass_call(slot)).flatten();
+    let wall = crate::util::wall_now_ms;
+    for (work, effect) in items.iter().zip(effects) {
+        let call = if steps {
+            pass.as_ref()
+        } else {
+            call_of(&work.item)
+        };
+        let outputs = &mut effect.outputs;
+        super::stamp::stamp_plugin_ends(slot, call, outputs, || change_seq, wall);
+    }
+}
+
 /// Anything still queued behind a parked head is owed a fresh round, or a
 /// healthy payload behind a poison one vanishes.
 fn finish_batch(core: &PollCore, token: u64, queue: std::collections::VecDeque<ItemAttempt>) {
@@ -246,10 +273,9 @@ pub(super) fn settle_item(
     let timers = committed_timers(&work.item, effect.timers, parked);
     // A failed attempt's captured outputs must not ship: it did not complete.
     let outputs = if parked { Vec::new() } else { effect.outputs };
-    let (edge_outputs, mut wire_outputs) = split_outputs(outputs);
+    let (edge_outputs, wire_outputs) = split_outputs(outputs);
     let consumed_offset = consumed_offset_of(&work.item);
     let call = call_of(&work.item);
-    super::stamp::stamp_plugin_ends(slot, call, &mut wire_outputs, crate::util::wall_now_ms);
     let dlq = park.map(|(error, tries)| park_entry(slot, host_bytes(&work.item), error, tries));
     let keeps_edges = slot.keeps_edges(consumed_offset);
     let edges = route_edge_outputs(
@@ -298,8 +324,13 @@ pub(super) fn settle_item(
 }
 
 /// A host's answer to a steps relay undo: its changes and plugin outputs settled
-/// as an item's are, into the undo's own record; a failed hook reported.
-pub(crate) fn settle_steps_undo(slot: &Arc<CellSlot>, outcome: schema::ActivationOutcome) {
+/// as an item's are, stamped at the `change_seq` its Command carried, into the
+/// undo's own record; a failed hook reported.
+pub(crate) fn settle_steps_undo(
+    slot: &Arc<CellSlot>,
+    outcome: schema::ActivationOutcome,
+    change_seq: u64,
+) {
     match outcome {
         schema::ActivationOutcome::Work(effects) => {
             let Some(facts) = slot.dispatcher.host_facts() else {
@@ -307,7 +338,16 @@ pub(crate) fn settle_steps_undo(slot: &Arc<CellSlot>, outcome: schema::Activatio
             };
             let stream = crate::steps::unwired_stream();
             for effect in effects {
-                let (_edge, wire) = split_outputs(effect.outputs);
+                let (_edge, mut wire) = split_outputs(effect.outputs);
+                let call = crate::steps::pass_call(slot);
+                let wall = crate::util::wall_now_ms;
+                super::stamp::stamp_plugin_ends(
+                    slot,
+                    call.as_ref(),
+                    &mut wire,
+                    || change_seq,
+                    wall,
+                );
                 settle_steps_effects(
                     slot,
                     facts,
@@ -336,7 +376,7 @@ fn settle_steps_effects(
     changes: Vec<Vec<u8>>,
     timers: Vec<TimerOp>,
     event_time: u64,
-    mut wire_outputs: Vec<schema::Output>,
+    wire_outputs: Vec<schema::Output>,
     stream: &Arc<FlezhaStream>,
 ) {
     let channels: Vec<String> = wire_outputs
@@ -356,13 +396,6 @@ fn settle_steps_effects(
         checkpointed: false,
         parked: false,
     };
-    let call = crate::steps::pass_call(slot);
-    super::stamp::stamp_plugin_ends(
-        slot,
-        call.as_ref(),
-        &mut wire_outputs,
-        crate::util::wall_now_ms,
-    );
     let mut buffer = slot.flush_buffer.lock_recover();
     let (_park, plugin_outputs) = settle_into_buffer(
         slot,

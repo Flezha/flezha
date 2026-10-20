@@ -397,16 +397,14 @@ Tasklet and the clock it declares) and `topology.correction_window_zero`.
 ## Keyed channels
 
 `keyed/1` on the handle before `output/2` declares output identity on that output — the
-reference's `.keyed()`. Every frame it produces carries `flz.cell`
-(`<relay id>/<tasklet name>/<cell key or empty>`), `flz.seq`
-(`<change_seq at handout>.<emit ordinal>` — the seq the invocation started at, and the ordinal
-counting the item's plugin outputs from zero, stamped or not) and `flz.key`, appended after the
-user's metadata so a stamp cannot be clobbered. The key is the emit's own (`emit_keyed/3`), else
+reference's `.keyed()`. The SDK hands each output its key: the emit's own (`emit_keyed/3`), else
 the output route's `key_by`, else the emitting Cell's; a Single Cell with none is refused at the
-emit. An output not declared keyed carries no `flz.` key. Under the effectively-once tier, and
-in a durable steps relay, the SDK stamps nothing: the controller derives `flz.cell`, `flz.seq`
-and `flz.epoch` at flush from the effect record, so a host that also stamped would produce a
-second answer.
+emit. The core stamps the frame at settle with `flz.cell`
+(`<relay id>/<tasklet name>/<cell key or empty>`), `flz.seq` (`<change_seq at handout>.<emit ordinal>`, the
+ordinal counting the item's plugin outputs from zero, stamped or not) and `flz.key`, after the
+user's metadata so a stamp cannot be clobbered. An output not declared keyed carries no `flz.`
+key. Under the effectively-once tier, and in a durable steps relay, the controller derives
+`flz.cell`, `flz.seq` and `flz.epoch` at flush from the effect record instead.
 
 ## The runtime underneath
 

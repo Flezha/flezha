@@ -545,7 +545,7 @@ fn keyed_host(mid: u32, crossings: Arc<Crossings>, refuse: bool) -> FakeHost {
             crossings.0.lock().unwrap().push(crossing.entries.len());
             keyed_by_bytes(crossing, refuse)
         }
-        EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
+        EnginePayload::Work { slot, items, .. } => schema::ActivationOutcome::Work(
             items
                 .iter()
                 .map(|item| {
@@ -948,7 +948,7 @@ impl OwnTimerHost {
     fn answer(&mut self, payload: &EnginePayload) -> Option<schema::ActivationOutcome> {
         match payload {
             EnginePayload::Prepare(crossing) => Some(keyed_by_bytes(crossing, false)),
-            EnginePayload::Work { slot, items } => self
+            EnginePayload::Work { slot, items, .. } => self
                 .settle(slot, &items[0].item)
                 .map(|settled| schema::ActivationOutcome::Work(vec![settled])),
             _ => panic!("an activation the run never asks for"),
@@ -1114,7 +1114,7 @@ fn turn_host(mid: u32, undos: Arc<std::sync::atomic::AtomicUsize>) -> FakeHost {
                 ..effect(schema::Verdict::Ok, &[])
             }])
         }
-        EnginePayload::Work { slot, items } => schema::ActivationOutcome::Work(
+        EnginePayload::Work { slot, items, .. } => schema::ActivationOutcome::Work(
             items
                 .iter()
                 .map(|item| turn_effect(slot, mid, item))

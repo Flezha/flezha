@@ -83,6 +83,14 @@ pub(super) fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, s
     (work, effect)
 }
 
+/// `settle_item` behind the stamps `apply_result` puts on the item's outputs
+/// first, at change seq 0.
+fn settle_stamped(slot: &Arc<CellSlot>, work: ItemAttempt, mut effect: schema::ItemEffect) {
+    let effects = std::slice::from_mut(&mut effect);
+    super::activation::stamp_items(slot, std::slice::from_ref(&work), effects, 0);
+    settle_item(slot, &work, effect, None);
+}
+
 /// Records this Cell has actually SHIPPED. `drain_to_frames` fetch-adds
 /// the per-Cell seq once per drained record, so the counter advancing is
 /// exactly "a record left for the controller" — the one observable that
@@ -357,7 +365,7 @@ fn off_the_tier_every_sink_output_of_a_called_input_carries_the_call() {
     let mut frames = Vec::new();
     for call in [Some("w:tok"), None] {
         let (work, effect) = answering_work(Arc::clone(&stream), call);
-        settle_item(&producer, &work, effect, None);
+        settle_stamped(&producer, work, effect);
         for _ in 0..2 {
             let (_, payload, metadata) =
                 payloader::extract_payload(&controller_end).expect("a plugin frame");
@@ -371,7 +379,7 @@ fn off_the_tier_every_sink_output_of_a_called_input_carries_the_call() {
         scheduled_at: 1,
         stream: Arc::clone(&stream),
     });
-    settle_item(&producer, &work, effect, None);
+    settle_stamped(&producer, work, effect);
     for _ in 0..2 {
         let (_, payload, metadata) =
             payloader::extract_payload(&controller_end).expect("a plugin frame");
@@ -430,7 +438,7 @@ fn under_the_tier_every_recorded_sink_output_carries_the_call() {
     let instance = answering_instance(&id, true);
     let producer = Arc::clone(&instance.cells[0][0]);
     let (work, effect) = answering_work(stream_pair().0, Some("w:tok"));
-    let outputs = recorded_outputs(|| settle_item(&producer, &work, effect, None));
+    let outputs = recorded_outputs(|| settle_stamped(&producer, work, effect));
     let stamps: Vec<(&str, Option<&str>)> = outputs
         .iter()
         .map(|o| (o.channel.as_str(), reply_to_of(&o.metadata)))
@@ -562,6 +570,45 @@ fn expected_call_stamps() -> Vec<(String, String)> {
     .to_vec()
 }
 
+/// The `flz.cell` and `flz.seq` stamps of each output.
+fn identity_of(outputs: &[schema::Output]) -> Vec<Vec<(String, String)>> {
+    let stamp = |(key, _): &&(String, String)| key == "flz.cell" || key == "flz.seq";
+    let of = |o: &schema::Output| o.metadata.iter().filter(stamp).cloned().collect();
+    outputs.iter().map(of).collect()
+}
+
+/// Off the tier a keyed output carries its Cell and its place after the
+/// activation's change seq, a non-keyed one taking its ordinal unstamped;
+/// a class that records effects leaves the stamps to the controller.
+#[test]
+fn a_keyed_output_carries_its_identity_off_the_tier_only() {
+    let id = format!("identity_{}", std::process::id());
+    let off = calling_instance(&id, false);
+    let slot = &off.cells[0][0];
+    let (_, effect) = calling_work(stream_pair().0);
+    let (ask, out) = (effect.outputs[0].clone(), effect.outputs[1].clone());
+    let mut outputs = vec![out.clone(), ask, out];
+    crate::host::stamp::stamp_plugin_ends(slot, None, &mut outputs, || 5, || 0);
+    let cell = ("flz.cell".to_string(), format!("{id}_inst/p0/"));
+    let seq = |at: &str| ("flz.seq".to_string(), at.to_string());
+    assert_eq!(cell.1, slot.dispatcher.cell_label());
+    assert_eq!(
+        identity_of(&outputs),
+        vec![
+            vec![cell.clone(), seq("5.0")],
+            vec![],
+            vec![cell, seq("5.2")]
+        ]
+    );
+    let key = ("flz.key".to_string(), "anna-42".to_string());
+    assert!(outputs[0].metadata.contains(&key));
+
+    let on = calling_instance(&format!("identity_tier_{}", std::process::id()), true);
+    let (_, mut effect) = calling_work(stream_pair().0);
+    crate::host::stamp::stamp_plugin_ends(&on.cells[0][0], None, &mut effect.outputs, || 0, || 0);
+    assert_eq!(identity_of(&effect.outputs), vec![vec![], vec![]]);
+}
+
 /// Only an output on a call end reads the wall clock; a sink's output still
 /// loses the call stamps a host forged on it.
 #[test]
@@ -576,10 +623,16 @@ fn only_a_call_end_reads_the_clock() {
     let (_, effect) = calling_work(stream_pair().0);
     let (mut sink, mut both): (Vec<_>, Vec<_>) = (Vec::new(), effect.outputs.clone());
     sink.extend(effect.outputs.into_iter().skip(1));
-    crate::host::stamp::stamp_plugin_ends(slot, None, &mut sink, clock);
+    crate::host::stamp::stamp_plugin_ends(slot, None, &mut sink, || 0, clock);
     assert_eq!(reads.get(), 0, "a sink-only batch reads no clock");
-    assert!(sink[0].metadata.is_empty(), "the forged stamps are gone");
-    crate::host::stamp::stamp_plugin_ends(slot, None, &mut both, clock);
+    let identity_key = vec![("flz.key".to_string(), "anna-42".to_string())];
+    assert_eq!(call_stamps(&sink[0].metadata, (0, 0)), identity_key);
+    assert_eq!(
+        reply_to_of(&sink[0].metadata),
+        None,
+        "the forged stamps are gone"
+    );
+    crate::host::stamp::stamp_plugin_ends(slot, None, &mut both, || 0, clock);
     assert_eq!(reads.get(), 1, "one read for the batch's call end");
 }
 
@@ -591,7 +644,7 @@ fn a_called_inputs_request_carries_no_token() {
     let (_, mut effect) = calling_work(stream_pair().0);
     let token: Arc<str> = Arc::from("w:tok");
     let slot = &instance.cells[0][0];
-    crate::host::stamp::stamp_plugin_ends(slot, Some(&token), &mut effect.outputs, || 0);
+    crate::host::stamp::stamp_plugin_ends(slot, Some(&token), &mut effect.outputs, || 0, || 0);
     let calls: Vec<_> = effect
         .outputs
         .iter()
@@ -613,7 +666,7 @@ fn off_the_tier_a_request_carries_the_call_stamps_and_its_key() {
     let controller_end = flz_transport::transport::FlezhaStream::unix(controller_end);
     let (work, effect) = calling_work(Arc::clone(&stream));
     let before = crate::util::wall_now_ms();
-    settle_item(&producer, &work, effect, None);
+    settle_stamped(&producer, work, effect);
     let window = (before, crate::util::wall_now_ms());
     let mut frames = Vec::new();
     for _ in 0..2 {
@@ -626,7 +679,10 @@ fn off_the_tier_a_request_carries_the_call_stamps_and_its_key() {
         frames,
         vec![
             (b"ask".to_vec(), expected_call_stamps()),
-            (b"out".to_vec(), Vec::new()),
+            (
+                b"out".to_vec(),
+                vec![("flz.key".to_string(), "anna-42".to_string())]
+            ),
         ]
     );
 }
@@ -640,7 +696,7 @@ fn under_the_tier_the_recorded_request_carries_the_call_stamps() {
     let producer = Arc::clone(&instance.cells[0][0]);
     let (work, effect) = calling_work(stream_pair().0);
     let before = crate::util::wall_now_ms();
-    let outputs = recorded_outputs(|| settle_item(&producer, &work, effect, None));
+    let outputs = recorded_outputs(|| settle_stamped(&producer, work, effect));
     let window = (before, crate::util::wall_now_ms());
     let stamps: Vec<(&str, Vec<(String, String)>)> = outputs
         .iter()

@@ -38,11 +38,15 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             change_seq: 0,
             factory: crossing.instance.topology.factory_id.to_string(),
         },
-        EnginePayload::Work { slot, items } => schema::Activation {
+        EnginePayload::Work {
+            slot,
+            items,
+            change_seq,
+        } => schema::Activation {
             token: act.token,
             target: cell_ref_of(slot),
             kind: schema::ActivationKind::Work(work_items_to_schema(slot, items)),
-            change_seq: slot.change_seq.load(Ordering::Acquire),
+            change_seq: *change_seq,
             factory: slot.topology.factory_id.to_string(),
         },
         EnginePayload::Leave {

@@ -64,6 +64,8 @@ pub enum EnginePayload {
     Work {
         slot: Arc<CellSlot>,
         items: Vec<ItemAttempt>,
+        /// The Cell's change seq at handout, which a host's `flz.seq` reads.
+        change_seq: u64,
     },
     /// A command interaction on one Cell. Its exclusivity is the enqueuer's
     /// gate ([`PollCore::with_cell_exclusive`], or a steps relay undo's held
@@ -121,7 +123,7 @@ impl EngineActivation {
     /// The work item a host numbers `index`, and its Cell.
     pub fn host_item(&self, index: usize) -> Option<(&Arc<CellSlot>, &ItemAttempt)> {
         match &self.payload {
-            EnginePayload::Work { slot, items } => {
+            EnginePayload::Work { slot, items, .. } => {
                 host_items(items).nth(index).map(|work| (slot, work))
             }
             _ => None,
@@ -158,7 +160,7 @@ impl EngineActivation {
 
     pub fn into_work(self) -> Option<(u64, Arc<CellSlot>, Vec<ItemAttempt>)> {
         match self.payload {
-            EnginePayload::Work { slot, items } => Some((self.token, slot, items)),
+            EnginePayload::Work { slot, items, .. } => Some((self.token, slot, items)),
             _ => None,
         }
     }
@@ -375,6 +377,7 @@ impl PollCore {
                     payload: EnginePayload::Work {
                         slot: Arc::clone(slot),
                         items,
+                        change_seq: slot.change_seq.load(Ordering::Acquire),
                     },
                 });
             }
@@ -653,6 +656,7 @@ impl PollCore {
         slot: &Arc<CellSlot>,
         values: Vec<Arc<dyn std::any::Any + Send + Sync>>,
         offset: Option<u64>,
+        change_seq: u64,
         reply: CommandReply,
     ) {
         let outputs = values
@@ -662,7 +666,7 @@ impl PollCore {
             .collect();
         self.submit_direct(EnginePayload::Command {
             slot: Arc::clone(slot),
-            change_seq: slot.change_seq.load(Ordering::Acquire),
+            change_seq,
             kind: crate::schema::ActivationKind::CompensateRun { outputs },
             values,
             offset,

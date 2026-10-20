@@ -16,7 +16,7 @@ flz_core/src/coordinator.rs::heartbeat_metadata 59
 flz_core/src/effect.rs::fold 76
 flz_core/src/effect_result.rs::keep 52
 flz_core/src/host/activation.rs::route_edge_outputs 60
-flz_core/src/host/activation.rs::settle_item 69
+flz_core/src/host/activation.rs::settle_item 68
 flz_core/src/host/activation.rs::settle_items 60
 flz_core/src/host/commands.rs::restore_fold_exclusive 51
 flz_core/src/host/issue.rs::details 167
@@ -28,7 +28,7 @@ flz_core/src/poll_core/mod.rs::host_command_within 53
 flz_core/src/poll_core/wake.rs::wake_target 52
 flz_core/src/relay/instance.rs::with_options 71
 flz_core/src/steps/resume.rs::resumed_seed 74
-flz_core/src/steps/run.rs 2520
+flz_core/src/steps/run.rs 2517
 flz_core/src/steps/run.rs::act 73
 flz_core/src/steps/run.rs::admit 55
 flz_core/src/steps/run.rs::open_gate 56
@@ -54,7 +54,7 @@ lib/flezha/state/paths.ex 829
 lib/flezha/state/task_journal.ex 1008
 lib/flezha/state/wal_writer/epoch.ex::do_rewind 53
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
-sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 54
+sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 53
 sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51
 sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/RelayInstance.java::runItem 64
 sdk/node/src/definition.ts::defineTasklet 66
@@ -62,7 +62,6 @@ sdk/node/src/dispatch.ts::answer 54
 sdk/node/src/dispatch.ts::runWork 73
 sdk/php/src/Dispatch/Dispatcher.php::prepare 52
 sdk/php/src/Graph/ChannelSpec.php::__construct 63
-sdk/python/src/flezha/ctx.py::__init__#2 54
 sdk/python/src/flezha/dispatch.py::_prepare 51
 sdk/python/src/flezha/relay.py::relay 61
 sdk/rust/macros/src/relay.rs::parse 63
