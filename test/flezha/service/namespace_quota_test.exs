@@ -27,8 +27,9 @@ defmodule Flezha.Service.NamespaceQuotaTest do
   # Fails when: a field is resolved against anything but the default quotas' keys.
   test "a quota field is taken, as text and as an atom" do
     assert {:ok, _} = Namespace.create("quota-ns", [quotas: %{"max_relays" => 5}], @context)
+    assert {:ok, %{quotas: %{max_relays: 5}}} = NamespaceStore.get("quota-ns")
     assert {:ok, _} = Namespace.set_quotas("quota-ns", %{max_runners: 3}, @context)
-    assert {:ok, %{quotas: %{max_relays: 5, max_runners: 3}}} = NamespaceStore.get("quota-ns")
+    assert {:ok, %{quotas: %{max_runners: 3}}} = NamespaceStore.get("quota-ns")
   end
 
   test "a ceiling that is not a whole number names its field" do

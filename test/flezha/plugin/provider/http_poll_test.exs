@@ -447,17 +447,19 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     do: Map.merge(ProviderOptions.defaults(HttpPoll), extra)
 
   defp stub_worker(fields) do
-    failures = Keyword.get(fields, :failures, 0)
-    last_error = Keyword.get(fields, :last_error, nil)
-    settled_ago = Keyword.get(fields, :settled_ago_ms, 0)
-    settled_at = :erlang.monotonic_time(:millisecond) - settled_ago
+    facts = %{
+      consecutive_failures: Keyword.get(fields, :failures, 0),
+      last_error: Keyword.get(fields, :last_error, nil),
+      last_settled_at:
+        :erlang.monotonic_time(:millisecond) - Keyword.get(fields, :settled_ago_ms, 0)
+    }
 
     pid =
       spawn(fn ->
         recv = fn recv ->
           receive do
             {:health_probe, from, ref} ->
-              send(from, {ref, {failures, last_error, settled_at}})
+              send(from, {ref, facts})
               recv.(recv)
           end
         end

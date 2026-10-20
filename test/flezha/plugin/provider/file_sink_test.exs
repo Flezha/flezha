@@ -414,13 +414,13 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
   end
 
   describe "attach-time refusals" do
-    test "the entry-side keys are refused as options this provider does not offer" do
-      for key <- [:channel, :channel_in] do
-        name = Atom.to_string(key)
+    test "the entry-side key is refused as an option this provider does not offer" do
+      assert {:error, {:unknown_options, "file_sink", ["channel_in"]}} =
+               prepare_sink(%{channel_in: "events"})
+    end
 
-        assert {:error, {:unknown_options, "file_sink", [^name]}} =
-                 prepare_sink(%{key => "events"})
-      end
+    test "`channel` is the short spelling of `channel_out`" do
+      assert {:ok, %{filter_channel: ["events"]}} = prepare_sink(%{channel: "events"})
     end
   end
 

@@ -61,12 +61,12 @@ defmodule Flezha.Service.Cli.CatalogueTest do
 
       @doc "Three arguments, two declared."
       verb mismatched(a, b, c, caller_context),
-        verb: :cron_arithmetic,
+        verb: :plugin_info,
         args: [a: [type: :string, doc: "A."], b: [type: :string, doc: "B."]] do
         {:ok, {a, b, c, caller_context}}
       end
 
-      verb undocumented(caller_context), verb: :cron_arithmetic do
+      verb undocumented(caller_context), verb: :plugin_info do
         {:ok, caller_context}
       end
     end

@@ -316,9 +316,10 @@ $ flz plugin enable writer relay_file_output \
   --Xchannel_out=alerts
 ```
 
-`channel_out` restricts the output plugin to records whose metadata channel matches; absent, it
-writes every record its hook hands it. Several names, comma-separated, write them
-all. `channel` and `channel_in` are not parameters here: the output plugin feeds nothing.
+`channel_out`, or its short spelling `channel`, restricts the output plugin to records whose
+metadata channel matches; absent, it writes every record its hook hands it. Several names,
+comma-separated, write them all. `channel_in` is not a parameter here: the output plugin feeds
+nothing.
 
 ### One record, one line
 

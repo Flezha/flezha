@@ -1,10 +1,11 @@
-use crate::args::{Positional, Reading, NAMESPACE};
-use crate::dispatch::{Arg, Command, Missing, Verb};
-use crate::rpc;
 use flz_transport::errors::FlezhaError;
 use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::utility::socket_dir::Role;
 use flz_transport::utility::socket_probe::diagnose;
+
+use crate::args::{Positional, Reading, NAMESPACE};
+use crate::dispatch::{Arg, Command, Missing, Verb};
+use crate::rpc;
 
 const RUNNER_ID: &[Positional] = &[Positional::required("<runner_id>")];
 const STABLE_ID: &[Positional] = &[Positional::required("<stable_id>")];

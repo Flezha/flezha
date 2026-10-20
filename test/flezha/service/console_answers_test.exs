@@ -166,7 +166,7 @@ defmodule Flezha.Service.ConsoleAnswersTest do
     test "keeps the keys it answered before" do
       assert {:ok, answer} = Fleet.provider("console_option_probe", %{source: :cli})
 
-      assert %{provider: "console_option_probe", type: :relay, hooks: []} = answer
+      assert %{provider: "console_option_probe", type: :relay, hooks: [:on_terminate]} = answer
       assert answer.help == OptionProbe.help("console_option_probe")
 
       assert Map.keys(answer) |> Enum.sort() == [

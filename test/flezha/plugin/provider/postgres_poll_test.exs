@@ -40,7 +40,8 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
 
       assert decl.feeds
       refute decl.shareable
-      assert decl.telemetry == [caught_up: :event]
+      assert [caught_up: {:event, words}] = decl.telemetry
+      assert words[:sentence] == "{plugin_id} caught up with {table}"
       assert Flezha.Plugin.Providers.fetch("relay_postgres_poll") == {:ok, PostgresPoll}
     end
   end

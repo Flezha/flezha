@@ -1376,7 +1376,7 @@
           "type": "keyword",
           "required": false,
           "default": [],
-          "doc": "`key`, for a partition group, and `msg_id`, the message's id."
+          "doc": "`key`, for a partition group, `msg_id`, the message's id, and `payload` (`text` or `base64`)."
         }
       ]
     },
