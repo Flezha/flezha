@@ -18,7 +18,6 @@ flz_core/src/effect_result.rs::keep 52
 flz_core/src/host/activation.rs::route_edge_outputs 60
 flz_core/src/host/activation.rs::settle_item 68
 flz_core/src/host/activation.rs::settle_items 60
-flz_core/src/host/commands.rs::restore_fold_exclusive 51
 flz_core/src/host/issue.rs::details 167
 flz_core/src/host/issue.rs::kind 67
 flz_core/src/host/leave.rs::relay_left 58

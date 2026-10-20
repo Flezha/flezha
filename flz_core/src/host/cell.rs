@@ -205,33 +205,16 @@ impl TaskletDispatcher for HostDispatcher {
             .and_then(|p| p.event_time)
     }
 
-    fn restore_state(
+    fn restore(
         &self,
-        _state: &mut Box<dyn Any + Send>,
-        _timers: &mut PendingTimers,
-        _snapshot_header: &[u8],
-        _snapshot_bytes: &[u8],
-        _change_log_bytes: &[u8],
-        _cell_key: Option<&str>,
-    ) -> Result<crate::restore::RestoreOutcome, crate::header::RestoreError> {
-        Err(crate::header::RestoreError::SnapshotDecode(
-            "host-held state: restore reaches the host through its RestoreFold \
-             activation (`restore_fold_exclusive`), never this in-process seam"
-                .to_string(),
-        ))
+        slot: &Arc<CellSlot>,
+        payload: &crate::restore::RestoreInitPayload<'_>,
+    ) -> Result<crate::restore::RestoreOutcome, crate::Error> {
+        super::commands::restore_fold_exclusive(slot, payload)
     }
 
-    fn snapshot_frame(
-        &self,
-        _state: &mut Box<dyn Any + Send>,
-        _flush_buffer: &mut Box<dyn FlushableBuffer>,
-        _timers: &PendingTimers,
-    ) -> Result<(Vec<u8>, u64, usize), crate::Error> {
-        // Compaction reaches the host through its SnapshotRequest activation
-        // (`snapshot_frame_crossing`), never this in-process seam.
-        Err(crate::Error::HostCrossing(
-            crate::Code::HostStateInProcess.with([]),
-        ))
+    fn snapshot_frame(&self, slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::Error> {
+        super::commands::snapshot_frame_crossing(slot)
     }
 }
 

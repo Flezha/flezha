@@ -125,6 +125,12 @@ pub trait FlushableBuffer: Send + Any {
     /// The holds the next drain releases once its frames are written.
     fn take_holds(&mut self) -> Vec<Arc<crate::prefix::Hold>>;
 
+    /// Re-state, above a compaction snapshot's seq, what the truncation that
+    /// snapshot authorizes would delete: the pending timers, and the consumed
+    /// offset of the state the snapshot holds. Whether anything is owed a
+    /// drain.
+    fn restate_above_snapshot(&mut self, register_ops: Vec<crate::schema::TimerOp>) -> bool;
+
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 

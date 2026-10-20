@@ -1,8 +1,8 @@
 //! Inbound `CompactCell`: controller → SDK ask-for-snapshot.
 //!
 //! Locates the live `CellSlot` addressed by `cell_id`, drains its
-//! pending changes, serializes its `Self::State` with **postcard** (the codec
-//! `cell/restore.rs` decodes — NOT the JSON migration serializer), and
+//! pending changes, encodes its state (a typed Cell's with **postcard**, the
+//! codec its restore decodes; a host-run Cell's by its host), and
 //! ships it as a `cell_state_snapshot` data frame stamped with the seq the
 //! snapshot already contains. It then answers `CompactCellResponse` with
 //! that seq and the body's byte size, so the controller can write the snapshot
@@ -23,7 +23,6 @@ use crate::cell::CellSlot;
 use crate::pb::{CompactCell, CompactCellResponse};
 use crate::runner::RunnerNode;
 use crate::state_sink::{send, CELL_STATE_SNAPSHOT_PAYLOAD_ID};
-use crate::util::LockRecover;
 
 /// Snapshot one Cell under its handout exclusivity (no activation
 /// interleaves) and ship the frame AFTER the drained change frames — both
@@ -31,34 +30,18 @@ use crate::util::LockRecover;
 /// snapshot folds before the snapshot that truncates them. `(seq, size)`, or
 /// `None` with the failure recorded.
 fn compact_slot(slot: &Arc<CellSlot>, errors: &mut Vec<crate::Error>) -> Option<(u64, u64)> {
-    crate::poll_core::global().with_cell_exclusive(slot, || match snapshot_slot(slot) {
-        Ok((frame, seq, size)) => {
-            send(CELL_STATE_SNAPSHOT_PAYLOAD_ID, frame);
-            Some((seq, size as u64))
-        }
-        Err(e) => {
-            errors.push(e);
-            None
+    crate::poll_core::global().with_cell_exclusive(slot, || {
+        match slot.dispatcher.snapshot_frame(slot) {
+            Ok((frame, seq, size)) => {
+                send(CELL_STATE_SNAPSHOT_PAYLOAD_ID, frame);
+                Some((seq, size as u64))
+            }
+            Err(e) => {
+                errors.push(e);
+                None
+            }
         }
     })
-}
-
-/// The snapshot frame, seq and size of one Cell. MUST run under the cell's
-/// handout exclusivity: a host-run Cell crosses a SnapshotRequest activation;
-/// a typed one encodes in-process holding the slot's state lock, which keeps
-/// out a dispatch, then its flush_buffer and timers.
-fn snapshot_slot(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::Error> {
-    if slot.dispatcher.host_facts().is_some() {
-        return crate::host::snapshot_frame_crossing(slot);
-    }
-    let mut state_guard = match slot.state.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut buffer_guard = slot.flush_buffer.lock_recover();
-    let timers = crate::timer::restated(slot, &slot.timers.lock_recover());
-    slot.dispatcher
-        .snapshot_frame(&mut state_guard, &mut buffer_guard, &timers)
 }
 
 impl CommandAction for CompactCell {

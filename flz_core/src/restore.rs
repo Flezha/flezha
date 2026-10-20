@@ -1,6 +1,6 @@
-//! The change-log walk a restore folds through: framing CRC, header
-//! resolution and effect-record unwrapping exist once here, and a sink owns
-//! what to do with each body. The invariant: a refused record delivers
+//! The walk a restore folds through: snapshot resolution, framing CRC,
+//! header resolution and effect-record unwrapping exist once here, and a sink
+//! owns what to do with each body. The invariant: a refused record delivers
 //! nothing, and an effect record's enclosed bodies inherit its version.
 
 use crate::util::{read_u32_be, read_u64_be};
@@ -29,6 +29,14 @@ pub struct RestoreOutcome {
 /// Where the walk delivers what it decoded: folded into typed state, or
 /// collected for a host crossing.
 pub trait ChangeLogSink {
+    /// The snapshot body, delivered before any change, with the version
+    /// decision it decodes under.
+    fn snapshot(
+        &mut self,
+        decision: crate::header::SchemaDecision,
+        bytes: &[u8],
+    ) -> Result<(), RestoreError>;
+
     /// One change body, with the version decision it decodes under.
     fn change(
         &mut self,
@@ -40,21 +48,35 @@ pub trait ChangeLogSink {
     fn timers(&mut self, ops: &[crate::schema::TimerOp]);
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ChangeLogSummary {
-    pub terminal_seq: u64,
-    pub migrated: bool,
+/// One Cell's restore, for the typed fold and the host crossing alike: the
+/// snapshot resolved and delivered first, then the change log after it.
+pub fn fold_restore(
+    payload: &RestoreInitPayload<'_>,
+    expected: &crate::header::HeaderTemplate,
+    min_readable: u32,
+    sink: &mut dyn ChangeLogSink,
+) -> Result<RestoreOutcome, RestoreError> {
+    let mut snapshot_migrated = false;
+    if !payload.snapshot_bytes.is_empty() {
+        let header = crate::header::decode_header(payload.snapshot_header)?;
+        let decision = crate::header::resolve_state(&header, expected, min_readable)?;
+        snapshot_migrated = decision.migrating();
+        sink.snapshot(decision, payload.snapshot_bytes)?;
+    }
+    let mut outcome = fold_change_log(payload.change_log_bytes, expected, min_readable, sink)?;
+    outcome.migrated |= snapshot_migrated;
+    Ok(outcome)
 }
 
 /// Walk a change log once — CRC, header resolution, bodies to `sink` in seq
-/// order — for the typed fold and the host crossing alike.
+/// order.
 pub fn fold_change_log(
     change_log_bytes: &[u8],
     expected: &crate::header::HeaderTemplate,
     min_readable: u32,
     sink: &mut dyn ChangeLogSink,
-) -> Result<ChangeLogSummary, RestoreError> {
-    let mut summary = ChangeLogSummary::default();
+) -> Result<RestoreOutcome, RestoreError> {
+    let mut summary = RestoreOutcome::default();
 
     for record in iter_change_log_records(change_log_bytes) {
         let record = record?;
@@ -193,13 +215,22 @@ mod tests {
         SDK_LANG_RUST,
     };
 
-    /// Collects what the walk hands it.
+    /// Collects what the walk hands it, the snapshot body included.
     #[derive(Default)]
     struct RecordingSink {
         changes: Vec<Vec<u8>>,
     }
 
     impl ChangeLogSink for RecordingSink {
+        fn snapshot(
+            &mut self,
+            _decision: crate::header::SchemaDecision,
+            bytes: &[u8],
+        ) -> Result<(), RestoreError> {
+            self.changes.push(bytes.to_vec());
+            Ok(())
+        }
+
         fn change(
             &mut self,
             _decision: crate::header::SchemaDecision,
@@ -303,6 +334,29 @@ mod tests {
 
         assert_eq!(summary.terminal_seq, 0);
         assert_eq!(sink.changes, vec![b"postcard-bytes".to_vec()]);
+    }
+
+    /// A restore hands the snapshot over before the log it precedes and
+    /// answers the log's terminal seq.
+    #[test]
+    fn a_restore_delivers_the_snapshot_before_the_change_log() {
+        let rust = template(SDK_LANG_RUST);
+        let log = record(7, &rust, b"change");
+        let payload = RestoreInitPayload {
+            snapshot_header: &rust.stamp(b"snapshot"),
+            snapshot_bytes: b"snapshot",
+            change_log_bytes: &log,
+        };
+        let mut sink = RecordingSink::default();
+
+        let outcome = fold_restore(&payload, &rust, 1, &mut sink).unwrap();
+
+        let expected = RestoreOutcome {
+            terminal_seq: 7,
+            migrated: false,
+        };
+        assert_eq!(outcome, expected);
+        assert_eq!(sink.changes, [b"snapshot".to_vec(), b"change".to_vec()]);
     }
 
     /// The crc that is checked is the frame's trailing one, over header and

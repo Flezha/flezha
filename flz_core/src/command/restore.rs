@@ -11,9 +11,8 @@ use prost::Message;
 use super::{CommandAction, Reply};
 use crate::cell::CellSlot;
 use crate::pb::{RestoreInitState, RestoreInitStateResponse};
-use crate::restore::{iter_change_log_records, RestoreOutcome};
+use crate::restore::{iter_change_log_records, RestoreInitPayload, RestoreOutcome};
 use crate::runner::RunnerNode;
-use crate::util::LockRecover;
 
 impl CommandAction for RestoreInitState {
     fn handle(
@@ -83,29 +82,23 @@ impl RestoreInitState {
     }
 }
 
-/// Rebuild one Cell's state and re-arm its `change_seq`, through the host
-/// crossing or the typed fold; a zeroed outcome on failure.
+/// Rebuild one Cell's state and re-arm its `change_seq`; a zeroed outcome on
+/// failure.
 fn restore_into_slot(
     slot: &Arc<CellSlot>,
     cmd: &RestoreInitState,
     errors: &mut Vec<crate::Error>,
 ) -> RestoreOutcome {
+    let payload = RestoreInitPayload {
+        snapshot_header: &cmd.snapshot_header,
+        snapshot_bytes: &cmd.snapshot_bytes,
+        change_log_bytes: &cmd.change_log_bytes,
+    };
     // The fold runs under the cell's handout exclusivity: no input
     // activation is handed out before it completes.
     crate::poll_core::global().with_cell_exclusive(slot, || {
-        let folded = if slot.dispatcher.host_facts().is_some() {
-            crate::host::restore_fold_exclusive(
-                slot,
-                &cmd.snapshot_header,
-                &cmd.snapshot_bytes,
-                &cmd.change_log_bytes,
-                errors,
-            )
-        } else {
-            restore_typed_exclusive(slot, cmd, errors)
-        };
-        match folded {
-            Some(outcome) => {
+        match slot.dispatcher.restore(slot, &payload) {
+            Ok(outcome) => {
                 // The change log alone undercounts a snapshot-only restore:
                 // the controller's terminal covers the snapshot too.
                 let t = outcome.terminal_seq.max(cmd.terminal_seq);
@@ -115,35 +108,12 @@ fn restore_into_slot(
                     migrated: outcome.migrated,
                 }
             }
-            None => RestoreOutcome::default(),
+            Err(e) => {
+                errors.push(e);
+                RestoreOutcome::default()
+            }
         }
     })
-}
-
-fn restore_typed_exclusive(
-    slot: &Arc<CellSlot>,
-    cmd: &RestoreInitState,
-    errors: &mut Vec<crate::Error>,
-) -> Option<RestoreOutcome> {
-    let mut guard = match slot.state.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let mut timers = slot.timers.lock_recover();
-    match slot.dispatcher.restore_state(
-        &mut guard,
-        &mut timers,
-        &cmd.snapshot_header,
-        &cmd.snapshot_bytes,
-        &cmd.change_log_bytes,
-        slot.cell_key.as_deref(),
-    ) {
-        Ok(outcome) => Some(outcome),
-        Err(e) => {
-            errors.push(crate::host::restore_failed(e));
-            None
-        }
-    }
 }
 
 fn reseat_restored(slot: &Arc<CellSlot>, terminal: u64, change_log_bytes: &[u8]) {

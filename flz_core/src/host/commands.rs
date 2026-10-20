@@ -8,20 +8,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::cell::BytesBuffer;
 use crate::cell::CellSlot;
 use crate::error::{Code, Error};
 use crate::flusher::FlushableBuffer;
 use crate::header::{HeaderTemplate, RestoreError, SchemaDecision};
+use crate::restore::{RestoreInitPayload, RestoreOutcome};
 use crate::schema::{self, TimerOp};
 use crate::timer::PendingTimers;
 use crate::util::LockRecover;
-
-/// A refusal from the core is the restore's failure, reported by name — the
-/// host never sees the record.
-fn note_error<T>(result: Result<T, RestoreError>, errors: &mut Vec<Error>) -> Option<T> {
-    result.map_err(|e| errors.push(restore_failed(e))).ok()
-}
 
 /// A restore that could not complete, with the refusal's own words as the
 /// reason.
@@ -41,21 +35,24 @@ fn wrong_outcome(command: &str) -> Error {
     Error::HostCrossing(Code::HostWrongOutcome.with([("command", command.into())]))
 }
 
-/// The host's sink: change bodies are collected verbatim for the crossing,
-/// tagged with the version the host must migrate them from. Timers are the
-/// core's own concern and fold here.
+/// The host's sink: the snapshot and change bodies are collected verbatim for
+/// the crossing, tagged with the version the host must migrate them from.
+/// Timers are the core's own concern and fold here.
 #[derive(Default)]
 struct HostSink {
+    snapshot: Option<schema::RestoreBody>,
     changes: Vec<schema::RestoreBody>,
     timers: PendingTimers,
 }
 
 impl crate::restore::ChangeLogSink for HostSink {
+    fn snapshot(&mut self, decision: SchemaDecision, bytes: &[u8]) -> Result<(), RestoreError> {
+        self.snapshot = Some(restore_body(decision, bytes));
+        Ok(())
+    }
+
     fn change(&mut self, decision: SchemaDecision, bytes: &[u8]) -> Result<(), RestoreError> {
-        self.changes.push(schema::RestoreBody {
-            bytes: bytes.to_vec(),
-            from_version: from_version(decision),
-        });
+        self.changes.push(restore_body(decision, bytes));
         Ok(())
     }
 
@@ -66,136 +63,104 @@ impl crate::restore::ChangeLogSink for HostSink {
     }
 }
 
-/// The version tag a body crosses with: absent when the host decodes it at its
-/// own version.
-fn from_version(decision: SchemaDecision) -> Option<u32> {
-    match decision {
-        SchemaDecision::Decode => None,
-        SchemaDecision::Migrate { from_version } => Some(from_version),
+/// A body as it crosses: no version tag when the host decodes it at its own.
+fn restore_body(decision: SchemaDecision, bytes: &[u8]) -> schema::RestoreBody {
+    schema::RestoreBody {
+        bytes: bytes.to_vec(),
+        from_version: match decision {
+            SchemaDecision::Decode => None,
+            SchemaDecision::Migrate { from_version } => Some(from_version),
+        },
     }
 }
 
-/// Restore a host-run Cell: split the persisted records into what the core
-/// owns (cursors, timer ops, the schema decision — resolved here) and what only
-/// the host can decode (its own change bodies — crossed as a
-/// [`schema::RestoreFold`] activation). Runs under the cell gate; returns the
-/// terminal WAL seq and whether anything migrated, or `None` with the failure
-/// recorded in `errors`.
-pub fn restore_fold_exclusive(
+fn host_facts(slot: &CellSlot) -> Result<&crate::host::HostTaskletFacts, Error> {
+    slot.dispatcher
+        .host_facts()
+        .ok_or_else(|| Error::HostCrossing(Code::NotHostTasklet.with([])))
+}
+
+/// Restore a host-run Cell: the core resolves what it owns (cursors, timer
+/// ops, the schema decision) and crosses what only the host can decode, its
+/// own bodies, as a [`schema::RestoreFold`] activation. Runs under the cell
+/// gate.
+pub(super) fn restore_fold_exclusive(
     slot: &Arc<CellSlot>,
-    snapshot_header: &[u8],
-    snapshot_bytes: &[u8],
-    change_log_bytes: &[u8],
-    errors: &mut Vec<Error>,
-) -> Option<crate::restore::RestoreOutcome> {
-    let facts = slot.dispatcher.host_facts()?;
-    let expected = facts.header();
-    let min_readable = facts.min_readable_schema_version;
-
+    payload: &RestoreInitPayload<'_>,
+) -> Result<RestoreOutcome, Error> {
+    let facts = host_facts(slot)?;
     let mut sink = HostSink::default();
-    let summary = note_error(
-        crate::restore::fold_change_log(change_log_bytes, &expected, min_readable, &mut sink),
-        errors,
-    )?;
-    let (snapshot, snapshot_migrated) = resolve_snapshot(
-        &expected,
-        min_readable,
-        snapshot_header,
-        snapshot_bytes,
-        errors,
-    )?;
-    let migrated = summary.migrated | snapshot_migrated;
-
+    let outcome = crate::restore::fold_restore(
+        payload,
+        &facts.header(),
+        facts.min_readable_schema_version,
+        &mut sink,
+    )
+    .map_err(restore_failed)?;
     let fold = schema::RestoreFold {
-        snapshot,
+        snapshot: sink.snapshot,
         changes: sink.changes,
     };
-    match crate::poll_core::global().host_command(slot, schema::ActivationKind::RestoreFold(fold)) {
-        Ok(schema::ActivationOutcome::Restored) => {
+    match crate::poll_core::global()
+        .host_command(slot, schema::ActivationKind::RestoreFold(fold))?
+    {
+        schema::ActivationOutcome::Restored => {
             *slot.timers.lock_recover() = sink.timers;
-            Some(crate::restore::RestoreOutcome {
-                terminal_seq: summary.terminal_seq,
-                migrated,
-            })
+            Ok(outcome)
         }
-        Ok(schema::ActivationOutcome::Failed(err)) => {
-            errors.push(host_failed("restore_fold", err.message));
-            None
-        }
-        Ok(_) => {
-            errors.push(wrong_outcome("restore_fold"));
-            None
-        }
-        Err(e) => {
-            errors.push(e);
-            None
-        }
+        schema::ActivationOutcome::Failed(err) => Err(host_failed("restore_fold", err.message)),
+        _ => Err(wrong_outcome("restore_fold")),
     }
 }
 
-/// The snapshot body the host folds first, tagged with its version decision,
-/// and whether that decision migrates; `None` after a refusal is recorded.
-fn resolve_snapshot(
-    expected: &HeaderTemplate,
-    min_readable: u32,
-    snapshot_header: &[u8],
-    snapshot_bytes: &[u8],
-    errors: &mut Vec<Error>,
-) -> Option<(Option<schema::RestoreBody>, bool)> {
-    if snapshot_bytes.is_empty() {
-        return Some((None, false));
-    }
-    let decision = note_error(
-        crate::header::decode_header(snapshot_header)
-            .and_then(|h| crate::header::resolve_state(&h, expected, min_readable)),
-        errors,
-    )?;
-    let body = schema::RestoreBody {
-        bytes: snapshot_bytes.to_vec(),
-        from_version: from_version(decision),
-    };
-    Some((Some(body), decision.migrating()))
-}
-
-/// Compaction snapshot for a host-run Cell: drain pending changes, read
-/// the seq, re-state the pending timer set (so truncation cannot eat it),
-/// then cross a [`schema::ActivationKind::SnapshotRequest`] and frame the
-/// host-encoded state. Runs under the cell gate.
-pub fn snapshot_frame_crossing(slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), Error> {
-    let facts = slot
-        .dispatcher
-        .host_facts()
-        .ok_or_else(|| Error::HostCrossing(Code::NotHostTasklet.with([])))?;
-    let header = facts.header();
+/// A compaction snapshot of either kind of Cell, under the cell gate: drain
+/// pending changes, read the seq, re-state the pending timer set (so
+/// truncation cannot eat it), then frame the body `encode_body` gives as of
+/// that seq. `(frame, seq, body_len)`.
+pub fn snapshot_frame(
+    slot: &Arc<CellSlot>,
+    header: &HeaderTemplate,
+    encode_body: impl FnOnce() -> Result<Vec<u8>, Error>,
+) -> Result<(Vec<u8>, u64, usize), Error> {
     let flush = |buffer: &mut Box<dyn FlushableBuffer>| {
         crate::flusher::flush_one(
             &mut **buffer,
             &slot.cell_identity,
             &slot.change_seq,
-            &header,
+            header,
             slot.keeps_state,
         );
     };
-    flush(&mut slot.flush_buffer.lock_recover());
-    let seq = slot.change_seq.load(Ordering::Acquire).saturating_sub(1);
-    // The snapshot body is the host's State alone; what the coming truncation
-    // would delete is re-stated AFTER the seq is read — landing at
-    // `snapshot_seq + 1`, which `truncate_up_to` keeps.
     let register_ops = crate::timer::restated(slot, &slot.timers.lock_recover()).as_register_ops();
+    // One buffer lock across the drain and the seq read, so the background
+    // flusher cannot assign a seq between them.
     let mut buffer = slot.flush_buffer.lock_recover();
-    if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
-        if bytes.restate_above_snapshot(register_ops) {
-            flush(&mut buffer);
-        }
+    flush(&mut buffer);
+    let seq = slot.change_seq.load(Ordering::Acquire).saturating_sub(1);
+    // What the coming truncation would delete is re-stated AFTER the seq is
+    // read, landing at `snapshot_seq + 1`, which `truncate_up_to` keeps; a
+    // crash between the two leaves an untruncated log holding the originals.
+    if buffer.restate_above_snapshot(register_ops) {
+        flush(&mut buffer);
     }
     drop(buffer);
-    let state = snapshot_state(
-        crate::poll_core::global().host_command(slot, schema::ActivationKind::SnapshotRequest)?,
-    )?;
-    let size = state.len();
+    let body = encode_body()?;
     let frame =
-        crate::flusher::build_cell_frame(&slot.cell_identity, seq, &header.stamp(&state), &state);
-    Ok((frame, seq, size))
+        crate::flusher::build_cell_frame(&slot.cell_identity, seq, &header.stamp(&body), &body);
+    Ok((frame, seq, body.len()))
+}
+
+/// A host-run Cell's compaction snapshot: its body is the host's State alone,
+/// crossed as a [`schema::ActivationKind::SnapshotRequest`].
+pub(super) fn snapshot_frame_crossing(
+    slot: &Arc<CellSlot>,
+) -> Result<(Vec<u8>, u64, usize), Error> {
+    snapshot_frame(slot, &host_facts(slot)?.header(), || {
+        snapshot_state(
+            crate::poll_core::global()
+                .host_command(slot, schema::ActivationKind::SnapshotRequest)?,
+        )
+    })
 }
 
 /// The host's snapshot body, or the refusal its answer carries.

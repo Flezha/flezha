@@ -172,10 +172,15 @@ static STATE: Mutex<SinkState> = Mutex::new(SinkState::new());
 /// can put an already-framed entry back on the wire unchanged.
 static SECONDARY_STREAM: Mutex<Option<Arc<FlezhaStream>>> = Mutex::new(None);
 
+/// Installing a stream arms the timers of Cells restored while none was.
 pub fn set_secondary_stream(stream: Option<Arc<FlezhaStream>>) {
+    let installed = stream.is_some();
     *SECONDARY_STREAM
         .lock()
         .expect("secondary stream lock poisoned") = stream;
+    if installed {
+        crate::timer::arm_awaiting_stream();
+    }
 }
 
 /// The live secondary stream; what a restored Cell's timers re-arm on.

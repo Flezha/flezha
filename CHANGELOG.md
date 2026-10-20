@@ -13,6 +13,16 @@
 - The shutdown drain no longer counts plugin homes among the relays it reports as locally
   hosted or still local.
 
+### Fixed: a Cell restored before its stream keeps its timers
+
+- A Cell restored before the runner's secondary stream was connected kept its processing-time
+  timers pending but never armed them, so they did not fire until a later restore. Connecting
+  the stream now arms them.
+- Restore and compaction run one sequence in the core for typed Rust and hosted Cells alike.
+- **BREAKING:** in the Rust SDK `init_cell_with_payload` returns a `RestoreOutcome` (the
+  terminal seq and whether anything migrated) in place of the migrated `bool`, and the
+  dispatcher's `restore` and `snapshot_frame` take the Cell's slot.
+
 ### Changed: timers are judged once, in the core
 
 - **BREAKING:** in the Java, Elixir, Python, Ruby, PHP and Node SDKs the timer cap and the

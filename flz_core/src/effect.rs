@@ -392,20 +392,6 @@ impl<B: Bodies> EffectBuffer<B> {
         true
     }
 
-    /// Re-state, above a compaction snapshot's seq, what the truncation that
-    /// snapshot authorizes would delete: the pending timers, and the consumed
-    /// offset of the state the snapshot holds. Whether anything is owed a
-    /// drain.
-    pub fn restate_above_snapshot(&mut self, register_ops: Vec<TimerOp>) -> bool {
-        let owed = !register_ops.is_empty() || self.shipped.is_some();
-        self.timer_ops = register_ops;
-        if let Some((offset, event_time)) = self.shipped {
-            self.effects
-                .push(EffectEntry::offset_only(Some(offset), event_time));
-        }
-        owed
-    }
-
     /// Fold one invocation of a Cell outside the tier into the drain's one
     /// entry. A park closes that entry, so its dead letter keeps the offset of
     /// the input it parked.
@@ -508,6 +494,16 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
 
     fn take_holds(&mut self) -> Vec<Arc<Hold>> {
         std::mem::take(&mut self.holds)
+    }
+
+    fn restate_above_snapshot(&mut self, register_ops: Vec<TimerOp>) -> bool {
+        let owed = !register_ops.is_empty() || self.shipped.is_some();
+        self.timer_ops = register_ops;
+        if let Some((offset, event_time)) = self.shipped {
+            self.effects
+                .push(EffectEntry::offset_only(Some(offset), event_time));
+        }
+        owed
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

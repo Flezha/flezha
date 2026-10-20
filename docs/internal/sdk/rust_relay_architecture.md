@@ -734,6 +734,15 @@ which no controller setting overrides. Trait surface, wire format,
 `TaskletTestHarness` (`replay_equals`, `replay_emits_equal`) and the Java
 port: [`state_persistence.md`](state_persistence.md).
 
+Restore and compaction run the core's one sequence for every kind of Cell;
+the typed parts are the sink and the body codec. A restore folds through
+`flz_core::restore::fold_restore` (snapshot first, then the change log) into
+a `TypedSink` that decodes or migrates each body with postcard, and
+`init_cell_with_payload` answers the terminal seq from that walk. A compaction
+is `flz_core::host::snapshot_frame(slot, header, encode_body)`: drain, read
+`change_seq - 1`, re-state the pending timers above it, then frame the
+postcard body the typed dispatcher encodes under the state lock.
+
 ## Limits
 
 - **Per-Tasklet `handle_message` is not served by the SDK**: the
@@ -767,6 +776,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | Wire dispatch (`RelayDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
 | Relay state JSON shape, `apply_init_values` | `flz_core/src/command/cell_state.rs` |
+| Restore fold and compaction snapshot; the typed sink | `flz_core/src/restore.rs`, `flz_core/src/host/commands.rs`; `sdk/rust/src/cell/restore.rs` |
 | `Relay`; `TaskletTestHarness` | `sdk/rust/src/steps/mod.rs`, `flz_core/src/steps/mod.rs`; `sdk/rust/src/testing/harness.rs` |
 
 ## See also

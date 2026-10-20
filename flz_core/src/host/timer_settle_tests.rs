@@ -1,6 +1,7 @@
 //! A hosted item's timer ops are judged at settle, against the Cell's live
 //! set, before its verdict is matched: a refusal fails the item down the path
-//! every failed item takes, and a commit moves the Tasklet's counters.
+//! every failed item takes, and a commit moves the Tasklet's counters. A
+//! restored Cell's timers arm once a secondary stream is installed.
 
 use std::sync::Arc;
 
@@ -178,4 +179,31 @@ fn a_batch_judges_each_item_against_what_the_one_before_committed() {
 
     assert_eq!(body.consumed_offset, Some(2), "the second item is refused");
     assert_eq!(pending_of(&slot), vec![LATER, LATER + 1]);
+}
+
+/// A Cell restored before the secondary stream exists has no stream to arm
+/// its processing-time timers on; installing the stream arms them, and a due
+/// one fires.
+#[test]
+fn a_timer_restored_before_the_secondary_stream_fires_once_it_is_installed() {
+    let _sink = crate::state_sink::test_guard();
+    crate::state_sink::set_secondary_stream(None);
+    let (_instance, slot) = capped("restored_early", 10, &[1]);
+    // The test holds the Cell's round, so the firing stays in its mailbox.
+    assert!(slot.mailbox.claim_inflight());
+    let core = crate::poll_core::global();
+
+    // What a restore runs once its fold rebuilt the pending set.
+    crate::timer::rearm_restored(&slot);
+    core.promote_due_wakes();
+    assert!(slot.mailbox.is_empty(), "no stream, nothing armed yet");
+
+    crate::state_sink::set_secondary_stream(Some(stream_pair().0));
+    core.promote_due_wakes();
+    crate::state_sink::set_secondary_stream(None);
+
+    match slot.mailbox.pop() {
+        Some(CellItem::Timer(fire)) => assert_eq!(fire.scheduled_at, 1),
+        _ => panic!("the restored timer did not fire after the install"),
+    }
 }

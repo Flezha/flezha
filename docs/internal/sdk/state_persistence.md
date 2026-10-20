@@ -63,7 +63,9 @@ in effect records, timer ops into the pending-timer set), re-arms the change seq
 `terminal_seq`) and answers `RestoreInitStateResponse { cell_id, terminal_seq }`. It also
 discards any open checkpoint interval, half-filled replay slice and queued inputs (the
 controller re-forwards them from the durable input log), restores the consumed-offset floor
-and event-time high-water from the effect records, and re-arms processing-time timers.
+and event-time high-water from the effect records, and re-arms processing-time timers. A Cell
+restored before the runner's secondary stream exists has nothing to arm them on; installing the
+stream arms them, once.
 
 The Elixir SDK folds through the core like every SDK on it: the core walks and verifies the
 records, and hands each snapshot and change body to the SDK, which decodes it from the External
@@ -75,7 +77,9 @@ CrcMismatch, SnapshotDecode, ChangeDecode}`. Java folds through a `RestoreFold`
 activation: the core splits the log on `format_id`, folds timer ops and cursors itself and
 hands the host only the snapshot and change bodies to Kryo-decode and fold through each
 change's `applyTo`; the
-host fold performs no header or CRC check. A restore naming a Cell with no live slot
+host fold performs no header or CRC check. Both folds are one walk,
+`flz_core::restore::fold_restore`: snapshot first, then the log, answering the terminal seq; only
+the sink differs. A restore naming a Cell with no live slot
 validates the log and acks the terminal seq; a dynamic Cell the controller has state for
 is materialised so it survives a rebind; an evicted Cell is never restored — eviction
 deletes its files.
@@ -89,7 +93,8 @@ core, under the Cell's exclusivity gate, drains the pending flush buffer first
 truncates records with `seq > snapshot_seq` and seeds its baseline there, so stamping
 `change_seq` (the next seq to assign) would dedup-drop the next real record. The
 pending-timer set is re-stated as a fresh timer-ops record after the seq is read, landing at
-`snapshot_seq + 1` where truncation keeps it. `State` is serialised with the change codec —
+`snapshot_seq + 1` where truncation keeps it. That sequence is
+`flz_core::host::snapshot_frame` for every Cell; only the body differs. `State` is serialised with the change codec —
 postcard (Rust, in-process), Kryo (Java) or ETF (Elixir), the latter two via a `SnapshotRequest` activation, never the
 JSON migration serializer, or restore cannot decode it — shipped as a
 `cell_state_snapshot` data frame, and acknowledged with

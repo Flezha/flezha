@@ -483,29 +483,19 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
         let _ = (slot, outputs, offset);
     }
 
-    /// Rebuild `state` and `timers` in place from a snapshot (with its stored
-    /// header) plus change log; answers the terminal seq and whether any
-    /// record was migrated.
-    fn restore_state(
+    /// Rebuild the Cell's state and pending timers from a snapshot (with its
+    /// stored header) plus change log, under the cell gate; answers the
+    /// terminal seq and whether any record was migrated.
+    fn restore(
         &self,
-        state: &mut Box<dyn Any + Send>,
-        timers: &mut crate::timer::PendingTimers,
-        snapshot_header: &[u8],
-        snapshot_bytes: &[u8],
-        change_log_bytes: &[u8],
-        cell_key: Option<&str>,
-    ) -> Result<crate::restore::RestoreOutcome, crate::restore::RestoreError>;
+        slot: &Arc<CellSlot>,
+        payload: &crate::restore::RestoreInitPayload<'_>,
+    ) -> Result<crate::restore::RestoreOutcome, crate::Error>;
 
-    /// Compaction: `state` as a `cell_state_snapshot` frame stamped with
-    /// the highest seq it contains, after draining the buffer so the two
-    /// cannot tear. `timers` is re-stated ABOVE that seq so the truncation the
-    /// snapshot authorizes cannot take them. Returns `(frame, seq, body_len)`.
-    fn snapshot_frame(
-        &self,
-        state: &mut Box<dyn Any + Send>,
-        flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
-        timers: &crate::timer::PendingTimers,
-    ) -> Result<(Vec<u8>, u64, usize), crate::Error>;
+    /// Compaction, under the cell gate: the state as a `cell_state_snapshot`
+    /// frame stamped with the highest seq it contains, through
+    /// [`crate::host::snapshot_frame`]. Returns `(frame, seq, body_len)`.
+    fn snapshot_frame(&self, slot: &Arc<CellSlot>) -> Result<(Vec<u8>, u64, usize), crate::Error>;
 }
 
 /// What both slot builders (typed and host) derive the same way; the caller

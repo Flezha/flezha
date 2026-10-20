@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -489,6 +489,13 @@ pub fn restated(slot: &Arc<CellSlot>, live: &PendingTimers) -> PendingTimers {
 /// drops every firing its journal records as committed.
 pub fn rearm_restored(slot: &Arc<CellSlot>) {
     drop_committed_firings(slot);
+    arm_restored(slot);
+}
+
+/// Restored Cells whose processing-time timers wait for a secondary stream.
+static AWAITING_STREAM: Mutex<Vec<Weak<CellSlot>>> = Mutex::new(Vec::new());
+
+fn arm_restored(slot: &Arc<CellSlot>) {
     let ops = slot
         .timers
         .lock_recover()
@@ -496,22 +503,30 @@ pub fn rearm_restored(slot: &Arc<CellSlot>) {
     if ops.is_empty() {
         return;
     }
+    // Held across the read so an install between the read and the push
+    // still finds this Cell in the list.
+    let mut awaiting = AWAITING_STREAM.lock_recover();
     // A restore has no originating input to inherit a connection from; the live
     // secondary stream is the same one the flusher ships on.
     let Some(stream) = crate::state_sink::secondary_stream() else {
-        tracing::debug!(
-            target: "flezha::timer",
-            cell = slot.dispatcher.cell_label(),
-            pending = ops.len(),
-            "restored processing-time timers not re-armed: no secondary stream installed"
-        );
+        awaiting.push(Arc::downgrade(slot));
         return;
     };
+    drop(awaiting);
     // Armed at once, not held: a timer set in an earlier pass joins a stage
     // that is running.
     let core = crate::poll_core::global();
     for op in ops {
         core.arm_timer(slot, op.scheduled_at, Arc::clone(&stream));
+    }
+}
+
+/// Arm the timers of every Cell restored before a secondary stream existed;
+/// an install calls it once.
+pub(crate) fn arm_awaiting_stream() {
+    let awaiting = std::mem::take(&mut *AWAITING_STREAM.lock_recover());
+    for slot in awaiting.iter().filter_map(Weak::upgrade) {
+        arm_restored(&slot);
     }
 }
 
