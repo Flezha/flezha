@@ -131,9 +131,6 @@ defmodule Flezha.State.PersistenceResolver do
     _, _ -> window
   end
 
-  @spec compaction_timeout_ms() :: non_neg_integer()
-  def compaction_timeout_ms(), do: Durations.get(:compaction_timeout_ms)
-
   @doc """
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
   "how many bytes is too many for one Cell-scale payload".

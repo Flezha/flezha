@@ -89,12 +89,7 @@ defmodule Flezha.State.DurabilityTier do
   configuration rather than a test knob.
   """
   @spec writer_id() :: binary()
-  def writer_id() do
-    case Config.get(:durability_writer_id) do
-      value when is_binary(value) and value != "" -> value
-      value -> to_string(value)
-    end
-  end
+  def writer_id(), do: to_string(Config.get(:durability_writer_id))
 
   @doc """
   This node now runs `state_key`'s relay, so it may take over that
@@ -123,42 +118,6 @@ defmodule Flezha.State.DurabilityTier do
   @spec release_relay(binary(), :moved | :stopped) :: :ok
   def release_relay(state_key, departure) when is_binary(state_key),
     do: if(enabled?(), do: Shipper.release(state_key, departure), else: :ok)
-
-  @doc "Backstop sweep period — the bound on how stale a quiet cell's remote copy gets."
-  @spec ship_interval_ms() :: pos_integer()
-  def ship_interval_ms(),
-    do: Durations.get(:durability_ship_interval_ms)
-
-  @doc "Time since the last successful ship at which the RPO alarm fires."
-  @spec rpo_target_ms() :: pos_integer()
-  def rpo_target_ms(), do: Durations.get(:durability_rpo_target_ms)
-
-  @doc "Orphan-blob collection period."
-  @spec gc_interval_ms() :: pos_integer()
-  def gc_interval_ms(), do: Durations.get(:durability_gc_interval_ms)
-
-  @doc """
-  Age below which an unreferenced artifact is never collected, whoever owns it.
-
-  This is the half of collection safety that does not depend on knowing whose
-  artifact it is: an upload still in flight is by definition young, so a peer
-  controller mid-ship is covered without any coordination between the two.
-  """
-  @spec gc_grace_ms() :: pos_integer()
-  def gc_grace_ms(), do: Durations.get(:durability_gc_grace_ms)
-
-  @doc """
-  Age at which an unreferenced artifact is collected even though no node holds
-  local state for its reference — a stopped relay, or one whose state moved.
-
-  Without it, scoping collection to what a node owns would leak those forever.
-  Far longer than `gc_grace_ms/0` on purpose: it is the threshold past which no
-  ship can plausibly still be in flight, so it must not be the same number, or
-  the scoping would contribute nothing.
-  """
-  @spec gc_abandoned_after_ms() :: pos_integer()
-  def gc_abandoned_after_ms(),
-    do: Durations.get(:durability_gc_abandoned_after_ms)
 
   @doc """
   Supervision children for the application module: the backend connection, the
@@ -558,7 +517,7 @@ defmodule Flezha.State.DurabilityTier do
   @spec breaches() :: [map()]
   def breaches() do
     if enabled?() do
-      target = rpo_target_ms()
+      target = Durations.get(:durability_rpo_target_ms)
       now = System.system_time(:millisecond)
 
       status()

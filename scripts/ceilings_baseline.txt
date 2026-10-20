@@ -30,7 +30,7 @@ flz_transport/src/transport/quic_pair_tests.rs::serve 64
 lib/flezha/observability/counter_table.ex::__using__ 107
 lib/flezha/relay/lifecycle.ex::complete_init 65
 lib/flezha/runner/stream_channel.ex::init 52
-lib/flezha/state/durability_tier/shipper.ex 810
+lib/flezha/state/durability_tier/shipper.ex 809
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
 sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 52
 sdk/node/src/definition.ts::defineTasklet 66

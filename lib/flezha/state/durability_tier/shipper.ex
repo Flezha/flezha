@@ -645,14 +645,12 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp collect_orphans(state) do
     with {:ok, blob_entries} <- state.backend.list(Manifest.blob_prefix(), state.opts) do
       owned = MapSet.new(DurabilityTier.all_refs(state.writer))
-      abandoned = DurabilityTier.gc_abandoned_after_ms()
+      abandoned = Durations.get(:durability_gc_abandoned_after_ms)
 
       # The age test comes first and costs nothing, so nothing younger than the
       # grace is ever fetched for, let alone deleted.
-      {candidates, retained} =
-        Enum.split_with(blob_entries, fn {_key, age} ->
-          age >= DurabilityTier.gc_grace_ms()
-        end)
+      grace = Durations.get(:durability_gc_grace_ms)
+      {candidates, retained} = Enum.split_with(blob_entries, fn {_key, age} -> age >= grace end)
 
       orphans =
         candidates
@@ -796,9 +794,10 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp sha256(bytes), do: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower)
 
   defp arm_sweep(state),
-    do: arm_timer(state, :sweep, DurabilityTier.ship_interval_ms(), :sweep_tick)
+    do: arm_timer(state, :sweep, Durations.get(:durability_ship_interval_ms), :sweep_tick)
 
-  defp arm_gc(state), do: arm_timer(state, :gc, DurabilityTier.gc_interval_ms(), :gc_tick)
+  defp arm_gc(state),
+    do: arm_timer(state, :gc, Durations.get(:durability_gc_interval_ms), :gc_tick)
 
   defp emit(event, measurements, ref, extra \\ %{}) do
     :telemetry.execute(

@@ -139,7 +139,7 @@ defmodule Flezha.State.Watchdog do
 
   @impl true
   def handle_cast({:compaction_started, cell_id, runner_id}, state) do
-    if PersistenceResolver.compaction_timeout_ms() > 0 do
+    if Durations.get(:compaction_timeout_ms) > 0 do
       now = :erlang.monotonic_time(:millisecond)
       {:noreply, %{state | compactions: Map.put(state.compactions, cell_id, {now, runner_id})}}
     else
@@ -283,7 +283,7 @@ defmodule Flezha.State.Watchdog do
   defp flag_rpo_exceeded(ref, lag) do
     :telemetry.execute(
       [:flezha, :state, :rpo_exceeded],
-      %{lag_ms: lag, target_ms: DurabilityTier.rpo_target_ms()},
+      %{lag_ms: lag, target_ms: Durations.get(:durability_rpo_target_ms)},
       %{ref: inspect(ref)}
     )
   end
@@ -438,7 +438,7 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp sweep_compactions(state, now) do
-    timeout = PersistenceResolver.compaction_timeout_ms()
+    timeout = Durations.get(:compaction_timeout_ms)
 
     if timeout <= 0 do
       state

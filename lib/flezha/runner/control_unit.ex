@@ -282,9 +282,7 @@ defmodule Flezha.Runner.ControlUnit do
 
     case ControlChannel.send_control(state.runner_id, command) do
       {:ok, ref} ->
-        state =
-          Map.put(state, :response_refs, Map.put(state.response_refs, ref, {:ping, from, nonce}))
-
+        state = put_ref(state, ref, {:ping, from, nonce})
         {:noreply, arm_timer(state, {:ping, ref}, timeout_ms, {:ping_timeout, ref})}
 
       {:error, reason} ->
@@ -428,10 +426,11 @@ defmodule Flezha.Runner.ControlUnit do
     end
   end
 
-  defp store_ref(state, ref, from, want_metadata \\ false) do
-    entry = {:reply, from, System.monotonic_time(:millisecond), want_metadata}
-    Map.put(state, :response_refs, Map.put(state.response_refs, ref, entry))
-  end
+  defp store_ref(state, ref, from, want_metadata \\ false),
+    do: put_ref(state, ref, {:reply, from, System.monotonic_time(:millisecond), want_metadata})
+
+  defp put_ref(state, ref, entry),
+    do: %{state | response_refs: Map.put(state.response_refs, ref, entry)}
 
   defp handle_refs(state, ref, reply, metadata) do
     case Map.pop(state.response_refs, ref) do

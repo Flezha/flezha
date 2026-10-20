@@ -260,18 +260,25 @@ defmodule Flezha.Config.DurationRows do
     {:outbox_retry_ms, :ms, 1_000, []},
 
     # ---- durability tier ---------------------------------------------------
+    # An unreferenced artifact no node holds local state for (a stopped relay,
+    # one whose state moved) is collected at this age: far past the grace, where
+    # no ship can still be in flight.
     {:durability_gc_abandoned_after_ms, :ms, 604_800_000,
      key: {:durability_tier, :gc_abandoned_after_ms},
      env: "FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS",
      min: 1},
+    # No unreferenced artifact younger than this is collected, whoever owns it:
+    # an upload in flight is young, so a peer mid-ship needs no coordination.
     {:durability_gc_grace_ms, :ms, 3_600_000,
      key: {:durability_tier, :gc_grace_ms}, env: "FLEZHA_DURABILITY_GC_GRACE_MS", min: 1},
     {:durability_gc_interval_ms, :ms, 3_600_000,
      key: {:durability_tier, :gc_interval_ms}, env: "FLEZHA_DURABILITY_GC_INTERVAL_MS", min: 1},
     {:durability_pg_query_ms, :ms, 30_000, []},
+    # Time since a reference's last successful ship at which the RPO alarm fires.
     {:durability_rpo_target_ms, :ms, 120_000,
      key: {:durability_tier, :rpo_target_ms}, env: "FLEZHA_DURABILITY_RPO_TARGET_MS", min: 1},
     {:durability_ship_call_ms, :ms, nil, derived: {:headroom, :sdk_commit_ack_ms, -5_000}},
+    # The backstop sweep: how stale a quiet cell's remote copy may get.
     {:durability_ship_interval_ms, :ms, 30_000,
      key: {:durability_tier, :ship_interval_ms}, env: "FLEZHA_DURABILITY_SHIP_INTERVAL_MS", min: 1},
 
