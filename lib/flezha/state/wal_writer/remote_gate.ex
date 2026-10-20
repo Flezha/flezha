@@ -27,7 +27,8 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Process.{DurableTasks, Timer, Watch}
   alias Flezha.State.{DurabilityTier, Paths, WriterRegistry}
-  alias Flezha.State.WalWriter.{Admission, Settlement}
+  alias Flezha.State.DurabilityTier.{Artifact, Shipper}
+  alias Flezha.State.WalWriter.{Admission, Boot, Settlement}
 
   # The credit of records a closed writer left on disk unshipped, one row per
   # held batch under its Cell id, owned by `Flezha.State.Supervisor` so it
@@ -192,9 +193,13 @@ defmodule Flezha.State.WalWriter.RemoteGate do
     :ok
   end
 
-  @doc "Wait until each gated writer `identity` owns drains a credit behind what it held, or dies."
+  @doc """
+  Wait until each gated writer `identity` owns drains a credit behind what it held, or dies, and
+  each writer-less gated Cell past its shipped cut ships; the disk is listed before the writers.
+  """
   @spec await_held(binary() | nil) :: :ok
   def await_held(identity) do
+    unshipped = unshipped(identity)
     credit = %{channel: self(), session: make_ref(), wire_size: 1}
 
     {owed, watch} =
@@ -207,7 +212,25 @@ defmodule Flezha.State.WalWriter.RemoteGate do
           {Map.put(owed, cell_id, pid), Watch.watch(watch, pid, cell_id)}
       end
 
+    Flezha.Parallel.each(Enum.reject(unshipped, &is_map_key(owed, &1)), &ship_until_landed/1)
     await_drains(owed, watch, credit.session)
+  end
+
+  defp unshipped(identity) do
+    for class <- Paths.relay_classes(),
+        match?({:ok, _, ^identity}, ClassRegistry.owner(class)),
+        cell_id <- Paths.cells_of(class),
+        new(cell_id, Boot.commit_unit(cell_id)),
+        {_lo, top} <- [Artifact.seq_bounds({:cell, cell_id})],
+        top > Shipper.shipped_through({:cell, cell_id}),
+        do: cell_id
+  end
+
+  defp ship_until_landed(cell_id, attempt \\ 1) do
+    with {:error, _} <- DurabilityTier.commit_sync(cell_id) do
+      Backoff.wait(:durability_ship, attempt, cell_id)
+      ship_until_landed(cell_id, attempt + 1)
+    end
   end
 
   defp await_drains(owed, _watch, _ref) when owed == %{}, do: :ok

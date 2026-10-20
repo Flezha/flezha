@@ -29,6 +29,13 @@
 - Node: `.fetchers(n)` is the base the host hands the governor, so `FLEZHA_WORKER_POOL_SIZE`
   now overrides it, and the fetchers retire and are replaced as every other SDK's workers are.
 
+### Fixed: a restarted controller holds new markers until the unshipped tails it holds ship
+
+- On a `durable: remote` flow class, a new stream's first marker after a controller restart
+  waits for the ship of every cell whose last record on local disk lies past its manifest entry,
+  also when the cell's writer has not started again; before, such an input could be confirmed
+  with its record on local disk only.
+
 ### Fixed: a returning controller's longer copy yields to the history its relay continued
 
 - A Cell's lineage file and its remote manifest entry carry a lineage id, minted at the Cell's

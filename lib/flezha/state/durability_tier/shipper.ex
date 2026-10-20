@@ -28,8 +28,6 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
   @table :flezha_durability_status
-  # Under the SDK's 30 s commit-ack budget: a synchronous barrier must fail
-  # loudly here rather than have the driver time out first.
 
   # `queued` dedups the queue and `manifests` caches the last entry written per
   # reference; everything else about a reference's schedule — superseded,
@@ -95,6 +93,10 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @spec end_wait(Manifest.ref()) :: :ok
   def end_wait(ref), do: cast({:end_wait, ref})
 
+  @doc "The highest seq `ref`'s cached, else fetched, entry covers; `-1` for none or no answer."
+  @spec shipped_through(Manifest.ref()) :: integer()
+  def shipped_through(ref), do: with({:error, _} <- call({:shipped_through, ref}), do: -1)
+
   @doc "Run one orphan-blob collection synchronously. Used by the sweep and by tests."
   @spec gc() :: {:ok, non_neg_integer()} | {:error, term()}
   def gc(), do: call(:gc)
@@ -110,12 +112,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   announced can land before the announcement is even dequeued.
   """
   @spec caught_up([Manifest.ref()]) :: [Manifest.ref()]
-  def caught_up(refs) do
-    case call({:caught_up, refs}) do
-      {:ok, landed} -> landed
-      {:error, _} -> []
-    end
-  end
+  def caught_up(refs), do: with({:error, _} <- call({:caught_up, refs}), do: [])
 
   @doc """
   Per-reference shipping state, straight out of ETS. Readable from any process
@@ -222,6 +219,9 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   def handle_call(:gc, _from, state), do: {:reply, collect_orphans(state), state}
 
+  def handle_call({:shipped_through, ref}, _from, state),
+    do: {:reply, Manifest.shipped_through(manifest_for(state, ref)), state}
+
   # Every enqueue marks its reference pending, so one that is not pending has
   # nothing announced left to ship — once something has landed for it at all.
   def handle_call({:caught_up, refs}, _from, state) do
@@ -234,7 +234,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
         end
       end)
 
-    {:reply, {:ok, landed}, state}
+    {:reply, landed, state}
   end
 
   # Sweep AND drain, so the caller has a real barrier: the queue is empty when

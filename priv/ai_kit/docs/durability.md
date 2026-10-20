@@ -393,10 +393,10 @@ copy resumes each cell after the last input it acknowledged. A backend outage
 stalls only `remote` classes, and the RPO alarm fires; `local` classes on the
 same controller carry on. `flz controller status` prints each running class's
 level as `durability_levels`, and each remote commit's wait is
-`[:flezha, :state, :remote_commit]`. One window is still open: after a
-controller restart, a new stream's marker does not wait for the ship of a cell
-whose writer has not started again when the marker arrives, so an input can be
-confirmed whose record is on local disk but not yet shipped.
+`[:flezha, :state, :remote_commit]`. After a restart, a new stream's first
+marker also waits until every cell of the stream's classes whose records on
+local disk lie past its shipped copy has shipped, whether or not its writer has
+started again.
 
 ## How to avoid loss
 

@@ -19,6 +19,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
   alias Flezha.State.WalWriter.RemoteGate
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
+  alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.TierE2EHarness
 
   setup %{rc: rc} do
@@ -357,17 +358,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       # fails when: the fence asks only the running writers, so a Cell whose
       # records sit on this disk alone and whose writer has not started again
       # lets a marker confirm an input the backend does not hold.
-      ClassRegistry.put_overwatch(ctx.rc, self(), nil)
       ref = {:cell, ctx.cell_id}
-
-      wal =
-        for seq <- 0..1,
-            into: "",
-            do: Frame.encode_record(seq, effect_header(), effect_body([], seq))
-
-      wal_path = Paths.wal_path(ctx.cell_id)
-      File.mkdir_p!(Path.dirname(wal_path))
-      File.write!(wal_path, wal)
+      unshipped_tail(ctx)
       refute Manifest.key(ref) in Stub.keys()
 
       :ok = RemoteGate.await_held(nil)
@@ -376,6 +368,89 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       assert Manifest.shipped_through(Stub.stored_manifest(ref)) == 1
       assert Supervisor.lookup(ctx.cell_id) == :error
     end
+
+    test "a fence ships nothing for a Cell whose entry names its last record", ctx do
+      # fails when: the fence lists a writer-less Cell by anything but its
+      # shipped cut, so a restart ships every gated Cell again, one outside the
+      # effectively-once tier (flush cursor -1) included.
+      unshipped_tail(ctx)
+      :ok = DurabilityTier.commit_sync(ctx.cell_id)
+      assert Lineage.progress(ctx.cell_id).outbox_flushed_seq == -1
+      capture_commits(ctx.cell_id)
+
+      :ok = RemoteGate.await_held(nil)
+
+      refute_received {:remote_commit, _, _}
+    end
+
+    test "a fence lists no Cell of a steps class", ctx do
+      # fails when: a steps Cell, which its stage barrier already ships, is
+      # shipped by the fence as well.
+      :ok = ClassRegistry.put(ctx.rc, :steps)
+      unshipped_tail(ctx)
+      capture_commits(ctx.cell_id)
+
+      :ok = RemoteGate.await_held(nil)
+
+      refute_received {:remote_commit, _, _}
+    end
+
+    test "a writer started between the fence's two reads is waited on once, by its credit",
+         ctx do
+      # fails when: a Cell whose writer started after the disk was listed is
+      # shipped by the fence as well as by its writer, or waited on by neither.
+      unshipped_tail(ctx)
+      capture_commits(ctx.cell_id)
+
+      stub(Paths, :cells_of, fn class ->
+        cells = call_original(Paths, :cells_of, [class])
+        {:ok, _writer} = Supervisor.find_or_start(ctx.cell_id)
+        cells
+      end)
+
+      :ok = RemoteGate.await_held(nil)
+
+      assert_received {:remote_commit, _, %{status: :ok}}
+      refute_received {:remote_commit, _, _}
+    end
+
+    test "a fence retries a writer-less Cell's failed ship and waits for it", ctx do
+      # fails when: the fence answers after a ship that failed, so a marker
+      # confirms an input the backend does not hold.
+      unshipped_tail(ctx)
+      capture_commits(ctx.cell_id)
+      Stub.fail_next_manifest()
+
+      :ok = RemoteGate.await_held(nil)
+
+      assert_received {:remote_commit, _, %{status: :error}}
+      assert_received {:remote_commit, _, %{status: :ok}}
+      assert Manifest.shipped_through(Stub.stored_manifest({:cell, ctx.cell_id})) == 1
+    end
+  end
+
+  # Records 0 and 1 of the Cell on this disk alone, with no writer, after a
+  # restart: the test process is the Overwatch that owns the class again.
+  defp unshipped_tail(ctx) do
+    ClassRegistry.put_overwatch(ctx.rc, self(), nil)
+
+    wal =
+      for seq <- 0..1,
+          into: "",
+          do: Frame.encode_record(seq, effect_header(), effect_body([], seq))
+
+    wal_path = Paths.wal_path(ctx.cell_id)
+    File.mkdir_p!(Path.dirname(wal_path))
+    File.write!(wal_path, wal)
+  end
+
+  defp capture_commits(cell_id) do
+    subject = inspect(cell_id)
+
+    Telemetry.capture([:flezha, :state, :remote_commit],
+      as: :remote_commit,
+      filter: &(&1.subject == subject)
+    )
   end
 
   # A stream channel's state as `Records.fence_once/1` reads it, for the

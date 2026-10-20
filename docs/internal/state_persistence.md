@@ -287,6 +287,14 @@ the one reader of the floor from disk. A cut is always at a snapshot's seq, so a
 rewind below the newest snapshot, or a realign, resets it to `-1`, and a read bounded below the
 newest snapshot does not count it.
 
+A stream's first marker fences the remote gate (`WalWriter.RemoteGate.await_held/1`): it lists
+from disk the gated Cells of the identity's `durable: remote` classes whose last record lies
+above the cut their manifest entry names (`DurabilityTier.Shipper.shipped_through/1`), then the running
+gated writers, dropping from the disk set every Cell a writer now holds. Each writer drains a
+fence credit behind what it holds; each Cell left in the disk set ships from the fence task,
+retried on the `:durability_ship` ladder until it lands, without starting a writer. The flush
+cursor is not the test: outside the effectively-once tier it stays `-1`.
+
 ## Schema evolution
 
 The header's `schema_version` (bytes 5..9) is the version of the Tasklet that

@@ -185,7 +185,8 @@ defmodule Flezha.State.WalWriter.Boot do
   # A Cell of a steps class commits at its stage marker; every other Cell at
   # its record. How it runs outlives the instance's registration on disk, so a
   # writer that boots before its instance binds still reads it.
-  defp commit_unit({relay_class, _sh, key}) do
+  @doc false
+  def commit_unit({relay_class, _sh, key}) do
     if key not in Paths.reserved_cell_keys() and ClassRegistry.journals?(relay_class),
       do: :stage,
       else: :record
