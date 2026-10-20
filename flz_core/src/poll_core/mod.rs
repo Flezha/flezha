@@ -252,6 +252,9 @@ pub struct PollCore {
     /// [`Self::poll`] entries: what separates busy (threads cycling through
     /// `poll`) from stuck (every thread inside user code).
     poll_entries: AtomicU64,
+    /// When a due wake was last answered as starvation, and the poll-entry
+    /// count then: the starvation waiter's alone, never the poll path's.
+    wake_answered: Mutex<Option<(Instant, u64)>>,
     /// Where [`Self::wait_starvation`] parks, under `ready`'s mutex. Never
     /// signalled from the handout path: the waiter re-evaluates on its own
     /// [`starvation::STARVATION_DWELL`] tick.
@@ -298,6 +301,7 @@ impl PollCore {
             max_inflight,
             pollers_inside: AtomicUsize::new(0),
             poll_entries: AtomicU64::new(0),
+            wake_answered: Mutex::new(None),
             starve_cv: Condvar::new(),
         }
     }

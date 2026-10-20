@@ -153,3 +153,35 @@ fn a_second_pool_open_on_one_context_is_refused() {
     };
     assert_eq!(stderr, Vec::<String>::new());
 }
+
+/// A local run's end stops its context's pool: the core runs on, so the
+/// workers that leave after it are not replaced, and nothing says they were.
+#[test]
+fn a_stopped_local_run_stops_its_pool() {
+    let Some(stderr) = stderr_of_child("a_stopped_local_run_stops_its_pool") else {
+        let ctx = veneer::CtxPtr::of(veneer::context_new(flz_core::SCHEMA_VERSION).unwrap());
+        let class = br#"{"factory_id": "abi_local_pool", "sdk_lang": 1, "sdk_version": "0.1.0",
+            "channels": [{"name": "in", "kind": "entry", "chains": [[{"link": "into", "tasklet": 0}]]}],
+            "tasklets": [{"name": "t"}]}"#;
+        veneer::declare_class(ctx, class).expect("the class declares");
+        veneer::local_start(ctx, c"abi_local_pool", c"abi-local-pool-1").expect("the run starts");
+        veneer::pool_open(ctx, 1).expect("the pool opens");
+
+        veneer::local_stop(ctx);
+        veneer::pool_left(ctx).expect("the base worker leaves");
+        assert_eq!(veneer::pool_supervise(ctx).ok(), Some(FLZ_POOL_STOP));
+        let taken = veneer::take_notices();
+        assert!(
+            taken
+                .iter()
+                .all(|n| !n.text.contains("replaced a poll worker")),
+            "{taken:?}"
+        );
+        veneer::context_free(ctx);
+        return;
+    };
+    assert!(
+        stderr.iter().all(|l| !l.contains("replaced a poll worker")),
+        "{stderr:?}"
+    );
+}

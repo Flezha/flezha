@@ -132,7 +132,10 @@ never trips; only a runner whose every thread is inside user code shows no
 entry for the window. Answering saturation with more threads would add
 contention to a runner that is merely working. A due deferred wake needs no
 dwell: every `poll` pass promotes what has come due, so an entry still sitting
-there is itself proof that no pass has happened.
+there is itself proof that no pass has happened. It is owed one thread at a
+time, though: after it is answered, it reads as starvation again only once a
+thread has entered `poll` or a dwell has passed, so a supervisor asking back to
+back cannot grow the pool before the thread it was given arrives.
 
 Two notes owed to whoever writes the next SDK:
 

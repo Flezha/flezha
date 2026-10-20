@@ -149,6 +149,33 @@ fn a_due_interval_close_into_a_full_mailbox_defers_instead_of_parking() {
     assert!(matches!(slot.mailbox.pop(), Some(CellItem::CloseInterval)));
 }
 
+/// A due wake no pass can service is owed one thread, not one per ask: the
+/// thread answered for it needs time to reach `poll`, so a supervisor asking
+/// back to back grows its pool by one per dwell, or once per poll entry.
+#[test]
+fn a_due_wake_is_owed_one_thread_until_a_poll_entry_or_a_dwell() {
+    let dwell = crate::poll_core::starvation::STARVATION_DWELL;
+    let core = PollCore::new();
+    let (_i, slot) = full_slot("poll-wake-owed-once");
+    core.arm_interval_close(&slot, crate::util::wall_now_ms() - 1);
+    // A zero wait evaluates once and answers: no park, no timing.
+    let owed = |core: &PollCore, wait| matches!(core.wait_starvation(wait), Starvation::Observed);
+
+    let asked = Instant::now();
+    assert!(owed(&core, Duration::ZERO), "a due wake needs no dwell");
+    assert!(
+        !owed(&core, Duration::ZERO),
+        "no thread has entered `poll` since the last answer"
+    );
+    assert!(owed(&core, Duration::from_secs(5)));
+    assert!(asked.elapsed() >= dwell, "owed again only a dwell on");
+
+    // A pass that cannot land the close re-records it a few ms on, owed then
+    // inside the dwell the last answer would otherwise hold it for.
+    assert!(matches!(core.poll(Duration::ZERO), Polled::Timeout));
+    assert!(owed(&core, dwell * 3 / 4), "a poll entry owes it again");
+}
+
 /// An entry armed while a poller is already blocked shortens that
 /// poller's wait: it is promoted promptly instead of at the
 /// caller-supplied timeout, and no thread was created to notice.

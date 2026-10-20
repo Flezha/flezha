@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use flz_core::schema;
+use flz_core::util::LockRecover;
 
 use crate::{
     hand_out, Error, FlzContext, LocalSession, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_TIMEOUT,
@@ -167,8 +168,9 @@ pub unsafe extern "C" fn flz_core_local_run_until_idle(
     ctx.status(run.run_until_idle(Duration::from_millis(timeout_ms)))
 }
 
-/// End the local run and release its Cells. A context with none is a
-/// no-op, so a host's close path needs no test of its own.
+/// End the local run, release its Cells and stop the context's pool. A
+/// context with none is a no-op, so a host's close path needs no test of its
+/// own.
 ///
 /// Values already released stay readable. Dropping the run drops the sender,
 /// so [`flz_core_local_next_output`] hands out what is still queued and then
@@ -179,6 +181,11 @@ pub unsafe extern "C" fn flz_core_local_run_until_idle(
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_local_stop(ctx: *mut FlzContext) -> i32 {
     let ctx = &*ctx;
-    ctx.local.lock().unwrap_or_else(|p| p.into_inner()).take();
+    let ended = ctx.local.lock_recover().take().is_some();
+    // The core runs on after a local run, so a live pool would replace the
+    // workers that leave now.
+    if let Some(pool) = ctx.pool.lock_recover().as_ref().filter(|_| ended) {
+        pool.stop();
+    }
     FLZ_OK
 }

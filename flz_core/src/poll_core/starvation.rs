@@ -76,7 +76,7 @@ impl PollCore {
         // due, so an entry still sitting there proves no pass has happened
         // since it did.
         if self.wakes.any_due(crate::util::wall_now_ms()) {
-            return true;
+            return self.owed_for_wake(now);
         }
         // A direct activation — a host crossing, a steps relay undo — is runnable
         // whatever the cap says, and something waits on its answer; queued cell
@@ -97,5 +97,18 @@ impl PollCore {
                 false
             }
         }
+    }
+
+    /// One thread for a due wake, not one per ask: the thread answered last
+    /// needs time to reach `poll`, so until a thread enters it or a dwell
+    /// passes, the wake is owed none again.
+    fn owed_for_wake(&self, now: Instant) -> bool {
+        let entries = self.poll_entries.load(Ordering::Acquire);
+        let mut answered = self.wake_answered.lock_recover();
+        if matches!(*answered, Some((at, seen)) if seen == entries && now - at < STARVATION_DWELL) {
+            return false;
+        }
+        *answered = Some((now, entries));
+        true
     }
 }
