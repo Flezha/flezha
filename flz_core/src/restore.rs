@@ -378,6 +378,19 @@ mod tests {
         assert!(sink.changes.is_empty());
     }
 
+    /// A log cut short, before a full frame header or inside a declared
+    /// frame, is refused rather than ending quietly.
+    #[test]
+    fn a_truncated_change_log_is_refused() {
+        let mut overrun = record(7, &template(SDK_LANG_RUST), b"postcard-bytes");
+        overrun.pop();
+
+        for log in [&[0u8; 10][..], &overrun] {
+            let err = iter_change_log_records(log).next().unwrap().unwrap_err();
+            assert!(matches!(err, RestoreError::HeaderInvalid), "{err:?}");
+        }
+    }
+
     mod shared_fixture {
         //! The frame both runtimes read, from the one file that holds it:
         //! `test/fixtures/durable_frame.txt`. The Elixir side folds the same
