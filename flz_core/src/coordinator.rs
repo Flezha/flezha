@@ -341,11 +341,6 @@ impl Coordinator {
     ) -> Option<(Self, [JoinHandle<()>; 2])> {
         let mut runner = RunnerNode::new(namespace.clone());
         install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.relay_registry));
-
-        // Expose the coordinator channel process-globally so the
-        // cell-state sink can drive a reconnect on a broken-pipe
-        // flood without a handle threaded through every layer.
-        crate::runner::install_reconnect_trigger(otx.clone());
         let otx_arc = Arc::new(Mutex::new(otx));
         let (answered, control_stream, quic_client) = control_unit::open(
             namespace.clone(),

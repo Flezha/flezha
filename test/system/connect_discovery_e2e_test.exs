@@ -29,6 +29,13 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
   end
 
   describe "the socket ladder" do
+    # The repository rung is relative to the runner's working directory. One of
+    # this test's own keeps it from the checkout's `app_data/sockets`, which a
+    # developer's controller or another run's decoy may hold live.
+    setup do
+      {:ok, cwd: tmp_dir("cwd")}
+    end
+
     test "a runner started with no socket path finds the controller through the runtime dir",
          ctx do
       runtime_dir = tmp_dir("xdg")
@@ -38,7 +45,8 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
       id =
         NodeTestHelper.start_runner(ctx.namespace,
-          env: [{"FLEZHA_SOCKET_FILES_PATH", ""}, {"XDG_RUNTIME_DIR", runtime_dir}]
+          env: [{"FLEZHA_SOCKET_FILES_PATH", ""}, {"XDG_RUNTIME_DIR", runtime_dir}],
+          port_opts: [cd: ctx.cwd]
         )
 
       assert id in FleetManager.active_runners(ctx.namespace)
@@ -51,13 +59,14 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
       # A second live control socket at the repository rung, so the runner sees
       # two controllers and no variable saying which is meant. That rung is
       # relative to the runner's own working directory, and a test app either
-      # runs from the repository root or `cd`s into its own directory, so both
-      # are planted.
-      decoys = Enum.map(repository_rungs(), &listen_at/1)
+      # runs where it is started or `cd`s into its own directory, so both are
+      # planted.
+      decoys = Enum.map(repository_rungs(ctx.cwd), &listen_at/1)
 
       output =
         run_until(ctx.namespace, 15_000,
-          env: [{"FLEZHA_SOCKET_FILES_PATH", ""}, {"XDG_RUNTIME_DIR", runtime_dir}]
+          env: [{"FLEZHA_SOCKET_FILES_PATH", ""}, {"XDG_RUNTIME_DIR", runtime_dir}],
+          cwd: ctx.cwd
         )
 
       Enum.each(decoys, &:gen_tcp.close/1)
@@ -70,7 +79,7 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
       assert output =~ Path.expand(Support.socket_dir()),
              "the refusal names the first candidate, but said: #{output}"
 
-      assert Enum.any?(named_rungs(), &(output =~ &1)),
+      assert Enum.any?(named_rungs(ctx.cwd), &(output =~ &1)),
              "the refusal names the second candidate, but said: #{output}"
 
       assert output =~ "FLEZHA_SOCKET_FILES_PATH",
@@ -101,22 +110,22 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
   # --- helpers ---
 
-  # Where `app_data/sockets` lands for a runner started from the repository root
-  # and for one that `cd`s into its own app directory — the rung is relative to
-  # the runner's working directory, and test apps differ.
-  defp repository_rungs do
+  # Where `app_data/sockets` lands for a runner started in `cwd` and for one
+  # that `cd`s into its own app directory — the rung is relative to the
+  # runner's working directory, and test apps differ.
+  defp repository_rungs(cwd) do
     app_dir = Path.expand("test/apps/#{NodeTestHelper.spawn_runtime()}_runner")
     app_rung = Path.join(app_dir, "app_data/sockets")
 
     unless File.dir?(app_rung), do: on_exit(fn -> File.rm_rf(Path.join(app_dir, "app_data")) end)
 
-    [Path.expand("app_data/sockets"), app_rung]
+    [Path.join(cwd, "app_data/sockets"), app_rung]
   end
 
   # The rungs as a runner may name them: a test app under `test/apps` is a
   # symlink, and a runner that reports its working directory resolved names
   # the rung under the directory the link points at.
-  defp named_rungs do
+  defp named_rungs(cwd) do
     link = Path.expand("test/apps/#{NodeTestHelper.spawn_runtime()}_runner")
 
     resolved =
@@ -125,7 +134,7 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
         {:error, _} -> []
       end
 
-    repository_rungs() ++ resolved
+    repository_rungs(cwd) ++ resolved
   end
 
   # A live control socket in `dir`. Only the socket file is removed afterwards;
@@ -155,7 +164,7 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
       NodeTestHelper.open_runner_port(command,
         transport: :uds,
         env: Keyword.fetch!(opts, :env),
-        port_opts: [:exit_status]
+        port_opts: [:exit_status, cd: Keyword.fetch!(opts, :cwd)]
       )
 
     output = collect(port, System.monotonic_time(:millisecond) + budget, "")

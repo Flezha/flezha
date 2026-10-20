@@ -35,6 +35,7 @@ test/fixtures/knob_parse_cases.txt|How a configuration knob parses. Every SDK's 
 test/fixtures/layout_rows.txt|Where the product puts its files and what `flz reset` does with each subtree.
 test/fixtures/local_mode_word_count.txt|The local-mode example's declared graph and its expected output, run by every SDK's local-mode test.
 test/fixtures/reference_topologies.txt|The reference channel topology for the shared fixture classes, and the refusals every authoring layer owes.
+test/fixtures/derived_cell_modes.txt|The Cell mode the core derives from a declaration's chains. `flz_core` derives it; Java's `HostClassDeclarationTest` reads the modes the core answered.
 test/fixtures/call_response_envelope.json|The `Response` envelope the controller writes for each call outcome, and what it decodes to. The core's decoder is asserted against every case; every SDK round-trips one.
 test/fixtures/runner_connect_env.txt|The environment contract every SDK's connect path reads, and the socket-directory ladder in the order it is walked.
 openspec/specs/java-sdk/spec.md|The Java SDK's scenarios. The Java repository's spec-coverage gate holds its test names against them.

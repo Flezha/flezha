@@ -165,6 +165,10 @@ impl Session {
         let (reply_tx, replies) = crossbeam::channel::unbounded();
         let bridge = crate::shutdown::ShutdownBridge::new();
         crate::shutdown::register_bridge(Arc::clone(&bridge));
+        // The coordinator channel, process-globally, so the cell-state sink
+        // can drive a reconnect without a handle threaded through every layer.
+        // Installed before the thread starts, so a refusal below withdraws it.
+        crate::runner::install_reconnect_trigger(runner_tx.clone());
         crate::runner::start(
             namespace.to_string(),
             Arc::clone(&self.declared),
@@ -175,6 +179,8 @@ impl Session {
         if let Err(refused) = await_confirmation(&replies, start_wait()) {
             crate::control_unit::abandon_starts();
             let _ = runner_tx.send(RunnerMessage::Abandon);
+            // A channel nobody reads: a request asked now answers unavailable at once.
+            crate::runner::install_reconnect_trigger(crossbeam::channel::unbounded().0);
             return Err(refused);
         }
         *started = Some(runner_tx);

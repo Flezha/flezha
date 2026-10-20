@@ -234,6 +234,10 @@ fn an_unanswered_start_is_unconfirmed_and_stops_dialling() {
     assert_eq!(error.code, "runtime.connect_unconfirmed");
     assert_eq!(error.details["wait_ms"], 300);
     assert!(!session.is_started());
+    // The coordinator giving up takes no more requests, so one asked now
+    // answers at once rather than waiting out its deadline.
+    let update = pb::command_request::Command::UpdateFactories(pb::UpdateFactories::default());
+    assert!(crate::shutdown::ask("after-a-refused-start".into(), update).is_err());
     // The runner thread holds the declared set while it dials; it lets go
     // once the abandoned start stops retrying.
     assert!(

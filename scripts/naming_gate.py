@@ -573,11 +573,20 @@ def lanes(rows):
     return list(by_group.values())
 
 
+def alone(lane):
+    """How many of `lane`'s rows run alone before the lanes start: all of the
+    dependency compile every other lane builds on, and a lane's rows up to its
+    last build, whose output other lanes run (a runner jar, an SDK's copy of the
+    native library every veneer builds to one path)."""
+    if lane[0]["group"] == "deps":
+        return len(lane)
+    return max((at + 1 for at, row in enumerate(lane) if row.get("builds")), default=0)
+
+
 def run_gates(rows, logs=None, jobs=1):
     """Run `rows` and return the status the contract at the top says: in order,
-    or with `jobs` > 1 as lanes, `jobs` at a time. The dependency compile every
-    other lane builds on runs alone first, and the e2e lanes, the longest, start
-    first."""
+    or with `jobs` > 1 as lanes, `jobs` at a time, after the rows `alone` names
+    have run one at a time. The e2e lanes, the longest, start first."""
     if logs:
         os.makedirs(logs, exist_ok=True)
     report = {"unavailable": [], "failed": [], "errored": []}
@@ -585,13 +594,13 @@ def run_gates(rows, logs=None, jobs=1):
         for row in rows:
             run_gate(row, report, logs)
     else:
-        rest = lanes(rows)
-        first = [lane for lane in rest if lane[0]["group"] == "deps"]
-        rest = sorted((lane for lane in rest if lane not in first),
-                      key=lambda lane: not lane[0]["group"].startswith("e2e"))
-        for lane in first:
-            for row in lane:
+        cuts = [(lane, alone(lane)) for lane in sorted(
+            lanes(rows), key=lambda lane: (lane[0]["group"] != "deps",
+                                           not lane[0]["group"].startswith("e2e")))]
+        for lane, cut in cuts:
+            for row in lane[:cut]:
                 run_gate(row, report, logs)
+        rest = [lane[cut:] for lane, cut in cuts if lane[cut:]]
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             for done in [pool.submit(lambda lane=lane: [run_gate(row, report, logs)
                                                         for row in lane]) for lane in rest]:
@@ -681,7 +690,8 @@ def _contract_self_test():
 
 def _runner_problems(rows):
     """The row behind a timed-out one still runs, `--logs` files a noisy row's
-    output and verdict, and a `groups` row stands for its rows once each."""
+    output and verdict, a `groups` row stands for its rows once each, and a
+    build runs before the lanes."""
     problems = []
     with contextlib.redirect_stdout(out := io.StringIO()):
         run_gates([rows["timed-out"], rows["clean"]])
@@ -699,6 +709,13 @@ def _runner_problems(rows):
              {"id": "u", "group": "union", "groups": "@x,@y,a"})
     if [row["id"] for row in select("@union", table)] != ["a", "b"]:
         problems.append("  groups: @union does not stand for the rows of @x and @y once each")
+    lanes_table = [{"id": row_id, "group": group, "argv": _sh("true"), "builds": row_id == "b"}
+                   for row_id, group in (("a", "x"), ("b", "x"), ("c", "x"), ("d", "y"))]
+    with contextlib.redirect_stdout(out := io.StringIO()):
+        run_gates(lanes_table, jobs=2)
+    order = re.findall(r"^PASS (\S+)", out.getvalue(), re.M)
+    if order[:2] != ["a", "b"] or sorted(order[2:]) != ["c", "d"]:
+        problems.append(f"  builds: ran {order}; a lane's rows up to its build run before any lane")
     return problems
 
 

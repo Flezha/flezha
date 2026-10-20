@@ -361,7 +361,8 @@ fn declares_the_effectively_once_class(ctx: *mut FlzContext, controller: &Contro
         "tasklets": [{
             "name": "eff_pass",
             "schema_version": 2,
-            "min_readable_schema_version": 1
+            "min_readable_schema_version": 1,
+            "migrates": true
         }]
     }"#;
     assert_eq!(

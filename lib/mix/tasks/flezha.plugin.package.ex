@@ -72,7 +72,8 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
       providers: providers
     }
 
-    stage = Path.join(Mix.Project.build_path(), "flezha_plugin_package")
+    # One per OS process: two packagings of a project share its build path.
+    stage = Path.join(Mix.Project.build_path(), "flezha_plugin_package_#{System.pid()}")
     File.rm_rf!(stage)
 
     try do

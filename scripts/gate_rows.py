@@ -21,7 +21,9 @@ BENIGN = re.compile(
     r"|^test \S+ \.\.\. ok$"
     # php-cs-fixer's banner and progress bar, written to stderr on every run.
     r'|^PHP CS Fixer [0-9.]+ .* by |^PHP runtime: [0-9.]+$|^Loaded config \S+ from ".*"\.$'
-    r"|^\s*[0-9]+/[0-9]+ \[[▓░]+\]\s+[0-9]+%$")
+    r"|^\s*[0-9]+/[0-9]+ \[[▓░]+\]\s+[0-9]+%$"
+    # Mix waiting on another lane's hold of the shared `_build`, as cargo's `Blocking`.
+    r"|^(\x1b\[0m)?Waiting for lock on the build directory \(held by process [0-9]+\)$")
 # pyright's notice that a newer release exists: it says nothing about the code.
 UPDATE_NOTICE = re.compile(
     r"^WARNING: there is a new pyright version available \(v[0-9.]+ -> v[0-9.]+\)\.$")
@@ -55,8 +57,10 @@ def noisy(row, out, err):
 # it was. A row may also declare `cwd` (relative to the root), `env` (values may
 # name `$VAR`s of the caller's environment), `timeout` in seconds, `quiet` (a
 # green run is still a finding when its output is noisy, `noisy` above) and
-# `stderr_ok` (under `quiet`, stderr is not judged). A row declaring `groups`
-# instead of `argv` stands for the rows that spec selects.
+# `stderr_ok` (under `quiet`, stderr is not judged) and `builds` (it builds
+# what other lanes run, so `--jobs` runs it, and its lane's rows before it,
+# before any lane starts). A row declaring `groups` instead of `argv` stands
+# for the rows that spec selects.
 GATES = (
     {"id": "overflow-naming", "group": "naming",
      "argv": ["scripts/check-overflow-naming.sh"]},
@@ -197,7 +201,8 @@ def _deps_compile(name, group, cwd, *envs):
 
 def _build(row_id, group, runtime, **opts):
     """A runner built by its manifest's test build, through the one build entry."""
-    return _bar(row_id, group, "scripts/build-runner.sh", runtime, "test", stderr_ok=True, **opts)
+    return _bar(row_id, group, "scripts/build-runner.sh", runtime, "test", stderr_ok=True,
+                builds=True, **opts)
 
 
 def _smoke(row_id, group, cwd, *runner, **opts):

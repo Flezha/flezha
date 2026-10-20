@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crossbeam::channel::Sender;
 use flz_transport::transport::FlezhaStream;
 
-/// The coordinator's message channel, installed once by `coordinator::start`.
+/// The coordinator's message channel, installed by `Session::start`.
 static RECONNECT_TRIGGER: OnceLock<Mutex<Sender<RunnerMessage>>> = OnceLock::new();
 
 pub fn install_reconnect_trigger(otx: Sender<RunnerMessage>) {
