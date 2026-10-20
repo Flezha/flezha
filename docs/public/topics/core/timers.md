@@ -206,7 +206,8 @@ uses a timer.
 - **Eviction discards a cell's timers.** A tasklet that sets timers and declares
   `cell_idle_ttl` is declaring them disposable.
 - **A live move to another runner does not carry pending timers.** The move ships the state
-  alone; the timers are still on disk, so a later restore rebuilds them.
+  alone; the timers are still on disk, so a later restore rebuilds them. A compaction where the
+  relay moved keeps them too: it writes the pending timers again above its snapshot.
 - **A `compensate` hook has no timers.** Every SDK answers a timer call there with
   `runtime.timers_unavailable`.
 - **In the Java, Node, Python, Ruby and PHP SDKs, a steps tasklet fed by another tasklet has no

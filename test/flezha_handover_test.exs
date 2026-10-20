@@ -7,12 +7,14 @@ defmodule FlezhaTest.Handover do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias Flezha.State.Commands
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.StepsResumeHarness
   alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RelayTestHelper
+  alias FlezhaTest.Helper.TierE2EHarness
   alias ProcessHub.Constant.Hook
 
   import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
@@ -65,17 +67,7 @@ defmodule FlezhaTest.Handover do
     # The drain reports when the local children are gone, which is the last
     # step the departing node controls; the registry row naming their new home
     # converges just after, so poll for it.
-    assert NodeTestHelper.wait_until(
-             fn ->
-               match?(
-                 {:ok, %{arrived_via_hotswap?: true}},
-                 RelayManager.get_overwatch_state(@default_namespace, relay_id)
-               )
-             end,
-             5_000,
-             25
-           ),
-           "expected live HotSwap handover, not a WAL cold restore"
+    assert arrived?(relay_id), "expected live HotSwap handover, not a WAL cold restore"
 
     {:ok, json_state} = RelayManager.get_cell_state(@default_namespace, relay_id)
     state = Payloader.json_to_map(json_state)
@@ -117,16 +109,7 @@ defmodule FlezhaTest.Handover do
 
     assert :ok = shutdown_peer(peer_node, 30_000)
 
-    assert NodeTestHelper.wait_until(
-             fn ->
-               match?(
-                 {:ok, %{arrived_via_hotswap?: true}},
-                 RelayManager.get_overwatch_state(@default_namespace, relay_id)
-               )
-             end,
-             5_000,
-             25
-           )
+    assert arrived?(relay_id)
 
     {:ok, target} = RelayManager.get_relay_pid(@default_namespace, relay_id)
     assert node(target) == node()
@@ -197,16 +180,7 @@ defmodule FlezhaTest.Handover do
     # protocol still live. The drain reports when the local children are gone,
     # which is the last step the departing node controls — the registry row
     # naming their new home converges just after, so poll for it.
-    assert NodeTestHelper.wait_until(
-             fn ->
-               match?(
-                 {:ok, %{arrived_via_hotswap?: true}},
-                 RelayManager.get_overwatch_state(@default_namespace, relay_id)
-               )
-             end,
-             5_000,
-             25
-           ),
+    assert arrived?(relay_id),
            "the relay must become addressable at its new home after the forced handover"
 
     RelayTestHelper.send_sync_io(relay_id, @default_namespace, "after_force", %{})
@@ -216,6 +190,50 @@ defmodule FlezhaTest.Handover do
     assert "after_force" in get_in(state, ["store_input_tasklet", "text_inputs"])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: a compaction where the relay moved snapshots a Cell holding no
+  # timers, so the restore after it rebuilds none and the session never closes.
+  @tag :multi_node
+  @tag :drain_migration_timers
+  @tag timeout: 180_000
+  test "a pending timer survives a live move, a compaction there and a restore" do
+    # The peer's runner inherits it: a session closes 30 s after its input.
+    System.put_env("TIMER_TEST_TIMEOUT_MS", "30000")
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_timer_node)
+    System.delete_env("TIMER_TEST_TIMEOUT_MS")
+    op = RelayFixture.start_on(peer_node, "drain_timer", "session_timeout")
+    assert NodeTestHelper.wait_until(fn -> session(op) != nil end, 30_000)
+    RelayManager.send_io(op, @default_namespace, "hello", %{"input_type" => "2"})
+    assert NodeTestHelper.wait_until(fn -> session(op)["touched"] == ["hello"] end, 15_000)
+
+    assert :ok = shutdown_peer(peer_node, 30_000)
+    assert arrived?(op)
+    :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :compaction_completed]])
+    cell = {op, "session_timeout_tasklet", ""}
+    {:ok, _} = Commands.dispatch_compact_cell(overwatch(op, @default_namespace).runner_id, cell)
+    assert_receive {[:flezha, :state, :compaction_completed], _, _, %{relay: ^op}}, 10_000
+    assert session(op)["closed_at"] == [], "the timer fired before the restore"
+
+    TierE2EHarness.force_fresh_rebind(@default_namespace, op)
+    assert NodeTestHelper.wait_until(fn -> session(op)["closed_at"] not in [nil, []] end, 60_000)
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # Whether the relay was handed over live to this controller, polled: the
+  # registry row naming its new home converges just after the drain reports.
+  defp arrived?(op) do
+    NodeTestHelper.wait_until(
+      fn -> overwatch(op, @default_namespace).arrived_via_hotswap? end,
+      5_000,
+      25
+    )
+  end
+
+  defp session(op) do
+    with {:ok, json} <- cell_state(op, @default_namespace),
+         do: Payloader.json_to_map(json)["session_timeout_tasklet"],
+         else: (_unreadable -> nil)
   end
 
   # Attach the peer's drain telemetry (forwarded here as messages), then drive
@@ -750,15 +768,18 @@ defmodule FlezhaTest.Handover do
   defp signal_runner(os_pid, signal),
     do: {_, 0} = System.cmd("kill", [signal, Integer.to_string(os_pid)], stderr_to_stdout: true)
 
-  defp overwatch(op) do
-    case RelayManager.get_overwatch_state(@temp_namespace, op) do
+  defp overwatch(op, namespace \\ @temp_namespace) do
+    case RelayManager.get_overwatch_state(namespace, op) do
       {:ok, %{} = state} -> state
       _ -> %{runner_id: nil, snapshot: nil, arrived_via_hotswap?: nil}
     end
   end
 
   defp bound_runner(op), do: overwatch(op).runner_id
-  defp cell_state(op), do: RelayManager.get_cell_state(@temp_namespace, op)
+
+  defp cell_state(op, namespace \\ @temp_namespace),
+    do: RelayManager.get_cell_state(namespace, op)
+
   defp contains?(bin, text), do: is_binary(bin) and String.contains?(bin, text)
 
   defp state_has?(op, text) do
