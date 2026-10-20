@@ -208,9 +208,8 @@ fn edge_output(channel: u32, consumer: u32, key: &str, payload: &[u8]) -> Output
     }
 }
 
-/// A sink release carrying the identity stamps every erased SDK attaches
-/// host-side before it hands the core an output — the core does not invent
-/// them, and local mode must not lose them.
+/// A sink release under `key`, unstamped: the core stamps its identity at
+/// settle, as it does for every SDK.
 fn sink_output(channel: &str, key: &str, payload: &[u8]) -> Output {
     Output {
         target: OutputTarget::Plugin {
@@ -218,11 +217,7 @@ fn sink_output(channel: &str, key: &str, payload: &[u8]) -> Output {
         },
         key: Some(key.to_string()),
         event_time: None,
-        metadata: vec![
-            ("flz.cell".to_string(), format!("total/{key}")),
-            ("flz.seq".to_string(), "0.0".to_string()),
-            ("flz.key".to_string(), key.to_string()),
-        ],
+        metadata: Vec::new(),
         payload: payload.to_vec(),
     }
 }
@@ -406,7 +401,7 @@ fn a_keyed_sink_value_carries_the_stamps_a_deployed_run_stamps() {
     );
     assert_eq!(
         output.metadata.get("flz.cell").map(String::as_str),
-        Some("total/z")
+        Some("two-step-3/total/z")
     );
     assert_eq!(
         output.metadata.get("flz.seq").map(String::as_str),

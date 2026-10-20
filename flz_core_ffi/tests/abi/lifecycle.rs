@@ -629,7 +629,7 @@ fn the_keyed_input_reaches_its_own_cell(ctx: *mut FlzContext) {
     let [schema::WorkItem::Input(input)] = items.as_slice() else {
         panic!("expected one input, got {items:?}");
     };
-    assert_eq!(input.payload, b"k1:v", "the item keeps the entry payload");
+    assert!(input.payload.is_empty(), "a prepared item ships no payload");
     assert_eq!(input.form, schema::InputForm::Prepared(vec![b"v".to_vec()]));
     abi_complete(
         ctx,

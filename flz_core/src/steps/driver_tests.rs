@@ -125,10 +125,15 @@ fn answer(
     }
 }
 
+/// What a host reads of an input: a keyed Cell's prepared values (one per
+/// Cell in these tests), any other input's own bytes.
 fn host_bytes(value: &Arc<dyn std::any::Any + Send + Sync>) -> Vec<u8> {
     value
         .downcast_ref::<HostPayload>()
-        .map(|p| p.bytes.clone())
+        .map(|p| match &p.form {
+            crate::schema::InputForm::Prepared(values) => values.concat(),
+            _ => p.bytes.clone(),
+        })
         .unwrap_or_default()
 }
 

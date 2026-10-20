@@ -19,6 +19,7 @@ use flz_core::pb::control_frame::Frame;
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::socket_dir;
+use flz_transport::utility::socket_probe::{probe, Reach};
 use prost::Message;
 
 use super::{Progress, Scenario};
@@ -46,6 +47,10 @@ pub struct Controller {
 impl Controller {
     pub fn start(dir: &Path) -> Self {
         let path = socket_dir::control_socket_path_in(dir).expect("control socket path");
+        // A per-pid directory outlives its run, and pids wrap.
+        if probe(dir) == Reach::StaleSocket {
+            std::fs::remove_file(&path).expect("remove a stale control socket");
+        }
         let listener = UnixListener::bind(path).expect("bind control socket");
         Self::over(listener, DEFAULT_AWAIT)
     }

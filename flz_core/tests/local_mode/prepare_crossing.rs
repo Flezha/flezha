@@ -28,12 +28,24 @@ const KEYED_ENTRY_RETRIED: &str = r#"{
 /// the key it was dispatched with.
 fn echo_keyed(_activation: &Activation, item: &WorkItem) -> ItemEffect {
     match item {
-        WorkItem::Input(input) => ok_effect(vec![sink_output(
-            "out",
-            &String::from_utf8_lossy(&input.payload[..1]),
-            &input.payload,
-        )]),
+        WorkItem::Input(input) => {
+            let value = prepared_value(input);
+            ok_effect(vec![sink_output(
+                "out",
+                &String::from_utf8_lossy(&value[..1]),
+                value,
+            )])
+        }
         WorkItem::Timer(_) => ok_effect(Vec::new()),
+    }
+}
+
+/// The one value [`prepared`] answered for this item's Cell: a keyed item
+/// ships no payload of its own.
+fn prepared_value(input: &flz_core::schema::InputItem) -> &[u8] {
+    match &input.form {
+        flz_core::schema::InputForm::Prepared(values) => &values[0],
+        other => panic!("a keyed item arrives prepared, got {other:?}"),
     }
 }
 
@@ -123,7 +135,7 @@ fn a_payload_that_parks_is_dropped_and_the_run_settles() {
             _ => prepared(payload, want_keys),
         },
         |activation, item| match item {
-            WorkItem::Input(input) if input.payload == b"w:bad" => ItemEffect {
+            WorkItem::Input(input) if prepared_value(input) == b"w:bad" => ItemEffect {
                 verdict: Verdict::NonRetryableError {
                     message: "poison".to_string(),
                 },
