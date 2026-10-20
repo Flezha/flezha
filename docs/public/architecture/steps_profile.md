@@ -167,6 +167,12 @@ the resumed instance skips it and feeds its children from the journal. A class w
 `durable: false` keeps no journal; its chain runs again from the top over the restored cell
 state, which is why a tasklet must be safe to run twice.
 
+**A resumed instance runs nothing until its state is back.** It waits for every cell restore
+the start announced. One that has not landed within 30 s ends the run `error`
+(`steps restore gate timed out: 1 of 2 restores landed within 30 s`), and a stop during the
+wait ends it `cancelled`. Either way no tasklet and no undo hook runs, and the journal and the
+cell state are kept for a later start.
+
 ## One outbox
 
 In a durable steps relay, `ctx.emit` writes into the cell's effect record, as a flow cell

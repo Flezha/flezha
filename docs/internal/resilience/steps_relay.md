@@ -342,9 +342,13 @@ restore-before-run gate (`AddRelay.resume_cell_count`) holds the first tasklet u
 that many `RestoreInitState` frames land. The persisted Cell set includes keyed Cells, and a
 frame naming one mints it before it folds; the gate counts frames, not Cells, so a frame the
 `max_cells` cap refuses, or one naming a tasklet the class no longer declares, still counts.
-The last frame opens the gate on the reader that brings it,
-and a 30 s deadline on the deferred-wake list degrades a restore that never lands to a
-best-effort re-run. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
+The last frame opens the gate on the reader that brings it.
+A 30 s deadline on the deferred-wake list ends the run `error` when a restore never lands
+(`steps restore gate timed out: <restored> of <expected> restores landed within 30 s`): no pass
+starts and nothing is compensated, since an undo over Cells whose state never landed is the
+fault the gate guards. A stop or `max_duration` before the gate opens ends the run `cancelled`
+the same way. Either is the ordinary run teardown: no re-run, the outcome recorded, the state
+and journal kept for a later start. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
 post-resume appends are contiguous and the flow-only seq-gap resync never applies. Execution
 is at-least-once: steps and hooks are idempotent by author contract. A crashed instance reaches
 a new runner in one of two ways: a restarted runner presents the same stable identity

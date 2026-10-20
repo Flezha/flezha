@@ -31,8 +31,8 @@ use crate::routing::{Destination, Entering, Routed};
 pub(super) const ADMIT_RETRY: Duration = Duration::from_millis(5);
 /// How long an undo waits for its Cell's handout to be answered.
 pub(super) const UNDO_GATE_RETRY: Duration = Duration::from_millis(1);
-/// The restore gate's cap: a restore that never lands degrades to a
-/// best-effort re-run rather than a hung relay.
+/// The restore gate's cap: a restore that never lands ends the run `error`
+/// rather than hanging the relay or running over state that never landed.
 pub(super) const RESTORE_GATE: Duration = Duration::from_secs(30);
 
 /// One steps instance's run with the class facts every event reads.
@@ -501,11 +501,9 @@ impl Decide<'_, '_, '_> {
     pub(super) fn stop(&mut self) {
         self.r.run.cancel.store(true, Ordering::Release);
         match self.s.phase {
-            Phase::Gated => {
-                self.disarm(Deadline::RestoreGate);
-                self.open_gate();
-            }
-            Phase::Waiting => self.terminal("cancelled", String::new(), Vec::new()),
+            // Gated, the Cells' state has not all landed: the gate stays shut
+            // and the journal and state wait for a later start.
+            Phase::Gated | Phase::Waiting => self.terminal("cancelled", String::new(), Vec::new()),
             Phase::Running => {
                 self.kill_pass();
                 self.settle_pass();
@@ -547,13 +545,13 @@ impl Decide<'_, '_, '_> {
             Deadline::Ack(id) => self.ack_overdue(id),
             Deadline::RestoreGate => {
                 if self.s.phase == Phase::Gated {
-                    let (restored, expected) = (self.s.restored, self.s.expected);
-                    flz_transport::notice!(
-                        Warn,
-                        "steps crash-resume timed out waiting for Cell restores ({restored} of \
-                         {expected}); proceeding with partially-restored state"
+                    let error = format!(
+                        "steps restore gate timed out: {} of {} restores landed within {} s",
+                        self.s.restored,
+                        self.s.expected,
+                        RESTORE_GATE.as_secs()
                     );
-                    self.open_gate();
+                    self.terminal("error", error, Vec::new());
                 }
             }
             Deadline::UndoGate => self.undo_step(),

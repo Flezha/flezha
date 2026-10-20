@@ -1,6 +1,6 @@
 //! A steps deadline on the deferred-wake list: re-arming one replaces its
 //! entry, and a promotion for a due time since re-armed or disarmed changes
-//! nothing.
+//! nothing. The restore gate: neither its timeout nor a stop opens it.
 
 use std::time::Duration;
 
@@ -54,10 +54,65 @@ fn a_stale_steps_deadline_is_a_no_op() {
 
     deadline_due(&inst, Deadline::RestoreGate, current);
     assert_eq!(armed(r.run, Deadline::RestoreGate), None);
-    assert_ne!(
+    assert_eq!(
         r.run.sheet().phase,
-        Phase::Gated,
-        "the current one opens it"
+        Phase::Done,
+        "the current one ends the run instead of opening the gate"
     );
     crate::poll_core::global().disarm_instance(r.inst.seq, Deadline::RestoreGate, current);
+}
+
+/// What `f` decides for a run bound expecting two restores, one landed
+/// carrying its Cell's saga markers so a gate that opened would compensate:
+/// checked to start no pass, run no undo and leave the run done with nothing
+/// armed, its completion returned.
+fn at_the_gate(id: &str, f: impl FnOnce(&mut Decide<'_, '_, '_>)) -> (String, String, Vec<u8>) {
+    let inst = host_class::steps(id, &["in"]);
+    let r = Run::of(&inst).expect("a steps instance");
+    r.run.bind(crate::steps::Resume {
+        expected: 2,
+        ..Default::default()
+    });
+    crate::steps::open(&inst);
+    let cell = Arc::clone(&inst.all_slots()[0].cell_identity);
+    crate::steps::restore_landed(&inst, &cell, true, true);
+
+    let mut fx = Effects::default();
+    f(&mut Decide {
+        r: &r,
+        s: &mut r.run.sheet(),
+        fx: &mut fx,
+    });
+    assert!(fx.start.is_none() && fx.admit.is_empty(), "no pass starts");
+    assert!(
+        fx.run_undo.is_none() && fx.frames.is_empty(),
+        "nothing is compensated"
+    );
+    let completed = fx.completed.take().expect("the run ended");
+    r.act(fx);
+    assert_eq!(r.run.sheet().phase, Phase::Done);
+    assert!(crate::poll_core::global()
+        .instance_deadlines(r.inst.seq)
+        .is_empty());
+    completed
+}
+
+#[test]
+fn a_restore_gate_timeout_ends_the_run_error() {
+    assert_eq!(
+        at_the_gate("gate_timeout", |d| d.deadline(Deadline::RestoreGate)),
+        (
+            "error".to_string(),
+            "steps restore gate timed out: 1 of 2 restores landed within 30 s".to_string(),
+            Vec::new()
+        )
+    );
+}
+
+#[test]
+fn a_stop_at_the_restore_gate_ends_the_run_cancelled() {
+    assert_eq!(
+        at_the_gate("gate_stop", |d| d.stop()),
+        ("cancelled".to_string(), String::new(), Vec::new())
+    );
 }

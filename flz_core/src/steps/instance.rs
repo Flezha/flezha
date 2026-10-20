@@ -46,7 +46,7 @@ pub enum Deadline {
     MaxDuration,
     /// A barrier's ack is overdue: re-send it, or give up on it.
     Ack(u64),
-    /// Cell restores that never landed: proceed partially restored.
+    /// Cell restores that never landed: the run ends `error`.
     RestoreGate,
     /// An undo found its Cell still handed out: try again.
     UndoGate,

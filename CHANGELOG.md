@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed: a steps relay whose Cell restores do not all land fails instead of running
+
+- A resumed steps relay whose announced Cell restores have not all landed within 30 s now ends
+  `error` (`steps restore gate timed out: <restored> of <expected> restores landed within 30 s`),
+  running no tasklet and no undo hook. Before, it logged a warning and ran over the partially
+  restored state.
+- A stop or `max_duration` that arrives while the relay still waits for its restores ends it
+  `cancelled` the same way. Before, the stop let it run or compensate over that state.
+
 ### Fixed: a saga's compensation the controller does not acknowledge fails the run
 
 - A steps relay's `compensated` entry the controller refuses is sent again under the same
