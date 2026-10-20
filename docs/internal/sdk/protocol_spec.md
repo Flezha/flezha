@@ -248,7 +248,7 @@ to inter-tasklet consumers.
 ### Heartbeat frames
 
 `data_heartbeat` (empty message) is written on **every** secondary stream every
-`FLEZHA_DATA_HEARTBEAT_MS` (default 10 s, jittered into `[base/2, base]`)
+`FLEZHA_DATA_HEARTBEAT_MS` (default 10 s, jittered into `[base/2 + 1, base/2 + base]` ms)
 while connected, so an idle-but-healthy Relay keeps the controller's
 per-channel liveness clock fresh. Its metadata is the runner's self-report, and
 the key set is **one declaration**: every row of
@@ -590,9 +590,10 @@ A control read error while the status is `Running` drives a reconnect. The
 runner keeps its relay registry and per-Cell state, marks itself
 `Stopped` for the duration, re-dials with the same handshake (same
 `stable_id`) and returns to `Running` on the new stream. Every connect attempt
-retries forever with full-jitter exponential backoff:
-`jittered(min(100 ms × 2^min(attempt, 8), 30 s))` — 200 ms, 400 ms, … 25.6 s,
-capped at 30 s, each drawn from `[base/2, base]`. Reasons (logged, and carried
+retries forever with jittered exponential backoff, the `flz_transport::backoff::Ladder`
+`min(100 ms × 2^min(attempt, 8), cap)` — 200 ms, 400 ms, … 25.6 s — each drawn from
+`[base/2 + 1, base/2 + base]` ms and held at the cap, which is
+`FLEZHA_RECONNECT_MAX_BACKOFF_MS` (default 30 s). Reasons (logged, and carried
 by `[:flezha, :runner, :reconnected]`): `control_stream_broken`, `read_error`,
 `write_error`, `keepalive_timeout`, `controller_requested`, and
 `broken_pipe_flood` from the reliable state output (§7).

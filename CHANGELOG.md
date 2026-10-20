@@ -10,6 +10,15 @@
   `malformed_frames` count in `driver_stats`. The controller skipped such a frame, and kept the
   pairs before a cut one.
 
+### Changed: one backoff and one jitter
+
+- A runner's control-channel reconnect wait is capped by `FLEZHA_RECONNECT_MAX_BACKOFF_MS`
+  (default 30 s) instead of a fixed 30 s. Every runner wait, the reconnect, the tasklet retry,
+  the data-stream connect and the keepalive and heartbeat timers, is jittered by the
+  controller's rule, into `[d/2 + 1, d/2 + d]` ms: the reconnect wait and the two timers could
+  reach only `d` before, and the data-stream connect was not jittered. The controller's
+  control-channel liveness check draws from the same band.
+
 ### Fixed: a controller that finished its shutdown still refuses starts
 
 - A relay start or a runner connect that reached a controller after its graceful shutdown had

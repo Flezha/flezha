@@ -34,11 +34,11 @@ mod common;
 
 /// Sessions the refusal phase drives. Open 1 is immediate; opens 2, 3 and 4
 /// are preceded by rungs 1, 2 and 3 of the `:sdk_reconnect` ladder —
-/// `100 * 2^rung` ms, full-jittered into `[base/2, base]` — so the phase
-/// cannot finish in less than 100 + 200 + 400 ms.
+/// `100 * 2^rung` ms, jittered into `[base/2 + 1, base/2 + base]` — so the
+/// phase cannot finish in less than 100 + 200 + 400 ms.
 const REFUSED_SESSIONS: usize = 4;
 const LADDER_FLOOR: Duration = Duration::from_millis(700);
-/// The same three rungs at their unjittered ceiling (200 + 400 + 800 ms),
+/// The same three rungs at their jittered ceiling (300 + 600 + 1 200 ms),
 /// with room for the connects themselves: a wait that outruns this is the
 /// ladder climbing where it should have reset.
 const LADDER_CEILING: Duration = Duration::from_secs(3);
@@ -272,9 +272,29 @@ fn a_refused_session_backs_the_reconnect_ladder_off() {
         after_admitted
     );
 
+    the_cap_follows_the_environment(&otx, &orx);
+
     drop(controller);
     an_abandoned_start_stops_retrying(&otx);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A runner started with `FLEZHA_RECONNECT_MAX_BACKOFF_MS=2000` never waits
+/// past 2 s. The sessions climb from rung 1 to rung 6, whose 6.4 s delay
+/// jitters to no less than 3.2 s under the default 30 s cap.
+fn the_cap_follows_the_environment(
+    otx: &Arc<Mutex<Sender<RunnerMessage>>>,
+    orx: &Receiver<RunnerMessage>,
+) {
+    std::env::set_var("FLEZHA_RECONNECT_MAX_BACKOFF_MS", "2000");
+    for rung in 1..=6 {
+        let waited = one_session(otx, orx);
+        assert!(
+            waited < Duration::from_millis(2_200),
+            "rung {rung} waited {waited:?}, past the 2 s cap the environment set"
+        );
+    }
+    std::env::remove_var("FLEZHA_RECONNECT_MAX_BACKOFF_MS");
 }
 
 /// With no controller to reach, a starting connect retries until the host

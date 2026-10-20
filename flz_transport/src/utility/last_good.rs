@@ -69,7 +69,7 @@ impl<T: Clone + PartialEq> LastGood<T> {
     }
 }
 
-/// Shuffle in place from the same noise `liveness::jittered` decorrelates
+/// Shuffle in place from the same noise `backoff::jitter` decorrelates
 /// timing with — the jitter argument, applied to choice instead of delay.
 fn shuffle<T>(items: &mut [T]) {
     let mut state = noise() | 1;

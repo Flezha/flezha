@@ -487,7 +487,7 @@ fn spawn_liveness(
 ) -> JoinHandle<()> {
     let bridge = Arc::clone(bridge);
     thread::spawn(move || loop {
-        thread::sleep(liveness::jittered(interval()));
+        thread::sleep(flz_transport::backoff::jitter(interval()));
         let Some(stream) = bridge.control_stream() else {
             break;
         };

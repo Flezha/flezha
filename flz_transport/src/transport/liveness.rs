@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::env::env_ms;
-use crate::utility::noise::noise;
 
 /// Payload id for the steady-state keepalive round-trip. Carried on its own
 /// payload (a bare `Ping`/`PingResponse`), distinct from `"control_command"`,
@@ -48,17 +47,6 @@ pub fn control_keepalive_interval() -> Duration {
 /// controller's stall threshold so a couple of missed beats stay inside it.
 pub fn data_heartbeat_interval() -> Duration {
     env_ms("FLEZHA_DATA_HEARTBEAT_MS", DEFAULT_DATA_HEARTBEAT_MS)
-}
-
-/// Full-jitter a base duration into `[base/2, base]` so a fleet that all
-/// reconnect / keepalive at once spreads its traffic instead of thundering.
-pub fn jittered(base: Duration) -> Duration {
-    let ms = base.as_millis() as u64;
-    if ms < 2 {
-        return base;
-    }
-    let half = ms / 2;
-    Duration::from_millis(half + (noise() % (half + 1)))
 }
 
 /// What the control reader should do after a read error, given the deadline
@@ -243,15 +231,5 @@ mod tests {
         assert_eq!(live.classify_error(&to), ReadAction::Reconnect);
         assert_eq!(live.classify_error(&intr), ReadAction::Retry);
         assert_eq!(live.classify_error(&eof), ReadAction::Reconnect);
-    }
-
-    #[test]
-    fn jitter_stays_within_half_to_base() {
-        let base = Duration::from_millis(1000);
-        for _ in 0..50 {
-            let j = jittered(base);
-            assert!(j >= Duration::from_millis(500), "jitter {:?} below half", j);
-            assert!(j <= base, "jitter {:?} above base", j);
-        }
     }
 }

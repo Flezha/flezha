@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use flz_transport::transport::FlezhaStream;
-use flz_transport::utility::noise::{noise, xorshift64};
 
 use crate::admission::Held;
 use crate::cell::{CellItem, CellSlot};
@@ -112,19 +111,14 @@ pub fn note_parked(label: &str, attempts: u32, error: &dyn Display) {
     );
 }
 
-/// `base * 2^(attempt-1)` ±50 %, capped at
-/// [`crate::channel::RETRY_BACKOFF_MAX_MS`]; the jitter is runtime
-/// scheduling, outside the determinism contract.
+/// `base * 2^(attempt-1)`, jittered, at most [`crate::channel::RETRY_BACKOFF_MAX_MS`].
 fn backoff(base_ms: u64, attempt: u32) -> Duration {
-    let exp = base_ms
-        .max(1)
-        .saturating_mul(1u64 << (attempt.saturating_sub(1)).min(16))
-        .min(crate::channel::RETRY_BACKOFF_MAX_MS);
-    let mut x = noise() | 1;
-    xorshift64(&mut x);
-    // Uniform in [exp/2, exp*1.5), then re-capped.
-    let jittered = exp / 2 + x % exp;
-    Duration::from_millis(jittered.min(crate::channel::RETRY_BACKOFF_MAX_MS))
+    flz_transport::backoff::Ladder {
+        base: Duration::from_millis(base_ms),
+        factor_cap: 16,
+        cap: Duration::from_millis(crate::channel::RETRY_BACKOFF_MAX_MS),
+    }
+    .delay(attempt.saturating_sub(1))
 }
 
 /// What one ladder attempt came to.

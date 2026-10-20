@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::{io, thread};
 
 use crossbeam::channel::Sender;
+use flz_transport::env::env_ms;
 use flz_transport::errors::FlezhaError;
 use flz_transport::service::payloader;
 use flz_transport::transport::config::{
@@ -156,15 +157,15 @@ fn open_with_retry(
     }
 }
 
-/// The wait before an attempt: jitter on the exponential backoff so a
-/// controller restart that drops a whole fleet does not produce a synchronized
-/// reconnect storm. Every SDK over this crate shares `liveness::jittered`,
-/// which spreads `[d/2, d]`.
+const DEFAULT_RECONNECT_CAP_MS: u64 = 30_000;
+
 fn reconnect_backoff(attempt: u32) -> Duration {
-    liveness::jittered(std::cmp::min(
-        Duration::from_millis(100 * 2u64.pow(attempt.min(8))),
-        Duration::from_secs(30),
-    ))
+    flz_transport::backoff::Ladder {
+        base: Duration::from_millis(100),
+        factor_cap: 8,
+        cap: env_ms("FLEZHA_RECONNECT_MAX_BACKOFF_MS", DEFAULT_RECONNECT_CAP_MS),
+    }
+    .delay(attempt)
 }
 
 /// End a control session: record how it ended, then post the reconnect — the

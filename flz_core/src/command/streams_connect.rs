@@ -255,11 +255,12 @@ fn connect_unix(runner_id: &str, stream_type: &str) -> Result<UnixStream, String
                     ));
                 }
                 attempt += 1;
-                let backoff = std::cmp::min(
-                    std::time::Duration::from_millis(10 * 2u64.pow(attempt.min(6))),
-                    std::time::Duration::from_millis(500),
-                );
-                std::thread::sleep(backoff);
+                let backoff = flz_transport::backoff::Ladder {
+                    base: std::time::Duration::from_millis(10),
+                    factor_cap: 6,
+                    cap: std::time::Duration::from_millis(500),
+                };
+                std::thread::sleep(backoff.delay(attempt));
             }
         }
     }

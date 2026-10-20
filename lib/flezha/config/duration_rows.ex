@@ -33,7 +33,8 @@ defmodule Flezha.Config.DurationRows do
     {:k8s_discovery_request_ms, :ms, 15_000, []},
     # One authorization write or snapshot exchanged with another controller.
     {:authz_replica_call_ms, :ms, 5_000, []},
-    {:reconnect_max_backoff_ms, :ms, 30_000, key: true, env: "FLEZHA_RECONNECT_MAX_BACKOFF_MS"},
+    {:reconnect_max_backoff_ms, :ms, 30_000,
+     key: true, env: "FLEZHA_RECONNECT_MAX_BACKOFF_MS", runtimes: [:controller, :rust]},
 
     # ---- control plane: liveness, calls, drains ----------------------------
     {:control_liveness_interval_ms, :ms, 15_000,

@@ -19,6 +19,7 @@ defmodule Flezha.Runner.ControlChannel do
   request.
   """
 
+  alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel.Requests
@@ -414,17 +415,8 @@ defmodule Flezha.Runner.ControlChannel do
     interval = Durations.get(:control_liveness_interval_ms)
 
     if interval > 0,
-      do: arm_timer(state, :liveness, jittered(interval), :liveness_tick),
+      do: arm_timer(state, :liveness, Backoff.jitter(interval), :liveness_tick),
       else: state
-  end
-
-  # Full jitter into [interval/2, interval] so a fleet's control channels do
-  # not all wake in lockstep (mirrors the SDK's `liveness::jittered`).
-  defp jittered(ms) when ms < 2, do: ms
-
-  defp jittered(ms) do
-    half = div(ms, 2)
-    half + :rand.uniform(half + 1) - 1
   end
 
   defp gen_ref() do

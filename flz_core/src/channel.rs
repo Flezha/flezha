@@ -157,7 +157,7 @@ impl OverflowPolicy {
 pub struct RetryPolicy {
     /// Total attempts, first run included.
     pub max_attempts: u32,
-    /// Attempt n backs off `base * 2^(n-1)` ±50 %, capped at
+    /// Attempt n backs off `base * 2^(n-1)`, jittered, capped at
     /// [`RETRY_BACKOFF_MAX_MS`].
     pub backoff_base_ms: u64,
 }

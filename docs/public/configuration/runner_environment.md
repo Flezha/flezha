@@ -25,7 +25,8 @@ What each variable does is below; the type and default of every one is in
 - `FLEZHA_CONTROL_ACK_TIMEOUT_MS`: First-frame ack deadline.
 - `FLEZHA_CONTROL_IDLE_TIMEOUT_MS`: Steady-state idle window.
 - `FLEZHA_CONTROL_KEEPALIVE_MS`: Control-channel ping interval.
-- `FLEZHA_DATA_HEARTBEAT_MS`: `data_heartbeat` interval, jittered into `[base/2, base]`.
+- `FLEZHA_DATA_HEARTBEAT_MS`: `data_heartbeat` interval, jittered into `[base/2 + 1, base/2 + base]` ms. Every runner wait is spread by this one rule, `d/2 + u` with `u` uniform in `1..=d`, the same draw as the controller's own backoff.
+- `FLEZHA_RECONNECT_MAX_BACKOFF_MS`: The cap on a runner's wait between control-channel connect attempts (`100 ms × 2^attempt`, jittered, then held at the cap); the controller reads the same variable for its own reconnects.
 - `FLEZHA_WORKER_POOL_SIZE`: Read today by the Elixir, Java, Python, Ruby and Rust SDKs; the Node and PHP SDKs size their work otherwise. Default: Rust: host parallelism; Java: `2` fetchers; Python and Ruby: the processor count; Elixir: the schedulers online.
 - `FLEZHA_WORKER_POOL_MAX`: The ceiling the starvation supervisor may grow the worker or fetcher set to, read by the same five SDKs. Default: `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it).
 - `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`: How many cells are handed out at once, a steps stage's as well as a flow relay's.
@@ -78,6 +79,7 @@ What each variable does is below; the type and default of every one is in
 | `FLEZHA_QUIC_CLIENT_CERT` | path | `app_data/certs/client.pem` |
 | `FLEZHA_QUIC_CLIENT_KEY` | path | `app_data/certs/client.key` |
 | `FLEZHA_REAP_INTERVAL_MS` | ms | unset |
+| `FLEZHA_RECONNECT_MAX_BACKOFF_MS` | ms | `30000` |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | ms | `30000` |
 | `FLEZHA_RECONNECT_RING_CAPACITY` | positive_int | `1024` |
 | `FLEZHA_RELEASE_BASE_URL` | string | unset |
