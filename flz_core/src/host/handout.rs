@@ -121,12 +121,9 @@ fn work_items_to_schema(slot: &CellSlot, items: &[ItemAttempt]) -> Vec<schema::W
                     form: host.map_or(schema::InputForm::Untransformed, |p| p.form.clone()),
                 })
             }
-            CellItem::Timer(fire) => schema::WorkItem::Timer(schema::TimerItem {
-                kind: fire.kind,
-                scheduled_at: fire.scheduled_at,
-            }),
+            CellItem::Timer(fire) => schema::WorkItem::Timer(fire.firing),
             // Filtered out above; a firing item is the harmless shape.
-            CellItem::CloseInterval => schema::WorkItem::Timer(schema::TimerItem {
+            CellItem::CloseInterval => schema::WorkItem::Timer(schema::TimerFiring {
                 kind: schema::TimerKind::ProcessingTime,
                 scheduled_at: 0,
             }),

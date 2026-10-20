@@ -555,7 +555,7 @@ fn split_outputs(outputs: Vec<schema::Output>) -> (Vec<schema::Output>, Vec<sche
 /// The firing an item is, if it is one.
 fn firing_of(item: &CellItem) -> Option<(crate::timer::TimerKind, u64)> {
     match item {
-        CellItem::Timer(fire) => Some((fire.kind, fire.scheduled_at)),
+        CellItem::Timer(fire) => Some((fire.firing.kind, fire.firing.scheduled_at)),
         CellItem::Input(_) | CellItem::CloseInterval => None,
     }
 }

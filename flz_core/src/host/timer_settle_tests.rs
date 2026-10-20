@@ -86,8 +86,10 @@ fn a_settled_firing_moves_the_fired_counters() {
     let fired_before = timers_fired_total();
     let work = ItemAttempt {
         item: CellItem::Timer(crate::timer::TimerFire {
-            kind: PT,
-            scheduled_at: 500,
+            firing: crate::timer::TimerFiring {
+                kind: PT,
+                scheduled_at: 500,
+            },
             stream: stream_pair().0,
         }),
         now: None,
@@ -203,7 +205,7 @@ fn a_timer_restored_before_the_secondary_stream_fires_once_it_is_installed() {
     crate::state_sink::set_secondary_stream(None);
 
     match slot.mailbox.pop() {
-        Some(CellItem::Timer(fire)) => assert_eq!(fire.scheduled_at, 1),
+        Some(CellItem::Timer(fire)) => assert_eq!(fire.firing.scheduled_at, 1),
         _ => panic!("the restored timer did not fire after the install"),
     }
 }

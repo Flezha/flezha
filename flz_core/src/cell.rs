@@ -340,7 +340,7 @@ impl CellSlot {
                     None => "input".to_string(),
                 },
                 CellItem::Timer(fire) => {
-                    format!("{:?} timer for {}", fire.kind, fire.scheduled_at)
+                    format!("{:?} timer for {}", fire.firing.kind, fire.firing.scheduled_at)
                 }
                 CellItem::CloseInterval => "checkpoint interval close".to_string(),
             },

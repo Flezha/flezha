@@ -284,7 +284,7 @@ impl Run<'_> {
             // A Cell in the middle of an invocation holds its set: that answer
             // waits for the assembly, which drops a firing no longer pending.
             let pending = firing.slot.timers.try_lock().map_or(true, |pending| {
-                pending.contains(firing.fire.kind, firing.fire.scheduled_at)
+                pending.contains(firing.fire.firing.kind, firing.fire.firing.scheduled_at)
             });
             return self.decide(|d| d.start_firing(firing, pending));
         }

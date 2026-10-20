@@ -43,7 +43,7 @@ fn work_activation() -> Activation {
                 now: 1_000,
                 form: InputForm::Prepared(vec![vec![0x0C]]),
             }),
-            WorkItem::Timer(TimerItem {
+            WorkItem::Timer(TimerFiring {
                 kind: TimerKind::EventTime,
                 scheduled_at: 2_000,
             }),

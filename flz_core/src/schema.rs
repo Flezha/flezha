@@ -66,7 +66,7 @@ pub enum ActivationKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WorkItem {
     Input(InputItem),
-    Timer(TimerItem),
+    Timer(TimerFiring),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,10 +103,11 @@ impl InputForm {
     }
 }
 
-/// A validated firing; its `now` IS `scheduled_at`, so a chained
-/// `timer_after` is replay-stable.
+/// One timer firing: the clock it was scheduled against and the timestamp it
+/// was scheduled at. Its `now` IS `scheduled_at`, so a chained `timer_after`
+/// is replay-stable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TimerItem {
+pub struct TimerFiring {
     pub kind: TimerKind,
     pub scheduled_at: u64,
 }
@@ -358,7 +359,7 @@ mod tests {
                     now: 1000,
                     form: InputForm::Transformed,
                 }),
-                WorkItem::Timer(TimerItem {
+                WorkItem::Timer(TimerFiring {
                     kind: TimerKind::ProcessingTime,
                     scheduled_at: 2000,
                 }),

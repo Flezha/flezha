@@ -240,8 +240,8 @@ impl Firing {
     pub(crate) fn key(&self) -> FiringKey {
         FiringKey {
             cell_key: self.slot.cell_key.clone(),
-            kind: self.fire.kind,
-            scheduled_at: self.fire.scheduled_at,
+            kind: self.fire.firing.kind,
+            scheduled_at: self.fire.firing.scheduled_at,
         }
     }
 }

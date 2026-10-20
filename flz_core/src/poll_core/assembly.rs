@@ -14,7 +14,7 @@ use super::ItemAttempt;
 use crate::cell::{CellItem, CellPayload, CellSlot};
 use crate::channel::RetryPolicy;
 use crate::correction::Lateness;
-use crate::timer::{TimerFire, TimerKind};
+use crate::timer::{TimerFire, TimerFiring, TimerKind};
 use crate::util::LockRecover;
 
 pub(super) fn closed_slice_pending(slot: &Arc<CellSlot>) -> bool {
@@ -279,10 +279,10 @@ fn stage_timer(
     if slot
         .timers
         .lock_recover()
-        .contains(fire.kind, fire.scheduled_at)
+        .contains(fire.firing.kind, fire.firing.scheduled_at)
     {
         items.push(ItemAttempt {
-            now: Some(fire.scheduled_at),
+            now: Some(fire.firing.scheduled_at),
             attempt: 1,
             is_final: 1 >= policy.max_attempts,
             item: CellItem::Timer(fire),
@@ -421,8 +421,10 @@ fn push_due_event_timers(
                 attempt: 1,
                 is_final: 1 >= policy.max_attempts,
                 item: CellItem::Timer(TimerFire {
-                    kind: TimerKind::EventTime,
-                    scheduled_at,
+                    firing: TimerFiring {
+                        kind: TimerKind::EventTime,
+                        scheduled_at,
+                    },
                     stream: Arc::clone(stream),
                 }),
             });

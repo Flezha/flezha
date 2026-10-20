@@ -386,8 +386,10 @@ fn off_the_tier_every_sink_output_of_a_called_input_carries_the_call() {
     // A timer firing answers nobody.
     let (mut work, effect) = answering_work(Arc::clone(&stream), None);
     work.item = CellItem::Timer(crate::timer::TimerFire {
-        kind: crate::timer::TimerKind::ProcessingTime,
-        scheduled_at: 1,
+        firing: crate::timer::TimerFiring {
+            kind: crate::timer::TimerKind::ProcessingTime,
+            scheduled_at: 1,
+        },
         stream: Arc::clone(&stream),
     });
     settle_stamped(&producer, work, effect);

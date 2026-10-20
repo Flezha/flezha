@@ -143,7 +143,7 @@ impl Decide<'_, '_, '_> {
         let Some(stage) = self.open_timer_pass(firing.node, key.clone()) else {
             return;
         };
-        if firing.fire.kind == TimerKind::EventTime {
+        if firing.fire.firing.kind == TimerKind::EventTime {
             stage.claim = Some(key);
             self.fx.ready.push(firing.slot);
             return;

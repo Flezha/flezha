@@ -16,7 +16,7 @@ use super::PollCore;
 use crate::cell::{CellItem, CellSlot};
 use crate::dynamic::DynamicCellRegistry;
 use crate::relay::Deadline;
-use crate::timer::{TimerFire, TimerKind};
+use crate::timer::{TimerFire, TimerFiring, TimerKind};
 use crate::util::LockRecover;
 
 /// How long a wake whose target mailbox was full waits before the next try;
@@ -343,8 +343,10 @@ fn timer_target(
 ) -> Option<(Arc<CellSlot>, CellItem, Wake)> {
     let live = slot.upgrade()?;
     let fire = TimerFire {
-        kind: TimerKind::ProcessingTime,
-        scheduled_at,
+        firing: TimerFiring {
+            kind: TimerKind::ProcessingTime,
+            scheduled_at,
+        },
         stream: Arc::clone(&stream),
     };
     // A steps relay's firing is a trigger of its run: the pass sheet decides

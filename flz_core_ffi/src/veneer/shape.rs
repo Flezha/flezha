@@ -497,7 +497,7 @@ fn input_item<S: Sink>(s: &S, i: schema::InputItem) -> Result<S::Value, S::Error
     s.finish_map(out)
 }
 
-fn timer_item<S: Sink>(s: &S, t: schema::TimerItem) -> Result<S::Value, S::Error> {
+fn timer_item<S: Sink>(s: &S, t: schema::TimerFiring) -> Result<S::Value, S::Error> {
     let mut out = s.map()?;
     set_word(s, &mut out, KIND, word::TIMER)?;
     set_word(s, &mut out, TIMER_KIND, t.kind.as_str())?;

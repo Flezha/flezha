@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::cell::CellSlot;
 use crate::error::Code;
 use crate::host::HostClock;
-pub use crate::schema::{TimerKind, TimerOp};
+pub use crate::schema::{TimerFiring, TimerKind, TimerOp};
 use crate::util::LockRecover;
 
 /// A refused timer registration.
@@ -127,8 +127,7 @@ impl PendingTimers {
 /// `on_timer`'s emits leave on.
 #[derive(Clone)]
 pub struct TimerFire {
-    pub kind: TimerKind,
-    pub scheduled_at: u64,
+    pub firing: TimerFiring,
     pub stream: Arc<FlezhaStream>,
 }
 
