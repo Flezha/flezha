@@ -193,6 +193,7 @@ mix bench.steps --scenario chain -n 1000 --tasks 4 -c 100
 mix bench.steps --scenario chain -n 2000 --tasks 4 --rate 200
 mix bench.steps --scenario turns -n 100 -m 100 --rate 1000
 mix bench.steps --scenario turns -n 100 --duration 600 --rate 500 --kill-runner-at 120
+mix bench.steps --scenario turns -n 100 -m 100 --rate 1000 --compensating
 mix bench.steps --scenario sleep -n 10000 --wake-after-ms 15000
 mix bench.steps --scenario sleep -n 10000 --keep
 mix bench.steps --scenario sleep-boot -n 10000
@@ -201,7 +202,7 @@ mix bench.steps --scenario sleep-boot -n 10000
 | Scenario     | What it measures                                                                                                                                                                                                                |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `chain`      | Spawn `-n` run-once steps relays of `bench_chain_<tasks>` (`--tasks 1\|4\|16`; `--tier optout` picks `bench_chain_optout_4`, the persistence-off twin), each seeded with `"<seq>,<send_ts_ns>"` passed through to the output. `-c N` keeps N in flight (closed loop), `--rate R` spawns R/s (open loop); neither = one burst. |
-| `turns`      | Spawn `-n` `bench_loop_steps` instances, send `-m` turns each round-robin (`--rate` total turns/s, else unpaced under an in-flight cap) and measure the reply. `--duration S` sizes `-m` from the rate; `--kill-runner-at S` SIGKILLs one runner S seconds in. |
+| `turns`      | Spawn `-n` `bench_loop_steps` instances, send `-m` turns each round-robin (`--rate` total turns/s, else unpaced under an in-flight cap) and measure the reply. `--duration S` sizes `-m` from the rate; `--kill-runner-at S` SIGKILLs one runner S seconds in. `--compensating` drives `chat_rewind_steps`, whose reply tasklet keeps state and overrides `compensate`, so each turn also writes a compensation-intent marker (its class ends an instance after 600 s). |
 | `sleep`      | Spawn `-n` loops, one turn each, wait until every instance has parked; report resting cost per sleeper and the convergence tick time, then a message wake storm (`--wake-rate R` paces it, `--no-wake` skips it) and, with `--wake-after-ms`, a timer wake storm. `--keep` leaves the namespace for `sleep-boot`. |
 | `sleep-boot` | Boot over the namespace `sleep --keep` left: time until every sleeper is back as a suspended Overwatch, then the same wake storm.                                                                                               |
 

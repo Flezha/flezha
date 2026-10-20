@@ -16,6 +16,7 @@ defmodule Mix.Tasks.Bench.Steps do
       mix bench.steps --scenario chain -n 2000 --tasks 4 --rate 200
       mix bench.steps --scenario turns -n 100 -m 100 --rate 1000
       mix bench.steps --scenario turns -n 100 --duration 600 --rate 500 --kill-runner-at 120
+      mix bench.steps --scenario turns -n 100 -m 100 --rate 1000 --compensating
       mix bench.steps --scenario sleep -n 10000 --wake-after-ms 15000
       mix bench.steps --scenario sleep -n 10000 --keep
       mix bench.steps --scenario sleep-boot -n 10000
@@ -31,6 +32,9 @@ defmodule Mix.Tasks.Bench.Steps do
       round-robin (`--rate` total turns/s, else unpaced under an in-flight cap)
       and measure the reply. `--duration S` sizes `-m` from the rate.
       `--kill-runner-at S` SIGKILLs one runner S seconds into the turns.
+      `--compensating` drives `chat_rewind_steps` instead, whose reply tasklet
+      keeps state and overrides `compensate`, so every turn also writes a
+      compensation-intent marker; its class ends an instance after 600 s.
     * `sleep` — spawn `-n` loops, one turn each, wait until every instance has
       suspended; report the controller's resting cost per sleeper and the
       convergence tick time, then a message wake storm (one turn to every
@@ -66,6 +70,7 @@ defmodule Mix.Tasks.Bench.Steps do
     wake_rate: :integer,
     warm_turn: :boolean,
     no_wake: :boolean,
+    compensating: :boolean,
     runtime: :string
   ]
 
@@ -122,7 +127,7 @@ defmodule Mix.Tasks.Bench.Steps do
     scenario = parse_scenario(opts[:scenario] || "chain")
     tasks = opts[:tasks] || 4
     tier = opts[:tier] || "durable"
-    factory = fixture(scenario, tier, tasks)
+    factory = fixture(scenario, tier, tasks, opts[:compensating] || false)
 
     n = opts[:num] || 100
     rate = opts[:rate] || 0
@@ -165,13 +170,20 @@ defmodule Mix.Tasks.Bench.Steps do
   defp parse_scenario("sleep-boot"), do: :sleep_boot
   defp parse_scenario(other), do: raise("unknown --scenario #{inspect(other)}")
 
-  # The test-app fixture each scenario drives. Only the chain has variants, and
-  # only the ones its factories exist for.
-  defp fixture(:chain, "durable", tasks) when tasks in [1, 4, 16], do: "bench_chain_#{tasks}"
-  defp fixture(:chain, "optout", 4), do: "bench_chain_optout_4"
+  # The test-app fixture each scenario drives, and only the variants its
+  # factories exist for.
+  defp fixture(:turns, _tier, _tasks, true), do: "chat_rewind_steps"
 
-  defp fixture(:chain, _tier, _tasks),
+  defp fixture(_scenario, _tier, _tasks, true),
+    do: raise("--compensating: the turns scenario only")
+
+  defp fixture(:chain, "durable", tasks, false) when tasks in [1, 4, 16],
+    do: "bench_chain_#{tasks}"
+
+  defp fixture(:chain, "optout", 4, false), do: "bench_chain_optout_4"
+
+  defp fixture(:chain, _tier, _tasks, false),
     do: raise("chain fixtures: --tasks 1|4|16 --tier durable, or --tasks 4 --tier optout")
 
-  defp fixture(_scenario, _tier, _tasks), do: "bench_loop_steps"
+  defp fixture(_scenario, _tier, _tasks, false), do: "bench_loop_steps"
 end
