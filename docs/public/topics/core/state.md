@@ -343,7 +343,7 @@ that sleeps, or of a class kept in memory, cannot be read this way. The other
 | --- | --- | --- | --- | --- |
 | Schema version: bump it on a change to the state or change types that is not purely additive. A restore refuses a version above the running one, or below the readable floor, by name | `Tasklet::SCHEMA_VERSION` | `@Tasklet.Spec(schemaVersion = n)` | `schema_version/0`, with `min_readable_schema_version/0` as the floor | 1 |
 | Log size at which the controller asks for a snapshot | `Tasklet::compact_after_bytes()` | `@Tasklet.Spec(compactAfterBytes = n)` | `compact_after_bytes/0` | 8 MiB |
-| Pending-timer cap per cell; past it, registering a timer fails with `runtime.timer_cap_exceeded` | `Tasklet::max_timers_per_cell()` | `@Tasklet.Spec(maxTimersPerCell = n)` | `max_timers_per_cell/0` | 10 000 |
+| Pending-timer cap per cell; past it, the item fails with `runtime.timer_cap_exceeded` (in Rust, the call) | `Tasklet::max_timers_per_cell()` | `@Tasklet.Spec(maxTimersPerCell = n)` | `max_timers_per_cell/0` | 10 000 |
 | Wait between flushes of recorded changes | `FLEZHA_FLUSH_LINGER_MS` | `FLEZHA_FLUSH_LINGER_MS` | none: records ship at the end of each invocation | 5 ms |
 
 The Node, Python, Ruby and PHP SDKs carry the same settings under their own

@@ -341,9 +341,8 @@ payload), `now/1` (the declared clock's value, once per invocation; the schedule
 inside `on_timer/4`), `cell_key/1`, and the timer four
 — `timer_after/2` (milliseconds after `now/1`), `timer_at_event_time/2`,
 `cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
-`{:ok, at}`, the absolute timestamp a cancel takes, or
-`runtime.event_time_timer_without_event_time_clock` /
-`runtime.timer_cap_exceeded`; inside a `compensate/3` hook all four answer
+`{:ok, at}`, the absolute timestamp a cancel takes, and a cancel `:ok`; inside a
+`compensate/3` hook all four answer
 `runtime.timers_unavailable` (see [Timers and clocks](#timers-and-clocks)).
 `spawn_steps(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a steps relay
 instance, `id:` and `if_running:` optional, with `payload` sent as an output with no codec sends a
@@ -451,11 +450,11 @@ Inside `on_timer/4`, `now/1` is the scheduled timestamp under every clock, so a 
 
 A Tasklet registers a deadline from `run/3` or from a firing and handles it in
 `on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers
-are one set per kind, bounded by `max_timers_per_cell/0`: a duplicate registration is a
-no-op, a cancel of nothing answers `false`. After a restart or a move the SDK reads the
-pending set the core restored before the Cell's first invocation, so a cancel and the cap see
-every timer registered before it. An invocation's registrations and cancellations
-commit only when it completes. A firing on a Tasklet that exports no `on_timer/4` parks
+are one set per kind, kept by the core and bounded by `max_timers_per_cell/0`: a duplicate
+registration is a no-op, and so is a cancel of nothing. An invocation's registrations and
+cancellations reach the core only when it completes, which judges them as the item settles:
+past the cap, or an event-time timer under another clock, the item fails, not retried, with
+`runtime.timer_cap_exceeded` / `runtime.event_time_timer_without_event_time_clock`. A firing on a Tasklet that exports no `on_timer/4` parks
 non-retryably naming the tasklet and the callback. Only a `compensate` hook runs with
 timers unavailable: there each of the four ctx timer calls answers
 `runtime.timers_unavailable` and arms nothing. When each kind fires, and how pending timers

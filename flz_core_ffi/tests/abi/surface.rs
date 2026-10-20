@@ -111,11 +111,7 @@ fn the_fixture_is_the_table() {
 
 #[test]
 fn the_jni_rows_are_the_java_surface() {
-    let jni = || {
-        SURFACE
-            .iter()
-            .filter(|entry| matches!(entry.reach, Reach::Jni | Reach::Every))
-    };
+    let jni = || SURFACE.iter().filter(|entry| entry.reach == Reach::Every);
     let rows = jni()
         .map(|entry| format!("{}|{}", entry.camel_name(), entry.abi))
         .collect();

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed: timers are judged once, in the core
+
+- **BREAKING:** in the Java, Elixir, Python, Ruby, PHP and Node SDKs the timer cap and the
+  event-time clock rule are judged by the core when an item settles, not at the call. An item
+  whose registrations pass `max_timers_per_cell`, or that sets an event-time timer under
+  another clock, fails, not retried, with `runtime.timer_cap_exceeded` or
+  `runtime.event_time_timer_without_event_time_clock`, and parks as any failed item does; its
+  recorded changes are kept. The Rust SDK still refuses at the call.
+- **BREAKING:** Java's `cancelEventTimeTimer` and `cancelProcessingTimeTimer` return `void`,
+  and Elixir's two cancels answer `:ok`: neither SDK keeps a copy of the pending set any more.
+  Elixir's timer calls no longer answer a refusal.
+- Python (`max_timers_per_cell=`), Ruby (`max_timers_per_cell n`), PHP
+  (`#[Task(maxTimersPerCell: n)]`) and Node (`maxTimersPerCell`) declare the cap, 10 000 unset.
+- A settled firing moves the per-tasklet fired counter and the heartbeat's `timers_fired` for
+  every SDK.
+- **BREAKING:** the C ABI entry `flz_core_pending_timers` and Java's `FlzCore.pendingTimers`
+  are removed.
+
 ### Changed: a relay binds its runner once
 
 - **BREAKING:** the application env `:hub_runner_assign_wait_ms` is removed. A hub start no

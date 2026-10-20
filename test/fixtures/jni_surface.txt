@@ -33,7 +33,6 @@ part|flz_core_part
 effectBegin|flz_core_effect_begin
 effectEnd|flz_core_effect_end
 effectRelease|flz_core_effect_release
-pendingTimers|flz_core_pending_timers
 adminCall|flz_core_admin_call
 sendMessage|flz_core_send_message
 relays|flz_core_relays

@@ -350,7 +350,7 @@ one already commits stage by stage.
 
 A tasklet of a steps relay registers timers as a flow tasklet does, and a
 firing runs as a pass of its own ([`../../public/topics/core/timers.md`](../../public/topics/core/timers.md));
-only a `compensate` hook's context carries no timer session, and there every
+only a `compensate` hook's context records no timer ops, and there every
 timer call throws a `FlezhaException` with the code `runtime.timers_unavailable`.
 A `spawnSteps` naming a flow factory reads `relay.factory_not_steps`. A flow
 tasklet's `complete` ends its instance once the work its cells hold has run.

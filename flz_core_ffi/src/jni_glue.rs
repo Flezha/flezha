@@ -448,43 +448,6 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_part<'l>(
     report(&mut env, outcome);
 }
 
-/// The pending timers of the Cell `token` runs, as `[kind, at, kind, at, ...]`
-/// with kind `0` for event time and `1` for processing time.
-#[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_pendingTimers<'l>(
-    mut env: JNIEnv<'l>,
-    _class: JClass,
-    ctx: jlong,
-    token: jlong,
-) -> jlongArray {
-    let pairs = veneer::pending_timers(ctx_of(ctx), token as u64).map(|ops| {
-        ops.iter()
-            .flat_map(|op| {
-                let kind = match op.kind {
-                    flz_core::schema::TimerKind::EventTime => 0,
-                    flz_core::schema::TimerKind::ProcessingTime => 1,
-                };
-                [kind, op.scheduled_at as i64]
-            })
-            .collect::<Vec<i64>>()
-    });
-    let array = pairs.and_then(|pairs| {
-        let array = env
-            .new_long_array(pairs.len() as i32)
-            .map_err(|e| Refusal::Shape(format!("timer array failed: {e}")))?;
-        env.set_long_array_region(&array, 0, &pairs)
-            .map_err(|e| Refusal::Shape(format!("timer array failed: {e}")))?;
-        Ok(array)
-    });
-    match array {
-        Ok(array) => array.into_raw(),
-        Err(refusal) => {
-            throw(&mut env, &refusal);
-            std::ptr::null_mut()
-        }
-    }
-}
-
 /// A byte answer as a Java `byte[]`, `null` for none; a refusal is thrown and
 /// answers `null`.
 fn bytes_or_throw(env: &mut JNIEnv, answer: Result<Option<Vec<u8>>, Refusal>) -> jbyteArray {

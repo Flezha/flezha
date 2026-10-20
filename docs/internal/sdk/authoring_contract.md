@@ -370,7 +370,10 @@ register a per-Cell deadline, and `Tasklet::on_timer` /
 `Tasklet.onTimer` / `on_timer/4` handles the firing with the same state and
 context `run` gets.
 Registration returns the absolute timestamp it is scheduled at; that value is
-the handle a cancellation takes.
+the handle a cancellation takes. The cap (`max_timers_per_cell`) and the
+clock rule are judged once: Rust at the call; for every hosted SDK the core,
+when the item settles, failing it not retried. No hosted SDK keeps a copy of
+the pending set.
 
 Three rules make the callback part of the determinism contract:
 

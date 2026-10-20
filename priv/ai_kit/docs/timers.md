@@ -63,10 +63,12 @@ In the host SDKs, `kind` is `"processing_time"` or `"event_time"`. The Elixir fu
 
 - Setting a timer returns its **absolute** scheduled time, which is what a cancel takes.
 - Pending timers are a **set**: setting the same timer twice is one timer, and cancelling one
-  that is not set changes nothing.
-- An event-time timer needs an event-time clock: the tasklet must declare `event_time(input)`
-  (Rust), `eventTime(input)` (Java) or `event_time/1` (Elixir). Otherwise it is refused as
-  `runtime.event_time_timer_without_event_time_clock`.
+  that is not set changes nothing. A Rust cancel answers whether one was pending; the others
+  answer nothing (Elixir `:ok`).
+- An event-time timer needs an event-time clock: the tasklet must write its event-time
+  function (`event_time`, `eventTime` or `event_time/1`). Otherwise it is refused as
+  `runtime.event_time_timer_without_event_time_clock`: in Rust at the call; in the other SDKs
+  the item fails when it settles, as [Bounds and observing](#bounds-and-observing) describes.
 - A tasklet that sets a timer must handle it. Setting one is a runtime call, so a missing
   handler cannot be caught at build time: the default `on_timer` panics (Rust) or throws (Java)
   naming the tasklet; in Node, Python, Ruby and PHP a firing on a tasklet without the callback
@@ -184,9 +186,16 @@ uses a timer.
 
 ## Bounds and observing
 
-- `max_timers_per_cell()` / `maxTimersPerCell()` (default 10 000) bounds a cell's pending set.
-  Setting a timer past it is refused as `runtime.timer_cap_exceeded`, naming the tasklet and
-  the bound.
+- `max_timers_per_cell` (default 10 000) bounds a cell's pending set: `max_timers_per_cell()`
+  in Rust, `@Tasklet.Spec(maxTimersPerCell = n)` in Java, `maxTimersPerCell` in Node and in
+  PHP's `#[Task]`, `max_timers_per_cell` in Python and Ruby, `max_timers_per_cell/0` in
+  Elixir. Setting a timer past it is refused as `runtime.timer_cap_exceeded`, naming the
+  tasklet and the bound.
+- Rust refuses at the call. In the other SDKs the core judges an item's timer calls when the
+  item settles, against the cell's pending set: an item a refusal names fails, not retried,
+  and parks like any failed item (in a steps relay, its stage fails). Its outputs and timer
+  registrations are dropped and its recorded changes kept, so the live state and a restored
+  one agree.
 - Per tasklet, counters track pending, set, fired, cancelled and refused timers. Every runner
   heartbeat carries `timers_armed` (processing-time timers waiting, across the runner) and
   `timers_fired`. A `timers_fired` that stops moving while `timers_armed` climbs means firings

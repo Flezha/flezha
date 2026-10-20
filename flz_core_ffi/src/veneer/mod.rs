@@ -32,8 +32,6 @@ pub enum Reach {
     CAbi,
     /// The C ABI and the Python, Ruby and Node glue.
     Glue,
-    /// The C ABI and JNI.
-    Jni,
     /// Every binding.
     Every,
 }
@@ -122,7 +120,6 @@ pub const SURFACE: &[Entry] = surface![
     // For the controller to keep the result.
     (effect_end, true, Every),
     (effect_release, false, Every),
-    (pending_timers, false, Jni),
     (admin_call, true, Every),
     // For the controller's answer, or while a local consumer's mailbox is full.
     (send_message, true, Every),
@@ -475,19 +472,6 @@ pub fn part(ctx: CtxPtr, token: u64, item: u32, payload: &[u8]) -> Result<(), Re
     verdict(ctx, unsafe {
         crate::flz_core_part(ctx.get(), token, item, payload.as_ptr(), payload.len())
     })
-}
-
-/// The pending timers of the Cell `token` runs, as registrations.
-pub fn pending_timers(ctx: CtxPtr, token: u64) -> Result<Vec<schema::TimerOp>, Refusal> {
-    let (status, ops) = with_buffer(
-        &[FLZ_OK],
-        |out, out_len| unsafe { crate::flz_core_pending_timers(ctx.get(), token, out, out_len) },
-        |bytes| postcard::from_bytes::<Vec<schema::TimerOp>>(bytes),
-    );
-    match (status, ops) {
-        (FLZ_OK, Some(Ok(ops))) => Ok(ops),
-        _ => Err(core(ctx)),
-    }
 }
 
 /// What a begun `ctx.effect` does next.

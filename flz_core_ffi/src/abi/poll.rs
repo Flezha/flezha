@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use flz_core::poll_core::{EngineActivation, Polled, Starvation};
+use flz_core::poll_core::{Polled, Starvation};
 use flz_core::schema;
 
 use crate::{
@@ -169,42 +169,4 @@ pub unsafe extern "C" fn flz_core_part(
         Ok(_) => FLZ_OK,
         Err(refusal) => ctx.fail(refusal.into()),
     }
-}
-
-/// The pending timers of the Cell an outstanding work activation runs, as the
-/// core keeps them. A restore hands a host its state and not its timers, so a
-/// host that keeps its own copy reads them here once after one. On [`FLZ_OK`],
-/// `*buf_out`/`*len_out` hold the postcard `Vec<TimerOp>`, each a
-/// registration; free with [`flz_core_buf_free`].
-///
-/// # Safety
-/// `ctx` must be live; `buf_out`/`len_out` must be valid writable pointers.
-#[no_mangle]
-pub unsafe extern "C" fn flz_core_pending_timers(
-    ctx: *mut FlzContext,
-    token: u64,
-    buf_out: *mut *mut u8,
-    len_out: *mut usize,
-) -> i32 {
-    live!(ctx);
-    let ops = match ctx.outstanding.get(&token).as_deref() {
-        Some(Outstanding {
-            activation:
-                EngineActivation {
-                    payload: flz_core::poll_core::EnginePayload::Work { slot, .. },
-                    ..
-                },
-            ..
-        }) => {
-            use flz_core::util::LockRecover;
-            slot.timers.lock_recover().as_register_ops()
-        }
-        _ => return ctx.fail(Error::UnknownToken(token)),
-    };
-    hand_out(
-        postcard::to_stdvec(&ops).expect("timer ops encode"),
-        buf_out,
-        len_out,
-    );
-    FLZ_OK
 }

@@ -125,6 +125,7 @@ The keywords `flezha.tasklet` takes beside `name`:
 | `cell_keys` | a fixed set of cells, routed by `cells_for` |
 | `idle_ttl_seconds` | how long an idle dynamic cell lives, a positive whole number of seconds; unset keeps it |
 | `max_cells`, `mailbox_capacity` | the cap on cells, and each cell's mailbox |
+| `max_timers_per_cell` | the pending timers one cell may hold, 10 000 unset; an item past it fails |
 | `logical_clock` | a clock that counts the tasklet's changes |
 | `schema_version`, `min_readable_schema_version` | the saved state's version, and the oldest it reads through `migrate_state` / `migrate_change` |
 | `state`, `change` | the state and change classes, when the hints do not name them |

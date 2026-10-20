@@ -14,12 +14,19 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
   Cell's state comes back through, re-arms the wheel, and the session still
   closes — on a fresh SDK-side instance, from a timer nobody re-registered.
 
+  The third holds the core's judgement at settle: on `timer_cap` (2 pending
+  timers per Cell) a registration past the cap, and an event-time timer under
+  a wall clock, each fail their item into the dead-letter queue naming the
+  refusal, and the Cell a restore rebuilds from its records reads as the live
+  one did.
+
   Tagged `:system` (boots a real subprocess); the Java arm additionally needs
   Run with `mix test --include system test/system/cell_timers_e2e_test.exs`.
   """
 
   use FlezhaTest.SystemCase, capability: :cell_timers
 
+  alias Flezha.Dlq.Store
   alias Flezha.Relay.Builder
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
@@ -40,6 +47,41 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
 
   test "a pending timer survives a re-seat from disk and still fires" do
     run_crash_case()
+  end
+
+  test "an item past the timer cap or the clock fails, and a restore reads as the live Cell" do
+    isolate_dlq()
+    namespace = "timers_cap"
+    {port, _ce_id} = start_runner(namespace)
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
+
+    relay_id = "timer_cap_e2e_#{System.unique_integer([:positive])}"
+    assert {:ok, _info} = start_relay(namespace, relay_id, "timer_cap")
+    await_readable(namespace, relay_id)
+
+    # Hours apart, so none fires: the third passes the cap of 2 and `event`
+    # is an event-time timer under a wall clock.
+    for value <- ["1", "2", "3", "event"],
+        do: RelayManager.send_io(relay_id, namespace, value, %{"input_type" => "2"})
+
+    assert NodeTestHelper.wait_until(fn -> length(Store.list(relay_id)) == 2 end, 30_000, 100),
+           "both refused items park, got #{inspect(Store.list(relay_id))}"
+
+    errors = Enum.map(Store.list(relay_id), & &1["error"])
+    assert Enum.any?(errors, &(&1 =~ "runtime.timer_cap_exceeded")), inspect(errors)
+
+    assert Enum.any?(errors, &(&1 =~ "runtime.event_time_timer_without_event_time_clock")),
+           inspect(errors)
+
+    live = state_of(namespace, relay_id)
+    TierE2EHarness.force_fresh_rebind(namespace, relay_id)
+
+    assert NodeTestHelper.wait_until(
+             fn -> state_of(namespace, relay_id) == live end,
+             30_000,
+             100
+           ),
+           "restored #{inspect(state_of(namespace, relay_id))}, live was #{inspect(live)}"
   end
 
   # One input, then silence. The only thing that can produce a `closed_at` is
@@ -143,16 +185,26 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     )
   end
 
-  defp start_relay(namespace, relay_id) do
-    result =
-      RelayManager.start_relay(namespace, %Builder{
-        id: relay_id,
-        factory_id: @factory,
-        init_values: %{},
-        opts: []
-      })
+  defp start_relay(namespace, relay_id, factory \\ @factory) do
+    RelayManager.start_relay(namespace, %Builder{
+      id: relay_id,
+      factory_id: factory,
+      init_values: %{},
+      opts: []
+    })
+  end
 
-    result
+  defp isolate_dlq do
+    dir =
+      Path.join(System.tmp_dir!(), "flezha_timer_cap_dlq_#{System.unique_integer([:positive])}")
+
+    original = Application.get_env(:flezha, :dlq, [])
+    Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, dir))
+
+    on_exit(fn ->
+      Application.put_env(:flezha, :dlq, original)
+      File.rm_rf!(dir)
+    end)
   end
 
   defp state_of(namespace, relay_id) do

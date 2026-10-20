@@ -56,7 +56,6 @@ lib/flezha/state/wal_writer/epoch.ex::do_rewind 53
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
 sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 53
 sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51
-sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/RelayInstance.java::runItem 64
 sdk/node/src/definition.ts::defineTasklet 66
 sdk/node/src/dispatch.ts::answer 54
 sdk/node/src/dispatch.ts::runWork 73

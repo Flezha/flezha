@@ -35,7 +35,6 @@ flz_core_local_start
 flz_core_local_stop
 flz_core_monotonic_nanos
 flz_core_part
-flz_core_pending_timers
 flz_core_poll
 flz_core_relays
 flz_core_response_decode
