@@ -337,19 +337,16 @@ impl Decide<'_, '_, '_> {
                 // re-forwards it, and that message's pass resumes.
                 return self.enter_waiting();
             }
-            self.s.phase = Phase::Starting;
-            self.fx.start = Some(match timer {
+            return self.start(match timer {
                 Some(origin) => Source::Resumed {
                     origin,
                     channel: self.entry_point().0,
                 },
                 None => carried,
             });
-            return;
         }
         if self.s.iter > 0 && self.r.spec.each.carries_leaf() {
-            self.s.phase = Phase::Starting;
-            self.fx.start = Some(carried);
+            self.start(carried);
         } else {
             self.enter_waiting();
         }

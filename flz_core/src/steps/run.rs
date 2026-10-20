@@ -94,18 +94,20 @@ impl<'a> Run<'a> {
         self.run.me.clone()
     }
 
-    /// Decide under the sheet lock, then act on what was decided.
-    pub(super) fn decide(&self, f: impl FnOnce(&mut Decide<'_, '_, '_>)) {
+    /// Decide under the sheet lock, then act on what was decided; what the
+    /// decision answered comes back.
+    pub(super) fn decide<T>(&self, f: impl FnOnce(&mut Decide<'_, '_, '_>) -> T) -> T {
         let mut fx = Effects::default();
-        {
+        let answer = {
             let mut sheet = self.run.sheet();
             f(&mut Decide {
                 r: self,
                 s: &mut sheet,
                 fx: &mut fx,
-            });
-        }
+            })
+        };
         self.act(fx);
+        answer
     }
 }
 
@@ -444,19 +446,18 @@ impl Decide<'_, '_, '_> {
         self.fx.completed = Some((status.to_string(), error, result));
     }
 
-    /// `cancelled` when a stop tripped the token, else the error.
-    pub(super) fn abnormal(&self, error: &StepsError) -> (String, String) {
-        if self.cancelled() {
-            ("cancelled".to_string(), String::new())
-        } else {
-            ("error".to_string(), error.message.clone())
-        }
-    }
-
     /// A clean end with nothing left to run: `cancelled` when a stop asked.
     pub(super) fn finish_clean(&mut self) {
         let status = if self.cancelled() { "cancelled" } else { "ok" };
         self.terminal(status, String::new(), Vec::new());
+    }
+
+    /// Seed a pass from `source` once the lock is let go of. Inlined: it runs
+    /// per message.
+    #[inline(always)]
+    pub(super) fn start(&mut self, source: Source) {
+        self.s.phase = Phase::Starting;
+        self.fx.start = Some(source);
     }
 
     /// Whether the current iteration takes its seed from a message.
@@ -464,7 +465,8 @@ impl Decide<'_, '_, '_> {
         self.r.spec.each.message_fed(self.s.iter)
     }
 
-    pub(super) fn barrier(&mut self, target: BarrierFor) -> u64 {
+    /// Raise a barrier on `target` and queue its frame for the send.
+    pub(super) fn barrier(&mut self, target: BarrierFor, frame: Frame) -> u64 {
         let id = self.s.next_barrier;
         self.s.next_barrier += 1;
         self.s.barriers.insert(
@@ -481,6 +483,7 @@ impl Decide<'_, '_, '_> {
                 sends: 1,
             },
         );
+        self.fx.frames.push((id, frame));
         id
     }
 
@@ -514,7 +517,7 @@ impl Decide<'_, '_, '_> {
                     .map(|(&id, _)| id)
                     .collect();
                 self.drop_barriers(owed);
-                self.compensate(AfterUndo::Terminal("cancelled".to_string(), String::new()));
+                self.compensate(AfterUndo::cancelled());
             }
             // A pass being seeded reads the token as it starts; rollback IS
             // the answer to a stop that finds one running.

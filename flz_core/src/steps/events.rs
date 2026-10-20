@@ -281,15 +281,13 @@ pub(crate) fn firing_promoted(slot: &Arc<CellSlot>, fire: TimerFire) {
 /// An event-time firing the Cell's assembly found due at the top of a
 /// batch: whether it runs in this batch.
 pub(crate) fn firing_assembled(slot: &Arc<CellSlot>, fire: &TimerFire) -> bool {
-    let mut runs = false;
     with_cell(slot, |r, node, _| {
         r.decide(|d| {
-            runs = d
-                .admit_firing(Firing::new(node, slot, fire.clone()))
+            d.admit_firing(Firing::new(node, slot, fire.clone()))
                 .is_some()
-        });
-    });
-    runs
+        })
+    })
+    .unwrap_or(false)
 }
 
 /// Event-time firings the assembly staged ahead of an input join the stage
@@ -311,10 +309,9 @@ pub(crate) fn firings_joined(slot: &Arc<CellSlot>, count: usize) {
 /// stage commits; `false` when the run journals nothing, where it commits at
 /// settle as a flow relay's does.
 pub(crate) fn hold_removal(slot: &Arc<CellSlot>, op: TimerOp) -> bool {
-    let mut held = false;
     with_cell(slot, |r, node, cell| {
         if !r.journaling() {
-            return;
+            return false;
         }
         r.decide(|d| {
             d.s.attempts
@@ -323,54 +320,52 @@ pub(crate) fn hold_removal(slot: &Arc<CellSlot>, op: TimerOp) -> bool {
                 .removals
                 .push(op)
         });
-        held = true;
-    });
-    held
+        true
+    })
+    .unwrap_or(false)
 }
 
 /// Hand a steps relay Cell's processing-time op to its tasklet's running
 /// stage ([`Stage::hold`](super::instance::Stage::hold)); `false` when none runs.
 pub(crate) fn hold_arm(slot: &Arc<CellSlot>, op: &TimerOp, stream: &Arc<FlezhaStream>) -> bool {
-    let mut held = false;
     with_cell(slot, |r, node, _| {
         r.decide(|d| {
-            held = d
-                .running_stage(node)
+            d.running_stage(node)
                 .is_some_and(|s| s.hold(slot, op, stream))
         })
-    });
-    held
+    })
+    .unwrap_or(false)
 }
 
 /// The removals the running pass holds for `slot`, not yet durable.
 pub(crate) fn held_removals(slot: &Arc<CellSlot>) -> Vec<TimerOp> {
-    let mut held = Vec::new();
     with_cell(slot, |r, node, cell| {
         let sheet = r.run.sheet();
         let stage = sheet.pass.as_ref().and_then(|pass| pass.stages.get(&node));
         let recorded = stage.and_then(|stage| stage.cells.get(&cell));
-        held.extend(recorded.iter().flat_map(|run| run.removals.iter().copied()));
         let attempt = sheet.attempts.get(&(node, cell));
-        held.extend(attempt.iter().flat_map(|a| a.removals.iter().copied()));
-    });
-    held
+        recorded
+            .iter()
+            .flat_map(|run| run.removals.iter().copied())
+            .chain(attempt.iter().flat_map(|a| a.removals.iter().copied()))
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// The firings of `slot` whose stage the bind's journal records committed.
 pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<(TimerKind, u64)> {
-    let mut fired = Vec::new();
     with_cell(slot, |r, node, _| {
         let sheet = r.run.sheet();
-        fired.extend(
-            sheet
-                .journal
-                .iter()
-                .flat_map(|journal| journal.firings())
-                .filter(|&(_, at, key)| at == node && key.cell_key == slot.cell_key)
-                .map(|(_, _, key)| (key.kind, key.scheduled_at)),
-        );
-    });
-    fired
+        sheet
+            .journal
+            .iter()
+            .flat_map(|journal| journal.firings())
+            .filter(|&(_, at, key)| at == node && key.cell_key == slot.cell_key)
+            .map(|(_, _, key)| (key.kind, key.scheduled_at))
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// The identities an idle sweep keeps, and the record references per Cell.
@@ -446,14 +441,16 @@ pub(crate) fn deadline_due(inst: &RelayInstance, deadline: Deadline, due: u64) {
     }
 }
 
-pub(super) fn with_cell(slot: &Arc<CellSlot>, f: impl FnOnce(&Run<'_>, usize, CellPos)) {
-    let Some(inst) = slot.instance.upgrade() else {
-        return;
-    };
-    let Some(r) = Run::of(&inst) else { return };
-    if let Some((node, cell)) = r.locate(slot) {
-        f(&r, node, cell);
-    }
+/// `f` over `slot`'s run, its stage and its place there; `None` when the
+/// Cell belongs to no live steps run.
+pub(super) fn with_cell<T>(
+    slot: &Arc<CellSlot>,
+    f: impl FnOnce(&Run<'_>, usize, CellPos) -> T,
+) -> Option<T> {
+    let inst = slot.instance.upgrade()?;
+    let r = Run::of(&inst)?;
+    let (node, cell) = r.locate(slot)?;
+    Some(f(&r, node, cell))
 }
 
 /// A barrier's controller reply, on the control reader.

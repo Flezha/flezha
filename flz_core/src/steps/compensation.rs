@@ -130,12 +130,7 @@ pub(super) fn saga_steps(
             if undone.contains(run.cell.cell_identity.as_slice()) {
                 continue;
             }
-            steps.push_back(UndoStep::Cell {
-                iter: record.iter,
-                cell: Arc::clone(&run.cell),
-                outputs: run.outputs.iter().map(Arc::clone).collect(),
-                marks: true,
-            });
+            steps.push_back(UndoStep::cell(record.iter, run, true));
         }
     }
     steps
@@ -157,12 +152,7 @@ pub(super) fn unwind_steps(r: &Run<'_>, iterations: &[Vec<StageRecord>]) -> VecD
     for record in plan_compensation(OnFailure::UndoAll, iterations, &[]) {
         if r.task(record.stage_idx).compensate_overridden {
             for run in &record.cells {
-                steps.push_back(UndoStep::Cell {
-                    iter: record.iter,
-                    cell: Arc::clone(&run.cell),
-                    outputs: run.outputs.iter().map(Arc::clone).collect(),
-                    marks: false,
-                });
+                steps.push_back(UndoStep::cell(record.iter, run, false));
             }
         }
         steps.push_back(UndoStep::Record {
@@ -235,10 +225,15 @@ impl Decide<'_, '_, '_> {
         self.undo_step();
     }
 
-    /// A pass that could not be seeded: undo what is outstanding.
+    /// The run cannot go on: undo what is outstanding, then end `cancelled`
+    /// when a stop tripped the token, else `error`.
     pub(super) fn compensate_on(&mut self, error: StepsError) {
-        let (status, error) = self.abnormal(&error);
-        self.compensate(AfterUndo::Terminal(status, error));
+        let then = if self.cancelled() {
+            AfterUndo::cancelled()
+        } else {
+            AfterUndo::Terminal("error".to_string(), error.message)
+        };
+        self.compensate(then);
     }
 
     /// The next step of the undo plan, or what follows its end.
@@ -282,8 +277,7 @@ impl Decide<'_, '_, '_> {
             }
             let written = std::mem::take(&mut undo.cells);
             let command = undo_frame(r, node, iter, cells_ran, written);
-            let id = self.barrier(BarrierFor::Undo);
-            self.fx.frames.push((id, Frame::Built(Box::new(command))));
+            self.barrier(BarrierFor::Undo, Frame::Built(Box::new(command)));
             return;
         }
     }

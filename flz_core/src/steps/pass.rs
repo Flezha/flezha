@@ -40,9 +40,7 @@ impl Decide<'_, '_, '_> {
             None => self.s.carry.take().map(Source::Carry),
         };
         if let Some(source) = source {
-            self.s.phase = Phase::Starting;
-            self.fx.start = Some(source);
-            return;
+            return self.start(source);
         }
         self.s.phase = Phase::Waiting;
         self.rearm_sleep();
@@ -114,10 +112,17 @@ impl Decide<'_, '_, '_> {
         let (channel, offset) = self.entry_point();
         let mut pass = Pass::new(PassOrigin::Timer { node, firing }, channel, offset, None);
         pass.stages.insert(node, Stage::owing(1));
+        self.run_pass(pass);
+        self.s.stage(node)
+    }
+
+    /// `pass` is the one in flight and its Cells run. Inlined: it runs per
+    /// pass.
+    #[inline(always)]
+    fn run_pass(&mut self, pass: Pass) {
         self.s.pass = Some(pass);
         self.s.phase = Phase::Running;
         self.r.run.pass_dead.store(false, Ordering::Release);
-        self.s.pass.as_mut()?.stages.get_mut(&node)
     }
 
     /// A queued firing's turn: its pass opens when the timer is still
@@ -132,7 +137,7 @@ impl Decide<'_, '_, '_> {
             return self.enter_waiting();
         }
         if self.cancelled() {
-            return self.compensate(AfterUndo::Terminal("cancelled".to_string(), String::new()));
+            return self.compensate(AfterUndo::cancelled());
         }
         let key = firing.key();
         let Some(stage) = self.open_timer_pass(firing.node, key.clone()) else {
@@ -164,8 +169,7 @@ impl Decide<'_, '_, '_> {
     pub(super) fn arrived(&mut self, message: Message) {
         if self.s.phase == Phase::Waiting && self.message_fed() {
             self.disarm(Deadline::ParkIdle);
-            self.s.phase = Phase::Starting;
-            self.fx.start = Some(Source::Message(message));
+            self.start(Source::Message(message));
         } else {
             self.s.queue.push_back(Trigger::Message(message));
         }
@@ -182,7 +186,7 @@ impl Decide<'_, '_, '_> {
             return;
         }
         if self.cancelled() {
-            return self.compensate(AfterUndo::Terminal("cancelled".to_string(), String::new()));
+            return self.compensate(AfterUndo::cancelled());
         }
         if matches!(origin, PassOrigin::Message { .. }) {
             self.s.entry = Some((channel, offset));
@@ -200,9 +204,7 @@ impl Decide<'_, '_, '_> {
         for release in roots {
             ready.entry(release.node).or_default().push(release);
         }
-        self.s.pass = Some(pass);
-        self.s.phase = Phase::Running;
-        self.r.run.pass_dead.store(false, Ordering::Release);
+        self.run_pass(pass);
         for (node, items) in ready {
             self.start_stage(node, items);
         }
@@ -304,7 +306,7 @@ impl Decide<'_, '_, '_> {
             refused: true,
             ..Failure::new(node, None, StepsError::from(error))
         });
-        if let Some(stage) = self.s.pass.as_mut().and_then(|p| p.stages.get_mut(&node)) {
+        if let Some(stage) = self.s.stage(node) {
             stage.state = StageState::Done;
         }
         self.settle_pass();
@@ -400,20 +402,17 @@ impl Decide<'_, '_, '_> {
         if !self.r.journaling() {
             return self.stage_committed(node);
         }
-        let id = self.barrier(BarrierFor::Stage(node));
-        if let Some(stage) = self.s.pass.as_mut().and_then(|p| p.stages.get_mut(&node)) {
+        let frame = Frame::Task {
+            node,
+            iter,
+            cells,
+            completion: asked,
+            trigger,
+        };
+        let id = self.barrier(BarrierFor::Stage(node), frame);
+        if let Some(stage) = self.s.stage(node) {
             stage.state = StageState::Committing(id);
         }
-        self.fx.frames.push((
-            id,
-            Frame::Task {
-                node,
-                iter,
-                cells,
-                completion: asked,
-                trigger,
-            },
-        ));
     }
 
     /// The stage's commit is durable: its held items go to its children,
@@ -534,8 +533,7 @@ impl Decide<'_, '_, '_> {
         let error = failure
             .map(|f| f.error)
             .unwrap_or_else(|| StepsError::from("cancelled"));
-        let (status, error) = self.abnormal(&error);
-        self.compensate(AfterUndo::Terminal(status, error));
+        self.compensate_on(error);
     }
 
     /// Whether `failure` ends only its turn: a tasklet's failure, not its
@@ -574,8 +572,7 @@ impl Decide<'_, '_, '_> {
             dead_letter: Some(dead_letter),
         };
         self.s.phase = Phase::Sealing;
-        let id = self.barrier(BarrierFor::DeadLetter);
-        self.fx.frames.push((id, frame));
+        self.barrier(BarrierFor::DeadLetter, frame);
     }
 
     /// The failed turn's iteration is committed: what it ran is undone as a
@@ -618,8 +615,7 @@ impl Decide<'_, '_, '_> {
             dead_letter: None,
         };
         self.s.phase = Phase::Sealing;
-        let id = self.barrier(BarrierFor::Iteration);
-        self.fx.frames.push((id, frame));
+        self.barrier(BarrierFor::Iteration, frame);
     }
 
     pub(super) fn iter_acked(&mut self) {

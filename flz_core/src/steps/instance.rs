@@ -164,11 +164,14 @@ pub(crate) struct PassSheet {
 }
 
 impl PassSheet {
+    /// `node`'s stage in the pass in flight.
+    pub(crate) fn stage(&mut self, node: usize) -> Option<&mut Stage> {
+        self.pass.as_mut()?.stages.get_mut(&node)
+    }
+
     /// `node`'s stage in the pass in flight, while it is running.
     pub(crate) fn running(&mut self, node: usize) -> Option<&mut Stage> {
-        self.pass
-            .as_mut()
-            .and_then(|pass| pass.stages.get_mut(&node))
+        self.stage(node)
             .filter(|stage| stage.state == StageState::Running)
     }
 }
@@ -535,12 +538,10 @@ impl BarrierFor {
                 format!("commit {node} refused by controller: {error}"),
             ),
             BarrierFor::Iteration | BarrierFor::DeadLetter => {
-                let error = StepsError::from(format!(
+                d.compensate_on(StepsError::from(format!(
                     "iteration commit {} refused by controller: {error}",
                     d.s.iter
-                ));
-                let (status, error) = d.abnormal(&error);
-                d.compensate(AfterUndo::Terminal(status, error));
+                )));
             }
             BarrierFor::Undo => d.undo_journaled(Err(error)),
         }
@@ -620,10 +621,29 @@ pub(crate) enum UndoStep {
     Mark { identity: Arc<Vec<u8>> },
 }
 
+impl UndoStep {
+    /// Undo `run` of iteration `iter`.
+    pub(crate) fn cell(iter: u32, run: &CellRun, marks: bool) -> Self {
+        Self::Cell {
+            iter,
+            cell: Arc::clone(&run.cell),
+            outputs: run.outputs.iter().map(Arc::clone).collect(),
+            marks,
+        }
+    }
+}
+
 pub(crate) enum AfterUndo {
     Terminal(String, String),
     /// A rewind's undo ran; the journal's resume point is next.
     Resume,
+}
+
+impl AfterUndo {
+    /// The end a stop asked for.
+    pub(crate) fn cancelled() -> Self {
+        Self::Terminal("cancelled".to_string(), String::new())
+    }
 }
 
 /// The completion an iteration's tasklets asked for, resolved so it never

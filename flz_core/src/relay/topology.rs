@@ -347,9 +347,10 @@ pub(crate) fn reachable(children: &[Vec<usize>], roots: impl Iterator<Item = usi
 }
 
 /// Walk `n` nodes over `edges` (producer → consumer pairs), reachable from
-/// the tasklets the `entries` feed. Merge mappings are irrelevant to shape, so an edge is a pair of
-/// tasklet ids. The walk starts at every node no edge enters, so a node the
-/// roots do not reach still takes a position and is reported on its own.
+/// the tasklets the `entries` feed. Merge mappings are irrelevant to shape,
+/// so an edge is a pair of tasklet ids. The walk starts at every node no edge
+/// enters, so a node the roots do not reach still takes a position and is
+/// reported on its own.
 pub(crate) fn graph_order(
     n: usize,
     edges: &[(TaskletId, TaskletId)],
