@@ -218,7 +218,7 @@ defmodule Flezha.ShutdownTest do
             pid: self(),
             bound_runner: "e1",
             factory_id: "f",
-            halted?: true,
+            phase: :halted,
             halt_reason: :x
           },
           {:ns, "stale"} => %{

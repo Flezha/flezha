@@ -45,7 +45,7 @@ defmodule Flezha.Relay.Rebind do
   died. A failed bind halts the relay on the target.
   """
   @spec rebind(Overwatch.t(), binary()) :: {:reply, :ok | {:error, term()}, Overwatch.t()}
-  def rebind(%Overwatch{migrate_task: task} = state, _new_runner_id) when task != nil,
+  def rebind(%Overwatch{bind_task: task} = state, _new_runner_id) when task != nil,
     do: {:reply, {:error, :busy}, state}
 
   def rebind(%Overwatch{} = state, new_runner_id),
@@ -64,7 +64,7 @@ defmodule Flezha.Relay.Rebind do
   def session_replaced(%Overwatch{runner_id: old} = state, old, new_session, continuity) do
     case continuity do
       :reconnected -> Lifecycle.commit_binding(state, new_session)
-      :restarted when state.migrate_task == nil -> start_bind(state, new_session, nil)
+      :restarted when state.bind_task == nil -> start_bind(state, new_session, nil)
       :restarted -> state
     end
   end
@@ -89,13 +89,13 @@ defmodule Flezha.Relay.Rebind do
 
   # A graceful stop ends the Overwatch with a reason its linked bind task
   # would ignore, so teardown kills the task rather than wait on its bind.
-  @spec terminate_migrate_task(Overwatch.t()) :: Overwatch.t()
-  def terminate_migrate_task(%Overwatch{migrate_task: nil} = state), do: state
+  @spec terminate_bind_task(Overwatch.t()) :: Overwatch.t()
+  def terminate_bind_task(%Overwatch{bind_task: nil} = state), do: state
 
-  def terminate_migrate_task(%Overwatch{migrate_task: %{pid: pid}} = state) do
+  def terminate_bind_task(%Overwatch{bind_task: %{pid: pid}} = state) do
     Process.unlink(pid)
     Process.exit(pid, :kill)
-    %{state | migrate_task: nil}
+    %{state | bind_task: nil}
   end
 
   @doc """
@@ -103,7 +103,8 @@ defmodule Flezha.Relay.Rebind do
   the Overwatch. The task is linked to the Overwatch, so a killed Overwatch
   takes its bind with it and no second bind outlives it. It reports its
   outcome and decides nothing: a failure is a halt the Overwatch declares.
-  `then` is what a wake carries (`apply_migrate_result/2`).
+  `then` is what a wake carries, and `from` the phase the bind started from
+  (`apply_bind_result/2`).
   """
   @spec start_bind(Overwatch.t(), binary(), :stop | nil) :: Overwatch.t()
   def start_bind(%Overwatch{} = state, runner_id, then) do
@@ -118,10 +119,10 @@ defmodule Flezha.Relay.Rebind do
             {:error, err, halted} -> {:halt, halted, err}
           end
 
-        send(parent, {:migrate_task_result, self(), result})
+        send(parent, {:bind_task_result, self(), result})
       end)
 
-    %Overwatch{state | migrate_task: %{pid: pid, then: then}}
+    %Overwatch{state | bind_task: %{pid: pid, then: then, from: state.phase}}
   end
 
   @doc """
@@ -131,7 +132,7 @@ defmodule Flezha.Relay.Rebind do
   """
   @spec bind_task_exited(Overwatch.t(), term()) :: Overwatch.t()
   def bind_task_exited(%Overwatch{} = state, reason),
-    do: apply_migrate_result(state, {:halt, state, {:bind_task_exit, reason}})
+    do: apply_bind_result(state, {:halt, state, {:bind_task_exit, reason}})
 
   @doc """
   Fold a bind task's result back into the state.
@@ -139,15 +140,15 @@ defmodule Flezha.Relay.Rebind do
   `complete_init/5` ran inside the task, whose `self()` is not the Overwatch
   process, so the binding is published here — the one point every move
   funnels through: a halted relay's rebind, a wake, a `rebind` and a
-  restarted runner.
+  restarted runner. A phase that changed since the bind started is a halt or
+  a sleep that landed meanwhile: the bound state is stale and is not adopted.
   """
-  @spec apply_migrate_result(Overwatch.t(), tuple()) :: Overwatch.t()
-  def apply_migrate_result(%Overwatch{parked_in_flight: true} = state, {:bound, _recovered}) do
-    # The instance parked before this bind reported, so the bound state is
-    # stale; the suspension stands, and the tail that was journaled meanwhile
-    # (or a stop the wake carried) wakes it again.
+  @spec apply_bind_result(Overwatch.t(), tuple()) :: Overwatch.t()
+  def apply_bind_result(%Overwatch{phase: phase, bind_task: %{from: from}} = state, {:bound, _})
+      when phase != from do
+    # The tail journaled meanwhile, or a stop the wake carried, wakes it again.
     then = carried(state)
-    state = %Overwatch{state | migrate_task: nil, parked_in_flight: false}
+    state = %Overwatch{state | bind_task: nil}
 
     case then do
       :stop -> state |> Suspend.wake(:stop) |> elem(1)
@@ -155,7 +156,7 @@ defmodule Flezha.Relay.Rebind do
     end
   end
 
-  def apply_migrate_result(state, {:bound, recovered}) do
+  def apply_bind_result(state, {:bound, recovered}) do
     Logger.info("[Overwatch] relay #{state.id} bound onto runner #{recovered.runner_id}")
 
     Lifecycle.publish_binding(recovered, state.runner_id)
@@ -163,16 +164,16 @@ defmodule Flezha.Relay.Rebind do
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 
     # The bound runner's state supersedes a snapshot stored before the bind.
-    %{recovered | migrate_task: nil, snapshot: nil}
+    %{recovered | bind_task: nil, snapshot: nil}
   end
 
   # A failed bind with input journaled meanwhile tries again at once, as any
   # bind that ends with work owed does.
-  def apply_migrate_result(_state, {:halt, halted, err}) do
-    %{Lifecycle.halt(halted, err) | migrate_task: nil, parked_in_flight: false}
+  def apply_bind_result(_state, {:halt, halted, err}) do
+    %{Lifecycle.halt(halted, err) | bind_task: nil}
     |> Suspend.rehydrate_if_pending()
   end
 
-  defp carried(%Overwatch{migrate_task: %{then: then}}), do: then
+  defp carried(%Overwatch{bind_task: %{then: then}}), do: then
   defp carried(%Overwatch{}), do: nil
 end

@@ -50,6 +50,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
       builder: %{run: :steps, opts: []},
       settings: %{run: :steps, each: :per_input, on_failure: :keep_progress},
       runner_id: "exec1",
+      phase: :running,
       namespace: @namespace,
       started_at: System.system_time(:millisecond) - uptime_ms,
       default_input_type: "2",
@@ -132,10 +133,10 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     assert proc["run"] == "flow"
   end
 
-  # `Lifecycle.halt/2` stores the failure reason in `init_error` and leaves the
+  # `Lifecycle.halt/2` stores the failure reason in `halt_reason` and leaves the
   # Overwatch alive, so a halted relay is still listed and still readable.
   defp parked_state(reason \\ {:no_runner, "exec1"}),
-    do: Map.put(steps_state(0), :init_error, reason)
+    do: Map.merge(steps_state(0), %{halt_reason: reason, phase: :halted})
 
   # The observation `Convergence.Probe` builds from an Overwatch state, so both
   # user surfaces are driven from one relay state rather than two
@@ -143,8 +144,8 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   defp observed(state) do
     %{
       bound_runner: state.runner_id,
-      halted?: Map.get(state, :init_error) != nil,
-      suspended?: Map.get(state, :suspended, false)
+      phase: state.phase,
+      halt_reason: Map.get(state, :halt_reason)
     }
   end
 
@@ -187,7 +188,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   end
 
   test "a suspended instance still reports suspended when it also carries a park reason" do
-    stub_one(Map.put(parked_state(), :suspended, true))
+    stub_one(%{parked_state() | phase: :suspended})
 
     out =
       capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), output: "json") end)
@@ -223,8 +224,11 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   # relay holds no binding at all — which is what separates the two words.
   defp held_state,
     do:
-      %{steps_state(0) | runner_id: nil}
-      |> Map.put(:init_error, {:runner_not_ready, :timeout})
+      Map.merge(steps_state(0), %{
+        runner_id: nil,
+        phase: :unbound,
+        halt_reason: {:runner_not_ready, :timeout}
+      })
 
   # A held relay's health as the loop publishes it, the intent unmet for
   # `unmet_ms`.
@@ -241,8 +245,8 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     |> Snapshot.publish()
   end
 
-  # fails when: the phase derivation tests `init_error` before the binding, so a
-  # held relay reads `parked` on the surface the loop calls `unbound`; or the
+  # fails when: the judge reads the halt reason before the binding, so a held
+  # relay reads `halted` on the surface the loop calls `unbound`; or the
   # grace outlives its window and hides the verdict.
   test "info and the loop's verdict record agree that a held relay is unbound" do
     publish_held(Durations.get(:convergence_unmet_intent_grace_ms) + 1)
@@ -283,6 +287,23 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     %{"relays" => [proc]} = Jason.decode!(out)
 
     assert proc["phase"] == "unbound"
+  end
+
+  # fails when: `info` reads the phase from the loop's last verdict, so a
+  # session woken and bound before the next tick still reads `suspended`.
+  test "a woken relay reads running before the loop's next tick" do
+    asleep = %{steps_state(0) | runner_id: nil, phase: :suspended}
+    Snapshot.publish(Map.put(Snapshot.current(), :relay_health, judged(asleep)))
+    stub_one(steps_state(0))
+
+    out =
+      capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), output: "json") end)
+
+    assert %{"relays" => [%{"phase" => "running", "health" => "suspended"}]} = Jason.decode!(out)
+
+    text = capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), []) end)
+    assert text =~ "Phase: running"
+    assert text =~ "Runner ID: exec1"
   end
 
   test "a healthy relay carries the loop's own verdict on both surfaces" do

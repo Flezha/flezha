@@ -127,7 +127,7 @@ defmodule Flezha.Service.RelayActivityTest do
     stub(ControlUnit, :send_control_await, fn _, _, _ -> flunk("a runner was asked") end)
 
     for {state, why} <- [
-          {%{bound(ctx.relay) | suspended: true}, :suspended},
+          {%{bound(ctx.relay) | phase: :suspended}, :suspended},
           {%{bound(ctx.relay) | runner_id: nil}, :unbound}
         ] do
       serve(ctx, state)

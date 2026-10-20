@@ -326,14 +326,14 @@ defmodule FlezhaTest.Relay.CallsTest do
       assert_received {:on_output, "hello", %{"channel" => "out"}}
     end
 
-    test "an answer a migrate task held answers when it is released", %{inst: inst} do
+    test "an answer a bind task held answers when it is released", %{inst: inst} do
       {:ok, host} = start_supervised({Host, state(inst)})
       caller = call(host, "hello")
       token = called_token(inst)
 
       # A rebind's bind in flight holds the instance's output.
       binding = %{ref: make_ref(), pid: self()}
-      :sys.replace_state(host, &%{&1 | init_error: :sdk_start_failed, migrate_task: binding})
+      :sys.replace_state(host, &%{&1 | halt_reason: :sdk_start_failed, bind_task: binding})
       GenServer.cast(host, {:io_out, "hello", %{"flz.reply_to" => token, "channel" => "out"}})
       assert [_held] = :sys.get_state(host).held_outputs
       refute Task.yield(caller, 50)
@@ -409,7 +409,7 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "a call the relay cannot take is refused at once, nothing ingested", %{inst: inst} do
       on_exit(TestHelpers.override_env(:call_pending_max, 1))
 
-      parked = start_supervised!({Host, state(inst, init_error: :sdk_start_failed)}, id: :parked)
+      parked = start_supervised!({Host, state(inst, halt_reason: :sdk_start_failed)}, id: :parked)
       assert {:error, %Error{code: "call.unavailable"}} = Task.await(call(parked, "x"))
 
       {:ok, host} = start_supervised({Host, state(inst)})
@@ -478,7 +478,7 @@ defmodule FlezhaTest.Relay.CallsTest do
          %{inst: inst} do
       FlezhaTest.Case.install([:state_tree])
       stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, ^inst -> nil end)
-      asleep = state(inst, durable_steps: true, suspended: true, channel: nil)
+      asleep = state(inst, durable_steps: true, phase: :suspended, channel: nil)
       {:ok, host} = start_supervised({Host, asleep})
 
       caller = call(host, "turn")

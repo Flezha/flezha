@@ -208,7 +208,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   # Binding cold and folding input WOULD be, which is what this scenario forbids.
   defp serving?(namespace, relay_id) do
     with {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_id),
-         %{init_error: nil} <- :sys.get_state(pid) do
+         %{halt_reason: nil} <- :sys.get_state(pid) do
       true
     else
       _ -> false

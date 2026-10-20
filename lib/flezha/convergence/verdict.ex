@@ -158,39 +158,6 @@ defmodule Flezha.Convergence.Verdict do
   end
 
   @doc """
-  The relay's own lifecycle word, read from what the probe observed. The
-  one derivation of a phase in the tree: `info` reads it for a relay the
-  loop has not judged yet, and the judge reads it for every one it has. An
-  observation that names no relay at all (`observed?: false`, which only
-  the judge's merged facts carry) has no phase to report.
-  """
-  @spec phase_of(map()) :: phase()
-  def phase_of(observed) do
-    observed? = Map.get(observed, :observed?, true)
-
-    cond do
-      suspended?(observed) -> :suspended
-      observed? and unbound?(observed) -> :unbound
-      halted?(observed) -> :halted
-      observed? -> :running
-      true -> nil
-    end
-  end
-
-  # The order `Probe.Judge` derives the state in, so the two answers cannot
-  # describe one relay differently.
-  #
-  # Each fact has two spellings, because two callers reach this: the probe's
-  # merged facts, and an Overwatch's own state as `info` holds it. A caller
-  # carrying neither spelling of the binding is reporting no binding at all,
-  # which is not a claim that there is none.
-  defp suspended?(o), do: Map.get(o, :suspended?, false) or Map.get(o, :suspended, false)
-
-  defp unbound?(o), do: is_nil(Map.get(o, :bound_runner, Map.get(o, :runner_id, :absent)))
-
-  defp halted?(o), do: Map.get(o, :halted?, false) or not is_nil(Map.get(o, :init_error))
-
-  @doc """
   Execute `[:flezha, :health, :verdict]` for every subject whose state changed
   between two tick maps. Steady state emits nothing — a transition is the
   event, and a record that holds is what `/healthz` is for. Each names the

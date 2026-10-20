@@ -9,9 +9,10 @@ defmodule Flezha.Convergence.Probe.Table do
   are bridged by `Flezha.Observability.TelemetryBridge`'s derived half, with no
   edit to the Diff, the snapshot, `/healthz`, the CLI or the bridge.
 
-  Three entries declare events and read nothing (`facts: nil`): the judge's own
+  Four entries declare events and read nothing (`facts: nil`): the judge's own
   transition event, the runner-side SDK hold whose fact belongs to the runner,
-  and the bounded call whose two facts are fields of the binding row. They exist
+  and the bounded call and the suspension, whose facts are fields of the
+  binding row. They exist
   so those events reach a sink by declaration rather than by a hand-written
   bridge line.
   """
@@ -34,10 +35,11 @@ defmodule Flezha.Convergence.Probe.Table do
          meaning: "A relay was halted after a failure and stays stopped until someone acts."}
       ]
     },
+    # Declaration-only: a suspension is the binding row's `phase`.
     %{
       id: :suspension,
       kind: :relay,
-      facts: &Readers.suspension/1,
+      facts: nil,
       events: [
         {[:flezha, :steps, :suspend_requested],
          label: "Pause asked",

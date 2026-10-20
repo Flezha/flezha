@@ -388,7 +388,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
 
       reason = {:plugin_prepare_failed, "a_plugin", :boom}
       {:ok, pid} = RelayManager.get_relay_pid(@namespace, op)
-      :sys.replace_state(pid, &%{&1 | init_error: reason})
+      :sys.replace_state(pid, &%{&1 | halt_reason: reason, phase: :halted})
       for _ <- 1..3, do: Loop.tick_now()
 
       expected = "plugin.prepare_failed"
@@ -547,7 +547,12 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
 
       op = start_relay("unheard_op")
       {:ok, pid} = RelayManager.get_relay_pid(@namespace, op)
-      :sys.replace_state(pid, &%{&1 | init_error: {:plugin_prepare_failed, "p", :boom}})
+
+      :sys.replace_state(
+        pid,
+        &%{&1 | halt_reason: {:plugin_prepare_failed, "p", :boom}, phase: :halted}
+      )
+
       :ok = RelayManager.stop_relay(@namespace, op)
 
       :erlang.trace(sink, false, [:receive])

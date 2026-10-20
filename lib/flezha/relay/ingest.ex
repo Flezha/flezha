@@ -140,7 +140,7 @@ defmodule Flezha.Relay.Ingest do
   is held for that call (`seed/3`).
   """
   @spec seed_or_hold(Overwatch.t(), Flezha.Relay.Builder.t()) :: Overwatch.t()
-  def seed_or_hold(%Overwatch{init_error: nil} = state, relay) do
+  def seed_or_hold(%Overwatch{halt_reason: nil} = state, relay) do
     case Keyword.get(relay.opts, :seed_input) do
       {message, metadata} when is_binary(message) and is_map(metadata) ->
         seed = {message, metadata, Keyword.get(relay.opts, :seed_call)}
@@ -236,7 +236,7 @@ defmodule Flezha.Relay.Ingest do
 
   # Why a call cannot be taken at all: a halted relay, or a single-pass
   # steps instance that has already been given its input.
-  defp call_refusal(%Overwatch{init_error: reason}) when reason != nil,
+  defp call_refusal(%Overwatch{halt_reason: reason}) when reason != nil,
     do: {"call.unavailable", %{reason: "the relay is halted"}}
 
   defp call_refusal(%Overwatch{} = state) do
@@ -478,7 +478,7 @@ defmodule Flezha.Relay.Ingest do
   # the log's whole undelivered tail; the journal's answer reports the
   # suspension and wakes the instance (`settle/3`). An input a plugin filtered
   # journals nothing, and is answered — and wakes — at once.
-  def confirming_ingest(%Overwatch{suspended: true} = state, message, metadata, reply_to) do
+  def confirming_ingest(%Overwatch{phase: :suspended} = state, message, metadata, reply_to) do
     case ingest(state, message, metadata, reply_to) do
       {:pending, state} ->
         {:pending, state}
@@ -613,7 +613,7 @@ defmodule Flezha.Relay.Ingest do
   # A journaled payload's forward and the reply it owed, once the log answered.
   # A suspended instance forwards nothing: the payload waits in the log for the
   # rehydrating bind, which is what the reply reports and what the append wakes.
-  defp settle(%Overwatch{suspended: true} = state, reply_to, payload)
+  defp settle(%Overwatch{phase: :suspended} = state, reply_to, payload)
        when payload != :refused do
     state
     |> owe(reply_to, told(reply_to, {:ok, :suspended}))

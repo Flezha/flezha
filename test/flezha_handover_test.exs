@@ -681,10 +681,9 @@ defmodule FlezhaTest.Handover do
                 |> then(fn {:ok, s} ->
                   Map.take(s, [
                     :runner_id,
-                    :suspended,
-                    :parked,
-                    :init_error,
-                    :migrate_task,
+                    :phase,
+                    :halt_reason,
+                    :bind_task,
                     :durable_steps
                   ])
                 end), Flezha.State.InputLog.tail(op),

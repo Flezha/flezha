@@ -155,7 +155,7 @@ defmodule Flezha.Convergence.Probe.Judge do
       not Map.get(facts, :observed?, true) or Map.get(facts, :bound_runner) == :unknown ->
         {:unknown, {:unobserved, :relay_state}}
 
-      Map.get(facts, :suspended?, false) ->
+      Map.get(facts, :phase) == :suspended ->
         {:suspended, :evicted_at_boundary}
 
       is_nil(Map.get(facts, :bound_runner)) ->
@@ -167,7 +167,7 @@ defmodule Flezha.Convergence.Probe.Judge do
       not live?(facts) ->
         {:failed, :dead_runner}
 
-      Map.get(facts, :halted?, false) ->
+      Map.get(facts, :phase) == :halted ->
         {:halted, {:halted, Map.get(facts, :halt_reason)}}
 
       true ->
@@ -259,7 +259,10 @@ defmodule Flezha.Convergence.Probe.Judge do
     end
   end
 
-  defp phase(:relay, facts), do: Verdict.phase_of(Map.put_new(facts, :observed?, false))
+  # The relay's own word, as the probe read it off the Overwatch; an
+  # observation that names no relay at all has none.
+  defp phase(:relay, facts),
+    do: if(Map.get(facts, :observed?, false), do: Map.get(facts, :phase))
 
   defp phase(:plugin, facts) do
     cond do

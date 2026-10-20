@@ -12,6 +12,7 @@ defmodule Flezha.Service.Relay.Info do
   alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Overwatch
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table.Health, as: TableHealth
   alias Flezha.Relay.KeyGroup
@@ -112,7 +113,7 @@ defmodule Flezha.Service.Relay.Info do
       effectively_once: Map.get(state, :effectively_once) == true,
       durable: durable_level(relay_id, state),
       sleep_after_ms: ClassRegistry.sleep_after_ms(class_of(relay_id, state)),
-      phase: phase(namespace, relay_id, state),
+      phase: to_string(Overwatch.phase(state) || :unknown),
       health: Snapshot.relay_health(namespace, relay_id),
       uptime_ms: uptime_ms(state),
       default_input_type: state.default_input_type,
@@ -223,18 +224,6 @@ defmodule Flezha.Service.Relay.Info do
   # Where the class keeps its work, from what its runner announced.
   defp durable_level(relay_id, state),
     do: relay_id |> class_of(state) |> ClassRegistry.durable_level() |> Atom.to_string()
-
-  # The relay's own lifecycle state, read from the verdict record the
-  # convergence loop published for it — the same field `flz relay list`,
-  # `/healthz` and the console read, so no two surfaces describe one relay
-  # in contradictory words. A relay the loop has not judged yet still gets
-  # a phase, derived from its own state by the record module's one derivation.
-  defp phase(namespace, relay_id, state) do
-    case Snapshot.verdict(namespace, relay_id) do
-      %Verdict{phase: phase} when not is_nil(phase) -> to_string(phase)
-      _ -> to_string(Verdict.phase_of(state))
-    end
-  end
 
   defp uptime_ms(%{started_at: started}) when is_integer(started),
     do: max(0, System.system_time(:millisecond) - started)

@@ -76,7 +76,13 @@ defmodule Flezha.Relay.Overwatch do
     init_values: %{},
     default_input_type: "2",
     arrived_via_hotswap?: false,
-    init_error: nil,
+    # `:running | :unbound | :halted | :suspended`, written only by the
+    # transitions.
+    phase: :unbound,
+    # The transition under way, `nil` when none is.
+    cause: nil,
+    # Why the relay halted, kept through a suspension or a lost binding.
+    halt_reason: nil,
     # Wall-clock ms at process start, for `flz relay info` uptime. Wall-clock
     # (not monotonic) so the value stays comparable when read from another node.
     started_at: nil,
@@ -89,10 +95,10 @@ defmodule Flezha.Relay.Overwatch do
     liveness_ref: nil,
     # A bind onto another runner (a rebind, a wake, a restarted runner) runs
     # in a task linked to this process so it never blocks the Overwatch and
-    # never outlives it; this field carries the in-flight task's pid and what
-    # the bind carries. `nil` when no migrate is in flight.
-    migrate_task: nil,
-    # Outputs that arrived while a migrate task was binding, newest first,
+    # never outlives it: `%{pid, then, from}`, the task, what the bind carries
+    # and the phase it started from. `nil` when no bind is in flight.
+    bind_task: nil,
+    # Outputs that arrived while a bind task was binding, newest first,
     # delivered once its binding is adopted.
     held_outputs: [],
     # Effectively-once tier, declared by the SDK in the AddRelay response
@@ -110,16 +116,8 @@ defmodule Flezha.Relay.Overwatch do
     # The class sleeps when idle, declared by the SDK: its input is journaled
     # so a message that finds it asleep wakes it and waits in the log.
     sleeps: false,
-    # Asleep (`durable-suspension`): zero live runner resources,
-    # registry entry retained. A new input-log append, or the recorded wake
-    # deadline — rehydrates through the normal bind path.
-    suspended: false,
     # Timer ref for the recorded wake deadline while suspended.
     timers: %{},
-    # A park that landed while a bind task was binding: the task's bound
-    # state is stale by the time it reports, and the journaled tail still
-    # owes a wake.
-    parked_in_flight: false,
     # Late-input correction window (ms), declared by the SDK. `nil` = the class
     # never corrects. Gates lateness handling and the event-time-ordered replay.
     correction_window_ms: nil,
@@ -155,6 +153,10 @@ defmodule Flezha.Relay.Overwatch do
   @spec relay_class(t()) :: binary()
   def relay_class(%__MODULE__{} = state),
     do: Keyword.get(state.builder.opts, :relay_class, state.id)
+
+  @doc "The relay's phase; a state from an older controller, without the field, reads `nil`."
+  @spec phase(map()) :: :running | :unbound | :halted | :suspended | nil
+  def phase(state), do: Map.get(state, :phase)
 
   @doc """
   Push one payload at the bound stream channel. The single statement of the
@@ -391,19 +393,18 @@ defmodule Flezha.Relay.Overwatch do
 
   # A start's held input is taken here and the start answered once it is: a
   # refused call or input fails the start, so its caller is told.
-  def handle_call({:registry_runner_set, announce?}, from, %__MODULE__{init_error: nil} = state) do
+  def handle_call({:registry_runner_set, announce?}, from, %__MODULE__{halt_reason: nil} = state) do
     call = state.seed && elem(state.seed, 2)
     owed = {self(), {:seed_taken, from, announce?, call}}
 
-    case Ingest.seed(%__MODULE__{state | seed: nil}, state.seed, owed) do
+    case Ingest.seed(%__MODULE__{state | seed: nil, cause: :start}, state.seed, owed) do
       {:pending, state} -> {:noreply, state}
       {verdict, state} -> {:reply, Ingest.started(state, announce?, call, verdict), state}
     end
   end
 
-  def handle_call({:registry_runner_set, _}, _from, %__MODULE__{init_error: reason} = state) do
-    {:reply, {:error, reason}, state}
-  end
+  def handle_call({:registry_runner_set, _}, _from, %__MODULE__{halt_reason: reason} = state),
+    do: {:reply, {:error, reason}, %__MODULE__{state | cause: :start}}
 
   @impl true
   def handle_call({:plugin_subscribe, plugin_id, %Plugin{} = binding, entry}, _from, state) do
@@ -515,7 +516,7 @@ defmodule Flezha.Relay.Overwatch do
   # nothing finer — the same path as the confirming entry point below, reported
   # coarsely.
   @impl true
-  def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
+  def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
       when reason != nil do
     {:reply, {:error, :startup_failed}, state}
   end
@@ -525,7 +526,7 @@ defmodule Flezha.Relay.Overwatch do
   # forwarding sink can tell "done" from "retry". The cast keeps its
   # fire-and-forget shape, including its silent drop for a halted relay.
   @impl true
-  def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
+  def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
       when reason != nil do
     {:reply, {:error, :not_ready}, state}
   end
@@ -576,7 +577,7 @@ defmodule Flezha.Relay.Overwatch do
   # `halted_drops` is the only handle a cast-based source's loss has while the
   # relay stays halted.
   @impl true
-  def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
+  def handle_cast({:io_in, _message, _metadata}, %__MODULE__{halt_reason: reason} = state)
       when reason != nil do
     LivenessCounters.bump_relay(state.liveness_ref, :halted_drops)
     {:noreply, state}
@@ -595,7 +596,7 @@ defmodule Flezha.Relay.Overwatch do
   # run settles the entry it was dispatched under, carrying the holds its sinks
   # took — so an output no delivery-guaranteed sink took is complete the moment
   # the chain has had it, filtered included.
-  # A migrate task binds the plugins on its own copy of this state, so an
+  # A bind task binds the plugins on its own copy of this state, so an
   # output of the instance it woke or rebound waits for that binding to be
   # adopted rather than meet a plugin table the bind has not brought up (a
   # sleeper rediscovered at boot has none running). An instance moved while it
@@ -609,9 +610,9 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, state}
   end
 
-  def handle_cast(frame, %__MODULE__{migrate_task: %{}} = state)
+  def handle_cast(frame, %__MODULE__{bind_task: %{}} = state)
       when is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] and
-             (state.suspended or state.init_error != nil) do
+             (state.phase == :suspended or state.halt_reason != nil) do
     {:noreply, %__MODULE__{state | held_outputs: [frame | state.held_outputs]}}
   end
 
@@ -657,7 +658,7 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast(:rehydrate_if_pending, state), do: Suspend.runner_available(state)
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
-  # A handover ships it and the next running migrate seeds from it, until a
+  # A handover ships it and the next running bind seeds from it, until a
   # runner is bound again: that runner's state supersedes it, so the bind drops
   # it. Cold-boot restart is covered by the per-Cell WAL files instead.
   @impl true
@@ -698,7 +699,7 @@ defmodule Flezha.Relay.Overwatch do
   # re-forward here would push input at the runner the relay is halted away
   # from — the same reason the ingress cast is dropped while halted.
   @impl true
-  def handle_info({:stream_bound, _channel}, %__MODULE__{init_error: reason} = state)
+  def handle_info({:stream_bound, _channel}, %__MODULE__{halt_reason: reason} = state)
       when reason != nil do
     {:noreply, state}
   end
@@ -764,22 +765,19 @@ defmodule Flezha.Relay.Overwatch do
   # The in-flight bind task posts its result via a plain `send/2` before it
   # exits, so this clause runs before its `:EXIT` and clears the slot.
   @impl true
-  def handle_info(
-        {:migrate_task_result, _task_pid, result},
-        %__MODULE__{migrate_task: %{}} = state
-      ) do
+  def handle_info({:bind_task_result, _task_pid, result}, %__MODULE__{bind_task: %{}} = state) do
     # The task reports a copy of this state taken before the outputs it held.
-    %__MODULE__{} = adopted = Rebind.apply_migrate_result(state, result)
+    %__MODULE__{} = adopted = Rebind.apply_bind_result(state, result)
     {:noreply, release_outputs(%__MODULE__{adopted | held_outputs: state.held_outputs})}
   end
 
   # Late delivery: the task was terminated by a teardown, or a second
-  # migrate already replaced `state.migrate_task`. Drop.
-  def handle_info({:migrate_task_result, _task_pid, _result}, state), do: {:noreply, state}
+  # bind already replaced `state.bind_task`. Drop.
+  def handle_info({:bind_task_result, _task_pid, _result}, state), do: {:noreply, state}
 
   # The bind task died before it reported: a failed bind.
   @impl true
-  def handle_info({:EXIT, pid, reason}, %__MODULE__{migrate_task: %{pid: pid}} = state),
+  def handle_info({:EXIT, pid, reason}, %__MODULE__{bind_task: %{pid: pid}} = state),
     do: {:noreply, state |> Rebind.bind_task_exited(reason) |> release_outputs()}
 
   # A monitored input log that exits with an append in flight reports it as a
@@ -859,8 +857,8 @@ defmodule Flezha.Relay.Overwatch do
   def confirm_hold(nil), do: :ok
   def confirm_hold(metadata), do: Outbox.confirm_delivery(metadata)
 
-  # Deliver what arrived while a migrate task was binding, in arrival order;
-  # a migrate spawned meanwhile holds them again.
+  # Deliver what arrived while a bind task was binding, in arrival order;
+  # a bind spawned meanwhile holds them again.
   defp release_outputs(%__MODULE__{held_outputs: []} = state), do: state
 
   defp release_outputs(%__MODULE__{held_outputs: held} = state) do
@@ -906,7 +904,7 @@ defmodule Flezha.Relay.Overwatch do
   # effect of a read. `flz state at` is the durable-read path.
   defp read_runner(%__MODULE__{} = state, from, {kind, _} = command, opts, shape) do
     cond do
-      state.suspended ->
+      state.phase == :suspended ->
         {:reply, {:error, {:not_resident, :suspended, state.id}}, state}
 
       is_nil(state.runner_id) ->

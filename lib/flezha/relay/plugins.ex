@@ -164,7 +164,7 @@ defmodule Flezha.Relay.Plugins do
         {:ok, %{state | extensions: table}}
 
       # The id is the only thing naming WHICH plugin halted the relay. It
-      # rides `init_error` out through `:registry_runner_set` to whoever asked
+      # rides `halt_reason` out through `:registry_runner_set` to whoever asked
       # for the start.
       {:error, {plugin_id, reason}} ->
         {:error, {:plugin_prepare_failed, plugin_id, reason}}

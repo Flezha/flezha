@@ -87,8 +87,8 @@ defmodule FlezhaTest.Relay.PreviewTest do
   end
 
   test "a part is never held behind a binding in flight", %{inst: inst} do
-    host = host(inst, [{"l1", listener(inst, "l1")}], suspended: true)
-    :sys.replace_state(host, &%{&1 | migrate_task: %{ref: make_ref(), pid: self()}})
+    host = host(inst, [{"l1", listener(inst, "l1")}], phase: :suspended)
+    :sys.replace_state(host, &%{&1 | bind_task: %{ref: make_ref(), pid: self()}})
     {message, metadata} = @part
 
     GenServer.cast(host, {:io_part, message, metadata})

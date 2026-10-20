@@ -221,7 +221,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         assert NodeTestHelper.wait_until(
                  fn ->
                    match?(
-                     {:ok, %{runner_id: ^target, migrate_task: nil}},
+                     {:ok, %{runner_id: ^target, bind_task: nil}},
                      RelayManager.get_overwatch_state(ctx.namespace, relay_id)
                    )
                  end,

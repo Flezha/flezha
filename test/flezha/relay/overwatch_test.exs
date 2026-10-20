@@ -204,7 +204,7 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
     end
 
     # The move binds in a task; the resolver would run inside it.
-    assert NodeTestHelper.wait_until(fn -> :sys.get_state(pid).migrate_task == nil end, 10_000)
+    assert NodeTestHelper.wait_until(fn -> :sys.get_state(pid).bind_task == nil end, 10_000)
     refute_received {:probe, :called}
   end
 

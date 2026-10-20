@@ -334,7 +334,7 @@ defmodule Flezha.Service.RelayManager.Init do
   defp bind_started(namespace, relay, {relay_node, pid}, announce?) do
     # ProcessHub reports `started` as soon as `start_link/1`
     # returns; the relay's `handle_continue(:bind_runner, …)`
-    # surfaces a plugin-chain failure via the `init_error` field
+    # surfaces a plugin-chain failure via the `halt_reason` field
     # on Overwatch state — `:registry_runner_set` returns
     # `{:error, _}` instead of crashing the GenServer, as it does for a
     # call the start carried that the instance refuses. The

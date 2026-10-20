@@ -4,7 +4,7 @@ defmodule Flezha.Convergence.Diff do
   reality, and this tick's verdict records into a structured `Delta`
   enumerating every invariant violation. The records are the health input in
   place of an open signals map: the binding classification reads a record's
-  `state` and `reason`, never `bound_runner`/`halted?`/`suspended?` of its own,
+  `state` and `reason`, never `bound_runner`/`phase` of its own,
   and a `driver` record is planned for by nobody — `/healthz` owns it. This is NOT a per-failure-mode dispatch: each `Delta` field
   corresponds to one invariant, every declared kind is consumed by exactly one
   field, and all catalogue rows reduce to populating these fields.
@@ -395,8 +395,7 @@ defmodule Flezha.Convergence.Diff do
   # anything to heal until then.
   defp plugins_diffable?(observed_relay) do
     is_pid(Map.get(observed_relay, :pid)) and
-      not Map.get(observed_relay, :suspended?, false) and
-      not Map.get(observed_relay, :halted?, false)
+      Map.get(observed_relay, :phase, :running) == :running
   end
 
   # I2: a relay's declared plugin set (durable cspec) vs the set actually

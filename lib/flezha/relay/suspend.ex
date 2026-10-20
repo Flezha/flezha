@@ -178,7 +178,7 @@ defmodule Flezha.Relay.Suspend do
   def evict_runner(%Overwatch{} = state, deadline) do
     %Overwatch{
       cancel_wake_timer(state)
-      | suspended: true,
+      | phase: :suspended,
         runner_id: nil,
         channel: nil
     }
@@ -203,11 +203,11 @@ defmodule Flezha.Relay.Suspend do
   floor, or whose recorded wake deadline has elapsed.
   """
   @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
-  def rehydrate_if_pending(%Overwatch{suspended: false} = state), do: state
-
-  def rehydrate_if_pending(%Overwatch{} = state) do
+  def rehydrate_if_pending(%Overwatch{phase: :suspended} = state) do
     if pending?(Overwatch.relay_class(state)), do: rehydrate(state), else: state
   end
+
+  def rehydrate_if_pending(%Overwatch{} = state), do: state
 
   @doc """
   The Overwatch's answer to a runner of its factory connecting: a suspended
@@ -217,7 +217,7 @@ defmodule Flezha.Relay.Suspend do
           {:noreply, Overwatch.t()} | {:noreply, Overwatch.t(), :hibernate}
   def runner_available(%Overwatch{} = state) do
     case rehydrate_if_pending(state) do
-      %Overwatch{suspended: true, migrate_task: nil} = asleep -> {:noreply, asleep, :hibernate}
+      %Overwatch{phase: :suspended, bind_task: nil} = asleep -> {:noreply, asleep, :hibernate}
       state -> {:noreply, state}
     end
   end
@@ -258,10 +258,10 @@ defmodule Flezha.Relay.Suspend do
   can take the instance; it stays suspended.
   """
   @spec wake(Overwatch.t(), :stop | nil) :: {:ok | {:error, :no_runner}, Overwatch.t()}
-  def wake(%Overwatch{suspended: false} = state, _then), do: {:ok, state}
+  def wake(%Overwatch{phase: phase} = state, _then) when phase != :suspended, do: {:ok, state}
 
-  def wake(%Overwatch{migrate_task: %{} = task} = state, then),
-    do: {:ok, %Overwatch{state | migrate_task: Map.put(task, :then, then || task[:then])}}
+  def wake(%Overwatch{bind_task: %{} = task} = state, then),
+    do: {:ok, %Overwatch{state | bind_task: Map.put(task, :then, then || task[:then])}}
 
   def wake(%Overwatch{} = state, then) do
     case RelayManager.assign_runner(state.namespace, state.factory_id, state.id) do
@@ -289,7 +289,7 @@ defmodule Flezha.Relay.Suspend do
   asleep, and the caller stops it as an awake one.
   """
   @spec wake_to_stop(Overwatch.t()) :: {:reply, :ok | {:error, term()}, Overwatch.t()}
-  def wake_to_stop(%Overwatch{suspended: true} = state) do
+  def wake_to_stop(%Overwatch{phase: :suspended} = state) do
     {reply, state} = wake(state, :stop)
     {:reply, reply, state}
   end
@@ -377,11 +377,12 @@ defmodule Flezha.Relay.Suspend do
     # arrives. The park/rehydrate cycle costs a bind; stranding the turn would
     # cost correctness. `RemRelay` is already enqueued on the control
     # stream, so the rehydrating `AddRelay` cannot overtake it.
-    # Parked while a rebind was still binding: the task's result must not
-    # resurrect a binding the runner has just torn down.
-    state = %Overwatch{state | parked_in_flight: state.migrate_task != nil}
+    # Parked while a bind was still binding: its result must not resurrect a
+    # binding the runner has just torn down. A wake's own bind started
+    # suspended, so the phase alone cannot tell; its start phase is voided.
+    task = state.bind_task && %{state.bind_task | from: nil}
 
-    state
+    %Overwatch{state | bind_task: task}
     |> enter_suspended(park)
     |> rehydrate_if_pending()
   end

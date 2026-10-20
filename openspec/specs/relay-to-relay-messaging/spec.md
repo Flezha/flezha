@@ -72,12 +72,12 @@ The verdicts SHALL be:
   a duplicate, or refused by the durable log as already consumed
 - `{:ok, :suspended}` — the target is suspended; the payload is durable in its inbox and SHALL
   be delivered when the instance rehydrates
-- `{:error, :not_ready}` — the target is parked with an `init_error`
+- `{:error, :not_ready}` — the target is parked with an `halt_reason`
 - `{:error, :not_found}` — no pid is registered for `(namespace, relay_id)`
 - `{:error, :refused}` — the durable log refused the append
 
 The existing `{:io_in, _, _}` cast behaviour SHALL be unchanged, including its silent drop for
-an `init_error`-parked relay. The drop SHALL be silent to the sender and never unrecorded:
+an `halt_reason`-parked relay. The drop SHALL be silent to the sender and never unrecorded:
 each dropped cast SHALL increment a per-relay counter, summed into the data-plane aggregates
 the transport source publishes, so a cast-based source's loss is measurable from outside the
 controller for as long as the relay stays parked.
@@ -105,7 +105,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
   inbox, and the relay SHALL rehydrate and receive the payload in its undelivered tail
 
 #### Scenario: A parked target reports not-ready rather than dropping
-- **WHEN** the confirming entry point is invoked against a relay whose `init_error` is set
+- **WHEN** the confirming entry point is invoked against a relay whose `halt_reason` is set
 - **THEN** it SHALL return `{:error, :not_ready}` and the payload SHALL NOT be discarded by the
   Overwatch
 
@@ -119,7 +119,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 - **THEN** it SHALL return `{:error, :not_found}`
 
 #### Scenario: The existing cast keeps its behaviour
-- **WHEN** `{:io_in, message, metadata}` is cast to a relay whose `init_error` is set
+- **WHEN** `{:io_in, message, metadata}` is cast to a relay whose `halt_reason` is set
 - **THEN** the message SHALL be silently discarded as before and no verdict SHALL be produced
 
 #### Scenario: A parked log parks the caller and only the caller
@@ -146,7 +146,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 
 #### Scenario: The parked cast's drop is counted
 
-- **WHEN** `{:io_in, message, metadata}` is cast twice to a relay whose `init_error` is set
+- **WHEN** `{:io_in, message, metadata}` is cast twice to a relay whose `halt_reason` is set
 - **THEN** the relay's parked-drop counter SHALL read `2`, its received-input counter SHALL
   stay at `0`, and the aggregate the transport source publishes SHALL include those two drops
 

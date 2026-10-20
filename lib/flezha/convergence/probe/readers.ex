@@ -41,6 +41,7 @@ defmodule Flezha.Convergence.Probe.Readers do
         factory_id: Map.get(obs, :factory_id),
         live_runners: live_runners(ctx, ns),
         registry_tag: Map.get(obs, :registry_tag),
+        phase: Map.get(obs, :phase),
         node: node_of(obs),
         observed?: observed != nil
       }
@@ -48,26 +49,17 @@ defmodule Flezha.Convergence.Probe.Readers do
     end)
   end
 
-  @doc "Whether `Lifecycle.halt/2` left a reason on the Overwatch, and which."
+  @doc "The reason `Lifecycle.halt/2` left on the Overwatch, if any."
   @spec halt(context()) :: [Fact.t()]
   def halt(ctx) do
     per_relay(ctx, fn ref, key, observed ->
       fact(
         %{
-          halted?: Map.get(observed || %{}, :halted?, false),
           halt_reason: Map.get(observed || %{}, :halt_reason),
           halt_args: Facts.args(ctx.signals[:facts] || %{}, :relay_halted, key)
         },
         ref
       )
-    end)
-  end
-
-  @doc "Whether the relay was evicted at a committed iteration boundary."
-  @spec suspension(context()) :: [Fact.t()]
-  def suspension(ctx) do
-    per_relay(ctx, fn ref, _key, observed ->
-      fact(%{suspended?: Map.get(observed || %{}, :suspended?, false)}, ref)
     end)
   end
 
@@ -129,15 +121,14 @@ defmodule Flezha.Convergence.Probe.Readers do
     end
   end
 
-  # A plugin set is readable only on a relay the probe actually reached
-  # and that is neither suspended nor halted: a suspended instance released its
-  # plugins with its runner, and there is nothing there to be unhealthy.
+  # A plugin set is readable only on a running relay the probe actually
+  # reached: a suspended instance released its plugins with its runner, and
+  # there is nothing there to be unhealthy.
   defp plugin_readable?(nil), do: false
 
   defp plugin_readable?(observed) do
     Map.get(observed, :bound_runner) not in [nil, :unknown] and
-      not Map.get(observed, :suspended?, false) and
-      not Map.get(observed, :halted?, false)
+      Map.get(observed, :phase, :running) == :running
   end
 
   @doc """

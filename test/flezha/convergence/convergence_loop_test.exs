@@ -188,7 +188,7 @@ defmodule Flezha.Convergence.LoopTest do
     # that goes through the judge.
     test "a parked relay is released by the same path" do
       stub(Probe, :snapshot, fn ->
-        reality(%{halted?: true, halt_reason: {:ping_failed, :timeout}, bound_runner: @fresh})
+        reality(%{phase: :halted, halt_reason: {:ping_failed, :timeout}, bound_runner: @fresh})
       end)
 
       :ok = Loop.tick_now()
@@ -233,7 +233,7 @@ defmodule Flezha.Convergence.LoopTest do
 
     defp sleeping_relay() do
       test_pid = self()
-      stub(Probe, :snapshot, fn -> reality(%{suspended?: true, bound_runner: nil}) end)
+      stub(Probe, :snapshot, fn -> reality(%{phase: :suspended, bound_runner: nil}) end)
       stub(HubManager, :get_pid, fn :ns, "op" -> {:ok, test_pid} end)
       :ok = Loop.tick_now()
       assert :sys.get_state(Loop).verdicts[{:relay, {:ns, "op"}}].state == :suspended

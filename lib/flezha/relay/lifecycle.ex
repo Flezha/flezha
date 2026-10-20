@@ -197,9 +197,9 @@ defmodule Flezha.Relay.Lifecycle do
                correction_window_ms: declarations.correction_window_ms,
                sleeps: declarations.sleep_after_ms != nil,
                settings:
-                 Map.take(declarations, [:run, :each, :on_failure, :durable, :sleep_after_ms])
-           }
-           |> Map.put(:init_error, nil),
+                 Map.take(declarations, [:run, :each, :on_failure, :durable, :sleep_after_ms]),
+               halt_reason: nil
+           },
          :ok <- await_stream_bound(state),
          # Before anything re-runs: the kept effect results reach the runner
          # ahead of the restores and the input tail.
@@ -295,7 +295,7 @@ defmodule Flezha.Relay.Lifecycle do
 
     _ = Replay.restore_on_bind(state, relay)
 
-    {:ok, Suspend.cancel_wake_timer(%{state | suspended: false})}
+    {:ok, Suspend.cancel_wake_timer(%{state | phase: :running})}
   end
 
   # A refused restore is not a cold start: the durable state never reached the
@@ -519,8 +519,14 @@ defmodule Flezha.Relay.Lifecycle do
       }
     )
 
-    Map.put(state, :init_error, reason)
+    %Overwatch{state | halt_reason: reason, phase: halted_phase(state)}
   end
+
+  # The order health is derived in: a sleeper stays suspended, and a relay
+  # holding no binding stays unbound.
+  defp halted_phase(%Overwatch{phase: :suspended}), do: :suspended
+  defp halted_phase(%Overwatch{runner_id: nil}), do: :unbound
+  defp halted_phase(%Overwatch{}), do: :halted
 
   # No runner has connected yet, which is not a fault: hold the relay alive
   # with the outcome on its state. Stopping here would put a supervisor restart
@@ -535,7 +541,7 @@ defmodule Flezha.Relay.Lifecycle do
   # previous boot is not a binding, and keeping one makes the judge call the
   # relay failed where the phase calls it unbound.
   defp hold_unbound(%Overwatch{} = state, reason),
-    do: %{state | runner_id: nil, init_error: {:runner_not_ready, reason}}
+    do: %{state | runner_id: nil, halt_reason: {:runner_not_ready, reason}, phase: :unbound}
 
   # A halt a plugin caused names that plugin; every other reason carries `nil`
   # rather than claim a plugin id it does not have.
@@ -614,7 +620,7 @@ defmodule Flezha.Relay.Lifecycle do
   def shutdown_steps do
     [
       %{scope: :process, order: 5, name: :calls, run: &calls_step/2},
-      %{scope: :process, order: 10, name: :migrate_task, run: &migrate_task_step/2},
+      %{scope: :process, order: 10, name: :bind_task, run: &bind_task_step/2},
       %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
       %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
       %{scope: :process, order: 35, name: :writers, run: &writers_step/2},
@@ -644,8 +650,8 @@ defmodule Flezha.Relay.Lifecycle do
     :ok
   end
 
-  defp migrate_task_step({state, _reason}, _budget) do
-    _ = Rebind.terminate_migrate_task(state)
+  defp bind_task_step({state, _reason}, _budget) do
+    _ = Rebind.terminate_bind_task(state)
     :ok
   end
 

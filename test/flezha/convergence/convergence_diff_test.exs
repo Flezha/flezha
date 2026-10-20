@@ -125,7 +125,7 @@ defmodule Flezha.Convergence.DiffTest do
     end
 
     test "a parked or a suspended relay yields neither missing nor extra" do
-      for gate <- [%{halted?: true}, %{suspended?: true}] do
+      for gate <- [%{phase: :halted}, %{phase: :suspended}] do
         observed =
           Map.merge(%{running_plugins: [], subscribed_plugins: ["src", "stray"]}, gate)
 
@@ -340,7 +340,7 @@ defmodule Flezha.Convergence.DiffTest do
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
         relays: %{
-          {:ns, "r"} => %{bound_runner: nil, pid: self(), suspended?: true, running_plugins: []}
+          {:ns, "r"} => %{bound_runner: nil, pid: self(), phase: :suspended, running_plugins: []}
         },
         stalled_relays: MapSet.new()
       }
@@ -366,7 +366,7 @@ defmodule Flezha.Convergence.DiffTest do
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
         relays: %{
-          {:ns, "r"} => %{bound_runner: "e", pid: self(), halted?: true, running_plugins: []}
+          {:ns, "r"} => %{bound_runner: "e", pid: self(), phase: :halted, running_plugins: []}
         },
         stalled_relays: MapSet.new()
       }

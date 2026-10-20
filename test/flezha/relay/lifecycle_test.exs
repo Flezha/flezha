@@ -154,10 +154,10 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
                    2_000
   end
 
-  test "6.4 a halted relay rebinds: pings, starts, clears init_error, activates plugins",
+  test "6.4 a halted relay rebinds: pings, starts, clears halt_reason, activates plugins",
        %{test_pid: test_pid, ets: ets} do
     # Start the relay so the readiness gate passes but the START ping fails,
-    # parking it (alive, init_error set). Started directly (not via
+    # parking it (alive, halt_reason set). Started directly (not via
     # RelayManager) so the parked-and-alive GenServer is not
     # stop_child_quietly'd — this is the cold-restart parked state.
     Application.put_env(
@@ -185,12 +185,14 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       end
     end)
 
-    # It parks (init_error set) and never activates the plugin while parked.
+    # It parks (halt_reason set) and never activates the plugin while parked.
     assert NodeTestHelper.wait_until(
-             fn -> overwatch_state(pid).init_error != nil end,
+             fn -> overwatch_state(pid).halt_reason != nil end,
              2_000,
              20
            )
+
+    assert Overwatch.phase(overwatch_state(pid)) == :halted
 
     refute_received :activated
 
@@ -201,20 +203,21 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
     assert :ok = GenServer.call(pid, {:rebind, runner_id})
 
-    # init_error cleared and the plugin activated (resumes producing).
+    # halt_reason cleared and the plugin activated (resumes producing).
     # `:rebind` is async (the bind runs in a
     # `Task.Supervisor.async_nolink` task), so we poll the state instead of
     # asserting immediately.
     assert_receive :activated, 5_000
 
     assert NodeTestHelper.wait_until(
-             fn -> is_nil(overwatch_state(pid).init_error) end,
+             fn -> is_nil(overwatch_state(pid).halt_reason) end,
              2_000,
              20
            )
 
     state = overwatch_state(pid)
     assert Table.phase(state.extensions, "unpark_plugin") == :running
+    assert Overwatch.phase(state) == :running
   end
 
   defp overwatch_state(pid), do: GenServer.call(pid, :get_overwatch_state)
@@ -275,7 +278,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
              "(baseline=#{baseline}, final=#{final})"
   end
 
-  test "stop_relay returns :ok within 1s while a parked-unpark migrate task is in flight",
+  test "stop_relay returns :ok within 1s while a parked-unpark bind task is in flight",
        %{test_pid: test_pid, ets: ets} do
     # The async migrate path lives on the parked-unpark branch — that's
     # where the whole bind runs. Boot a parked relay (start ping fails
@@ -305,7 +308,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     # Wait for the relay to park.
     assert NodeTestHelper.wait_until(
              fn ->
-               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+               GenServer.call(overwatch_pid, :get_overwatch_state).halt_reason != nil
              end,
              2_000,
              25
@@ -327,7 +330,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
     # Now tear the relay down the way the hub stop path does (a
     # supervisor :shutdown exit). terminate/2 MUST return within 1 s even
-    # though the migrate task is blocked inside the ping — it kills the
+    # though the bind task is blocked inside the ping — it kills the
     # task instead of waiting on it. Trap: the Overwatch is linked to this
     # test, and a :shutdown stop propagates over the link.
     Process.flag(:trap_exit, true)
@@ -336,7 +339,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     elapsed = System.monotonic_time(:millisecond) - started
 
     assert elapsed < 1_000,
-           "teardown returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
+           "teardown returned in #{elapsed} ms; required < 1 s while bind task is in flight"
   end
 
   describe "a park is reported, not only logged" do
@@ -353,7 +356,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
       state = %Overwatch{id: id, namespace: @namespace}
 
-      assert %Overwatch{init_error: ^reason} = Lifecycle.halt(state, reason)
+      assert %Overwatch{halt_reason: ^reason} = Lifecycle.halt(state, reason)
 
       assert_receive {:halted, %{count: 1}, meta}
       assert meta.namespace == @namespace
@@ -376,6 +379,20 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       assert_receive {:halted, %{count: 1}, meta}
       assert meta.reason == {:restore_refused, :sdk_refused}
       assert meta.plugin_id == nil
+    end
+
+    # fails when: a halt writes `:halted` over a sleeper or a relay holding no
+    # binding, so the phase and the judge's state describe one relay differently.
+    test "a halt keeps a suspended or unbound phase and halts a bound one" do
+      bound = %Overwatch{id: "halt-phase", namespace: @namespace, runner_id: "r", phase: :running}
+
+      for {state, phase} <- [
+            {bound, :halted},
+            {%{bound | runner_id: nil}, :unbound},
+            {%{bound | runner_id: nil, phase: :suspended}, :suspended}
+          ] do
+        assert %Overwatch{phase: ^phase, halt_reason: :boom} = Lifecycle.halt(state, :boom)
+      end
     end
   end
 
@@ -419,7 +436,8 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       # both read it: no binding, and the bind's own reason.
       state = overwatch_state(pid)
       assert is_nil(state.runner_id)
-      assert {:runner_not_ready, reason} = state.init_error
+      assert Overwatch.phase(state) == :unbound
+      assert {:runner_not_ready, reason} = state.halt_reason
       assert reason in [:timeout, :unavailable]
     end
 
@@ -461,15 +479,15 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
         builder: %Builder{id: id, factory_id: @factory},
         extensions: Table.new(Overwatch.__extensions_catalog__()),
         runner_id: nil,
-        init_error: {:runner_not_ready, :timeout}
+        halt_reason: {:runner_not_ready, :timeout}
       }
 
-      assert {:reply, :ok, %Overwatch{migrate_task: %{pid: task}}} =
+      assert {:reply, :ok, %Overwatch{bind_task: %{pid: task}}} =
                Overwatch.handle_call({:rebind, "late_runner"}, {self(), make_ref()}, held)
 
-      # The migrate task runs `complete_init`, the full init, which pings the
+      # The bind task runs `complete_init`, the full init, which pings the
       # runner.
-      assert_receive {:migrate_task_result, ^task, {:halt, _, {:ping_failed, :no_runner}}}, 2_000
+      assert_receive {:bind_task_result, ^task, {:halt, _, {:ping_failed, :no_runner}}}, 2_000
     end
 
     # fails when: holding replaces a crash loop with a stall — the relay
@@ -500,7 +518,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
                fn ->
                  match?(
                    {:runner_not_ready, _},
-                   overwatch_state(pid).init_error
+                   overwatch_state(pid).halt_reason
                  )
                end,
                3_000,
@@ -517,12 +535,12 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       assert :ok = GenServer.call(pid, {:rebind, target})
 
       assert NodeTestHelper.wait_until(
-               fn -> is_nil(overwatch_state(pid).init_error) end,
+               fn -> is_nil(overwatch_state(pid).halt_reason) end,
                5_000,
                20
              ),
              "the held relay never bound: " <>
-               inspect(overwatch_state(pid).init_error)
+               inspect(overwatch_state(pid).halt_reason)
 
       assert overwatch_state(pid).runner_id == target
     end

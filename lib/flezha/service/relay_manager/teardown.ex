@@ -218,7 +218,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   defp request_stop(namespace, relay_id, wake?) do
     case RelayManager.get_overwatch_state(namespace, relay_id) do
-      {:ok, %{builder: %{run: :steps}, suspended: true}} when wake? ->
+      {:ok, %{builder: %{run: :steps}, phase: :suspended}} when wake? ->
         case RelayManager.ask_overwatch(namespace, relay_id, {:wake, then: :stop}) do
           :ok -> {:ok, :cooperative}
           # Woken meanwhile: stopped as an awake one, once.

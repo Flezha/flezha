@@ -70,29 +70,12 @@ defmodule Flezha.Relay.Handover do
     # traffic". An empty binary means "no prior state": the relay starts fresh.
     serialized_state = if is_binary(pipe_serialized), do: pipe_serialized, else: <<>>
 
-    command = %RunnerCommands.MigrationDeserialization{
-      relay_id: state.id,
-      factory_id: Map.get(handover_state, :factory_id),
-      serialized_state: serialized_state
-    }
-
     # A relay can arrive with nothing bound: this controller served its
     # group when the move started and no longer does, or its last runner for
     # the factory went while the move was in flight. There is no runner to ship
     # the state to, and the bind that follows restores it.
     bound? = is_binary(state.runner_id)
-
-    if bound? do
-      result =
-        Overwatch.with_task_span(:migration_deserialize, state.id, fn ->
-          ControlUnit.send_control_await(state.runner_id, {:migration_deserialization, command})
-        end)
-
-      case result do
-        {:error, reason} -> Logger.error("Failed to deserialize relay: #{inspect(reason)}")
-        _else -> :ok
-      end
-    end
+    if bound?, do: deserialize(state, Map.get(handover_state, :factory_id), serialized_state)
 
     # The bindings come up from the relay's declared entry, resolved on this
     # controller: what it can run here may differ from what the old one could.
@@ -111,6 +94,7 @@ defmodule Flezha.Relay.Handover do
       end
 
     {brought_up, _failed} = Plugins.bring_up(prepared)
+    arrived? = bound? and serialized_state != <<>>
 
     %Overwatch{
       state
@@ -122,9 +106,28 @@ defmodule Flezha.Relay.Handover do
         # carry it to, falls through to the on-disk state the bind already
         # restored from — otherwise the explicit `kick_restore` repair would
         # be locked out too.
-        arrived_via_hotswap?: bound? and serialized_state != <<>>
+        arrived_via_hotswap?: arrived?,
+        cause: if(arrived?, do: :arrive, else: state.cause)
     }
     |> arm_call_deadlines()
+  end
+
+  defp deserialize(%Overwatch{} = state, factory_id, serialized_state) do
+    command = %RunnerCommands.MigrationDeserialization{
+      relay_id: state.id,
+      factory_id: factory_id,
+      serialized_state: serialized_state
+    }
+
+    result =
+      Overwatch.with_task_span(:migration_deserialize, state.id, fn ->
+        ControlUnit.send_control_await(state.runner_id, {:migration_deserialization, command})
+      end)
+
+    case result do
+      {:error, reason} -> Logger.error("Failed to deserialize relay: #{inspect(reason)}")
+      _else -> :ok
+    end
   end
 
   # Each carried row keeps the deadline it had on the source node; an
@@ -165,7 +168,7 @@ defmodule Flezha.Relay.Handover do
   def consent(%Overwatch{} = state) do
     cond do
       state.corrections != %{} -> :defer
-      state.durable_steps and not state.suspended -> :defer
+      state.durable_steps and state.phase != :suspended -> :defer
       state.effectively_once and outbox_pending?(state) -> :defer
       true -> :ready
     end

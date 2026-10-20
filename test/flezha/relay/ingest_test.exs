@@ -68,7 +68,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   end
 
   test "a parked target reports not-ready instead of dropping" do
-    state = state(instance_id(), init_error: :sdk_start_failed)
+    state = state(instance_id(), halt_reason: :sdk_start_failed)
 
     assert {:reply, {:error, :not_ready}, _state} =
              Overwatch.handle_call({:ingest, "hello", %{}}, self(), state)
@@ -99,7 +99,7 @@ defmodule FlezhaTest.Relay.IngestTest do
         nil
       end)
 
-      state = state(inst, durable_steps: true, suspended: true, channel: nil)
+      state = state(inst, durable_steps: true, phase: :suspended, channel: nil)
       {:ok, host} = start_supervised({Host, state})
 
       assert {:ok, :suspended} = GenServer.call(host, {:ingest, "turn", %{}})
@@ -574,7 +574,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   end
 
   test "the existing cast keeps its silent drop for a parked relay" do
-    state = state(instance_id(), init_error: :sdk_start_failed, channel: fake_channel(:ok))
+    state = state(instance_id(), halt_reason: :sdk_start_failed, channel: fake_channel(:ok))
 
     assert {:noreply, ^state} = Overwatch.handle_cast({:io_in, "hello", %{}}, state)
     refute_received {:channel_got, _, _}
@@ -586,7 +586,7 @@ defmodule FlezhaTest.Relay.IngestTest do
 
     state =
       state(inst,
-        init_error: :sdk_start_failed,
+        halt_reason: :sdk_start_failed,
         channel: fake_channel(:ok),
         liveness_ref: ref
       )

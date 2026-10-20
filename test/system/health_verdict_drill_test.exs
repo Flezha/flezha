@@ -192,9 +192,9 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # heals the halt, so the read waits for the record: a read that comes first
   # sees the old one, and the tick it then asks for lands after the heal.
   defp rehalt(ctx, id, pid) do
-    if is_nil(:sys.get_state(pid).init_error) do
+    if is_nil(:sys.get_state(pid).halt_reason) do
       send(pid, {:restore_refused, :drill})
-      wait_until(fn -> not is_nil(:sys.get_state(pid).init_error) end, 5_000)
+      wait_until(fn -> not is_nil(:sys.get_state(pid).halt_reason) end, 5_000)
       wait_until(fn -> record_state(ctx, id) == :halted end, 10_000)
     end
 

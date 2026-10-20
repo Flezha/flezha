@@ -372,7 +372,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   defp bound?(ns, id) do
     match?(
-      {:ok, %{runner_id: runner, suspended: false}} when is_binary(runner),
+      {:ok, %{runner_id: runner, phase: phase}} when is_binary(runner) and phase != :suspended,
       RelayManager.get_overwatch_state(ns, id)
     )
   end

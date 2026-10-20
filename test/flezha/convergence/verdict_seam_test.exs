@@ -204,7 +204,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     test "a halted relay is halted, with its reason and its phase" do
       records =
         judged(
-          one("halted", bound_runner: "e1", halted?: true, halt_reason: :boom),
+          one("halted", bound_runner: "e1", phase: :halted, halt_reason: :boom),
           MapSet.new(["e1"])
         )
 
@@ -215,16 +215,15 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert record.phase == :halted
     end
 
-    # fails when: phase and state derive in different orders. A relay held
-    # after a bind that found no runner carries an `init_error`, which the probe
-    # reports as `halted?` — so a phase derivation that tests halted before the
-    # binding reports `halted` while the judge reports `unbound`.
+    # fails when: the judge reads a halt reason before the binding. A relay
+    # held after a bind that found no runner carries one, so the judge would
+    # report `halted` while its phase reads `unbound`.
     test "a relay held after a bind that found no runner is unbound in both words" do
       records =
         judged(
           one("held",
             bound_runner: nil,
-            halted?: true,
+            phase: :unbound,
             halt_reason: {:runner_not_ready, :timeout}
           ),
           MapSet.new(["e1"])
@@ -240,7 +239,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     test "a suspended instance is suspended, and a halt reason does not change that" do
       records =
         judged(
-          one("suspended", bound_runner: nil, suspended?: true, halted?: true),
+          one("suspended", bound_runner: nil, phase: :suspended, halt_reason: :boom),
           MapSet.new(["e1"])
         )
 
@@ -433,7 +432,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   end
 
   defp one(id, observed) do
-    %{{"ns", id} => Enum.into(observed, %{bound_runner: nil, suspended?: false, halted?: false})}
+    %{{"ns", id} => Enum.into(observed, %{bound_runner: nil, phase: :running})}
   end
 
   defp context_for(observed, roster, signals, plugins) do
@@ -464,8 +463,8 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       {"ns", "degraded"} => obs(bound_runner: "e1", running_plugins: [], subscribed_plugins: []),
       {"ns", "failed"} => obs(bound_runner: "gone"),
       {"ns", "unbound"} => obs(bound_runner: nil),
-      {"ns", "halted"} => obs(bound_runner: "e1", halted?: true),
-      {"ns", "suspended"} => obs(bound_runner: "e1", suspended?: true),
+      {"ns", "halted"} => obs(bound_runner: "e1", phase: :halted),
+      {"ns", "suspended"} => obs(bound_runner: "e1", phase: :suspended),
       {"ns", "unknown"} => obs(bound_runner: :unknown),
       {"ns", "plugged"} =>
         obs(
@@ -574,8 +573,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
   defp obs(fields) do
     Enum.into(fields, %{
       bound_runner: nil,
-      suspended?: false,
-      halted?: false,
+      phase: :running,
       running_plugins: [],
       subscribed_plugins: [],
       down_plugins: %{},

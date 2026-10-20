@@ -92,10 +92,10 @@ defmodule FlezhaTest.Relay.PackageProviderTest do
   end
 
   defp table(id) do
-    {:ok, %{extensions: table, init_error: init_error}} =
+    {:ok, %{extensions: table, halt_reason: halt_reason}} =
       RelayManager.get_overwatch_state(@namespace, id)
 
-    {table, init_error}
+    {table, halt_reason}
   end
 
   test "the example keys one writer per namespace and name", %{root: root, example: example} do
@@ -125,8 +125,8 @@ defmodule FlezhaTest.Relay.PackageProviderTest do
           assert {:ok, _} = start_bound("orphan_op", "s")
         end)
 
-      {table, init_error} = table("orphan_op")
-      assert init_error == nil
+      {table, halt_reason} = table("orphan_op")
+      assert halt_reason == nil
       controller = node()
 
       assert {:not_started, {:module_not_loaded, @stamp, ^controller} = why} =

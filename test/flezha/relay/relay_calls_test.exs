@@ -144,7 +144,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
         nil
       end)
 
-      state = Host.state(inst, durable_steps: true, suspended: true, channel: nil)
+      state = Host.state(inst, durable_steps: true, phase: :suspended, channel: nil)
       host = start_supervised!({Host, state})
       dispatch(host, "o1", request_metadata(now() + 30_000))
       assert_receive {:delivery_request, _, ^inst, %{id: id}}

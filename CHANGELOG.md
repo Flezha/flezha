@@ -34,6 +34,12 @@
   finished, but before the node stopped, was admitted; it answers `shutting_down` now. A restart
   of the shutdown coordinator no longer reopens admission either.
 
+### Fixed: `flz relay info` reads a relay's phase live
+
+- `Phase:` is read from the relay itself, not from the convergence loop's last verdict, so a
+  woken session reads `running` as soon as its bind is adopted. `Health:` is still the loop's
+  verdict and may lag until its next tick.
+
 ### Changed: names that say what they time
 
 - **BREAKING:** `FLEZHA_RUNNER_KEEPALIVE` is `FLEZHA_RUNNER_REMOVAL_GRACE_MS` and the application

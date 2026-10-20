@@ -51,7 +51,8 @@ defmodule FlezhaTest.Relay.SuspendTest do
       channel: self(),
       builder: %Builder{id: inst, factory_id: "chat", run: :steps, opts: []},
       extensions: Table.new(Overwatch.__extensions_catalog__()),
-      durable_steps: true
+      durable_steps: true,
+      phase: :running
     }
 
     struct!(base, overrides)
@@ -74,13 +75,13 @@ defmodule FlezhaTest.Relay.SuspendTest do
       :ok
     end)
 
-    parked = state(inst, migrate_task: %{ref: make_ref(), pid: self()})
-    recovered = %{parked | runner_id: "ex_woken", suspended: false}
+    parked = state(inst, bind_task: %{ref: make_ref(), pid: self()})
+    recovered = %{parked | runner_id: "ex_woken", phase: :running}
 
     {:noreply, unparked} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
+      Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, parked)
 
-    assert unparked.migrate_task == nil
+    assert unparked.bind_task == nil
     assert_receive {:tag_published, "default", "ex_woken"}
     assert_receive {:route_published, "ex_woken", ^test_pid}
   end
@@ -96,13 +97,13 @@ defmodule FlezhaTest.Relay.SuspendTest do
     parked =
       state(inst,
         snapshot: "stored_before_the_park",
-        migrate_task: %{ref: make_ref(), pid: self()}
+        bind_task: %{ref: make_ref(), pid: self()}
       )
 
-    recovered = %{parked | runner_id: "ex_woken", suspended: false}
+    recovered = %{parked | runner_id: "ex_woken", phase: :running}
 
     {:noreply, unparked} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
+      Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, parked)
 
     assert unparked.runner_id == "ex_woken"
     assert unparked.snapshot == nil
@@ -128,7 +129,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     assert_receive :evicted
     assert_receive {:registry_runner, nil}
 
-    assert suspended.suspended
+    assert Overwatch.phase(suspended) == :suspended
     assert suspended.runner_id == nil
     assert suspended.channel == nil
     refute Timer.armed?(suspended.timers, :wake), "no pending timer ⇒ wait for input alone"
@@ -166,18 +167,18 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
     {:noreply, after_park, :hibernate} = Overwatch.handle_cast({:suspend, 0, park()}, state(inst))
 
-    assert after_park.migrate_task != nil,
+    assert after_park.bind_task != nil,
            "an instance with undelivered input must rehydrate, not sit suspended " <>
              "waiting for a message that already arrived"
 
-    :ok = await_migrate_task(after_park)
+    :ok = await_bind_task(after_park)
 
     # With nothing pending, the same park suspends and stays there.
     :ok = TaskJournal.append_iter_committed(inst, 1, 1, [])
     :ok = TaskJournal.release_input(inst, 1)
     {:noreply, idle, :hibernate} = Overwatch.handle_cast({:suspend, 1, park()}, state(inst))
-    assert idle.suspended
-    assert idle.migrate_task == nil
+    assert Overwatch.phase(idle) == :suspended
+    assert idle.bind_task == nil
   end
 
   test "a park with a wake deadline arms the durable timer" do
@@ -198,19 +199,19 @@ defmodule FlezhaTest.Relay.SuspendTest do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _ns, "chat", ^inst -> "ex_2" end)
 
-    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    suspended = state(inst, phase: :suspended, runner_id: nil, channel: nil)
 
     {:noreply, journaling} =
       Overwatch.handle_cast({:io_in, "hello", %{"channel" => "chat"}}, suspended)
 
-    assert journaling.migrate_task == nil, "nothing wakes before the input is durable"
+    assert journaling.bind_task == nil, "nothing wakes before the input is durable"
     rehydrating = settle_journal(journaling)
 
     # Durable first: the input is in the log before anything else happens, so a
     # crash mid-rehydrate cannot lose it.
     assert [{0, "hello", _metadata}] = InputLog.undelivered(inst)
 
-    assert rehydrating.migrate_task != nil,
+    assert rehydrating.bind_task != nil,
            "the rehydrate runs through the normal (un-park) bind task"
 
     # Racing wake sources resolve to exactly one rehydration: a second input
@@ -218,55 +219,55 @@ defmodule FlezhaTest.Relay.SuspendTest do
     {:noreply, journaling} = Overwatch.handle_cast({:io_in, "second", %{}}, rehydrating)
     still_one = settle_journal(journaling)
 
-    assert still_one.migrate_task == rehydrating.migrate_task,
+    assert still_one.bind_task == rehydrating.bind_task,
            "a second wake source does not start a second rehydration"
 
     assert Enum.map(InputLog.undelivered(inst), &elem(&1, 1)) == ["hello", "second"]
 
-    :ok = await_migrate_task(rehydrating)
+    :ok = await_bind_task(rehydrating)
   end
 
   test "the wake deadline rehydrates and appends nothing" do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> "ex_2" end)
 
-    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    suspended = state(inst, phase: :suspended, runner_id: nil, channel: nil)
     {:noreply, rehydrating} = Overwatch.handle_info(:wake_deadline, suspended)
 
-    assert rehydrating.migrate_task != nil
+    assert rehydrating.bind_task != nil
     refute Timer.armed?(rehydrating.timers, :wake)
 
     assert InputLog.undelivered(inst) == [],
            "the restored Cells' own timer fires; nothing rides the input log"
 
-    :ok = await_migrate_task(rehydrating)
+    :ok = await_bind_task(rehydrating)
   end
 
   test "a runner connecting wakes a sleeper that owes input and leaves one that owes nothing" do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> "ex_2" end)
-    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    suspended = state(inst, phase: :suspended, runner_id: nil, channel: nil)
 
     {:noreply, idle, :hibernate} = Overwatch.handle_cast(:rehydrate_if_pending, suspended)
-    assert idle.migrate_task == nil, "a sleeper owing nothing was woken"
+    assert idle.bind_task == nil, "a sleeper owing nothing was woken"
 
     {:ok, 0} = InputLog.append(inst, "kept while no runner served it", %{})
     {:noreply, waking} = Overwatch.handle_cast(:rehydrate_if_pending, suspended)
-    assert waking.migrate_task != nil, "a sleeper owing input stayed asleep"
+    assert waking.bind_task != nil, "a sleeper owing input stayed asleep"
 
-    :ok = await_migrate_task(waking)
+    :ok = await_bind_task(waking)
   end
 
   test "with no runner to rehydrate onto, the instance stays suspended" do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> nil end)
 
-    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    suspended = state(inst, phase: :suspended, runner_id: nil, channel: nil)
     {:noreply, journaling} = Overwatch.handle_cast({:io_in, "hi", %{}}, suspended)
     still = settle_journal(journaling)
 
-    assert still.suspended
-    assert still.migrate_task == nil
+    assert Overwatch.phase(still) == :suspended
+    assert still.bind_task == nil
     assert [{0, "hi", _metadata}] = InputLog.undelivered(inst), "the input is not lost"
   end
 
@@ -274,11 +275,11 @@ defmodule FlezhaTest.Relay.SuspendTest do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> nil end)
 
-    suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
+    suspended = state(inst, phase: :suspended, runner_id: nil, channel: nil)
     {:noreply, still} = Overwatch.handle_info(:wake_deadline, suspended)
 
-    assert still.suspended
-    assert still.migrate_task == nil
+    assert Overwatch.phase(still) == :suspended
+    assert still.bind_task == nil
     assert Timer.armed?(still.timers, :wake), "nothing else would wake it"
     retry_in = Process.read_timer(elem(Map.fetch!(still.timers, :wake), 0))
     assert retry_in > 0 and retry_in <= Flezha.Config.Durations.get(:convergence_tick_ms)
@@ -298,8 +299,8 @@ defmodule FlezhaTest.Relay.SuspendTest do
   # missing runner rather than on anything else — and what keeps it from
   # outliving its test and landing on the next test's instance-pinned stub
   # carrying this test's id.
-  defp await_migrate_task(%Overwatch{migrate_task: %{pid: pid}}) do
-    assert_receive {:migrate_task_result, ^pid, {:halt, _parked, {:ping_failed, _}}}, 2_000
+  defp await_bind_task(%Overwatch{bind_task: %{pid: pid}}) do
+    assert_receive {:bind_task_result, ^pid, {:halt, _parked, {:ping_failed, _}}}, 2_000
     :ok
   end
 
@@ -312,7 +313,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     stub(Flezha.Service.HubManager, :relay_set_runner, fn _, _, _ -> :ok end)
 
     {:noreply, asleep, :hibernate} = Overwatch.handle_cast({:suspend, 3, park(nil)}, state(inst))
-    assert asleep.suspended
+    assert Overwatch.phase(asleep) == :suspended
     assert Suspend.sleep_record(inst) == park(nil)
     assert_received :evicted
 
@@ -321,29 +322,52 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
     ExUnit.CaptureLog.capture_log(fn ->
       {:noreply, bound, :hibernate} = Overwatch.handle_cast({:suspend, 3, park()}, state(other))
-      refute bound.suspended
+      refute Overwatch.phase(bound) == :suspended
       assert bound.runner_id == "ex_1"
     end)
 
     refute_received :evicted
   end
 
-  test "a park landing while an un-park binds keeps its record and the suspension" do
-    inst = instance_id()
+  # fails when: a bind task's bound state is adopted after a park landed while
+  # it was binding, a rebind's (the phase moved) or a wake's (it did not).
+  test "a park landing while a bind binds keeps its record and the suspension" do
     stub(Flezha.Runner.ControlUnit, :stop_relay_async, fn _, _ -> :ok end)
     stub(Flezha.Service.HubManager, :relay_set_runner, fn _, _, _ -> :ok end)
-    binding = state(inst, migrate_task: %{ref: make_ref(), pid: self()})
 
-    {:noreply, parked, :hibernate} = Overwatch.handle_cast({:suspend, 4, park()}, binding)
-    assert parked.parked_in_flight
+    for from <- [:running, :suspended] do
+      inst = instance_id()
+      task = %{pid: self(), then: nil, from: from}
+      binding = state(inst, phase: from, bind_task: task)
 
-    recovered = %{parked | runner_id: "ex_stale", suspended: false}
+      {:noreply, parked, :hibernate} = Overwatch.handle_cast({:suspend, 4, park()}, binding)
+      recovered = %{parked | runner_id: "ex_stale", phase: :running}
+
+      {:noreply, after_bind} =
+        Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, parked)
+
+      assert Overwatch.phase(after_bind) == :suspended,
+             "a bind from #{from} adopted its stale state"
+
+      assert after_bind.bind_task == nil
+      assert Suspend.sleep_record(inst) == park()
+    end
+  end
+
+  # fails when: a halt that landed while a bind was binding is overwritten by
+  # the bind's bound state.
+  test "a halt landing while a bind binds stands" do
+    binding = state(instance_id(), bind_task: %{pid: self(), then: nil, from: :running})
+
+    {:noreply, halted} = Overwatch.handle_info({:restore_refused, :boom}, binding)
+    recovered = %{binding | runner_id: "ex_stale", bind_task: nil}
 
     {:noreply, after_bind} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
+      Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, halted)
 
-    assert after_bind.suspended, "the stale bound state is not adopted"
-    assert Suspend.sleep_record(inst) == park()
+    assert Overwatch.phase(after_bind) == :halted
+    assert after_bind.halt_reason == {:restore_refused, :boom}
+    assert after_bind.runner_id == "ex_1"
   end
 
   test "whether an instance sleeps is read from its park record and its log, for either kind" do
@@ -391,7 +415,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     {:noreply, booted, :hibernate} =
       Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh)
 
-    assert booted.suspended
+    assert Overwatch.phase(booted) == :suspended
     assert booted.sleeps, "a message that finds it asleep is journaled"
     assert InputLog.tail(inst) == {:ok, 1, 1}, "what its Cell consumed is not owed"
   end
@@ -473,11 +497,11 @@ defmodule FlezhaTest.Relay.SuspendTest do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> "ex_2" end)
     :ok = Suspend.put_sleep(inst, park())
-    asleep = state(inst, suspended: true, runner_id: nil, channel: nil)
+    asleep = state(inst, phase: :suspended, runner_id: nil, channel: nil)
 
     {:reply, :ok, waking} = Overwatch.handle_call({:wake, then: :stop}, self(), asleep)
-    assert waking.migrate_task.then == :stop
-    :ok = await_migrate_task(waking)
+    assert waking.bind_task.then == :stop
+    :ok = await_bind_task(waking)
     assert Suspend.sleep_record(inst) == nil, "the bind cleared the record before the start"
 
     # The rebind reports its binding: the stop follows it to that runner.
@@ -492,13 +516,13 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
     carrying = %{
       asleep
-      | migrate_task: %{ref: make_ref(), pid: self(), then: :stop}
+      | bind_task: %{ref: make_ref(), pid: self(), then: :stop}
     }
 
-    recovered = %{carrying | runner_id: "ex_2", suspended: false}
+    recovered = %{carrying | runner_id: "ex_2", phase: :running}
 
     {:noreply, _awake} =
-      Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, carrying)
+      Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, carrying)
 
     assert_received {:steps_stop, "ex_2", ^inst}
   end
@@ -506,13 +530,13 @@ defmodule FlezhaTest.Relay.SuspendTest do
   test "a stop finds no runner to wake on, or the instance already awake" do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> nil end)
-    asleep = state(inst, suspended: true, runner_id: nil, channel: nil)
+    asleep = state(inst, phase: :suspended, runner_id: nil, channel: nil)
 
     ExUnit.CaptureLog.capture_log(fn ->
       assert {:reply, {:error, :no_runner}, still} =
                Overwatch.handle_call({:wake, then: :stop}, self(), asleep)
 
-      assert still.suspended
+      assert Overwatch.phase(still) == :suspended
     end)
 
     assert {:reply, {:error, :awake}, _} =
@@ -540,7 +564,9 @@ defmodule FlezhaTest.Relay.SuspendTest do
     {:noreply, booted, :hibernate} =
       Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh)
 
-    assert booted.suspended, "the boot never binds a suspended instance to a runner"
+    assert Overwatch.phase(booted) == :suspended,
+           "the boot never binds a suspended instance to a runner"
+
     assert booted.runner_id == nil
     assert Timer.armed?(booted.timers, :wake), "the recorded wake deadline is re-armed"
 
@@ -556,7 +582,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
              Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh),
            "it takes the normal bind path (which finds no runner here)"
 
-    assert {:runner_not_ready, _} = held.init_error
+    assert {:runner_not_ready, _} = held.halt_reason
   end
 
   test "whether a suspended instance owes input is answered without reading its records" do
@@ -637,7 +663,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
     # A rewind is a rebind, not a park: the instance comes straight back up and
     # no park record was written.
-    assert state.migrate_task != nil
+    assert state.bind_task != nil
     assert Suspend.sleep_record(inst) == nil
 
     # Undo-and-continue: the rebind's seed leaves the floor where the commits put
@@ -645,7 +671,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     :ok = TaskJournal.release_input(inst)
     assert InputLog.tail(inst) == {:ok, 3, 4}
 
-    :ok = await_migrate_task(state)
+    :ok = await_bind_task(state)
   end
 
   test "rewind to an uncommitted iteration is refused, changing nothing" do
@@ -682,7 +708,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     assert {:reply, :ok, rewound} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
     assert TaskJournal.current_epoch(inst) == 1
 
-    :ok = await_migrate_task(rewound)
+    :ok = await_bind_task(rewound)
   end
 
   test "iterations that emitted nothing need no coverage" do
@@ -692,7 +718,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     :ok = ClassRegistry.put_compensable_ops(inst, [])
 
     assert {:reply, :ok, rewound} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
-    :ok = await_migrate_task(rewound)
+    :ok = await_bind_task(rewound)
   end
 
   describe "migration_consent/1 (processhub-deferred-migration)" do
@@ -711,7 +737,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     test "an unsuspended durable steps relay defers; a suspended one consents" do
       inst = instance_id()
       assert Overwatch.migration_consent(state(inst)) == :defer
-      assert Overwatch.migration_consent(state(inst, suspended: true)) == :ready
+      assert Overwatch.migration_consent(state(inst, phase: :suspended)) == :ready
     end
 
     test "an effectively-once instance with pending outbox defers, drained consents" do
@@ -759,7 +785,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
       inst = instance_id()
       st = state(inst, durable_steps: false, sleeps: true)
       assert Overwatch.migration_consent(st) == :ready
-      assert Overwatch.migration_consent(%{st | suspended: true}) == :ready
+      assert Overwatch.migration_consent(%{st | phase: :suspended}) == :ready
     end
   end
 
@@ -780,7 +806,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
       assert_receive {:migration_ready, hub_id, ^inst}
       assert hub_id == Identificator.hub("default")
-      assert suspended.suspended
+      assert Overwatch.phase(suspended) == :suspended
     end
 
     test "the last correction draining signals migration_ready; a remaining one does not" do

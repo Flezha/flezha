@@ -157,7 +157,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
     test "a stub executor answering :ok leaves a parked ladder armed until the park is observed gone" do
       stub(Probe, :snapshot, fn ->
-        reality(%{halted?: true, halt_reason: {:ping_failed, :timeout}})
+        reality(%{phase: :halted, halt_reason: {:ping_failed, :timeout}})
       end)
 
       :ok = Loop.tick_now()
@@ -167,7 +167,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       assert Map.has_key?(:sys.get_state(Loop).facts, {:relay_halted, {:ns, "op"}})
 
       # Repaired: the probe sees it unparked, the fact goes and the key resets.
-      stub(Probe, :snapshot, fn -> reality(%{halted?: false, halt_reason: nil}) end)
+      stub(Probe, :snapshot, fn -> reality(%{phase: :running, halt_reason: nil}) end)
       :ok = Loop.tick_now()
 
       assert Backoff.attempt(:sys.get_state(Loop).backoff, {:halted, "op"}) == 0

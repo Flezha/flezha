@@ -15,6 +15,7 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Parallel
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Relay.Overwatch
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
@@ -150,9 +151,8 @@ defmodule Flezha.Convergence.Probe do
           bound_runner: Map.get(ow, :runner_id),
           registry_tag: registry_tag(ow),
           factory_id: Map.get(ow, :factory_id),
-          halted?: Map.get(ow, :init_error) != nil,
-          halt_reason: Map.get(ow, :init_error),
-          suspended?: Map.get(ow, :suspended, false),
+          phase: Overwatch.phase(ow),
+          halt_reason: Map.get(ow, :halt_reason),
           running_plugins: running_plugins(ow),
           subscribed_plugins: subscribed_plugins(ow),
           down_plugins: phase_plugins(ow, :down),
@@ -181,9 +181,8 @@ defmodule Flezha.Convergence.Probe do
         bound_runner: nil,
         registry_tag: nil,
         factory_id: nil,
-        halted?: false,
+        phase: nil,
         halt_reason: nil,
-        suspended?: false,
         running_plugins: [],
         subscribed_plugins: [],
         down_plugins: %{},

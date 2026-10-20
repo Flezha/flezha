@@ -209,7 +209,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   # Asleep: evicted from its runner, its Overwatch kept.
   def suspended?(namespace, relay_id) do
     match?(
-      {:ok, %{suspended: true}},
+      {:ok, %{phase: :suspended}},
       RelayManager.get_overwatch_state(namespace, relay_id)
     )
   end

@@ -107,7 +107,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   # and a record that reaches it before then is not taken.
   defp serving?(op, name) do
     case RelayManager.get_overwatch_state(@namespace, op) do
-      {:ok, %{init_error: nil, extensions: table}} ->
+      {:ok, %{halt_reason: nil, extensions: table}} ->
         Table.running?(table, name) and Table.running?(table, "in_" <> op)
 
       _ ->

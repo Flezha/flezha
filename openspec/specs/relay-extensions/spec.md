@@ -169,7 +169,7 @@ Plugins in the `prepared` state SHALL NOT emit `:io_in` to the relay host. The `
 
 #### Scenario: Plugins stay in prepared state when SDK never starts
 - **GIVEN** a relay `r1` whose Overwatch enters the parked-error state because `:start_relay` exhausts its steps-retry budget
-- **WHEN** the Overwatch parks with `state.init_error != nil`
+- **WHEN** the Overwatch parks with `state.halt_reason != nil`
 - **THEN** every plugin in `state.extensions` SHALL be in the `:prepared` phase
 - **AND** no plugin SHALL have invoked `activate/1`
 - **AND** no plugin SHALL have opened an upstream connection or issued a subscribe handshake

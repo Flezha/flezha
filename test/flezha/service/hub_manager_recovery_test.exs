@@ -425,7 +425,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
                  fn ->
                    match?(
                      {:runner_not_ready, :unavailable},
-                     GenServer.call(pid, :get_overwatch_state).init_error
+                     GenServer.call(pid, :get_overwatch_state).halt_reason
                    )
                  end,
                  5_000,
@@ -500,7 +500,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     # Alive AND held, not alive-and-still-waiting.
     for pid <- pids do
-      assert {:runner_not_ready, _} = GenServer.call(pid, :get_overwatch_state).init_error
+      assert {:runner_not_ready, _} = GenServer.call(pid, :get_overwatch_state).halt_reason
     end
   end
 

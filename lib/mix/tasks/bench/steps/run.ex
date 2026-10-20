@@ -370,7 +370,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
             {:ok, pid} ->
               pid
               |> GenServer.call(:get_overwatch_state, 5_000)
-              |> Map.take([:suspended, :runner_id, :migrate_task, :parked_in_flight, :init_error])
+              |> Map.take([:phase, :runner_id, :bind_task, :halt_reason])
 
             other ->
               other

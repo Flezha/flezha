@@ -67,7 +67,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
     }
 
     reality = %{
-      relays: %{{@namespace, "op-1"} => Map.merge(%{halted?: false, suspended?: false}, observed)},
+      relays: %{{@namespace, "op-1"} => Map.merge(%{phase: :running}, observed)},
       active_runners: %{@namespace => MapSet.new(roster)}
     }
 
@@ -194,7 +194,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
 
     test "a suspended relay a runner can take is not a problem" do
       stub(FleetManager, :placement_refusal, fn @namespace, "orders" -> :none end)
-      publish_judged(%{bound_runner: "exec1", suspended?: true})
+      publish_judged(%{bound_runner: "exec1", phase: :suspended})
 
       assert %{"verdict" => "ok", "findings" => [asleep]} = answer()
       assert asleep["code"] == "diagnose.suspended"
@@ -204,7 +204,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
 
     test "a suspended relay no runner serves is a problem, not asleep" do
       stub(FleetManager, :placement_refusal, fn @namespace, "orders" -> :no_such_factory end)
-      publish_judged(%{bound_runner: "exec1", suspended?: true})
+      publish_judged(%{bound_runner: "exec1", phase: :suspended})
 
       answer = answer()
       assert answer["verdict"] == "problem"
@@ -215,14 +215,14 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
     test "a suspended relay another node's runners serve is asleep, not a problem" do
       stub(FleetManager, :placement_refusal, fn @namespace, "orders" -> :no_such_factory end)
       stub(Flezha.Cluster.Directory, :factory_nodes, fn @namespace, "orders" -> [:other@host] end)
-      publish_judged(%{bound_runner: "exec1", suspended?: true})
+      publish_judged(%{bound_runner: "exec1", phase: :suspended})
 
       assert %{"verdict" => "ok", "findings" => [%{"code" => "diagnose.suspended"}]} = answer()
     end
 
     test "a suspended relay the serving runners cannot take is a mismatch" do
       stub(FleetManager, :placement_refusal, fn _ns, _factory -> {:language, 3} end)
-      publish_judged(%{bound_runner: "exec1", suspended?: true})
+      publish_judged(%{bound_runner: "exec1", phase: :suspended})
 
       assert codes(answer()) == ["diagnose.runner_mismatch"]
     end
