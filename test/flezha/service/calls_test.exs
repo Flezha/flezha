@@ -51,7 +51,6 @@ defmodule FlezhaTest.Service.CallsTest do
         queue_max: :infinity,
         retry_backoff_ms: 10,
         retry_max_backoff_ms: 20,
-        call_timeout_ms: 1_000,
         confirm: false,
         owner: self()
       }

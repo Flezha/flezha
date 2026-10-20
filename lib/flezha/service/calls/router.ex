@@ -149,7 +149,6 @@ defmodule Flezha.Service.Calls.Router do
       queue_max: :infinity,
       retry_backoff_ms: 50,
       retry_max_backoff_ms: 2_000,
-      call_timeout_ms: Durations.get(:overwatch_call_timeout_ms),
       idle_ms: Durations.get(:call_worker_idle_ms)
     }
   end

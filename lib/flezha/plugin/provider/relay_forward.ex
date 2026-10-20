@@ -21,6 +21,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Host.MsgId
   alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
@@ -31,6 +32,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   alias Flezha.State.Outbox
 
   require Logger
+  require MsgId
 
   use ProviderBehaviour,
     emits: [shipped: nil, retried: nil],
@@ -92,10 +94,18 @@ defmodule Flezha.Plugin.Provider.RelayForward do
          queue_max: opts.queue_max,
          retry_backoff_ms: opts.retry_backoff_ms,
          retry_max_backoff_ms: opts.retry_max_backoff_ms,
-         call_timeout_ms: opts.call_timeout_ms
+         deliver: deliver(opts.source_namespace, member_id, opts.call_timeout_ms)
        }}
     end
   end
+
+  @doc """
+  The delivery a worker makes into `target`: its confirming ingest, answering
+  the verdict the worker settles its head by.
+  """
+  @spec deliver(String.t(), String.t(), timeout()) :: (binary(), map() -> term())
+  def deliver(namespace, target, timeout),
+    do: &RelayManager.send_io_confirming(target, namespace, &1, &2, timeout)
 
   # A re-run of `init_provider/1` re-reads the target's member set, which is how
   # a rescaled target stops being routed by yesterday's ranges. Members that
@@ -179,7 +189,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
 
       case Outbox.dedup_key(metadata) do
         nil -> metadata
-        key -> Map.put_new(metadata, "flz.msg_id", plugin_id <> "/" <> key)
+        key -> MsgId.stamp(metadata, plugin_id, key)
       end
     else
       metadata

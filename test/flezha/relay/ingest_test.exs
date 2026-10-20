@@ -67,10 +67,11 @@ defmodule FlezhaTest.Relay.IngestTest do
     assert_receive {:channel_got, ^inst, {"hello", _md}}
   end
 
-  test "a parked target reports not-ready instead of dropping" do
-    state = state(instance_id(), halt_reason: :sdk_start_failed)
+  test "a parked target reports not-ready, naming itself, instead of dropping" do
+    inst = instance_id()
+    state = state(inst, halt_reason: :sdk_start_failed)
 
-    assert {:reply, {:error, :not_ready}, _state} =
+    assert {:reply, {:error, {:not_accepting_input, ^inst}}, _state} =
              Overwatch.handle_call({:ingest, "hello", %{}}, self(), state)
   end
 
@@ -79,6 +80,12 @@ defmodule FlezhaTest.Relay.IngestTest do
 
     assert {:reply, {:ok, :absorbed}, _state} =
              Overwatch.handle_call({:ingest, "drop-me now", %{}}, self(), state)
+  end
+
+  test "a filtered payload reads absorbed through Host.inject/5, not a bare :ok" do
+    {:ok, host} = start_supervised({Host, state(instance_id()) |> with_filter("drop-me")})
+
+    assert {:ok, :absorbed} = PluginHost.inject(host, "drop-me now", %{}, :verdict, 1_000)
   end
 
   describe "the keys only the controller sets" do
@@ -177,7 +184,11 @@ defmodule FlezhaTest.Relay.IngestTest do
       log =
         ExUnit.CaptureLog.capture_log(fn ->
           for _ <- 1..3,
-              do: assert({:error, :refused} = GenServer.call(host, {:ingest, "doomed", %{}}))
+              do:
+                assert(
+                  {:error, {:input_refused, ^inst}} =
+                    GenServer.call(host, {:ingest, "doomed", %{}})
+                )
         end)
 
       # append-before-forward: nothing moved, and the refusal is told once, by
@@ -232,7 +243,7 @@ defmodule FlezhaTest.Relay.IngestTest do
     test "an unbound stream is not-ready for a non-durable target, :ok for a durable one" do
       inst = instance_id()
 
-      assert {:reply, {:error, :not_ready}, _} =
+      assert {:reply, {:error, {:not_accepting_input, ^inst}}, _} =
                Overwatch.handle_call({:ingest, "x", %{}}, self(), state(inst, channel: nil))
 
       # A durable target answers `:ok` because the bind it armed re-forwards
@@ -270,6 +281,15 @@ defmodule FlezhaTest.Relay.IngestTest do
                "hello",
                %{}
              )
+  end
+
+  test "a target that exits reads unreachable, the one exit policy Host.inject/5 has" do
+    {pid, ref} = spawn_monitor(fn -> :ok end)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}
+    stub(Flezha.Service.HubManager, :get_pid, fn "default", "gone" -> {:ok, pid} end)
+
+    assert {:error, {:unreachable, :noproc}} =
+             RelayManager.send_io_confirming("gone", "default", "hello", %{})
   end
 
   # Stand-in relay that answers the first `answered` ingests and holds every
@@ -389,8 +409,11 @@ defmodule FlezhaTest.Relay.IngestTest do
       {:ok, stub} = HoldingStub.start_link(1)
       records = for m <- ["a", "b", "c"], do: {m, %{}}
 
-      assert [:ok, {:error, {:unreachable, :timeout}}, {:error, {:unreachable, :timeout}}] =
-               PluginHost.inject_many(stub, records, :verdict, 100)
+      assert [
+               {:ok, :absorbed},
+               {:error, {:unreachable, :timeout}},
+               {:error, {:unreachable, :timeout}}
+             ] = PluginHost.inject_many(stub, records, :verdict, 100)
 
       # The two held replies are sent now; the abandoned requests drop them.
       assert :ok = GenServer.call(stub, :release)
@@ -462,7 +485,7 @@ defmodule FlezhaTest.Relay.IngestTest do
       {:ok, host} = start_supervised({Host, state})
       twice = %{"flz.msg_id" => "m-twice"}
 
-      assert [:ok, :ok] =
+      assert [:ok, {:ok, :absorbed}] =
                PluginHost.inject_many(host, [{"x", twice}, {"x", twice}], :verdict, 5_000)
 
       assert_receive {:channel_got, ^inst, {"x", _metadata}}
@@ -568,7 +591,7 @@ defmodule FlezhaTest.Relay.IngestTest do
         {:ok, log}
       end)
 
-      assert {:error, :refused} = GenServer.call(host, {:ingest, "b", %{}})
+      assert {:error, {:input_refused, ^inst}} = GenServer.call(host, {:ingest, "b", %{}})
 
       assert_receive :log_looked_up
       assert_receive :log_looked_up

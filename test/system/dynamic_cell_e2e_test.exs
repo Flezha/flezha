@@ -24,6 +24,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -87,8 +88,8 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = RelayManager.start_relay(namespace, builder)
     assert info.runner_id == ce_id
-    RelayManager.send_io(relay_id, namespace, "#{key}:hello", %{"input_type" => "2"})
-    RelayManager.send_io(relay_id, namespace, "#{other}:bye", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "#{key}:hello", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "#{other}:bye", %{"input_type" => "2"})
 
     assert wait_until(fn -> cell_keys(namespace, relay_id) == [key, other] end, 15_000),
            "both keys should be live before the read is narrowed"
@@ -143,12 +144,12 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
 
     assert {:ok, _} = RelayManager.start_relay(namespace, builder)
-    RelayManager.send_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
     assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
 
     assert :ok = RelayManager.stop_relay(namespace, relay_id)
     assert {:ok, _} = RelayManager.start_relay(namespace, builder)
-    RelayManager.send_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
     assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
 
     assert seen(namespace, relay_id, key) == ["#{key}:second"],
@@ -165,12 +166,12 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     builder = %Builder{id: relay_id, factory_id: @factory, init_values: %{}, opts: []}
 
     assert {:ok, _} = RelayManager.start_relay(namespace, builder)
-    RelayManager.send_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
     assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
     # A 2 s TTL leaves time to read the re-minted Cell before it goes again.
     assert wait_until(fn -> cell_keys(namespace, relay_id) in [nil, []] end, 15_000)
 
-    RelayManager.send_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
     assert wait_until(fn -> seen(namespace, relay_id, key) != nil end, 15_000)
 
     assert seen(namespace, relay_id, key) == ["#{key}:second"],
@@ -217,14 +218,14 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     # An input for a never-seen key: the edge's key function names the Cell,
     # the SDK lazily creates it, runs it, and ships the Change. The controller
     # writes a WAL file — at the identity the trait hook names.
-    RelayManager.send_io(relay_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
 
     assert wait_until(fn -> File.exists?(Paths.wal_path(cell_id)) end, 15_000),
            "controller never wrote a WAL file for the lazily-created Cell"
 
     # A filtered input reaches no Cell at all — there is no keyless-drop path
     # to fall through any more.
-    RelayManager.send_io(relay_id, @namespace, "drop", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, @namespace, "drop", %{"input_type" => "2"})
 
     # No further input for the live key: after the 200 ms idle TTL the reaper
     # evicts the Cell and ships delete_cell_state; the controller removes

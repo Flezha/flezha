@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
   alias Flezha.Relay.{ClassRegistry, Replay, Suspend}
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.Service.RelayManager.Init
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
@@ -185,7 +186,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
         )
 
       start_steps(namespace, id, "typed_once_steps", first_message: nil)
-      :ok = RelayManager.send_io(id, namespace, "not json", %{})
+      :ok = RelayTestHelper.cast_io(id, namespace, "not json", %{})
 
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 30_000)
       assert [%{"generation" => 1}] = DlqStore.list(id)

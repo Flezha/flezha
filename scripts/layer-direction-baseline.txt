@@ -60,7 +60,6 @@ lib/flezha/plugin.ex -> (no directory owns it)
 lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManager
 lib/flezha/plugin/provider/relay_forward.ex -> Flezha.Service.HubManager
 lib/flezha/plugin/provider/relay_forward.ex -> Flezha.Service.RelayManager
-lib/flezha/plugin/provider/relay_forward/forward_worker.ex -> Flezha.Service.RelayManager
 lib/flezha/runner/admission.ex -> Flezha.AuthZ.RunnerProof
 lib/flezha/runner/admission/quota.ex -> Flezha.AuthZ.Quotas
 lib/flezha/runner/admission/quota.ex -> Flezha.AuthZ.Verb

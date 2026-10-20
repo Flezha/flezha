@@ -31,6 +31,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -62,7 +63,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     # Hours apart, so none fires: the third passes the cap of 2 and `event`
     # is an event-time timer under a wall clock.
     for value <- ["1", "2", "3", "event"],
-        do: RelayManager.send_io(relay_id, namespace, value, %{"input_type" => "2"})
+        do: RelayTestHelper.cast_io(relay_id, namespace, value, %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(fn -> length(Store.list(relay_id)) == 2 end, 30_000, 100),
            "both refused items park, got #{inspect(Store.list(relay_id))}"
@@ -96,7 +97,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     assert info.runner_id == ce_id
     await_readable(namespace, relay_id)
 
-    RelayManager.send_io(relay_id, namespace, "hello", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "hello", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
              fn -> touched(namespace, relay_id) == ["hello"] end,
@@ -132,7 +133,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
     assert {:ok, _info} = start_relay(namespace, relay_id)
     await_readable(namespace, relay_id)
 
-    RelayManager.send_io(relay_id, namespace, "hello", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "hello", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
              fn -> touched(namespace, relay_id) == ["hello"] end,
@@ -158,7 +159,7 @@ defmodule FlezhaTest.System.CellTimersE2ETest do
            "the restored Cell still owes the timer, and firing it needs no new input"
   end
 
-  # `send_io` is fire-and-forget: an input sent before the Cell is live is
+  # `cast_io` is fire-and-forget: an input sent before the Cell is live is
   # simply gone (this class has no input log and no durable inbox), and the
   # timer that input would have armed with it.
   defp await_readable(namespace, relay_id) do

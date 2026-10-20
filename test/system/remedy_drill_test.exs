@@ -52,6 +52,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   alias Flezha.State.{Commands, TestHelpers, WalWriter, Watchdog, WriterRegistry}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.Telemetry
   alias ProcessHub.Service.ProcessRegistry
 
@@ -395,7 +396,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       id = start_relay(namespace, "wedged", factory: "wedge_probe", plugins: [sink(self())])
       assert produces?(id, namespace, "one", "ok:one", 60_000)
 
-      RelayManager.send_io(id, namespace, "wedge", %{"input_type" => "2"})
+      RelayTestHelper.cast_io(id, namespace, "wedge", %{"input_type" => "2"})
       assert wait_until(fn -> inflight?(runner_a) end, 30_000), "the wedge never reached a worker"
       feeder = start_feeder(id, namespace, self())
       {_port_b, runner_b} = boot_runner(namespace, unique_id_path("drill"), env: heartbeat_env())
@@ -574,7 +575,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   defp feed(namespace, id, n) do
     for i <- 1..n do
-      RelayManager.send_io(
+      RelayTestHelper.cast_io(
         id,
         namespace,
         "line-#{i}-#{System.unique_integer([:positive])}",
@@ -622,7 +623,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       {:DOWN, _ref, :process, _pid, _reason} -> :ok
     after
       100 ->
-        RelayManager.send_io(relay_id, namespace, "feed", %{"input_type" => "2"})
+        RelayTestHelper.cast_io(relay_id, namespace, "feed", %{"input_type" => "2"})
         feed_loop(relay_id, namespace)
     end
   end

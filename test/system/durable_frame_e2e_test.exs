@@ -32,6 +32,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Frame
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.State.Paths
   alias Flezha.State.RecordFrame
   alias Flezha.State.Restore
@@ -184,7 +185,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     assert info.runner_id == ce_id
 
     for i <- 1..n do
-      RelayManager.send_io(relay_id, @namespace, "line-#{i}-#{relay_id}", %{
+      RelayTestHelper.cast_io(relay_id, @namespace, "line-#{i}-#{relay_id}", %{
         "input_type" => "2"
       })
     end

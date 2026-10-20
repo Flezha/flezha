@@ -532,8 +532,10 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       # Nothing durable holds it, so `:ok` would be a lie. The confirming entry
       # point is told so; the cast has nobody to tell, which is why the bind
       # must not leave this window open at all.
-      assert {{:error, :not_ready}, _state} =
+      assert {{:error, {:not_accepting_input, id}}, _state} =
                Ingest.confirming_ingest(state, "m0", %{}, {:ingest, {self(), make_ref()}})
+
+      assert id == state.id
     end
   end
 

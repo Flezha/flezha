@@ -17,6 +17,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Fixtures.RelayFixture
 
   @factory "wedge_probe"
@@ -59,7 +60,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
            "the relay never produced before the abort"
 
     # The fixture ends this activation as violently as its host allows.
-    RelayManager.send_io(relay_id, namespace, "abort", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, "abort", %{"input_type" => "2"})
 
     # No user action, no rebind: a pool that did not come back to size, or
     # a cell left holding an unanswered handout, would never serve this.

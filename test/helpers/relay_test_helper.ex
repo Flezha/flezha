@@ -1,14 +1,24 @@
 defmodule FlezhaTest.Helper.RelayTestHelper do
   @moduledoc """
-  Input delivery a test can wait on: `send_io` is fire-and-forget, so these
+  Input delivery a test can wait on: `cast_io/4` is fire-and-forget, so these
   retry until the relay is bound and the ingest is accepted.
   """
 
+  alias Flezha.Plugin.Host
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
 
   @default_timeout_ms 2_000
   @ingest_retry_ms 50
+
+  @doc """
+  Cast `msg` to `relay_id` as a source's `:fire_and_forget` inject does:
+  `:ok`, or the lookup's error for a relay that cannot be found.
+  """
+  def cast_io(relay_id, namespace, msg, metadata) do
+    with {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_id),
+         do: Host.inject(pid, msg, metadata, :fire_and_forget)
+  end
 
   @doc """
   Send `msg` to `relay_id` and block until a `{:message_forward, _}` reply
@@ -17,7 +27,7 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
   `:quic_test_timeout_ms` Application env (default 5 s) — the QUIC stack
   is slower than UDS on first-message paths.
 
-  Delivery rides `send_io_confirming/5`, never the `send_io/4` cast. A
+  Delivery rides `send_io_confirming/5`, never the `cast_io/4` cast. A
   relay whose runner-side bind has not finished answers a retryable
   verdict, and a cast drops that input with nothing to re-drive it — the
   first input after a start is exactly when that happens. Retrying until the

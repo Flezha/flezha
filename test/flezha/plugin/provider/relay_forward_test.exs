@@ -93,7 +93,7 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
       queue_max: :infinity,
       retry_backoff_ms: 10,
       retry_max_backoff_ms: 20,
-      call_timeout_ms: 1_000
+      deliver: RelayForward.deliver(@ns, target, 1_000)
     }
 
     start_supervised!({ForwardWorker, opts}, id: {ForwardWorker, plugin_id})

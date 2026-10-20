@@ -22,6 +22,7 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.Socket.Support
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper, Telemetry}
@@ -134,7 +135,7 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
     assert FleetManager.active_runners(@ns) == [runner_id]
 
     relay = start_relay()
-    for key <- ~w(a b a), do: RelayManager.send_io(relay, @ns, key, %{"input_type" => "2"})
+    for key <- ~w(a b a), do: RelayTestHelper.cast_io(relay, @ns, key, %{"input_type" => "2"})
 
     assert Enum.sort(for _ <- 1..3, do: output()) == ~w(a=1 a=2 b=1)
 

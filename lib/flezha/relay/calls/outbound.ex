@@ -11,8 +11,11 @@ defmodule Flezha.Relay.Calls.Outbound do
   alias Flezha.Process.Timer
   alias Flezha.Relay.Calls.{Inbound, Token}
   alias Flezha.Relay.Ingest
+  alias Flezha.Relay.Ingest.Verdict
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
+
+  require Verdict
 
   @call Token.call_key()
 
@@ -309,7 +312,7 @@ defmodule Flezha.Relay.Calls.Outbound do
   """
   @spec responded(Overwatch.t(), GenServer.from() | nil, call_id(), term()) :: Overwatch.t()
   def responded(%Overwatch{} = state, from, id, verdict) do
-    if Ingest.taken?(verdict) do
+    if Verdict.taken?(verdict) do
       {row, calls} = close(state.calls, id)
       if row, do: Overwatch.confirm_hold(row.hold)
       Ingest.reply(from, :ok)

@@ -19,6 +19,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Plugin.Provider.Worker
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Relay.Ingest.Verdict
 
   # The facts the provider's `health/1` judges: the path, where the reader
   # stopped if it did, whether the target is missing, the failure run and the
@@ -29,6 +30,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
 
   use Flezha.Process.Timer, keys: [:poll]
 
+  require Verdict
   require Logger
 
   # The prefix is derived from the provider's id; nothing here names a root.
@@ -211,7 +213,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
 
       true ->
         case confirm(state, line) do
-          :ok -> state |> delivered(line, rest) |> drain()
+          verdict when Verdict.taken?(verdict) -> state |> delivered(line, rest) |> drain()
           {:error, reason} -> {:waiting, failed(state, {:ingest, reason})}
         end
     end

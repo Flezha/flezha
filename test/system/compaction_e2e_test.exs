@@ -29,6 +29,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.State.TestHelpers
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
@@ -85,7 +86,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
 
     # Grow the WAL with changeful inputs (each PushText is one Change record).
     for i <- 1..50 do
-      RelayManager.send_io(relay_id, @namespace, "line-#{i}-#{relay_id}", %{
+      RelayTestHelper.cast_io(relay_id, @namespace, "line-#{i}-#{relay_id}", %{
         "input_type" => "2"
       })
     end

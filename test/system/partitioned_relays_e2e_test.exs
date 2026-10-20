@@ -27,6 +27,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
   alias Flezha.Relay.KeyGroup
   alias Flezha.Service.Cli
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Steps
   alias Flezha.State.Paths
@@ -112,7 +113,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
     for key <- @keys do
       member = owner(group, 3, key)
 
-      RelayManager.send_io(member, namespace, "#{key}:one", %{"input_type" => "2"})
+      RelayTestHelper.cast_io(member, namespace, "#{key}:one", %{"input_type" => "2"})
 
       assert NodeTestHelper.wait_until(
                fn ->
@@ -133,7 +134,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
     stranger = owner(group, 3, "BTC-USD")
     victim = Enum.find(Enum.map(members, & &1.id), &(&1 != stranger))
 
-    RelayManager.send_io(victim, namespace, "BTC-USD:mis", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(victim, namespace, "BTC-USD:mis", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(fn -> DlqStore.list(victim) != [] end, 20_000),
            "a key #{victim} does not own must be parked, not folded into its state"
@@ -212,7 +213,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
              inspect(live_state(namespace, new_owner, moved_key))
 
     # And it still serves: a fresh input folds onto the restored state.
-    RelayManager.send_io(new_owner, namespace, "#{moved_key}:two", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(new_owner, namespace, "#{moved_key}:two", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
              fn ->
@@ -263,7 +264,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
              )
 
     for key <- @keys do
-      RelayManager.send_io(owner(upstream, 3, key), namespace, "#{key}:fwd", %{
+      RelayTestHelper.cast_io(owner(upstream, 3, key), namespace, "#{key}:fwd", %{
         "input_type" => "2"
       })
     end
@@ -301,7 +302,7 @@ defmodule FlezhaTest.System.PartitionedRelaysE2ETest do
     new_target = owner(downstream, 3, moved_key)
     assert new_target != owner(downstream, 2, moved_key), "the fixture must move the key"
 
-    RelayManager.send_io(owner(upstream, 3, moved_key), namespace, "#{moved_key}:after", %{
+    RelayTestHelper.cast_io(owner(upstream, 3, moved_key), namespace, "#{moved_key}:after", %{
       "input_type" => "2"
     })
 

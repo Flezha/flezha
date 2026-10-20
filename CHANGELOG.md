@@ -76,6 +76,18 @@
   carried `flz.replay` was run as a correction's replay, without its parts and spawns.
   `flz.msg_id` still passes, so a sender's id still absorbs a duplicate.
 
+### Changed: one ingress, one message id, one fan-out rule
+
+- **BREAKING:** `Flezha.Plugin.Host.inject/5` in `:verdict` mode and `inject_many/4` answer
+  the typed verdict, `{:ok, :absorbed}` and `{:ok, :suspended}` included, instead of folding
+  both into `:ok`. A package source reads it through `Flezha.Relay.Ingest.Verdict.taken?/1`;
+  the Kafka, RabbitMQ and Postgres CDC sources do.
+- **BREAKING:** `RelayManager.send_io/4` is removed. `send_io_confirming/5` goes through
+  `Host.inject/5`, so a target that exits answers `{:error, {:unreachable, reason}}`, and a
+  parked relay's refusal names it on every path.
+- `Flezha.Plugin.Host.MsgId.stamp/3` stamps every source's `flz.msg_id` inline, keeping an id
+  the sender set, and `Host.fan_out/3` gives each relay a feeding worker serves its mode.
+
 ### Changed: one sink registration, one listener shell, one memory reading
 
 - **BREAKING:** `FLEZHA_MEMORY_REPORT_INTERVAL_MS` (`:memory_report_interval_ms`) and the

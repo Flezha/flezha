@@ -24,6 +24,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "state_freshness_e2e"
@@ -87,7 +88,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     inputs_sent = ["alpha-#{relay_id}", "beta-#{relay_id}", "gamma-#{relay_id}"]
 
     Enum.each(inputs_sent, fn line ->
-      RelayManager.send_io(relay_id, @namespace, line, %{"input_type" => "2"})
+      RelayTestHelper.cast_io(relay_id, @namespace, line, %{"input_type" => "2"})
     end)
 
     # Inputs travel via primary stream and the relay's `run` runs

@@ -13,13 +13,14 @@ defmodule Flezha.Plugin.Host do
   Bit indices are assigned from declaration order and used by the
   active-mask fast path in `Flezha.Plugin.Extension.Table`.
 
-  It is also where a source hands the host a record: `inject/4` is the one call
+  It is also where a source hands the host a record: `inject/5` is the one call
   every producer makes, and the mode says what the producer needs back;
   `inject_many/4` hands over a batch and waits once.
   """
 
   alias Flezha.Config
   alias Flezha.Relay.Calls.Inbound
+  alias Flezha.Relay.Ingest.Verdict
 
   @valid_kinds [:fold, :transform, :fanout, :request, :timer]
 
@@ -28,8 +29,9 @@ defmodule Flezha.Plugin.Host do
 
   * `:confirming` waits for the journal ack, so a zero-credit park blocks the
     producer and the upstream is back-pressured rather than buffered.
-  * `:verdict` waits and answers what the host decided, which a poller reads to
-    know whether to advance its content hash.
+  * `:verdict` waits and answers what the host decided, which a source reads
+    through `Flezha.Relay.Ingest.Verdict.taken?/1` to know whether to move its
+    position.
   * `:fire_and_forget` does not wait. The host owns the payload from the cast.
   * `:call` sends one input and waits for the host's answer to it, the first
     output it caused on a sink of the graph.
@@ -41,15 +43,17 @@ defmodule Flezha.Plugin.Host do
   spellings of "the payload is yours now" were five chances for a producer to
   pick the wrong one, and the mode is what actually differs between them.
 
-  A `:verdict` answers `:ok` or `{:error, reason}`, and a host it could not reach
-  is `{:error, {:unreachable, reason}}`. A `:call` takes the call's deadline in
+  A `:verdict` answers `:ok`, `{:ok, :absorbed}` (a filtered input or a
+  duplicate the input log holds), `{:ok, :suspended}` (journaled for an
+  instance asleep) or `{:error, reason}`, and a host it could not reach is
+  `{:error, {:unreachable, reason}}`. A `:call` takes the call's deadline in
   milliseconds as its last argument and answers `{:ok, payload, %{"channel" =>
   channel}}` or `{:error, %Flezha.Error{}}`: `call.timeout` at the deadline,
   `call.unavailable` for a host it could not reach. The other two answer `:ok`,
   because there is nothing else to say.
   """
   @spec inject(GenServer.server(), binary(), map(), inject_mode(), timeout()) ::
-          :ok | {:ok, binary(), map()} | {:error, term()}
+          Verdict.t() | {:ok, binary(), map()}
   def inject(overwatch, message, metadata, mode, timeout \\ :infinity)
 
   def inject(overwatch, message, metadata, :confirming, timeout) do
@@ -58,11 +62,7 @@ defmodule Flezha.Plugin.Host do
   end
 
   def inject(overwatch, message, metadata, :verdict, timeout) do
-    case GenServer.call(overwatch, {:ingest, message, metadata}, timeout) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+    GenServer.call(overwatch, {:ingest, message, metadata}, timeout)
   catch
     # The exit carries the call, and the call carries the payload, which a
     # verdict is logged and reported with and must never repeat.
@@ -78,10 +78,6 @@ defmodule Flezha.Plugin.Host do
   # resolves or authorizes it again, and its source is `plugin` whatever it says.
   def inject(overwatch, message, metadata, :call, deadline_ms),
     do: Inbound.call(overwatch, message, metadata, deadline_ms, inspect(overwatch), "plugin")
-
-  # A raw `{:ingest, …}` reply as `inject/5` answers it.
-  defp verdict({:ok, _}), do: :ok
-  defp verdict(other), do: other
 
   @typedoc """
   A relay a feeding worker injects into: its Overwatch, the entry channel
@@ -126,6 +122,23 @@ defmodule Flezha.Plugin.Host do
     end
   end
 
+  @doc """
+  How a feeding worker injects into each of `targets`: its pid, the metadata
+  `bag` with its entry channel stamped on, and its mode, built when the
+  targets change so a record costs one inject per relay. `mode` is how the
+  source confirms. An effectively-once relay is always confirmed in it, so a
+  zero-credit park blocks the source instead of a record being lost; a source
+  that reads every `:verdict` confirms every relay; any other relay is cast
+  and falls behind alone, in its own mailbox.
+  """
+  @spec fan_out([target()], map(), inject_mode()) :: [{pid() | nil, map(), inject_mode()}]
+  def fan_out(targets, bag, mode) do
+    for %{pid: pid, channel: channel, effectively_once: once?} <- targets do
+      metadata = if channel, do: Map.put(bag, "channel", channel), else: bag
+      {pid, metadata, if(once? or mode == :verdict, do: mode, else: :fire_and_forget)}
+    end
+  end
+
   @doc "Tell a feeding `worker` the relays it injects into from now on."
   @spec retarget(pid(), [target()]) :: :ok
   def retarget(worker, targets) do
@@ -143,13 +156,10 @@ defmodule Flezha.Plugin.Host do
   `:fire_and_forget` every record is cast and the answer is `:ok`.
   """
   @spec inject_many(GenServer.server(), [{binary(), map()}], :verdict, timeout()) ::
-          [:ok | {:error, term()}]
+          [Verdict.t()]
   @spec inject_many(GenServer.server(), [{binary(), map()}], :fire_and_forget, timeout()) :: :ok
-  def inject_many(overwatch, records, :verdict, timeout) do
-    overwatch
-    |> ingest_window(records, timeout, Config.get(:plugin_ingest_window))
-    |> Enum.map(&verdict/1)
-  end
+  def inject_many(overwatch, records, :verdict, timeout),
+    do: ingest_window(overwatch, records, timeout, Config.get(:plugin_ingest_window))
 
   def inject_many(overwatch, records, :fire_and_forget, _timeout),
     do:

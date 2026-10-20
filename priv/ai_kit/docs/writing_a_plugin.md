@@ -161,8 +161,10 @@ on the controller instead: `Host.targets(opts)` lists them, each with its entry 
 and the worker is sent `{:targets, targets}` each time one binds or leaves. A worker that
 can miss a message (a socket library dropping them while disconnected) reads them again
 with `Host.targets_of/1` from `opts.targets_from` when it reconnects. It keeps them as its
-state, so a record costs one `:fire_and_forget` inject per relay and nothing else. A
-relay whose input is durable runs the source on its own, with itself as the one target,
+state, each with the metadata and mode `Host.fan_out/3` gives it, so a record costs one
+`:fire_and_forget` inject per relay and nothing else. A record the source took from a
+system with message ids carries one through `Flezha.Plugin.Host.MsgId.stamp/3`, a macro
+that adds the id to the source's own map literal and keeps an id already set. A relay whose input is durable runs the source on its own, with itself as the one target,
 so that the worker's own relay is still the one that confirms. A shared worker that
 injects into `opts.overwatcher_pid` reaches the controller's copy, which drops the record,
 logs one warning and reports `plugin_lagging` with the count dropped.
@@ -170,13 +172,16 @@ logs one warning and reports `plugin_lagging` with the count dropped.
 A source that reads from a system with a position, such as an offset, a cursor or an
 acknowledgement, fetches a batch and hands it over with `Host.inject_many/4` in `:verdict`
 mode: up to `FLEZHA_PLUGIN_INGEST_WINDOW` (default `64`) records wait for their verdicts
-at once, and the answer is one verdict per record, in order,
-`{:error, {:unreachable, :timeout}}` for any the relay had not answered in time. It
-moves the upstream position only past records whose verdict is `:ok`, and waits for each
-batch, which keeps its memory bounded. How often it moves the position follows the
-relay, which the plugin's options tell it:
+at once, and the answer is one verdict per record, in order: `:ok`, `{:ok, :absorbed}` (a
+record a hook filtered, or a duplicate the input log holds), `{:ok, :suspended}` (journaled
+for a relay asleep), or an error, `{:error, {:unreachable, :timeout}}` for any the relay had
+not answered in time. `Host.inject/5` answers the same verdicts for one record. The source
+moves the upstream position only past records the guard
+`Flezha.Relay.Ingest.Verdict.taken?/1` takes (all three `:ok` shapes; never compare with
+`:ok`), and waits for each batch, which keeps its memory bounded. How often it moves the
+position follows the relay, which the plugin's options tell it:
 
-| The relay | Its plugins' options | A verdict `:ok` means | The source moves its position |
+| The relay | Its plugins' options | A taken verdict means | The source moves its position |
 | --- | --- | --- | --- |
 | a flow relay without `effectively_once` that does not sleep | `durable_input: false` | the relay took the record | every few seconds |
 | a durable steps relay, or a flow relay that sleeps | `durable_input: true` | the record is in the relay's input log | after every confirmed batch |
@@ -190,10 +195,20 @@ say.
 An output plugin implements `on_output` (and `on_input`, to act on what the relay ingests) and
 hands each payload to its worker, returning at once. A delivery-guaranteed output is held
 in the relay's outbox until the output plugin confirms it; an output plugin that gives one up parks it as a
-dead letter rather than dropping it, as the HTTP push and Kafka producer plugins do. The
-Postgres output plugin and the relay-forward plugin
-are the shapes to read: their catalogue pages describe the queue, the confirmation and the
-overflow policy each one follows.
+dead letter rather than dropping it, as the HTTP push and Kafka producer plugins do.
+
+The worker's queue is a `Flezha.Process.Backlog`, which is also its admission. A plugin
+that names a `queue_overflow` policy (the `Options.queue/1` rows) hands each payload over
+with `Backlog.dispatch/2`, which casts while the worker's full flag is down and waits in
+a call while it is up; the worker answers each arrival with `Backlog.offer/5`, calls
+`Backlog.room/1` after it takes payloads out, and counts or parks what overflows. A
+worker that never drops buffers every enqueue in a call and answers it with
+`Backlog.park_or_reply/2`, which holds the caller until `Backlog.release_waiters/1` finds
+room. A worker that commits in batches uses `Flezha.Plugin.Provider.Batcher` and writes
+`commit_batch/2`, what one batch commits, and `batch_failed/3`; the loop confirms the
+batch's holds and retries a failed one on its backoff row. The Postgres output plugin and the relay-forward
+plugin are the shapes to read: their catalogue pages describe the queue, the confirmation
+and the overflow policy each one follows.
 
 ### Telemetry
 

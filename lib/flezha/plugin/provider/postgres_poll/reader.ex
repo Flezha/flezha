@@ -22,6 +22,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   alias Flezha.Plugin.Provider.PostgresPoll.Query
   alias Flezha.Plugin.Provider.Worker
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Relay.Ingest.Verdict
 
   # The facts the provider's `health/1` judges: a missing table or column, the
   # failure run, its last error and the time of the last settled read. A probe
@@ -30,6 +31,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   use Worker, facts: [:missing, :consecutive_failures, :last_error, :last_settled_at]
   use Flezha.Process.Timer, keys: [:poll]
 
+  require Verdict
   require Logger
 
   # The prefix is derived from the provider's id; nothing here names a root.
@@ -170,7 +172,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
     {taken, refused} =
       records
       |> Enum.zip(verdicts)
-      |> Enum.split_while(fn {_record, verdict} -> verdict == :ok end)
+      |> Enum.split_while(fn {_record, verdict} -> Verdict.taken?(verdict) end)
 
     state = advance(state, taken)
 
@@ -184,7 +186,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   defp advance(state, []), do: state
 
   defp advance(state, taken) do
-    {{_payload, _metadata, at}, :ok} = List.last(taken)
+    {{_payload, _metadata, at}, _taken} = List.last(taken)
     emit(:shipped, %{count: length(taken)}, labels(state))
     Worker.recovered(%{state | cursor: %{state.cursor | at: at}})
   end

@@ -10,7 +10,7 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Relay.Builder, as: RelayBuilder
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.Relay.Ingest
+  alias Flezha.Relay.Ingest.Verdict
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Host
@@ -358,31 +358,15 @@ defmodule Flezha.Service.RelayManager do
       else: :ok
   end
 
-  def send_io(relay_id, namespace, message, metadata) do
-    with_relay_pid(namespace, relay_id, fn pid ->
-      GenServer.cast(pid, {:io_in, message, metadata})
-    end)
-  end
-
-  @typedoc """
-  What became of a payload handed to `send_io_confirming/5`. The three `:ok`
-  shapes are terminal — the receiver has decided the payload needs no further
-  delivery — and every error is retryable by the sender.
-  """
-  @type ingest_verdict ::
-          :ok
-          | {:ok, :absorbed}
-          | {:ok, :suspended}
-          | {:error, {:not_accepting_input | :input_refused, String.t()} | term()}
-
   @doc """
-  Confirming counterpart to `send_io/4`: runs the target's single pre-delivery
-  ingest path and answers what happened, so a forwarding sink can tell a
-  terminal outcome from one worth retrying. An unresolvable target answers the
-  lookup's own reason — also retryable, since the relay may not be started
-  yet.
+  Run the target's single pre-delivery ingest path through
+  `Flezha.Plugin.Host.inject/5` in `:verdict` mode and answer what happened, so
+  a forwarding sink can tell a terminal outcome from one worth retrying. An
+  unresolvable target answers the lookup's own reason, and one that exits
+  `{:error, {:unreachable, reason}}`: both retryable, since the relay may not
+  be started yet.
   """
-  @spec send_io_confirming(String.t(), String.t(), binary(), map(), timeout()) :: ingest_verdict()
+  @spec send_io_confirming(String.t(), String.t(), binary(), map(), timeout()) :: Verdict.t()
   def send_io_confirming(
         relay_id,
         namespace,
@@ -390,11 +374,8 @@ defmodule Flezha.Service.RelayManager do
         metadata,
         timeout \\ Durations.get(:overwatch_call_timeout_ms)
       ) do
-    with {:ok, relay_pid} <- get_relay_pid(namespace, relay_id) do
-      relay_pid
-      |> GenServer.call({:ingest, message, metadata}, timeout)
-      |> Ingest.named(relay_id)
-    end
+    with {:ok, relay_pid} <- get_relay_pid(namespace, relay_id),
+         do: Host.inject(relay_pid, message, metadata, :verdict, timeout)
   end
 
   @doc "The input metadata naming the entry channel `channel`; `nil` or `\"\"` names none."
@@ -464,7 +445,7 @@ defmodule Flezha.Service.RelayManager do
           [{binary(), map()}],
           timeout(),
           pos_integer()
-        ) :: [ingest_verdict()]
+        ) :: [Verdict.t()]
   def send_io_confirming_many(
         relay_id,
         namespace,

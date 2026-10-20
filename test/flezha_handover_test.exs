@@ -213,7 +213,7 @@ defmodule FlezhaTest.Handover do
 
     for id <- [op, idle] do
       assert NodeTestHelper.wait_until(fn -> session(id) != nil end, 30_000)
-      RelayManager.send_io(id, @default_namespace, "hello", %{"input_type" => "2"})
+      RelayTestHelper.cast_io(id, @default_namespace, "hello", %{"input_type" => "2"})
       assert NodeTestHelper.wait_until(fn -> session(id)["touched"] == ["hello"] end, 15_000)
     end
 

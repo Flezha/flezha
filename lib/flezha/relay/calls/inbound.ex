@@ -32,7 +32,10 @@ defmodule Flezha.Relay.Calls.Inbound do
   alias Flezha.Process.Timer
   alias Flezha.Relay.Calls.{Outbound, Token}
   alias Flezha.Relay.Ingest
+  alias Flezha.Relay.Ingest.Verdict
   alias Flezha.Relay.Overwatch
+
+  require Verdict
 
   @reply_to Token.reply_to_key()
   @call Token.call_key()
@@ -570,7 +573,7 @@ defmodule Flezha.Relay.Calls.Inbound do
   end
 
   defp forget_unless_taken(%Overwatch{} = state, token, verdict) do
-    if Ingest.taken?(verdict) do
+    if Verdict.taken?(verdict) do
       state
     else
       {code, details} = refusal(verdict)

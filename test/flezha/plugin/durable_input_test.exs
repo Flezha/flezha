@@ -13,6 +13,7 @@ defmodule FlezhaTest.Plugin.DurableInputTest do
   alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
   alias Flezha.Plugin.Host
+  alias Flezha.Plugin.Host.MsgId
   alias Flezha.Plugin.Shared
   alias FlezhaTest.Helper.OverwatchHost
 
@@ -117,6 +118,47 @@ defmodule FlezhaTest.Plugin.DurableInputTest do
 
       assert Host.commit_position(caught_up, :offset, :stopped) == caught_up
       refute_received {:"$gen_cast", {:plugin_opt_persist, _, _, _}}
+    end
+  end
+
+  describe "Host.MsgId" do
+    require MsgId
+
+    test "a literal takes <plugin_id>/<position>, a list position joined once" do
+      assert MsgId.stamp(%{"channel" => "in"}, "orders", "t/0/41") ==
+               %{"channel" => "in", "flz.msg_id" => "orders/t/0/41"}
+
+      assert MsgId.stamp(%{}, "orders", ["t" | [0, 41]]) == %{"flz.msg_id" => "orders/t/0/41"}
+    end
+
+    # Fails when: the id is put whatever the map holds.
+    test "an id the sender set wins" do
+      preset = %{"flz.msg_id" => "mine"}
+      assert MsgId.stamp(preset, "orders", 41) == preset
+      assert MsgId.stamp(%{"k" => "v"}, "orders", 41)["flz.msg_id"] == "orders/41"
+    end
+
+    test "stamp_some stamps no id for a record without a position" do
+      assert MsgId.stamp_some(%{"k" => "v"}, "orders", nil) == %{"k" => "v"}
+      assert MsgId.stamp_some(%{"k" => "v"}, "orders", 7)["flz.msg_id"] == "orders/7"
+    end
+  end
+
+  describe "Host.fan_out/3" do
+    test "an effectively-once relay is confirmed, a verdict source confirms every one" do
+      once = Host.target(:once, "a", true)
+      plain = Host.target(:plain, nil, false)
+
+      assert Host.fan_out([once, plain], %{"k" => "v"}, :confirming) == [
+               {:once, %{"k" => "v", "channel" => "a"}, :confirming},
+               {:plain, %{"k" => "v"}, :fire_and_forget}
+             ]
+
+      assert [{:once, _, :verdict}, {:plain, _, :verdict}] =
+               Host.fan_out([once, plain], %{}, :verdict)
+
+      assert [{:once, _, :fire_and_forget}, {:plain, _, :fire_and_forget}] =
+               Host.fan_out([once, plain], %{}, :fire_and_forget)
     end
   end
 end

@@ -29,6 +29,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.State.TestHelpers
   alias Flezha.State.Watchdog
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
@@ -236,7 +237,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
   end
 
   defp send(namespace, relay_id, input),
-    do: RelayManager.send_io(relay_id, namespace, input, %{})
+    do: RelayTestHelper.cast_io(relay_id, namespace, input, %{})
 
   defp state_of(namespace, relay_id) do
     case RelayManager.get_cell_state(namespace, relay_id) do

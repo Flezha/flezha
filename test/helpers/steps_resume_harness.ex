@@ -19,6 +19,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.Service.RelayManager.Init
   alias Flezha.State.Completion
   alias Flezha.State.Paths
@@ -80,7 +81,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   # --- durable-loop helpers ---------------------------------------------------
 
   def send_turn(namespace, relay_id, text, channel \\ "in") do
-    :ok = RelayManager.send_io(relay_id, namespace, text, %{"channel" => channel})
+    :ok = RelayTestHelper.cast_io(relay_id, namespace, text, %{"channel" => channel})
   end
 
   # The committed iterations as `node`'s journal holds them; `[]` while it
@@ -197,7 +198,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
 
   # One input on the relay's first entry channel.
   def send_input(namespace, relay_id, text),
-    do: :ok = RelayManager.send_io(relay_id, namespace, text, %{})
+    do: :ok = RelayTestHelper.cast_io(relay_id, namespace, text, %{})
 
   # Wait for the run's terminal completion record to carry `status`.
   def await_status(relay_id, status, timeout_ms) do

@@ -17,6 +17,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
   alias Flezha.Service.{HubManager, RelayManager}
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "test_temp_namespace"
@@ -85,7 +86,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
 
     # A data stream names only the relays that have taken an input on it,
     # and only those are flagged when it closes.
-    RelayManager.send_io(@relay, @namespace, "before the stop", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(@relay, @namespace, "before the stop", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
              fn -> Enum.any?(data_stream_channels(first), &carries_relay?/1) end,

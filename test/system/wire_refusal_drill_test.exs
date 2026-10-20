@@ -33,6 +33,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
@@ -167,7 +168,7 @@ defmodule FlezhaTest.System.WireRefusalDrillTest do
   end
 
   defp feed_until(relay_id, namespace, input, deadline) do
-    RelayManager.send_io(relay_id, namespace, input, %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, input, %{"input_type" => "2"})
 
     receive do
       {:message_forward, payload} ->

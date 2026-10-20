@@ -19,6 +19,7 @@ defmodule Flezha.Relay.Ingest do
 
   alias Flezha.Relay.Calls.{Inbound, Outbound, Token}
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Ingest.Verdict
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
@@ -26,6 +27,8 @@ defmodule Flezha.Relay.Ingest do
   alias Flezha.Relay.Suspend
   alias Flezha.State.InputLog
   alias Flezha.Transport.LivenessCounters
+
+  require Verdict
 
   @reply_to Token.reply_to_key()
 
@@ -38,14 +41,11 @@ defmodule Flezha.Relay.Ingest do
   """
   @type payload :: {binary(), map()} | nil | :refused
 
-  # The verdicts under which a relay's call, or its `Response`, was taken:
-  # a duplicate absorbed was taken the first time.
-  @taken [:ok, {:ok, :suspended}, {:ok, :absorbed}]
-
   @typedoc """
   Who is owed the outcome: nobody for a cast, or the entry point and its
   caller. The blocking `:io_in` call acts on accepted vs parked and nothing
-  finer, so it is told `:ok`; the confirming `:ingest` call is told the verdict.
+  finer, so it is told `:ok`; the confirming `:ingest` call is told the verdict,
+  a refusal naming this relay (`named/2`).
   A `:call` is owed its answer by the call row its token names, so only a
   verdict that ends the call is acted on
   (`Flezha.Relay.Calls.Inbound.answer_call/3`).
@@ -136,24 +136,22 @@ defmodule Flezha.Relay.Ingest do
   @doc "A start's answer to its input's verdict (`call` its call): its runner, or its error."
   @spec started(Overwatch.t(), boolean(), map() | nil, term()) ::
           {:ok, String.t() | nil} | {:error, Flezha.Error.t()}
-  def started(state, announce?, _call, verdict) when verdict in @taken do
+  def started(state, announce?, _call, verdict) when Verdict.taken?(verdict) do
     Lifecycle.started(state, announce?)
     {:ok, state.runner_id}
   end
 
   def started(_state, _announce?, _call, {:error, %Flezha.Error{}} = refused), do: refused
 
-  def started(state, _announce?, nil, {:error, _reason} = verdict) do
-    {:error, reason} = named(verdict, state.id)
-    {:error, Flezha.Error.from_reason(reason, nil)}
-  end
+  def started(_state, _announce?, nil, {:error, reason}),
+    do: {:error, Flezha.Error.from_reason(reason, nil)}
 
   def started(state, _announce?, _call, verdict) do
     {code, details} = Inbound.refusal(verdict)
     {:error, Inbound.error(Overwatch.callee(state), code, details)}
   end
 
-  @doc "An ingest verdict as a caller outside the relay is told it, naming the relay."
+  @doc "An ingest refusal as the `:ingest` entry point answers it, naming the relay."
   @spec named(term(), String.t()) :: term()
   def named({:error, :not_ready}, relay_id), do: {:error, {:not_accepting_input, relay_id}}
   def named({:error, :refused}, relay_id), do: {:error, {:input_refused, relay_id}}
@@ -202,14 +200,14 @@ defmodule Flezha.Relay.Ingest do
         {:pending, state}
 
       {_filtered, state} ->
-        {told(reply_to, filtered_asleep(reply_to)), Suspend.rehydrate(state)}
+        {told(state, reply_to, filtered_asleep(reply_to)), Suspend.rehydrate(state)}
     end
   end
 
   def confirming_ingest(%Overwatch{} = state, message, metadata, reply_to) do
     case ingest(state, message, metadata, reply_to) do
       {:pending, state} -> {:pending, state}
-      {payload, state} -> {told(reply_to, verdict(state, payload)), state}
+      {payload, state} -> {told(state, reply_to, verdict(state, payload)), state}
     end
   end
 
@@ -334,12 +332,12 @@ defmodule Flezha.Relay.Ingest do
   defp settle(%Overwatch{phase: :suspended} = state, reply_to, payload)
        when payload != :refused do
     state
-    |> owe(reply_to, told(reply_to, {:ok, :suspended}))
+    |> owe(reply_to, told(state, reply_to, {:ok, :suspended}))
     |> Suspend.rehydrate()
   end
 
   defp settle(%Overwatch{} = state, reply_to, payload),
-    do: owe(state, reply_to, told(reply_to, verdict(state, payload)))
+    do: owe(state, reply_to, told(state, reply_to, verdict(state, payload)))
 
   defp owe(state, {:call, token}, verdict), do: Inbound.answer_call(state, token, verdict)
 
@@ -366,12 +364,11 @@ defmodule Flezha.Relay.Ingest do
 
   def reply(from, reply), do: GenServer.reply(from, reply)
 
-  @doc "Whether `verdict` took a relay's call or its `Response`."
-  @spec taken?(term()) :: boolean()
-  def taken?(verdict), do: verdict in @taken
-
-  defp told({:io_in, _from}, _verdict), do: :ok
-  defp told(_reply_to, verdict), do: verdict
+  # The blocking `:io_in` call is told `:ok`; the `:ingest` call is told a
+  # refusal naming this relay.
+  defp told(_state, {:io_in, _from}, _verdict), do: :ok
+  defp told(state, {:ingest, _from}, {:error, _} = refused), do: named(refused, state.id)
+  defp told(_state, _reply_to, verdict), do: verdict
 
   # Forward what the journal answered with, and say what became of it. An unbound
   # stream is not a delivery failure for a durable target: the log holds the

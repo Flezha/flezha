@@ -416,7 +416,7 @@ defmodule Flezha.Relay.Overwatch do
   @impl true
   def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
       when reason != nil,
-      do: {:reply, {:error, :not_ready}, state}
+      do: {:reply, Ingest.named({:error, :not_ready}, state.id), state}
 
   # Both blocking entry points: the reply is owed until the journal answers, so
   # a source parked at zero credit is parked on its own call, never on this
@@ -459,8 +459,8 @@ defmodule Flezha.Relay.Overwatch do
   # ---------------------------------------------------------------
 
   # Halted: drop ingress casts. A sender that needs the payload held rather than
-  # dropped uses the confirming entry point, which answers `{:error, :not_ready}`
-  # instead. The drop is silent to the sender by contract but never unrecorded:
+  # dropped uses the confirming entry point, which answers
+  # `{:error, {:not_accepting_input, id}}` instead. The drop is silent to the sender by contract but never unrecorded:
   # `halted_drops` is the only handle a cast-based source's loss has while the
   # relay stays halted.
   @impl true

@@ -57,6 +57,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   alias Flezha.Service.Steps.Journal
   alias Flezha.State.{InputLog, TaskJournal}
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
@@ -92,7 +93,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   end
 
   defp send_in(namespace, id, text, channel \\ "in"),
-    do: :ok = RelayManager.send_io(id, namespace, text, %{"channel" => channel})
+    do: :ok = RelayTestHelper.cast_io(id, namespace, text, %{"channel" => channel})
 
   # The lines the sink has, once it has `count` of them. A durable output
   # re-driven after a crash reaches the sink again under its identity, which a

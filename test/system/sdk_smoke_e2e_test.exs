@@ -25,6 +25,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.DeclarationSnapshot
   alias FlezhaTest.Helper.NodeTestHelper
@@ -117,7 +118,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                    opts: [bindings: sink(ctx.namespace, relay_id)]
                  })
 
-        RelayManager.send_io(relay_id, ctx.namespace, "hello", %{"input_type" => "2"})
+        RelayTestHelper.cast_io(relay_id, ctx.namespace, "hello", %{"input_type" => "2"})
 
         assert_receive {:message_forward, payload}, 30_000
         assert to_string(payload) == "hello"
@@ -169,7 +170,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                    opts: [bindings: sink(ctx.namespace, relay_id, include_metadata: true)]
                  })
 
-        RelayManager.send_io(relay_id, ctx.namespace, "42", %{
+        RelayTestHelper.cast_io(relay_id, ctx.namespace, "42", %{
           "channel" => "input",
           "input_type" => "2"
         })
@@ -272,7 +273,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                  opts: [bindings: sink(ctx.namespace, relay_id, include_metadata: true)]
                })
 
-      RelayManager.send_io(relay_id, ctx.namespace, "k1:one", %{
+      RelayTestHelper.cast_io(relay_id, ctx.namespace, "k1:one", %{
         "channel" => "in",
         "input_type" => "2"
       })

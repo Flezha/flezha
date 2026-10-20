@@ -23,6 +23,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.Worker
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Relay.Ingest.Verdict
 
   # The facts the provider's `health/1` judges. A probe that times out, since
   # requests run off this process, means the worker itself is wedged rather
@@ -30,6 +31,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   use Worker, facts: [:consecutive_failures, :last_error, :last_settled_at]
   use Flezha.Process.Timer, keys: [:poll]
 
+  require Verdict
   require Logger
 
   # The prefix is derived from the provider's id; nothing here names a root.
@@ -40,6 +42,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
   @impl true
   def init(opts) do
+    mode = if opts[:targets_from], do: :fire_and_forget, else: :verdict
+
     state =
       opts
       |> Map.take([
@@ -53,8 +57,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
       ])
       |> Map.merge(Worker.fields(opts))
       |> Map.merge(%{
-        targets: offered(Host.targets(opts), %{}),
-        mode: if(opts[:targets_from], do: :fire_and_forget, else: :verdict),
+        targets: offered(Host.targets(opts), %{}, mode),
+        mode: mode,
         fetch: nil,
         etag: nil
       })
@@ -86,8 +90,9 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   # A relay it holds no hash for must be sent a body, which a request
   # carrying the last validator would not fetch.
   def handle_info({:targets, targets}, state) do
-    targets = offered(targets, Map.new(state.targets, fn {pid, _md, hash} -> {pid, hash} end))
-    etag = if Enum.any?(targets, &is_nil(elem(&1, 2))), do: nil, else: state.etag
+    held = Map.new(state.targets, fn {pid, _md, _mode, hash} -> {pid, hash} end)
+    targets = offered(targets, held, state.mode)
+    etag = if Enum.any?(targets, &is_nil(elem(&1, 3))), do: nil, else: state.etag
     {:noreply, %{state | targets: targets, etag: etag}}
   end
 
@@ -134,7 +139,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     if String.valid?(body) do
       hash = :crypto.hash(:sha256, body)
 
-      if Enum.all?(state.targets, &(elem(&1, 2) == hash)),
+      if Enum.all?(state.targets, &(elem(&1, 3) == hash)),
         do: unchanged(%{state | etag: etag}, latency_ms),
         else: inject(state, body, hash, etag, latency_ms)
     else
@@ -143,7 +148,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   defp inject(state, body, hash, etag, latency_ms) do
-    seed? = Enum.any?(state.targets, &is_nil(elem(&1, 2)))
+    seed? = Enum.any?(state.targets, &is_nil(elem(&1, 3)))
     {targets, refusals} = Enum.map_reduce(state.targets, [], &offer(&1, &2, state, body, hash))
     state = %{state | targets: targets}
 
@@ -170,20 +175,22 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   # is lost until the endpoint happens to change again. `:absorbed` (duplicate)
   # and `:suspended` (journaled for wake) both mean the relay owns the
   # payload. A cast answers `:ok`.
-  defp offer({_pid, _metadata, hash} = target, refusals, _state, _body, hash),
+  defp offer({_pid, _metadata, _mode, hash} = target, refusals, _state, _body, hash),
     do: {target, refusals}
 
-  defp offer({pid, metadata, _held} = target, refusals, state, body, hash) do
-    case Host.inject(pid, body, metadata, state.mode, state.timeout_ms) do
-      :ok -> {{pid, metadata, hash}, refusals}
+  defp offer({pid, metadata, mode, _held} = target, refusals, state, body, hash) do
+    case Host.inject(pid, body, metadata, mode, state.timeout_ms) do
+      verdict when Verdict.taken?(verdict) -> {{pid, metadata, mode, hash}, refusals}
       {:error, reason} -> {target, [reason | refusals]}
     end
   end
 
   # Each relay the worker injects into, with the hash of the content it
   # took last, kept across a change of relays.
-  defp offered(targets, held),
-    do: for(t <- targets, do: {t.pid, %{"channel" => t.channel}, Map.get(held, t.pid)})
+  defp offered(targets, held, mode) do
+    for {pid, metadata, target_mode} <- Host.fan_out(targets, %{}, mode),
+        do: {pid, metadata, target_mode, Map.get(held, pid)}
+  end
 
   defp unchanged(state, latency_ms) do
     emit(:unchanged, %{latency_ms: latency_ms}, labels(state))

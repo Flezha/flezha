@@ -45,6 +45,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   alias Flezha.State.{Paths, WalWriter}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   @tick_ms 1_000
@@ -224,7 +225,7 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
   end
 
   defp send_input(namespace, id, input),
-    do: RelayManager.send_io(id, namespace, input, %{"input_type" => "2"})
+    do: RelayTestHelper.cast_io(id, namespace, input, %{"input_type" => "2"})
 
   defp await_cell(id) do
     assert wait_until(fn -> Paths.cells_of(id) != [] end, 30_000),

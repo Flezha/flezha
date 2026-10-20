@@ -13,19 +13,19 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   same head. Nothing is dropped; enqueue callers park past `:queue_max` and the
   backpressure propagates into the source Overwatch.
 
-  A relay's call delivery (`Flezha.Service.Calls`) runs the same worker
-  with four options of its own: `:deliver`, the function that delivers one
-  payload in place of an ingest into the target; `:expires_at`, a payload's
-  wall-clock millisecond past which it leaves the queue undelivered, handed to
-  `:on_expire`; `confirm: false` for a payload whose outbox hold is answered
-  elsewhere; and `:idle_ms`, after which a worker with an empty queue tells
-  `:owner` it is idle.
+  `:deliver` is the function that delivers one payload: the relay forward
+  provider's confirming ingest into the target, or a relay's call delivery
+  (`Flezha.Service.Calls`), which runs the same worker with three options of
+  its own: `:expires_at`, a payload's wall-clock millisecond past which it
+  leaves the queue undelivered, handed to `:on_expire`; `confirm: false` for a
+  payload whose outbox hold is answered elsewhere; and `:idle_ms`, after which a
+  worker with an empty queue tells `:owner` it is idle.
   """
 
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Service.RelayManager
+  alias Flezha.Relay.Ingest.Verdict
   alias Flezha.State.Outbox
 
   # `:transient` so disabling the plugin stops the worker for good: the host
@@ -34,6 +34,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   use GenServer, restart: :transient
   use Flezha.Process.Timer, keys: [:retry, :idle]
 
+  require Verdict
   require Logger
 
   defstruct [
@@ -42,7 +43,6 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
     :queue_max,
     :retry_backoff_ms,
     :retry_max_backoff_ms,
-    :call_timeout_ms,
     # Telemetry metadata, constant for the worker's lifetime — built once here
     # rather than per payload.
     :labels,
@@ -124,14 +124,13 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
       queue_max: opts.queue_max,
       retry_backoff_ms: opts.retry_backoff_ms,
       retry_max_backoff_ms: opts.retry_max_backoff_ms,
-      call_timeout_ms: opts.call_timeout_ms,
       labels: %{
         plugin_id: opts.plugin_id,
         namespace: opts.source_namespace,
         source_relay_id: opts.source_relay_id,
         target_relay_id: opts.target_relay_id
       },
-      deliver: Map.get(opts, :deliver),
+      deliver: opts.deliver,
       expires_at: Map.get(opts, :expires_at),
       on_expire: Map.get(opts, :on_expire),
       idle_ms: Map.get(opts, :idle_ms),
@@ -238,7 +237,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
 
   defp spawn_delivery(state, message, metadata) do
     parent = self()
-    deliver = state.deliver || send_io(state)
+    deliver = state.deliver
     tag = make_ref()
 
     pid =
@@ -254,11 +253,6 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
       end)
 
     %{state | inflight: {tag, Process.monitor(pid)}}
-  end
-
-  defp send_io(%{target_relay_id: target, source_namespace: namespace} = state) do
-    timeout = state.call_timeout_ms
-    &RelayManager.send_io_confirming(target, namespace, &1, &2, timeout)
   end
 
   defp expired?(%{expires_at: nil}, _message, _metadata), do: false
@@ -302,7 +296,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   # Terminal: the receiver has decided the payload needs no further delivery.
   # The target's confirming ingest is the delivery confirmation: it answers
   # the outbox hold this payload was handed over with.
-  defp settle(state, verdict) when verdict in [:ok, {:ok, :absorbed}, {:ok, :suspended}] do
+  defp settle(state, verdict) when Verdict.taken?(verdict) do
     {_delivered, state} = pop_head(state)
     emit_delivered(verdict_tag(verdict), state.labels)
     deliver_next(state)

@@ -20,6 +20,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: PostgresBackend
   alias Flezha.State.Lineage
   alias Flezha.State.Paths
@@ -29,7 +30,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
 
   def send_inputs(relay_id, namespace, inputs, metadata \\ %{}) do
     for input <- inputs do
-      RelayManager.send_io(
+      RelayTestHelper.cast_io(
         relay_id,
         namespace,
         input,
@@ -96,7 +97,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   @doc """
   Kill the Overwatch and wait until its supervised replacement is live —
   inputs sent before that would race the restart (a real source blocks or
-  retries; `send_io` is fire-and-forget).
+  retries; `cast_io` is fire-and-forget).
   """
   def force_fresh_rebind(namespace, relay_id) do
     {:ok, old_pid} = RelayManager.get_relay_pid(namespace, relay_id)
@@ -376,7 +377,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   defp feed_until(relay_id, namespace, input, expected, deadline) do
-    RelayManager.send_io(relay_id, namespace, input, %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, namespace, input, %{"input_type" => "2"})
 
     cond do
       await_output(expected, 1_000) -> true

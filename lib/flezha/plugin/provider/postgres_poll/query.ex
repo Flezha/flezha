@@ -15,7 +15,10 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   and the row encoding are `Flezha.Plugin.Provider.Postgres.Connection`'s.
   """
 
+  alias Flezha.Plugin.Host.MsgId
   alias Flezha.Plugin.Provider.Postgres.Connection
+
+  require MsgId
 
   @session "SELECT set_config('transaction_read_only', 'on', true), " <>
              "set_config('statement_timeout', $1, true)"
@@ -217,10 +220,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
     end
   end
 
-  defp metadata(plan, at, spec) do
-    %{
-      "channel" => spec.entry_channel,
-      "flz.msg_id" => Enum.join([spec.plugin_id, plan.relation | at], "/")
-    }
-  end
+  defp metadata(plan, at, spec),
+    do: MsgId.stamp(%{"channel" => spec.entry_channel}, spec.plugin_id, [plan.relation | at])
 end

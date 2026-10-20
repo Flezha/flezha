@@ -9,6 +9,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   """
 
   alias Flezha.Convergence.Loop
+  alias Flezha.Plugin.Host
   alias Flezha.Relay.Builder
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
@@ -583,7 +584,9 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
 
   defp send_turn(ids, seq) do
     id = elem(ids, rem(seq, tuple_size(ids)))
-    RelayManager.send_io(id, Run.namespace(), "#{seq},#{Run.now_ns()}", %{"channel" => "in"})
+
+    with {:ok, pid} <- RelayManager.get_relay_pid(Run.namespace(), id),
+         do: Host.inject(pid, "#{seq},#{Run.now_ns()}", %{"channel" => "in"}, :fire_and_forget)
   end
 
   # Unpaced turns ride an in-flight cap (a few per loop) so the Overwatch

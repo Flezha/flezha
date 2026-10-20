@@ -23,6 +23,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
+  alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.State.Metrics
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -104,7 +105,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     # Prime with ONE input so the first state frame runs the credit
     # handshake, and burst only once the session is credit-speaking —
     # otherwise the burst races the handshake and flows un-metered.
-    RelayManager.send_io(relay_id, @namespace, "0:prime", %{"input_type" => "2"})
+    RelayTestHelper.cast_io(relay_id, @namespace, "0:prime", %{"input_type" => "2"})
 
     # The priming Change proves state frames flow at all (separating a
     # broken persistence path from a broken handshake in the failure mode).
@@ -119,7 +120,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     payload = String.duplicate("x", @input_bytes)
 
     for i <- 1..@input_count do
-      RelayManager.send_io(relay_id, @namespace, "#{i}:#{payload}", %{
+      RelayTestHelper.cast_io(relay_id, @namespace, "#{i}:#{payload}", %{
         "input_type" => "2"
       })
     end

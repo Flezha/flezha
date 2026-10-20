@@ -294,11 +294,9 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
     {:ok, state}
   end
 
-  # Every bound relay takes the frame in its own mode. An effectively-once
-  # one is confirming: awaiting its journal ack means a zero-credit park blocks
-  # this connection process, so the socket stops being read (TCP back-pressure)
-  # instead of a record being lost; every other one is cast and falls behind
-  # alone, in its own mailbox.
+  # Every bound relay takes the frame in its own mode (`ingest_targets/2`): a
+  # confirming one's zero-credit park blocks this connection process, so the
+  # socket stops being read (TCP back-pressure) instead of a record being lost.
   defp inject_each([{overwatch, metadata, mode} | rest], message) do
     _ = Host.inject(overwatch, message, metadata, mode)
     inject_each(rest, message)
@@ -318,19 +316,13 @@ defmodule Flezha.Plugin.Provider.Websocket.Client do
 
   @doc """
   The socket's per-relay injection state for `targets`
-  (`Flezha.Plugin.Host.targets/1`): each relay's metadata, the label `bag`
-  with its entry channel stamped on, and its mode. Built when the relays
-  change, so a frame costs one send per relay. Nothing overwrites the
+  (`Flezha.Plugin.Host.targets/1`), as `Flezha.Plugin.Host.fan_out/3` builds
+  it for a source that confirms with `:confirming`. Nothing overwrites the
   user's own "channel" key: naming it both ways is refused when the plugin is
   enabled.
   """
   @spec ingest_targets([Host.target()], map()) :: [{pid(), map(), Host.inject_mode()}]
-  def ingest_targets(targets, bag) do
-    for %{pid: pid, channel: channel, effectively_once: once?} <- targets do
-      metadata = if channel, do: Map.put(bag, "channel", channel), else: bag
-      {pid, metadata, if(once?, do: :confirming, else: :fire_and_forget)}
-    end
-  end
+  def ingest_targets(targets, bag), do: Host.fan_out(targets, bag, :confirming)
 
   # Data-vs-heartbeat classification (drives `last_data_frame_at`):
   #   * No `ignore_pattern` configured → every frame counts as data
