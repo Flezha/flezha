@@ -161,8 +161,8 @@ failure; finalise is the rows from 20, each failure logged and the next row run.
 
 Below the walk, `Flezha.Supervisor` stops its children in reverse order of the rows in
 `Flezha.Application.controller_children/0`. `Flezha.Process.DurableTasks` sits before the state
-side, so durable work started through `DurableTasks.start/1` ends, bounded, before the writers
-close.
+side, and each task started through `DurableTasks.start/1` traps exits, so the stop waits for it,
+up to five seconds, before the writers close.
 
 ## Guards
 

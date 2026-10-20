@@ -147,6 +147,12 @@
   woken session reads `running` as soon as its bind is adopted. `Health:` is still the loop's
   verdict and may lag until its next tick.
 
+### Fixed: a halt that lands while a relay wakes stands
+
+- A relay halted while it woke from a sleep, or while the convergence loop rebound it after an
+  earlier halt (a refused state restore, for one), was then reported `running` once its bind
+  finished, serving from empty state. The halt now stands.
+
 ### Changed: names that say what they time
 
 - **BREAKING:** `FLEZHA_RUNNER_KEEPALIVE` is `FLEZHA_RUNNER_REMOVAL_GRACE_MS` and the application

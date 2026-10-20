@@ -146,13 +146,25 @@ defmodule Flezha.Relay.Rebind do
     do: state |> apply_bind_result({:halt, state, {:bind_task_exit, reason}}) |> release_outputs()
 
   @doc """
+  Void the start phase of a bind in flight: a halt or a park landed while it
+  was binding, so its result is stale. A wake's or a halted relay's bind keeps
+  the phase it started from, so the phase alone cannot tell.
+  """
+  @spec void_bind(Overwatch.t()) :: Overwatch.t()
+  def void_bind(%Overwatch{bind_task: %{} = task} = state),
+    do: %Overwatch{state | bind_task: %{task | from: nil}}
+
+  def void_bind(%Overwatch{} = state), do: state
+
+  @doc """
   Fold a bind task's result back into the state.
 
   `complete_init/5` ran inside the task, whose `self()` is not the Overwatch
   process, so the binding is published here — the one point every move
   funnels through: a halted relay's rebind, a wake, a `rebind` and a
-  restarted runner. A phase that changed since the bind started is a halt or
-  a sleep that landed meanwhile: the bound state is stale and is not adopted.
+  restarted runner. A phase that changed since the bind started, or a start
+  phase `void_bind/1` voided, is a halt or a sleep that landed meanwhile: the
+  bound state is stale and is not adopted.
   """
   @spec apply_bind_result(Overwatch.t(), tuple()) :: Overwatch.t()
   def apply_bind_result(%Overwatch{phase: phase, bind_task: %{from: from}} = state, {:bound, _})

@@ -355,19 +355,23 @@ defmodule FlezhaTest.Relay.SuspendTest do
   end
 
   # fails when: a halt that landed while a bind was binding is overwritten by
-  # the bind's bound state.
+  # the bind's bound state: a start's or a rebind's (the phase moved), a wake's
+  # or a halted relay's rebind (it did not).
   test "a halt landing while a bind binds stands" do
-    binding = state(instance_id(), bind_task: %{pid: self(), then: nil, from: :running})
+    for {from, kept} <- [running: :halted, suspended: :suspended, halted: :halted] do
+      task = %{pid: self(), then: nil, from: from}
+      binding = state(instance_id(), phase: from, bind_task: task)
 
-    {:noreply, halted} = Overwatch.handle_info({:restore_refused, :boom}, binding)
-    recovered = %{binding | runner_id: "ex_stale", bind_task: nil}
+      {:noreply, halted} = Overwatch.handle_info({:restore_refused, :boom}, binding)
+      recovered = %{binding | runner_id: "ex_stale", phase: :running, bind_task: nil}
 
-    {:noreply, after_bind} =
-      Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, halted)
+      {:noreply, after_bind} =
+        Overwatch.handle_info({:bind_task_result, self(), {:bound, recovered}}, halted)
 
-    assert Overwatch.phase(after_bind) == :halted
-    assert after_bind.halt_reason == {:restore_refused, :boom}
-    assert after_bind.runner_id == "ex_1"
+      assert Overwatch.phase(after_bind) == kept, "a bind from #{from} adopted its stale state"
+      assert after_bind.halt_reason == {:restore_refused, :boom}
+      assert after_bind.runner_id == "ex_1"
+    end
   end
 
   test "whether an instance sleeps is read from its park record and its log, for either kind" do

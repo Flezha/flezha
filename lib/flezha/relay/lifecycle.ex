@@ -578,7 +578,8 @@ defmodule Flezha.Relay.Lifecycle do
   #
   # Every halt funnels through here, so it is the one point that can report and
   # declare one. The reason rides the event whole: a plugin halt's already names
-  # both the plugin and its provider module.
+  # both the plugin and its provider module. A bind in flight is voided, so its
+  # result cannot overwrite the halt.
   @spec halt(Overwatch.t(), term()) :: Overwatch.t()
   def halt(%Overwatch{} = state, reason) do
     Facts.declare(
@@ -597,7 +598,7 @@ defmodule Flezha.Relay.Lifecycle do
       }
     )
 
-    %Overwatch{state | halt_reason: reason, phase: halted_phase(state)}
+    %Overwatch{Rebind.void_bind(state) | halt_reason: reason, phase: halted_phase(state)}
   end
 
   # The order health is derived in: a sleeper stays suspended, and a relay

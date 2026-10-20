@@ -1,7 +1,8 @@
 defmodule Flezha.Process.DurableTasksTest do
   @moduledoc """
-  Durable work runs under the controller's task supervisor, and still runs,
-  without taking its caller down, when that supervisor is gone or stopping.
+  Durable work runs under the controller's task supervisor, which waits for it
+  when stopped, and still runs, without taking its caller down, when that
+  supervisor is gone or stopping.
 
   Each test acts on the application's own supervisor, so none runs alongside
   another.
@@ -26,6 +27,33 @@ defmodule Flezha.Process.DurableTasksTest do
     assert task in Task.Supervisor.children(DurableTasks)
     send(task, :go)
     assert_receive :ran
+  end
+
+  test "a task running when the supervisor stops still completes before the stop ends" do
+    test = self()
+
+    {:ok, task} =
+      DurableTasks.start(fn ->
+        receive do
+          :go -> send(test, :done)
+        end
+      end)
+
+    ref = Process.monitor(task)
+    :erlang.trace(task, true, [:receive, {:tracer, test}])
+
+    spawn(fn ->
+      :ok = Supervisor.terminate_child(Flezha.Supervisor, DurableTasks)
+      send(test, :stopped)
+    end)
+
+    restart_on_exit()
+    assert_receive {:trace, ^task, :receive, {:EXIT, _sup, :shutdown}}
+    refute_received :stopped
+    send(task, :go)
+    assert_receive :done
+    assert_receive {:DOWN, ^ref, :process, ^task, :normal}
+    assert_receive :stopped
   end
 
   test "with the supervisor stopped, the work runs and the caller does not exit" do

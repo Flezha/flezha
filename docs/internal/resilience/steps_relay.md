@@ -127,8 +127,8 @@ many items it is owed; while any is still owed its park deadline is 60 s instead
 idle, so a tail forwarded under load never meets an instance that already parked. An instance with
 undelivered input is never left suspended (`rehydrate_if_pending/1` runs at every park and at
 boot, and asks the log's tail rather than reading its records), and a park that lands while a
-bind is still binding wins (the bind task records the phase it started from, and a bound state
-reported after a halt or a park landed is stale and discarded; the pending tail wakes it again). A steps relay's journal, Cells and input log share one key, its
+bind is still binding wins (the bind task records the phase it started from, a halt or a park
+voids it, and a bound state reported after one landed is stale and discarded; the pending tail wakes it again). A steps relay's journal, Cells and input log share one key, its
 instance id, so a bind whose `:relay_class` names anything else is refused.
 
 **The wake timer** is the instance's earliest pending processing-time Cell timer, which the

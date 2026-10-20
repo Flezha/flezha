@@ -378,11 +378,9 @@ defmodule Flezha.Relay.Suspend do
     # cost correctness. `RemRelay` is already enqueued on the control
     # stream, so the rehydrating `AddRelay` cannot overtake it.
     # Parked while a bind was still binding: its result must not resurrect a
-    # binding the runner has just torn down. A wake's own bind started
-    # suspended, so the phase alone cannot tell; its start phase is voided.
-    task = state.bind_task && %{state.bind_task | from: nil}
-
-    %Overwatch{state | bind_task: task}
+    # binding the runner has just torn down.
+    state
+    |> Rebind.void_bind()
     |> enter_suspended(park)
     |> rehydrate_if_pending()
   end
