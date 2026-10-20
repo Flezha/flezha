@@ -380,7 +380,6 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
                keyless: false,
                ack_checkpoint: false,
                compensable_tasks: nil,
-               leaf_tasks: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil,
                persistent: true
@@ -400,7 +399,6 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
              keyless: false,
              ack_checkpoint: false,
              compensable_tasks: nil,
-             leaf_tasks: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil,
              persistent: true
@@ -474,16 +472,6 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
 
     assert %{run: :steps, each: :per_input, on_failure: :undo_all} =
              ClassRegistry.decode_declarations(raw, established)
-  end
-
-  test "leaf positions resolve to a list — the tree's completion rule" do
-    # A→(B,C): the relay is done when tasks 1 and 2 have committed.
-    assert declarations(%{"leaf_tasks" => "1,2"}).leaf_tasks == [1, 2]
-    # A linear chain's single terminal is the degenerate case.
-    assert declarations(%{"leaf_tasks" => "1"}).leaf_tasks == [1]
-    # Absent = a stream / an SDK that does not declare it — the
-    # controller cannot derive completion and must not guess.
-    assert declarations(%{"other" => "x"}).leaf_tasks == nil
   end
 
   defp encode(metadata) do

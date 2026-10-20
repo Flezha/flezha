@@ -74,7 +74,7 @@ $ ./bin/flz relay start order_executor --id order_2 --namespace trading --text '
 ```
 
 About ten seconds after the restart, `flz state journal order_2 --namespace
-trading` ends with `confirm_fill` and `complete: true`. Only `confirm_fill` ran
+trading` ends with `confirm_fill` and `outcome: ok`. Only `confirm_fill` ran
 after the crash: the runner's terminal shows one `[book]` line for the order,
 not two. A PHP runner's `confirm_fill` waits on a timer set for a fixed moment,
 so it finishes at the original deadline instead.

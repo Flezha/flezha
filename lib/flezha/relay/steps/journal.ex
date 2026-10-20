@@ -3,11 +3,11 @@ defmodule Flezha.Service.Steps.Journal do
   A steps instance's task journal as `Flezha.Service.Steps.journal/2` answers
   it: one row per entry in append order (seq, type, task index, iteration, the
   cells that ran with the effect records each wrote and the channels they wrote
-  on, and the handoff), the leaf tasklets that define "done", and whether the
-  in-flight iteration has committed every leaf.
+  on, and the handoff), and the run's `outcome`: the status and error the
+  engine completed it with (`Flezha.State.Completion`), or `nil` while it runs.
   """
 
-  alias Flezha.Relay.ClassRegistry
+  alias Flezha.State.Completion
   alias Flezha.State.Wire
   alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
@@ -16,15 +16,19 @@ defmodule Flezha.Service.Steps.Journal do
   @spec report(String.t()) :: {:ok, map()} | {:error, term()}
   def report(instance_id) do
     with {:ok, entries} <- TaskJournal.read(instance_id) do
-      leaf_tasks = ClassRegistry.leaf_tasks(instance_id)
-
       {:ok,
        %{
          instance: instance_id,
          entries: Enum.map(entries, &journal_row/1),
-         leaf_tasks: leaf_tasks,
-         complete: TaskJournal.complete?(instance_id, leaf_tasks)
+         outcome: outcome(instance_id)
        }}
+    end
+  end
+
+  defp outcome(instance_id) do
+    case Completion.read(instance_id) do
+      {:ok, record} -> Map.take(record, [:status, :error])
+      :error -> nil
     end
   end
 

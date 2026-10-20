@@ -189,7 +189,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   end
 
   defp await_owed_outboxes(relay_id, deadline) do
-    owed = TaskJournal.owed_outputs(relay_id)
+    owed = TaskJournal.Records.owed_outputs(relay_id)
 
     cond do
       owed == 0 ->

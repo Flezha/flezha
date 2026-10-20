@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed: the task journal reports how the engine ended the run
+
+- **BREAKING:** `flz state journal` ends with `outcome: ok` (or the status and error the run
+  ended with, as `outcome: error (<error>)`) or `outcome: running`, in place of
+  `leaves: <positions>  complete: <bool>`. Before, a `per_input` or `chained` loop that had
+  finished still read `complete: false`. The JSON report (`Steps.journal`) gains `outcome`
+  (`status`, `error`, or `null` while the run lives) and loses `leaf_tasks` and `complete`.
+- Wire: the `AddRelayResponse` metadata no longer carries `leaf_tasks`, and the controller no
+  longer keeps a class's leaf set (a `leaf_tasks` sidecar from an earlier version is left on
+  disk unread).
+
 ### Fixed: `max_duration_ms` counts from the run's first bind
 
 - A run's `max_duration_ms` window now counts from its first bind. A sleep and wake, a runner

@@ -34,7 +34,6 @@ lib/flezha/relay/lifecycle.ex::complete_init 65
 lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/service/plugin_manager.ex 879
 lib/flezha/state/durability_tier/shipper.ex 810
-lib/flezha/state/task_journal.ex 1008
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
 sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 52
 sdk/node/src/definition.ts::defineTasklet 66
@@ -50,4 +49,4 @@ sdk/rust/src/relay/dispatcher.rs::dispatch_item 66
 sdk/rust/src/relay/dispatcher.rs::run_activation 51
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
 xref cycles 3
-xref largest 152
+xref largest 154

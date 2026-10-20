@@ -11,17 +11,17 @@ defmodule Flezha.Service.Cli.Journal do
   def journal(report, _args, _opts) do
     IO.puts("task-journal for instance #{report.instance}:\n")
     Enum.each(report.entries, &print_journal_row/1)
-    print_journal_completion(report.leaf_tasks, report.complete)
+    print_journal_outcome(report.outcome)
   end
 
-  # The leaf set is what "done" means for a tree-shaped chain: the relay is
-  # complete when the in-flight iteration has committed every leaf. A class that
-  # declared none (a flow relay, an older SDK) leaves it underivable.
-  defp print_journal_completion(nil, _complete),
-    do: IO.puts("\n  complete: unknown (class declares no leaf tasklets)")
+  defp print_journal_outcome(nil), do: IO.puts("\n  outcome: running")
 
-  defp print_journal_completion(leaf_tasks, complete),
-    do: IO.puts("\n  leaves: #{Enum.join(leaf_tasks, ",")}  complete: #{complete}")
+  defp print_journal_outcome(%{status: status} = outcome) do
+    case Map.get(outcome, :error) do
+      blank when blank in [nil, ""] -> IO.puts("\n  outcome: #{status}")
+      error -> IO.puts("\n  outcome: #{status} (#{error})")
+    end
+  end
 
   defp print_journal_row(row) do
     IO.puts(

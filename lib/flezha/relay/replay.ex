@@ -501,7 +501,7 @@ defmodule Flezha.Relay.Replay do
   # A durable steps relay's turn that was parked but never reached its
   # `dead_lettered` record runs again over this tail, so its entry goes first.
   defp drop_unrecorded_turns(%Overwatch{durable_steps: true} = state),
-    do: TaskJournal.drop_unrecorded_turns(Overwatch.relay_class(state))
+    do: TaskJournal.Turns.drop_unrecorded_turns(Overwatch.relay_class(state))
 
   defp drop_unrecorded_turns(%Overwatch{}), do: :ok
 

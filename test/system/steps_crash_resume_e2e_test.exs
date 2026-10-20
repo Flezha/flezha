@@ -60,11 +60,11 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   import FlezhaTest.Helper.StepsResumeHarness
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
-  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Replay
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Completion
   alias Flezha.Service.Cli
+  alias Flezha.Service.Steps.Journal
   alias Flezha.State.Paths
   alias Flezha.State.Wire
   alias Flezha.State.Lineage
@@ -357,10 +357,8 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
            "each node commits exactly once across the crash — the join never twice: " <>
              inspect(committed)
 
-    assert ClassRegistry.leaf_tasks(relay_id) == [4],
-           "the join is the diamond's single leaf"
-
-    assert TaskJournal.complete?(relay_id, [4])
+    assert match?({:ok, %{outcome: %{status: "ok"}}}, Journal.report(relay_id)),
+           "the journal report carries the outcome the engine recorded"
   end
 
   # Arm a timer on a runner that parks its firing at `hold`, SIGKILL it once

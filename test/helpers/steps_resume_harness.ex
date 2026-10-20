@@ -23,6 +23,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
+  alias Flezha.State.TaskJournal.Records
   alias Flezha.State.Frame
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -72,7 +73,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   def outboxes_settled?(relay_id),
     do:
       NodeTestHelper.wait_until(
-        fn -> TaskJournal.owed_outputs(relay_id) == 0 end,
+        fn -> Records.owed_outputs(relay_id) == 0 end,
         30_000
       )
 

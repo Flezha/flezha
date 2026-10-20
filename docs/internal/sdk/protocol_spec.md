@@ -680,7 +680,6 @@ announcements:
 | `ack` | `"checkpoint"` | the class acknowledges input only at checkpoints |
 | `compact_after_bytes` | bytes | the smallest per-tasklet compaction trigger, when it differs from the default |
 | `compensable_tasks` | list | steps relay tree positions whose tasklet declares `compensate` |
-| `leaf_tasks` | list | the steps relay tree's leaf positions |
 
 #### Partition identity
 

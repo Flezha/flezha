@@ -70,11 +70,13 @@ runs on the same fake controller.
 | `Flezha.Runner.ControlChannel.Requests` | `RelayCompleted` (the completion record and the teardown), `IterPark` |
 | `Flezha.State.TaskJournal` | the per-instance journal: append, fold, cut, the rewind marker, what is committed and owed |
 | `Flezha.State.TaskJournal.Codec` | the entry types and their bytes, laid out in [`../state_persistence.md`](../state_persistence.md) |
+| `Flezha.State.TaskJournal.Records` | the effect records a stage entry names: the wait for them, their release, what the writers still owe |
+| `Flezha.State.TaskJournal.Turns` | a failed turn's dead letter: the park, its announcement, an unrecorded park dropped at bind |
 | `Flezha.State.InputLog` | the durable input a steps relay shares with the effectively-once tier |
 | `Flezha.State.WalWriter.Settlement` | a Cell writer's held records: released by a stage marker, dropped when no marker will name them |
 | `Flezha.Relay.Lifecycle`, `Flezha.Relay.Replay` | the bind: journal state, Cell restores, the floor and the re-forwarded tail |
 | `Flezha.Relay.Suspend` | the park record, the wake timer, rewind |
-| `Flezha.Relay.ClassRegistry` | what a class declared: `each`, its compensable and leaf tasklets, `single_input?/1` |
+| `Flezha.Relay.ClassRegistry` | what a class declared: `each`, its compensable tasklets, `single_input?/1` |
 | `Flezha.State.Completion`, `Flezha.State.Retention` | the finished-job record and its reclamation |
 | `Flezha.Service.Steps` | the service API behind `flz state journal`, `flz state inbox`, rewind and rescale |
 
@@ -135,9 +137,8 @@ can answer before the sending thread takes the lock again, and its re-send needs
 stage index and its wire `task_idx`. A producer's index is always below its consumers', so
 commits arrive in topological order, `plan_compensation` reverses them without a second walk,
 and a join resumes with each committed producer's hand-off banked rather than run again. The
-relay is `ok` when every leaf tasklet has committed; the SDK declares the leaf set
-(`leaf_tasks`) and the compensable set (`compensable_tasks`) in the `AddRelay` response
-metadata, so the controller reads the same facts from the journal.
+relay is `ok` when every leaf tasklet has committed; the SDK declares the compensable set
+(`compensable_tasks`) in the `AddRelay` response metadata, so a rewind is checked against it.
 
 ### A barrier keeps one identity
 
@@ -220,7 +221,7 @@ A crash, a migration, a wake and a rewind all go through `Lifecycle.complete_ini
 journal in `AddRelay.task_journal`, `resume_cell_count` Cell restores carrying their compensation
 markers, and the one re-forward (`Replay.reforward_undelivered_tail/1`) of the input log's
 records above the floor, after it removes a dead-letter entry whose `dead_lettered` record never
-landed (`TaskJournal.drop_unrecorded_turns/1`). At a writer's boot, `Settlement.seed_commits/3`
+landed (`TaskJournal.Turns.drop_unrecorded_turns/1`). At a writer's boot, `Settlement.seed_commits/3`
 re-derives from the journal's live entries which held records are committed. A live instance
 and a resumed one are the same data: the pass the journal describes is the pass the instance
 runs. A reconnect of the same runner process (the same `incarnation`) only moves the binding.
@@ -232,7 +233,7 @@ tears down under `Flezha.Process.DurableTasks`, off the control-channel reader, 
 two debts. The data stream is flushed (`StreamPool.flush_channels/2`, one bounded call per stream
 channel), so a class kept in memory has its last direct output routed before its Overwatch stops.
 The Cells' outboxes are waited for, up to `drain_owed_ms` (60 s), polling every 50 ms, until
-`TaskJournal.owed_outputs/1` is zero; a deadline hit is logged (`... still owed`) and the
+`TaskJournal.Records.owed_outputs/1` is zero; a deadline hit is logged (`... still owed`) and the
 retained WAL keeps the debt (window C10). An `error` ends the same way: there is no automatic
 re-run of a failed tasklet.
 
@@ -263,7 +264,7 @@ Paths in the Test column are under `test/system/` unless they name a crate.
 | C5 | a completing iteration journaled, crash before `RelayCompleted` | the resumed run ends `ok` with the journaled result and runs nothing | `open_gate` (`JournalResume.completion`) | `sdk/rust/src/steps/tests/driver/durable_loop.rs` `loop_completion` |
 | C6 | a timer firing's stage committed, the firing's removal unwritten | the restored timer is not fired again | `committed_firings` (the root's `TaskCommit` names the firing) | `steps_crash_resume_e2e_test.exs` "a crash after the firing's root committed does not fire it again"; `sdk/rust/src/steps/tests/driver/timers.rs` `a_crash_after_the_roots_ack_does_not_fire_it_again` |
 | C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `resend_refused`, `undo_journaled` | `flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
-| C8 | a failed turn parked, crash before its `dead_lettered` entry | the bind removes the unrecorded entry and the turn runs again, so the message is parked at most once | `TaskJournal.drop_unrecorded_turns/1` | `steps_failed_turn_e2e_test.exs` "after the park and before the record re-runs the turn, and parks it once", "after the record and before the undo is journaled undoes the turn once, on the rebind" |
+| C8 | a failed turn parked, crash before its `dead_lettered` entry | the bind removes the unrecorded entry and the turn runs again, so the message is parked at most once | `TaskJournal.Turns.drop_unrecorded_turns/1` | `steps_failed_turn_e2e_test.exs` "after the park and before the record re-runs the turn, and parks it once", "after the record and before the undo is journaled undoes the turn once, on the rebind" |
 | C9 | intent markers sent, crash before the barrier frame they precede | with a journal, intents start no compensation without a done marker; the stage runs again | the order inside `act`; `open_gate` | `steps_crash_resume_e2e_test.exs` "durable saga steps resumes compensation after a SIGKILL mid-rollback" |
 | C10 | `RelayCompleted` written, the drain of owed outboxes times out | the teardown goes on, the warning names what is still owed, the retained WAL keeps the debt; a finished relay is not started again | `drain_owed_ms`, `DurableTasks` | `test/flezha/runner/control_channel_steps_test.exs` "the teardown flushes the runner's stream channels before it deregisters" (the flush); none for the timeout |
 | C11 | a bind's Cell restores do not all land | the run ends `error` after 30 s naming how many landed; a stop or `max_duration` meanwhile ends it `cancelled`; no tasklet or hook runs, and the journal and state stay | `Deadline::RestoreGate` and `stop` in `Phase::Gated` | `flz_core/src/steps/run_tests.rs` `a_restore_gate_timeout_ends_the_run_error`, `a_stop_at_the_restore_gate_ends_the_run_cancelled`; the teardown that follows: `test/flezha/runner/control_channel_steps_test.exs` "RelayCompleted error → failure telemetry + identical teardown" |

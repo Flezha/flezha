@@ -250,7 +250,7 @@ task-journal for instance order_1:
     completes the instance: result 57 byte(s)
 
 
-  leaves: 2,3  complete: true
+  outcome: ok
 ```
 
 Each line is a finished step. `confirm_fill` ended the order with its result,

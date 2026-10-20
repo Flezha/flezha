@@ -180,25 +180,24 @@ fn metadata_response(class: Option<&RelayTopology>) -> Vec<u8> {
     AddRelayResponse { metadata }.encode_to_vec()
 }
 
-/// What a steps class declares: the compensable positions (a rewind may only
-/// unwind those) and the leaves (the relay is done when all committed).
+/// What a steps class declares: the compensable positions, comma-separated (a
+/// rewind may only unwind those; an empty string is "a tree, none
+/// compensable").
 fn steps_metadata(
     topology: &RelayTopology,
     spec: &StepsSpec,
     metadata: &mut HashMap<String, String>,
 ) {
-    metadata.insert(
-        "compensable_tasks".to_string(),
-        declared_tasks(spec, |node| {
+    let compensable = (0..spec.dag.len())
+        .filter(|&node| {
             topology
                 .tasklet(spec.dag.order[node])
                 .is_some_and(|task| task.compensate_overridden)
-        }),
-    );
-    metadata.insert(
-        "leaf_tasks".to_string(),
-        declared_tasks(spec, |node| spec.dag.children[node].is_empty()),
-    );
+        })
+        .map(|node| node.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    metadata.insert("compensable_tasks".to_string(), compensable);
 }
 
 /// What a flow class declares: the tier; partitionability only when
@@ -239,16 +238,6 @@ fn flow_metadata(topology: &RelayTopology, metadata: &mut HashMap<String, String
             metadata.insert("compact_after_bytes".to_string(), min_bytes.to_string());
         }
     }
-}
-
-/// The positions `select` picks out, comma-separated; an empty string is "a
-/// tree, none selected".
-fn declared_tasks(spec: &StepsSpec, select: impl Fn(usize) -> bool) -> String {
-    (0..spec.dag.len())
-        .filter(|&node| select(node))
-        .map(|node| node.to_string())
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 #[cfg(test)]
@@ -331,7 +320,6 @@ mod metadata_tests {
             vec![
                 ("compensable_tasks".to_string(), String::new()),
                 ("durable".to_string(), "local".to_string()),
-                ("leaf_tasks".to_string(), "0".to_string()),
             ]
         );
         assert!(metadata_response(

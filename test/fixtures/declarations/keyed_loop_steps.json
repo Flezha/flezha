@@ -1,7 +1,6 @@
 {
   "compensable_tasks": "",
   "durable": "local",
-  "leaf_tasks": "0",
   "max_duration_ms": "600000",
   "sleep_after_ms": "21600000"
 }

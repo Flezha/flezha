@@ -102,7 +102,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
         reason =
           case Enum.sort(owed) do
             [:turn] -> {:turn_not_parked, "the dead-letter queue did not answer in time"}
-            [{cell_id, seq} | _] -> TaskJournal.record_not_durable(cell_id, seq)
+            [{cell_id, seq} | _] -> TaskJournal.Records.record_not_durable(cell_id, seq)
           end
 
         {:noreply, records_failed(state, reference_id, reason)}
@@ -144,7 +144,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     Enum.reduce_while(records, {:ok, state.reqids}, fn {cell_id, _first, seq}, {:ok, reqids} ->
       label = {:record, reference_id, cell_id, seq}
 
-      case TaskJournal.await_record_async(cell_id, seq, reqids, label) do
+      case TaskJournal.Records.await_record_async(cell_id, seq, reqids, label) do
         {:ok, reqids} -> {:cont, {:ok, reqids}}
         {:error, reason} -> {:halt, reason}
       end
@@ -175,7 +175,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   # A dead-lettered turn's park is issued like a record wait and is owed as
   # one, under the same deadline.
   defp park_turn(state, reference_id, commit) do
-    case TaskJournal.park_turn_async(commit.relay_id, commit.turn, state.reqids, {
+    case TaskJournal.Turns.park_turn_async(commit.relay_id, commit.turn, state.reqids, {
            :turn,
            reference_id
          }) do
@@ -220,7 +220,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp record_durable({:reply, {:ok, _synced}}, _cell_id, _seq), do: {:ok, & &1}
 
   defp record_durable(_refused_or_gone, cell_id, seq),
-    do: {:error, TaskJournal.record_not_durable(cell_id, seq)}
+    do: {:error, TaskJournal.Records.record_not_durable(cell_id, seq)}
 
   # The park is durable: the `dead_lettered` entry names its DLQ entry, and the
   # post-ack step reports it.
@@ -313,7 +313,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
 
   defp turn_dead_lettered(%{relay_id: relay_id} = metadata, turn, entry_ref) do
     stall(:dead_lettered, relay_id)
-    TaskJournal.announce_turn(relay_id, turn, entry_ref)
+    TaskJournal.Turns.announce_turn(relay_id, turn, entry_ref)
     iteration_committed(relay_id, metadata.consumed_offset)
 
     Logger.warning(
@@ -365,7 +365,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
     } = commit
 
     cells = Enum.map(cells_ran, &committed_cell/1)
-    records = TaskJournal.record_ranges(cells)
+    records = TaskJournal.Records.record_ranges(cells)
 
     barrier =
       if compensating,
@@ -391,7 +391,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       response:
         {:task_commit_response,
          %RunnerCommands.TaskCommitResponse{relay_id: relay_id, task_idx: task_idx}},
-      post: fn -> TaskJournal.release_records(records) end
+      post: fn -> TaskJournal.Records.release_records(records) end
     }
   end
 

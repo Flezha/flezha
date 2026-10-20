@@ -27,12 +27,12 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   import FlezhaTest.Helper.StepsResumeHarness
 
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Wire
   alias Flezha.Service.Cli
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.Steps.Journal
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.InputLog
@@ -618,18 +618,15 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       assert hd(committed) == 0 and Enum.sort(committed) == [0, 1, 2, 3],
              "each tasklet commits exactly once across the crash: #{inspect(committed)}"
 
-      # The SDK declares the leaf set, so the controller derives DONE from the
-      # journal alone — no runner to ask.
-      leaf_tasks = ClassRegistry.leaf_tasks(relay_id)
-      assert leaf_tasks == [2, 3], "BranchC and BranchD are the tree's leaves"
-      assert TaskJournal.complete?(relay_id, leaf_tasks)
+      # The journal report carries the outcome the engine recorded.
+      assert {:ok, %{outcome: %{status: "ok"}}} = Journal.report(relay_id)
 
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
           Cli.call("Steps.journal", Jason.encode!([relay_id]), [])
         end)
 
-      assert rendered =~ "leaves: 2,3  complete: true"
+      assert rendered =~ "\n  outcome: ok\n"
       assert rendered =~ "edge: channel_id="
     end
 
@@ -673,8 +670,8 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       compensated = for %{type: :compensated, task_idx: idx} <- entries, do: idx
       assert Enum.sort(compensated) == [0, 1, 2]
 
-      refute TaskJournal.complete?(relay_id, ClassRegistry.leaf_tasks(relay_id)),
-             "a leaf that never committed leaves the relay incomplete"
+      assert {:ok, %{outcome: %{status: "error", error: error}}} = Journal.report(relay_id)
+      assert error != "", "the outcome carries the failing tasklet's error"
     end
   end
 

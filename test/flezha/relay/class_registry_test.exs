@@ -180,7 +180,6 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
         effectively_once: true,
         ack_checkpoint: true,
         compensable_tasks: [0, 2],
-        leaf_tasks: [1, 2],
         correction_window_ms: 60_000,
         compact_after_bytes: 4_194_304,
         durable: :remote,
@@ -191,7 +190,6 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     assert ClassRegistry.effectively_once?(class)
     assert ClassRegistry.ack_checkpoint?(class)
     assert ClassRegistry.compensable_tasks(class) == [0, 2]
-    assert ClassRegistry.leaf_tasks(class) == [1, 2]
     assert ClassRegistry.correction_window_ms(class) == 60_000
     assert ClassRegistry.compact_after_bytes(class) == 4_194_304
     assert ClassRegistry.remote?(class)
@@ -205,7 +203,6 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
         effectively_once: false,
         ack_checkpoint: false,
         compensable_tasks: nil,
-        leaf_tasks: nil,
         correction_window_ms: nil,
         compact_after_bytes: nil,
         durable: :local,
@@ -216,7 +213,6 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     refute ClassRegistry.effectively_once?(class)
     refute ClassRegistry.ack_checkpoint?(class)
     refute ClassRegistry.compensable_tasks(class)
-    refute ClassRegistry.leaf_tasks(class)
     refute ClassRegistry.correction_window_ms(class)
     refute ClassRegistry.compact_after_bytes(class)
     refute ClassRegistry.remote?(class)

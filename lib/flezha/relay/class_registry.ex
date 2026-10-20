@@ -30,7 +30,6 @@ defmodule Flezha.Relay.ClassRegistry do
   @sidecar "run"
   @tier_sidecar "effectively_once"
   @compensable_sidecar "compensable_tasks"
-  @leaf_sidecar "leaf_tasks"
   @checkpoint_sidecar "ack_checkpoint"
   @correction_sidecar "correction_window_ms"
   @compact_bytes_sidecar "compact_after_bytes"
@@ -46,7 +45,6 @@ defmodule Flezha.Relay.ClassRegistry do
     :effectively_once,
     :ack_checkpoint,
     :compensable_tasks,
-    :leaf_tasks,
     :correction_window_ms,
     :compact_after_bytes,
     :remote,
@@ -112,7 +110,6 @@ defmodule Flezha.Relay.ClassRegistry do
           keyless: boolean(),
           ack_checkpoint: boolean(),
           compensable_tasks: [non_neg_integer()] | nil,
-          leaf_tasks: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil,
           compact_after_bytes: pos_integer() | nil,
           persistent: boolean()
@@ -149,7 +146,6 @@ defmodule Flezha.Relay.ClassRegistry do
       keyless: Map.get(metadata, "keyed") == "false",
       ack_checkpoint: Map.get(metadata, "ack") == "checkpoint",
       compensable_tasks: parse_ops(Map.get(metadata, "compensable_tasks")),
-      leaf_tasks: parse_ops(Map.get(metadata, "leaf_tasks")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_ms")),
       compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
       persistent: durable != :memory
@@ -205,7 +201,6 @@ defmodule Flezha.Relay.ClassRegistry do
     put_effectively_once(relay_class, declarations.effectively_once)
     put_ack_checkpoint(relay_class, declarations.ack_checkpoint)
     put_compensable_ops(relay_class, declarations.compensable_tasks)
-    put_leaf_ops(relay_class, declarations.leaf_tasks)
     put_correction_window(relay_class, declarations.correction_window_ms)
     put_compact_after_bytes(relay_class, declarations.compact_after_bytes)
     put_remote(relay_class, declarations.durable == :remote)
@@ -515,13 +510,6 @@ defmodule Flezha.Relay.ClassRegistry do
     put_declaration(relay_class, :compensable_tasks, @compensable_sidecar, tasks)
   end
 
-  # Which of `relay_class`'s tree tasklets are leaves, whose commits mean the
-  # relay is done: kept like the compensable set, so the journal answers
-  # "complete?" with no runner to ask.
-  defp put_leaf_ops(relay_class, tasks) when is_binary(relay_class) do
-    put_declaration(relay_class, :leaf_tasks, @leaf_sidecar, tasks)
-  end
-
   @doc """
   Resolve which of `relay_class`'s chain tasklets declare a `compensate`
   hook: ETS → durable sidecar → `nil` (the class declared nothing).
@@ -529,15 +517,6 @@ defmodule Flezha.Relay.ClassRegistry do
   @spec compensable_tasks(binary()) :: [non_neg_integer()] | nil
   def compensable_tasks(relay_class) when is_binary(relay_class) do
     declaration(relay_class, :compensable_tasks, @compensable_sidecar, &parse_ops/1)
-  end
-
-  @doc """
-  Resolve `relay_class`'s leaf tasklets: ETS → durable sidecar → `nil`
-  (the class declared nothing — a stream, or an SDK without the declaration).
-  """
-  @spec leaf_tasks(binary()) :: [non_neg_integer()] | nil
-  def leaf_tasks(relay_class) when is_binary(relay_class) do
-    declaration(relay_class, :leaf_tasks, @leaf_sidecar, &parse_ops/1)
   end
 
   @doc """

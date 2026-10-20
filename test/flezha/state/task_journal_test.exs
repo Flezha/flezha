@@ -14,7 +14,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   alias Flezha.State.Wire
   alias Flezha.Service.Cli
   alias Flezha.State.{Commands, Lineage, Paths, TaskJournal, TestHelpers, WalWriter}
-  alias Flezha.State.TaskJournal.Codec
+  alias Flezha.State.TaskJournal.{Codec, Records}
 
   defp instance_id(), do: "opj_inst_#{System.unique_integer([:positive])}"
 
@@ -83,25 +83,6 @@ defmodule FlezhaTest.State.TaskJournalTest do
                %{task_idx: 1, handoff: [{2, "b"}]}
              ]
            } = TaskJournal.restore_state(inst)
-  end
-
-  test "complete? derives DONE from the declared leaf set" do
-    inst = instance_id()
-
-    # A→(B,C): leaves are tasks 1 and 2.
-    assert TaskJournal.complete?(inst, [1, 2]) == false, "an empty journal is not complete"
-    assert TaskJournal.complete?(inst, nil) == nil, "a class declaring no leaves is not derivable"
-
-    :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [{1, "a"}])
-    :ok = TaskJournal.append_task_committed(inst, 1, 0, [], [])
-    refute TaskJournal.complete?(inst, [1, 2]), "one leaf short"
-
-    :ok = TaskJournal.append_task_committed(inst, 2, 0, [], [])
-    assert TaskJournal.complete?(inst, [1, 2]), "every leaf of the in-flight iteration committed"
-
-    # A new iteration starts uncommitted: the leaves must commit again.
-    :ok = TaskJournal.append_iter_committed(inst, 0, 1, [])
-    refute TaskJournal.complete?(inst, [1, 2])
   end
 
   test "torn tail is discarded; complete prior entries remain readable" do
@@ -459,7 +440,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     :ok = TaskJournal.append_compensated(inst, 0, 0, [ran(seg, {3, 3}, ["undo"])])
 
     assert TaskJournal.committed_records(inst) == %{seg => [{0, 1}, {3, 3}], other => [{0, 0}]}
-    assert TaskJournal.record_ranges([ran(seg, {0, 1}), ran(other)]) == [{seg, 0, 1}]
+    assert Records.record_ranges([ran(seg, {0, 1}), ran(other)]) == [{seg, 0, 1}]
   end
 
   test "the rewind guard reads the channels the stage entries name" do

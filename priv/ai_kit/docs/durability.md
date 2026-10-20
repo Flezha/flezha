@@ -301,11 +301,12 @@ task-journal for instance order_1:
     ran: order_1/record_order/
     ...
 
-  leaves: 2,3  complete: false
+  outcome: running
 ```
 
-Three steps are committed. A runner killed now and started again runs only
-`confirm_fill`; the journal then ends with it and `complete: true`:
+Three steps are committed and the order is still running. A runner killed now
+and started again runs only `confirm_fill`, which completes the order; the
+journal then ends with it and `outcome: ok`:
 
 ```output
 ...
@@ -315,7 +316,7 @@ Three steps are committed. A runner killed now and started again runs only
     completes the instance: result 57 byte(s)
 
 
-  leaves: 2,3  complete: true
+  outcome: ok
 ```
 
 The money is not reserved twice and the order is not booked twice. The PHP

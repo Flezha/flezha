@@ -83,9 +83,9 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc """
-  One instance's task journal, in append order. With it come the leaf tasklets
-  that define "done" for it, and whether the in-flight iteration has committed
-  every leaf.
+  One instance's task journal, in append order, and the run's outcome. The
+  outcome is the status and error the engine completed the run with, or `nil`
+  while it runs.
   """
   @spec journal(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb journal(instance_id, caller_context),

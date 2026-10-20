@@ -1783,7 +1783,7 @@
     },
     {
       "name": "Steps.journal",
-      "doc": "One instance's task journal, in append order.",
+      "doc": "One instance's task journal, in append order, and the run's outcome.",
       "action": "state.records",
       "remote": true,
       "stream": false,
