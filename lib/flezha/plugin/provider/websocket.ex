@@ -23,6 +23,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   alias Flezha.Plugin.Provider.Websocket.Subscription
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.State.Outbox
 
   require Logger
@@ -48,94 +49,84 @@ defmodule Flezha.Plugin.Provider.Websocket do
   use ProviderBehaviour,
     feeds: true,
     shareable: true,
-    options: [
-      uri: [type: :string, required: true, doc: "The websocket endpoint to connect to"],
-      plugin_id: [type: :string, doc: "Plugin id; defaults to the id it was enabled under"],
-      ignore_pattern: [
-        type: :string,
-        doc: "Substring marking a frame as a heartbeat rather than data"
-      ],
-      post_connect: [type: :json, default: %{}, doc: "Frame sent once the socket opens"],
-      ws_opts: [type: :json, default: [], doc: "Options passed to the socket library"],
-      payload_metadata: [type: :json, default: %{}, doc: "Metadata merged into every injection"],
-      idle_timeout_ms: [
-        type: :int,
-        default: @default_idle_timeout_ms,
-        doc: "Silence on the connection before it is reopened; 0 disables"
-      ],
-      resubscribe_after_ms: [
-        type: :int,
-        default: @default_resubscribe_after_ms,
-        doc: "Silence of DATA frames before the subscription is reasserted; 0 disables"
-      ],
-      subscription_url: [type: :string, doc: "Endpoint the desired item set is polled from"],
-      subscription_items: [
-        type: :list,
-        live: true,
-        doc:
-          "Literal desired item set, instead of polling one; changed in place by flz plugin update"
-      ],
-      subscription_interval_ms: [
-        type: :int,
-        default: @default_subscription_interval_ms,
-        doc: "How often the item source is polled"
-      ],
-      subscription_headers: [type: :json, default: %{}, doc: "Headers for the item source poll"],
-      subscribe_template: [type: :string, doc: "Frame template carrying the items to subscribe"],
-      unsubscribe_template: [type: :string, doc: "Frame template carrying the items to drop"],
-      subscription_ack_mode: [
-        type: :enum,
-        values: ["required", "none"],
-        default: "required",
-        doc: "`\"none\"` commits a delta on successful send instead of on the server's ack"
-      ],
-      channel: [
-        type: :names,
-        doc:
-          "The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent. One name, since it names the entry channel too"
-      ],
-      channel_in: [
-        type: :names,
-        doc:
-          "Entry channel inbound frames are injected on, for a plugin whose two names differ. One name"
-      ],
-      channel_out: [
-        type: :names,
-        doc:
-          "Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all"
-      ],
-      sink_frame_type: [
-        type: :enum,
-        values: ["text", "binary"],
-        default: "text",
-        doc: "Websocket frame type an output is sent as"
-      ],
-      sink_template: [
-        type: :string,
-        doc:
-          "Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available"
-      ],
-      sink_queue_max: [
-        type: :int,
-        default: 10_000,
-        min: 1,
-        doc: "Outbound frames held while the socket is down before the caller blocks"
-      ],
-      sink_ack_mode: [
-        type: :enum,
-        values: ["none", "required"],
-        default: "none",
-        doc: "`\"required\"` answers the outbox hold on the upstream's ack instead of at handoff"
-      ],
-      # The set this plugin last committed, read back from the cspec on a
-      # restart rather than an option a user writes.
-      applied_subscriptions: [type: :any, internal: true],
-      # The reconcile plan `init_provider/1` derives from the rows above.
-      subscription: [type: :any, internal: true],
-      # The outbound half, derived from the sink rows and the directions this
-      # plugin was actually subscribed to.
-      sink: [type: :any, internal: true]
-    ],
+    options:
+      [
+        uri: [type: :string, required: true, doc: "The websocket endpoint to connect to"],
+        ignore_pattern: [
+          type: :string,
+          doc: "Substring marking a frame as a heartbeat rather than data"
+        ],
+        post_connect: [type: :json, default: %{}, doc: "Frame sent once the socket opens"],
+        ws_opts: [type: :json, default: [], doc: "Options passed to the socket library"],
+        payload_metadata: [type: :json, default: %{}, doc: "Metadata merged into every injection"],
+        idle_timeout_ms: [
+          type: :int,
+          default: @default_idle_timeout_ms,
+          doc: "Silence on the connection before it is reopened; 0 disables"
+        ],
+        resubscribe_after_ms: [
+          type: :int,
+          default: @default_resubscribe_after_ms,
+          doc: "Silence of DATA frames before the subscription is reasserted; 0 disables"
+        ],
+        subscription_url: [type: :string, doc: "Endpoint the desired item set is polled from"],
+        subscription_items: [
+          type: :list,
+          live: true,
+          doc:
+            "Literal desired item set, instead of polling one; changed in place by flz plugin update"
+        ],
+        subscription_interval_ms: [
+          type: :int,
+          default: @default_subscription_interval_ms,
+          doc: "How often the item source is polled"
+        ],
+        subscription_headers: [
+          type: :headers,
+          default: %{},
+          doc: "Headers for the item source poll"
+        ],
+        subscribe_template: [type: :string, doc: "Frame template carrying the items to subscribe"],
+        unsubscribe_template: [type: :string, doc: "Frame template carrying the items to drop"],
+        subscription_ack_mode: [
+          type: :enum,
+          values: ["required", "none"],
+          default: "required",
+          doc: "`\"none\"` commits a delta on successful send instead of on the server's ack"
+        ],
+        sink_frame_type: [
+          type: :enum,
+          values: ["text", "binary"],
+          default: "text",
+          doc: "Websocket frame type an output is sent as"
+        ],
+        sink_template: [
+          type: :string,
+          doc:
+            "Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available"
+        ],
+        sink_queue_max: [
+          type: :int,
+          default: 10_000,
+          min: 1,
+          doc: "Outbound frames held while the socket is down before the caller blocks"
+        ],
+        sink_ack_mode: [
+          type: :enum,
+          values: ["none", "required"],
+          default: "none",
+          doc:
+            "`\"required\"` answers the outbox hold on the upstream's ack instead of at handoff"
+        ],
+        # The set this plugin last committed, read back from the cspec on a
+        # restart rather than an option a user writes.
+        applied_subscriptions: [type: :any, internal: true],
+        # The reconcile plan `init_provider/1` derives from the rows above.
+        subscription: [type: :any, internal: true],
+        # The outbound half, derived from the sink rows and the directions this
+        # plugin was actually subscribed to.
+        sink: [type: :any, internal: true]
+      ] ++ Options.channel(:both, "frame") ++ Options.plugin_id("the id it was enabled under"),
     worker: [module: Client, restart: :temporary]
 
   defp convert_value(field, value) when field in @ms_fields and is_integer(value),

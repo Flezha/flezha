@@ -21,15 +21,15 @@ changed. Authors can read it as the smallest two-phase source provider.
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `url` | string | none | yes | The resource to GET each interval |
-| `channel` | names | none | no | The channel this plugin is attached to: the entry channel the body is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
-| `headers` | json | `%{}` | no | Request headers, as a JSON object |
+| `headers` | headers | `%{}` | no | Request headers, as a JSON object |
 | `interval_ms` | int | `60000` | no | Milliseconds between polls |
 | `timeout_ms` | int | `10000` | no | Budget for one request |
 | `max_body_bytes` | int | `1048576` | no | Largest body accepted before the poll is refused |
-| `failure_threshold` | int | `3` | no | Consecutive failed polls before the plugin reports unhealthy |
-| `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the source is idle; 0 derives it from `interval_ms` |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every response body is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every response body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
+| `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from the plugin's read interval |
 <!-- provider-options:end -->
 
 ## Example

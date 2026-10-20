@@ -20,7 +20,6 @@ without tearing it down, and can send the relay's outputs back out on the same s
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `uri` | string | none | yes | The websocket endpoint to connect to |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `ignore_pattern` | string | none | no | Substring marking a frame as a heartbeat rather than data |
 | `post_connect` | json | `%{}` | no | Frame sent once the socket opens |
 | `ws_opts` | json | `[]` | no | Options passed to the socket library |
@@ -30,17 +29,18 @@ without tearing it down, and can send the relay's outputs back out on the same s
 | `subscription_url` | string | none | no | Endpoint the desired item set is polled from |
 | `subscription_items` | list | none | no | Literal desired item set, instead of polling one; changed in place by flz plugin update |
 | `subscription_interval_ms` | int | `30000` | no | How often the item source is polled |
-| `subscription_headers` | json | `%{}` | no | Headers for the item source poll |
+| `subscription_headers` | headers | `%{}` | no | Headers for the item source poll |
 | `subscribe_template` | string | none | no | Frame template carrying the items to subscribe |
 | `unsubscribe_template` | string | none | no | Frame template carrying the items to drop |
 | `subscription_ack_mode` | enum | `"required"` | no | `"none"` commits a delta on successful send instead of on the server's ack |
-| `channel` | names | none | no | The channel this plugin is attached to: inbound frames are injected on it and only outputs naming it are sent. One name, since it names the entry channel too |
-| `channel_in` | names | none | no | Entry channel inbound frames are injected on, for a plugin whose two names differ. One name |
-| `channel_out` | names | none | no | Send only outputs whose metadata channel matches, for a plugin whose two names differ. Several names, comma-separated, select them all |
 | `sink_frame_type` | enum | `"text"` | no | Websocket frame type an output is sent as |
 | `sink_template` | string | none | no | Frame template carrying the output; {{payload}} required, {{req_id}}/{{cell}}/{{seq}} available |
 | `sink_queue_max` | int | `10000` | no | Outbound frames held while the socket is down before the caller blocks |
 | `sink_ack_mode` | enum | `"none"` | no | `"required"` answers the outbox hold on the upstream's ack instead of at handoff |
+| `channel` | names | none | no | The channel this plugin is attached to: every inbound frame is injected on it and only an output naming it reaches the plugin. One name, since it names the entry channel too |
+| `channel_in` | names | none | no | Entry channel every inbound frame is injected on, for a plugin whose two names differ. One name |
+| `channel_out` | names | none | no | Only an output whose metadata channel matches reaches the plugin, for a plugin whose two names differ. Several names, comma-separated, take them all |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 <!-- provider-options:end -->
 
 ## Example

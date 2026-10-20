@@ -29,7 +29,11 @@ defmodule Flezha.Plugin.Provider.HookWebhook do
         required: true,
         doc: "Where each event is POSTed: http or https, with a host and no credentials"
       ],
-      headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object; never logged"],
+      headers: [
+        type: :headers,
+        default: %{},
+        doc: "Request headers, as a JSON object; never logged"
+      ],
       timeout_ms: [type: :int, default: 5_000, min: 1, max: 60_000, doc: "Budget for one request"],
       retries: [
         type: :int,
@@ -44,8 +48,7 @@ defmodule Flezha.Plugin.Provider.HookWebhook do
   @impl true
   def init_provider(opts) do
     with {:ok, url} <- HttpFetch.validate_url(opts.url, "hook_webhook"),
-         {:ok, headers} <- HttpFetch.validate_headers(opts.headers, "hook_webhook"),
-         do: {:ok, %{opts | url: url, headers: headers}}
+         do: {:ok, %{opts | url: url}}
   end
 
   # One worker per plugin, which a name in another namespace does not share.

@@ -216,9 +216,9 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
                ~s|SELECT "id", "x"", pg_read_file('/etc/passwd') AS ""y"::text, r."id"::text | <>
                  ~s|FROM "sales"."or.ders" r WHERE r."id" IS NOT NULL ORDER BY r."id" LIMIT $1|
 
-      assert Query.relation(nil, ~s|a"b|) == ~s|"a""b"|
-      assert Query.split_table("sales.orders") == {"sales", "orders"}
-      assert Query.split_table("orders") == {nil, "orders"}
+      assert Connection.relation(nil, ~s|a"b|) == ~s|"a""b"|
+      assert Connection.split_table("sales.orders") == {"sales", "orders"}
+      assert Connection.split_table("orders") == {nil, "orders"}
     end
 
     test "a missing table and a missing column are named" do
@@ -300,7 +300,7 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
         [<<0>>]
       ]
 
-      assert Query.encode(columns, values) ==
+      assert Connection.encode(columns, values) ==
                ~s|{"i":42,"f":1.5,"nan":"NaN","inf":"-Infinity","b":true,"n":"12.3400",| <>
                  ~s|"at":"2026-10-02T12:30:00.123456Z","day":"2026-10-02","t":"12:30:00.000000",| <>
                  ~s|"local":"2026-10-02T12:30:00","u":"6f1c3a52-6f0a-4f43-9a41-0d8f8c2e7b11",| <>

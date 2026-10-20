@@ -108,12 +108,6 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   defp build(opts, url, items) do
     with {:ok, url} <- validate_url(url),
          {:ok, items} <- validate_items(items),
-         {:ok, headers} <-
-           HttpFetch.validate_headers(
-             Map.get(opts, :subscription_headers),
-             "websocket",
-             :subscription_headers
-           ),
          :ok <- interval(opts.subscription_interval_ms),
          {:ok, subscribe} <- template(opts, :subscribe_template),
          {:ok, unsubscribe} <- template(opts, :unsubscribe_template) do
@@ -122,7 +116,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
          url: url,
          items: items,
          range: range(opts),
-         headers: headers,
+         headers: Map.get(opts, :subscription_headers) || %{},
          interval_ms: opts.subscription_interval_ms,
          subscribe_template: subscribe,
          unsubscribe_template: unsubscribe,

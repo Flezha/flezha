@@ -22,8 +22,6 @@ repository, `Flezha/flezha_http_plugin`, which this repository carries as the su
 | --- | --- | --- | --- | --- |
 | `port` | int | none | yes | The TCP port the server listens on, 1 to 65535 |
 | `bind` | string | `"127.0.0.1"` | no | The address it listens on: an IPv4 or IPv6 literal, never a name |
-| `channel` | names | none | no | The entry channel every request is injected on, one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | The explicit spelling of `channel`. Required, unless `channel` names it |
 | `answer_channel` | string | none | no | The relay's channel whose output answers a request; the first output when unset |
 | `deadline_ms` | int | `30000` | no | How long a request waits for the relay's answer, 100 to 600000 |
 | `max_body_bytes` | int | `1048576` | no | The largest request body accepted, up to 16777216; a larger one is answered 413 |
@@ -33,6 +31,8 @@ repository, `Flezha/flezha_http_plugin`, which this repository carries as the su
 | `max_connections` | int | `1000` | no | Connections open at once, streams and waiting requests included; one more is closed at once |
 | `heartbeat_ms` | int | `15000` | no | How long a quiet stream waits before it writes a comment line, 1000 to 300000 |
 | `stream_wait_ms` | int | `5000` | no | How long a stream waits for the relay it names to exist, up to 60000; 0 answers 404 at once |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every request is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every request is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
 <!-- provider-options:end -->
 
 ## Example

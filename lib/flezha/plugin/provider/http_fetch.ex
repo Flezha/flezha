@@ -203,32 +203,4 @@ defmodule Flezha.Plugin.Provider.HttpFetch do
 
   def validate_url(_url, provider, field, _headers_field),
     do: ProviderOptions.refuse_required(provider, [field])
-
-  @doc """
-  Accept a header map, or the JSON object a CLI flag delivers it as, and
-  normalise both names and values to strings.
-  """
-  @spec validate_headers(term(), binary(), atom()) ::
-          {:ok, %{binary() => binary()}} | {:error, term()}
-  def validate_headers(headers, provider, field \\ :headers)
-
-  def validate_headers(nil, _provider, _field), do: {:ok, %{}}
-
-  def validate_headers(headers, provider, field) when is_binary(headers) do
-    case Jason.decode(headers) do
-      {:ok, decoded} when is_map(decoded) -> validate_headers(decoded, provider, field)
-      _ -> {:error, {:headers_invalid, provider, field}}
-    end
-  end
-
-  def validate_headers(headers, provider, field) when is_map(headers) do
-    if Enum.all?(headers, fn {_k, v} -> is_binary(v) or is_number(v) end) do
-      {:ok, Map.new(headers, fn {k, v} -> {to_string(k), to_string(v)} end)}
-    else
-      {:error, {:headers_invalid, provider, field}}
-    end
-  end
-
-  def validate_headers(_headers, provider, field),
-    do: {:error, {:headers_invalid, provider, field}}
 end

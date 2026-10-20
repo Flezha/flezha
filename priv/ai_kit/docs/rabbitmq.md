@@ -27,24 +27,24 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `port` | int | none | no | AMQP port; 5672, or 5671 with `ssl` |
 | `virtual_host` | string | `"/"` | no | Virtual host |
 | `username` | string | `"guest"` | no | User the plugin connects as |
-| `password` | string | none | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | none | no | Environment variable holding the password instead |
+| `password` | string | none | no | The password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password, read at every connect and preferred over an inline one |
 | `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
 | `ssl_options` | list | none | no | Erlang `:ssl` options, passed through |
 | `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
 | `reconnect_backoff_ms` | int | `500` | no | First wait before connecting again after a loss |
 | `reconnect_max_backoff_ms` | int | `30000` | no | Ceiling for that wait |
 | `queue` | string | none | yes | The queue to consume |
-| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every message is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | Entry channel every message is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `prefetch` | int | `200` | no | Deliveries the broker sends before the first of them is acknowledged |
 | `batch_ms` | int | `10` | no | Longest a delivery waits for others before its batch goes to the relay |
 | `msg_id_header` | string | none | no | A header whose value is the message's id, in place of its `message_id` |
 | `declare` | bool | `false` | no | Declare `queue` durable when it does not exist |
 | `bind_exchange` | string | none | no | With `declare`: an exchange the queue is bound to |
 | `routing_keys` | names | none | no | With `bind_exchange`: the binding keys, comma-separated; one empty key when unset |
-| `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every message is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every message is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
 <!-- provider-options:end -->
 
 ### Producer
@@ -56,8 +56,8 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `port` | int | none | no | AMQP port; 5672, or 5671 with `ssl` |
 | `virtual_host` | string | `"/"` | no | Virtual host |
 | `username` | string | `"guest"` | no | User the plugin connects as |
-| `password` | string | none | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | none | no | Environment variable holding the password instead |
+| `password` | string | none | no | The password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password, read at every connect and preferred over an inline one |
 | `ssl` | bool | `false` | no | TLS to the broker, verifying it against the system's CA store |
 | `ssl_options` | list | none | no | Erlang `:ssl` options, passed through |
 | `heartbeat_s` | int | `30` | no | AMQP heartbeat; 0 turns it off |
@@ -68,19 +68,19 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `routing_key_from` | enum | none | no | `flz_key`: each output's own `flz.key` is its routing key |
 | `persistent` | bool | `true` | no | Delivery mode 2: the broker writes it to disk |
 | `mandatory` | bool | `false` | no | The broker returns a payload no queue is bound for; a guaranteed one is parked |
-| `headers` | json | `%{}` | no | Static message headers, a JSON object; names starting `flz.` are refused |
+| `headers` | headers | `%{}` | no | Static message headers, a JSON object; names starting `flz.` are refused |
 | `content_type` | string | none | no | The message's `content_type` property |
 | `declare_exchange` | bool | `false` | no | Declare `exchange` durable when it does not exist |
 | `exchange_type` | enum | `"direct"` | no | With `declare_exchange`: the exchange's type |
-| `channel` | names | none | no | The channel this plugin is attached to: only payloads naming it are published. Several names, comma-separated, publish them all |
-| `channel_out` | names | none | no | Publish only payloads whose metadata channel matches; the explicit spelling |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `retries` | int | `5` | no | Publishes again of a guaranteed output the broker refused or a lost connection left unconfirmed |
-| `retry_backoff_ms` | int | `250` | no | First delay between retries |
-| `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay |
 | `queue_max` | int | `10000` | no | Payloads waiting while the connection is down |
 | `queue_max_bytes` | int | `67108864` | no | Payload bytes waiting while the connection is down |
 | `queue_overflow` | enum | `:drop_oldest` | no | What a full queue does with a plain output: keep it past the bound, drop the oldest plain one, or drop the newest; a guaranteed one always waits |
+| `channel` | names | none | no | The channel this plugin is attached to: only a payload naming it reaches the plugin. Several names, comma-separated, take them all |
+| `channel_out` | names | none | no | Only a payload whose metadata channel matches reaches the plugin; the explicit spelling of `channel`. Several names, comma-separated, take them all |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `retry_backoff_ms` | int | `250` | no | First delay before a failed attempt is made again |
+| `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay |
 <!-- provider-options:end -->
 
 ## Example

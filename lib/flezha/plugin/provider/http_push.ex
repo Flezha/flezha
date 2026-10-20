@@ -21,6 +21,7 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   alias Flezha.Plugin.Provider.HttpSend
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options
 
   # Resolved once: the dispatch looks its worker up here for every payload.
   @registry WorkerSup.registry_name(WorkerSup.family(__MODULE__))
@@ -30,97 +31,63 @@ defmodule Flezha.Plugin.Provider.HttpPush do
 
   use ProviderBehaviour,
     shareable: true,
-    options: [
-      url: [
-        type: :string,
-        required: true,
-        doc: "Where each payload is sent: http or https, with a host and no credentials"
-      ],
-      method: [type: :enum, values: ["POST", "PUT"], default: "POST", doc: "`POST` or `PUT`"],
-      headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object; never logged"],
-      content_type: [
-        type: :string,
-        default: "application/octet-stream",
-        doc: "The request's `content-type`"
-      ],
-      channel: [
-        type: :names,
-        doc:
-          "The channel this plugin is attached to: only payloads naming it are sent. Several names, comma-separated, send them all"
-      ],
-      channel_out: [
-        type: :names,
-        doc: "Send only payloads whose metadata channel matches; the explicit spelling"
-      ],
-      timeout_ms: [
-        type: :int,
-        default: 10_000,
-        min: 1,
-        max: 300_000,
-        doc: "Budget for one request, connect to last byte"
-      ],
-      max_in_flight: [
-        type: :int,
-        default: 1,
-        min: 1,
-        max: 64,
-        doc: "Requests outstanding at once, one connection each; above 1 order is not kept"
-      ],
-      retries: [
-        type: :int,
-        default: 5,
-        min: 0,
-        max: 100,
-        doc: "Retries of a 408, a 429, a 5xx, a timeout or a transport error"
-      ],
-      retry_backoff_ms: [type: :int, default: 250, min: 1, doc: "First delay between retries"],
-      retry_max_backoff_ms: [
-        type: :int,
-        default: 10_000,
-        min: 1,
-        doc: "Ceiling for that delay, and for a `retry-after`"
-      ],
-      delivery_timeout_ms: [
-        type: :int,
-        default: 30_000,
-        min: 1,
-        doc: "Time from a payload's first attempt after which it is not retried again"
-      ],
-      queue_max: [type: :int, default: 10_000, min: 1, doc: "Payloads waiting to be sent"],
-      queue_max_bytes: [
-        type: :int,
-        default: 67_108_864,
-        min: 1,
-        doc: "Payload bytes waiting to be sent"
-      ],
-      queue_overflow: [
-        type: :enum,
-        values: [:drop_nothing, :drop_oldest, :drop_newest],
-        default: :drop_nothing,
-        doc: "What a full queue does: make the dispatch wait, drop the oldest, or drop the newest"
-      ],
-      queue_block_timeout_ms: [
-        type: :int,
-        default: 5_000,
-        min: 1,
-        doc: "How long a dispatch waits on a full queue before the payload overflows"
-      ],
-      failure_threshold: [
-        type: :int,
-        default: 3,
-        min: 1,
-        doc: "Consecutive failed requests before the plugin reports unhealthy"
-      ]
-    ],
+    options:
+      [
+        url: [
+          type: :string,
+          required: true,
+          doc: "Where each payload is sent: http or https, with a host and no credentials"
+        ],
+        method: [type: :enum, values: ["POST", "PUT"], default: "POST", doc: "`POST` or `PUT`"],
+        headers: [
+          type: :headers,
+          default: %{},
+          doc: "Request headers, as a JSON object; never logged"
+        ],
+        content_type: [
+          type: :string,
+          default: "application/octet-stream",
+          doc: "The request's `content-type`"
+        ],
+        timeout_ms: [
+          type: :int,
+          default: 10_000,
+          min: 1,
+          max: 300_000,
+          doc: "Budget for one request, connect to last byte"
+        ],
+        max_in_flight: [
+          type: :int,
+          default: 1,
+          min: 1,
+          max: 64,
+          doc: "Requests outstanding at once, one connection each; above 1 order is not kept"
+        ],
+        retries: [
+          type: :int,
+          default: 5,
+          min: 0,
+          max: 100,
+          doc: "Retries of a 408, a 429, a 5xx, a timeout or a transport error"
+        ],
+        delivery_timeout_ms: [
+          type: :int,
+          default: 30_000,
+          min: 1,
+          doc: "Time from a payload's first attempt after which it is not retried again"
+        ]
+      ] ++
+        Options.channel(:out, "payload") ++
+        Options.retry(retry_max_backoff_ms: 10_000) ++
+        Options.queue() ++ Options.failure_threshold(),
     worker: [module: HttpSend, restart: :transient]
 
   @impl true
   def init_provider(opts) do
     with {:ok, url} <- HttpFetch.validate_url(opts.url, "http_push"),
-         {:ok, headers} <- HttpFetch.validate_headers(opts.headers, "http_push"),
-         :ok <- sendable_headers(headers) do
+         :ok <- sendable_headers(opts.headers) do
       if sendable_value?(opts.content_type),
-        do: {:ok, %{opts | url: url, headers: headers}},
+        do: {:ok, %{opts | url: url}},
         else: {:error, {:headers_invalid, "http_push", :content_type, "content-type"}}
     end
   end

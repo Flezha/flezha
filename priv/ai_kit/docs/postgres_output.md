@@ -22,20 +22,20 @@ id is `relay_postgres`.
 | --- | --- | --- | --- | --- |
 | `database` | string | none | yes | Database name |
 | `username` | string | none | yes | Role the plugin connects as |
-| `password` | string | none | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | none | no | Environment variable holding the password instead |
+| `password` | string | none | no | The password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password, read at every connect and preferred over an inline one |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
-| `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
 | `pool_size` | int | `2` | no | Connections in the plugin's pool |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one flush transaction |
-| `queue_max` | int | `10000` | no | Records held before enqueue blocks |
-| `retry_backoff_ms` | int | `250` | no | First delay after a failed flush |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 | `unhealthy_after_ms` | int | `30000` | no | Age of the last commit past which a backed-up output plugin is unhealthy |
 | `auto_create` | bool | `false` | no | Create the target tables when missing |
+| `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
+| `queue_max` | int | `10000` | no | Outputs the queue holds before it is full |
+| `retry_backoff_ms` | int | `250` | no | First delay before a failed attempt is made again |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 <!-- provider-options:end -->
 
 ## Example

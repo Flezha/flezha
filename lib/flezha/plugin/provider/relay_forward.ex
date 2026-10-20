@@ -24,6 +24,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Relay.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -32,21 +33,25 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   require Logger
 
   use ProviderBehaviour,
-    options: [
-      target_relay_id: [
-        type: :string,
-        required: true,
-        doc: "The relay in this namespace the payload is delivered to"
-      ],
-      plugin_id: [type: :string, doc: "Plugin id; defaults to `<source>-><target>`"],
-      queue_max: [type: :int, default: 10_000, min: 1, doc: "Records held per target member"],
-      retry_backoff_ms: [type: :int, default: 250, min: 1, doc: "First delay after a refusal"],
-      retry_max_backoff_ms: [type: :int, default: 5_000, min: 1, doc: "Ceiling for that delay"],
-      call_timeout_ms: [type: :int, default: 5_000, min: 1, doc: "Budget for one confirming call"],
-      # The target's member set, resolved at every prepare. It carries no pid:
-      # a route names the member, and the worker for it is addressed by name.
-      routes: [type: :any, internal: true]
-    ],
+    options:
+      [
+        target_relay_id: [
+          type: :string,
+          required: true,
+          doc: "The relay in this namespace the payload is delivered to"
+        ],
+        call_timeout_ms: [
+          type: :int,
+          default: 5_000,
+          min: 1,
+          doc: "Budget for one confirming call"
+        ],
+        # The target's member set, resolved at every prepare. It carries no pid:
+        # a route names the member, and the worker for it is addressed by name.
+        routes: [type: :any, internal: true]
+      ] ++
+        Options.plugin_id("`<source>-><target>`") ++
+        Options.queue([:queue_max]) ++ Options.retry(),
     worker: [module: ForwardWorker, restart: :transient]
 
   @impl true

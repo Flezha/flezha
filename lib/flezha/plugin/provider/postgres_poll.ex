@@ -25,6 +25,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
   alias Flezha.Plugin.Provider.PostgresPoll.Reader
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options
 
   use ProviderBehaviour,
     feeds: true,
@@ -33,17 +34,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
     options:
       Connection.rows() ++
         [
-          channel: [
-            type: :names,
-            doc:
-              "The channel this plugin is attached to: the entry channel every row is injected on, and one name. Required, unless `channel_in` names it"
-          ],
-          channel_in: [
-            type: :names,
-            doc:
-              "Entry channel every row is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it"
-          ],
-          plugin_id: [type: :string, doc: "Plugin id; defaults to the id it was enabled under"],
           table: [
             type: :string,
             required: true,
@@ -95,28 +85,14 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
             min: 1,
             doc: "Statement timeout of one read"
           ],
-          failure_threshold: [
-            type: :int,
-            default: 3,
-            min: 1,
-            doc: "Consecutive failed reads or refused rows before the plugin reports unhealthy"
-          ],
-          idle_after_ms: [
-            type: :int,
-            default: 0,
-            min: 0,
-            doc:
-              "Age of the last settled read past which the source is idle; 0 derives it from `interval_ms`"
-          ],
           # The committed cursor, written back by the reader and read on every
           # restart path, rather than an option a user writes.
           cursor: [type: :any, internal: true]
-        ],
+        ] ++
+        Options.channel(:in, "row") ++
+        Options.plugin_id("the id it was enabled under") ++
+        Options.failure_threshold() ++ Options.idle_after(),
     worker: [module: Reader, restart: :temporary]
-
-  # A channel written as an atom, which an Elixir-side spec may carry.
-  defp convert_value(field, value) when field in [:channel, :channel_in] and is_atom(value),
-    do: convert_value(field, Atom.to_string(value))
 
   @doc """
   Validate and prepare. Opens no connection: the reader does, at activation, so

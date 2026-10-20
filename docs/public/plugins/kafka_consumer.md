@@ -22,22 +22,23 @@ provider id `kafka_consumer`, in the Kafka plugin package beside the producer
 | --- | --- | --- | --- | --- |
 | `hosts` | names | none | yes | `host:port` names, comma-separated or as a list |
 | `auth` | map | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
-| `sasl_password_env` | string | none | no | Environment variable holding the SASL password, preferred over an inline one |
+| `password` | string | none | no | The SASL password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the SASL password, read at every connect and preferred over an inline one |
 | `use_ssl` | bool | none | no | TLS to the brokers |
 | `ssl_options` | list | none | no | Erlang `:ssl` options for that connection |
 | `topics` | names | none | yes | The topics to consume, comma-separated |
 | `group_id` | string | none | yes | The consumer group |
-| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every record is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | Entry channel every record is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `start_at` | enum | `"end"` | no | Where a group with no committed offset starts: the earliest record, or the next one written |
 | `max_bytes` | int | `1048576` | no | Bytes one fetch takes from one partition |
 | `max_wait_ms` | int | `500` | no | How long a fetch waits for records; below the client's 5 s request timeout |
 | `isolation_level` | enum | `:read_uncommitted` | no | Which records a fetch hands over: every record, or only those of committed transactions and no transaction markers |
 | `commit_interval_ms` | int | `5000` | no | Longest the offsets of taken records wait to be committed, unless the relay's input is durable |
 | `lag_interval_ms` | int | `5000` | no | How often the lag of each assigned partition is read |
-| `failure_threshold` | int | `3` | no | Refused batches in a row before the plugin reports unhealthy |
-| `idle_after_ms` | int | `0` | no | Age of the last settled lag read past which the source is idle; 0 derives it from `lag_interval_ms` |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every record is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every record is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
+| `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from the plugin's read interval |
 <!-- provider-options:end -->
 
 ## Example
@@ -88,11 +89,11 @@ $ flz plugin bind trades-in --relay_id pricer --hook=on_terminate
 
 ## Options in detail
 
-`hosts`, `auth`, `sasl_password_env`, `use_ssl` and `ssl_options` are the producer's, from
-one connection module both providers use: a credential is held in memory, the prepared
-`auth` carries `**redacted**` in place of the password, and `sasl_password_env` is read again
-at every group start. Prefer it: an inline password does not survive a move to another
-controller.
+`hosts`, `auth`, `password`, `password_env`, `use_ssl` and `ssl_options` are the producer's,
+from one connection module both providers use: a password, written as `password` or inside
+`auth`, is held in memory and the prepared options carry `**redacted**` in its place, and
+`password_env` is read again at every group start and wins over an inline password. Prefer
+it: an inline password does not survive a move to another controller.
 
 `start_at` places a group that has no committed offset for a partition: `beginning` reads
 from the earliest record Kafka still holds, `end` from the next one written. A group with a

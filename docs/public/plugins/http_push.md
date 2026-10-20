@@ -21,21 +21,21 @@ receiver, or any service that takes a request per record. It hooks `on_output`, 
 | --- | --- | --- | --- | --- |
 | `url` | string | none | yes | Where each payload is sent: http or https, with a host and no credentials |
 | `method` | enum | `"POST"` | no | `POST` or `PUT` |
-| `headers` | json | `%{}` | no | Request headers, as a JSON object; never logged |
+| `headers` | headers | `%{}` | no | Request headers, as a JSON object; never logged |
 | `content_type` | string | `"application/octet-stream"` | no | The request's `content-type` |
-| `channel` | names | none | no | The channel this plugin is attached to: only payloads naming it are sent. Several names, comma-separated, send them all |
-| `channel_out` | names | none | no | Send only payloads whose metadata channel matches; the explicit spelling |
 | `timeout_ms` | int | `10000` | no | Budget for one request, connect to last byte |
 | `max_in_flight` | int | `1` | no | Requests outstanding at once, one connection each; above 1 order is not kept |
 | `retries` | int | `5` | no | Retries of a 408, a 429, a 5xx, a timeout or a transport error |
-| `retry_backoff_ms` | int | `250` | no | First delay between retries |
-| `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay, and for a `retry-after` |
 | `delivery_timeout_ms` | int | `30000` | no | Time from a payload's first attempt after which it is not retried again |
-| `queue_max` | int | `10000` | no | Payloads waiting to be sent |
-| `queue_max_bytes` | int | `67108864` | no | Payload bytes waiting to be sent |
+| `channel` | names | none | no | The channel this plugin is attached to: only a payload naming it reaches the plugin. Several names, comma-separated, take them all |
+| `channel_out` | names | none | no | Only a payload whose metadata channel matches reaches the plugin; the explicit spelling of `channel`. Several names, comma-separated, take them all |
+| `retry_backoff_ms` | int | `250` | no | First delay before a failed attempt is made again |
+| `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay |
+| `queue_max` | int | `10000` | no | Outputs the queue holds before it is full |
+| `queue_max_bytes` | int | `67108864` | no | Output bytes the queue holds before it is full |
 | `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: make the dispatch wait, drop the oldest, or drop the newest |
-| `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before the payload overflows |
-| `failure_threshold` | int | `3` | no | Consecutive failed requests before the plugin reports unhealthy |
+| `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before its output overflows |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
 <!-- provider-options:end -->
 
 ## Example

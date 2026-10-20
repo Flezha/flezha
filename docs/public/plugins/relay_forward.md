@@ -23,11 +23,11 @@ external endpoint, and the shape to copy for a plugin author who needs an output
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `target_relay_id` | string | none | yes | The relay in this namespace the payload is delivered to |
-| `plugin_id` | string | none | no | Plugin id; defaults to `<source>-><target>` |
-| `queue_max` | int | `10000` | no | Records held per target member |
-| `retry_backoff_ms` | int | `250` | no | First delay after a refusal |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 | `call_timeout_ms` | int | `5000` | no | Budget for one confirming call |
+| `plugin_id` | string | none | no | Plugin id; defaults to `<source>-><target>` |
+| `queue_max` | int | `10000` | no | Outputs the queue holds before it is full |
+| `retry_backoff_ms` | int | `250` | no | First delay before a failed attempt is made again |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 <!-- provider-options:end -->
 
 ## Example

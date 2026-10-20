@@ -11,27 +11,11 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   value is a parameter. The cursor travels as Postgres's text form and is cast
   back on the server, because a text value cannot bind to an `int8` or a
   `timestamptz` parameter, and its text is the same on every controller because
-  the session runs in UTC.
+  the session runs in UTC. The name checks, the catalog read, the select list
+  and the row encoding are `Flezha.Plugin.Provider.Postgres.Connection`'s.
   """
 
-  @identifier ~r/\A[A-Za-z_][A-Za-z0-9_$]{0,62}\z/
-
-  # The types whose decoded value is written as it comes, as an ISO 8601 string,
-  # or as base64. Every other type is selected as its text form.
-  @as_decoded ~w(int2 int4 int8 float4 float8 bool text varchar bpchar json jsonb)
-  @temporal ~w(date time timestamp timestamptz)
-
-  @catalog """
-  SELECT n.nspname, c.relname, a.attname, format_type(a.atttypid, NULL),
-         t.typtype, t.typname, t.typcategory = 'A', e.typname
-  FROM pg_catalog.pg_class c
-  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-  JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-  JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
-  LEFT JOIN pg_catalog.pg_type e ON e.oid = t.typelem AND e.typtype = 'b'
-  WHERE c.oid = to_regclass($1::text)
-  ORDER BY a.attnum
-  """
+  alias Flezha.Plugin.Provider.Postgres.Connection
 
   @session "SELECT set_config('transaction_read_only', 'on', true), " <>
              "set_config('statement_timeout', $1, true)"
@@ -42,38 +26,13 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   """
   @spec validate_names(map()) :: :ok | {:error, {:invalid_option_value, atom(), term()}}
   def validate_names(opts) do
-    check_names([
-      {:table, opts.table, table_names(opts.table)},
+    Connection.check_names([
+      {:table, opts.table, Connection.table_names(opts.table)},
       {:id_column, opts.id_column, [opts.id_column]},
       {:timestamp_column, opts.timestamp_column, List.wrap(opts.timestamp_column)},
       {:columns, opts.columns, List.wrap(opts.columns)}
     ])
   end
-
-  @doc """
-  Refuse the first `{field, value, names}` of `checks` whose names are not all
-  identifiers, naming the field and the value as written.
-  """
-  @spec check_names([{atom(), term(), list()}]) ::
-          :ok | {:error, {:invalid_option_value, atom(), term()}}
-  def check_names(checks) do
-    case Enum.find(checks, fn {_field, _value, names} -> not Enum.all?(names, &identifier?/1) end) do
-      nil -> :ok
-      {field, value, _names} -> {:error, {:invalid_option_value, field, value}}
-    end
-  end
-
-  @doc "The names in a table written `name` or `schema.name`; a `nil` in place of any other."
-  @spec table_names(binary()) :: [binary() | nil]
-  def table_names(table) when is_binary(table) do
-    case String.split(table, ".") do
-      [_name] = names -> names
-      [_schema, _name] = names -> names
-      _more -> [nil]
-    end
-  end
-
-  defp identifier?(name), do: is_binary(name) and Regex.match?(@identifier, name)
 
   @doc """
   What the reader reads and how, from the plugin's prepared options: the table
@@ -117,17 +76,18 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   def plan(spec, []), do: {:error, {:table_missing, spec.table}}
 
   def plan(spec, [[schema, table | _] | _] = rows) do
-    types = Map.new(rows, fn [_, _, name, type | kind] -> {name, {type, kind(kind)}} end)
+    kinds = Map.new(Connection.kinds(rows))
+    types = Map.new(rows, fn [_, _, name, type | _kind] -> {name, type} end)
     wanted = spec.columns || Enum.map(rows, &Enum.at(&1, 2))
 
     case Enum.find([spec.id, spec.ts | wanted], &(&1 != nil and not Map.has_key?(types, &1))) do
       nil ->
-        columns = for name <- wanted, do: {name, elem(types[name], 1)}
+        columns = for name <- wanted, do: {name, kinds[name]}
 
         cursor =
           for name <- [spec.ts, spec.id],
               name,
-              do: {"r.#{quote_name(name)}", elem(types[name], 0)}
+              do: {"r.#{Connection.quote_name(name)}", types[name]}
 
         {:ok, queries(%{relation: "#{schema}.#{table}", columns: columns}, schema, table, cursor)}
 
@@ -136,22 +96,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
     end
   end
 
-  @doc """
-  Each column of the catalog's rows for one table, in column order, with the
-  kind its value is read and written as.
-  """
-  @spec kinds([list()]) :: [{binary(), term()}]
-  def kinds(rows), do: for([_schema, _table, name, _type | kind] <- rows, do: {name, kind(kind)})
-
-  defp kind([_typtype, _typname, true, element]), do: {:array, base_kind(element)}
-  defp kind(["b", typname, false, _element]), do: base_kind(typname)
-  defp kind(_other), do: :text
-
-  defp base_kind(typname) when typname in @as_decoded, do: :value
-  defp base_kind(typname) when typname in @temporal, do: :temporal
-  defp base_kind("bytea"), do: :bytea
-  defp base_kind(_other), do: :text
-
   # ---------- the queries ----------
 
   # The cursor's parameters come first, then the delay in timestamp mode, then
@@ -159,10 +103,10 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   defp queries(plan, schema, table, cursor) do
     # The cursor columns are named through the alias `r`, so ORDER BY reads the
     # table's column, never a selected column of the same name.
-    from = "#{relation(schema, table)} r"
+    from = "#{Connection.relation(schema, table)} r"
     names = Enum.map(cursor, &elem(&1, 0))
     order = Enum.join(names, ", ")
-    select = select_list(plan.columns) <> ", " <> texts(names)
+    select = Connection.select_list(plan.columns) <> ", " <> texts(names)
     not_null = Enum.map_join(names, " AND ", &"#{&1} IS NOT NULL")
     n = length(cursor)
     delay? = n == 2
@@ -185,17 +129,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   defp delay([ts, _id], at), do: " AND #{ts} < now() - $#{at}::bigint * interval '1 millisecond'"
   defp delay([_id], _at), do: ""
 
-  @doc """
-  The select list reading `columns` as their kinds say: a type with no decoded
-  form as its text, every other as it is.
-  """
-  @spec select_list([{binary(), term()}]) :: binary()
-  def select_list(columns), do: Enum.map_join(columns, ", ", &select/1)
-
-  defp select({name, :text}), do: "#{quote_name(name)}::text"
-  defp select({name, {:array, :text}}), do: "#{quote_name(name)}::text[]"
-  defp select({name, _kind}), do: quote_name(name)
-
   defp texts(names), do: Enum.map_join(names, ", ", &"#{&1}::text")
 
   defp casts(cursor) do
@@ -203,13 +136,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
     |> Enum.with_index(1)
     |> Enum.map_join(", ", fn {{_name, type}, i} -> "($#{i}::text)::#{type}" end)
   end
-
-  @doc """
-  A name as an identifier in a statement: quoted, so its case is kept, and any
-  `"` in it doubled, so a name the catalog answered cannot end the identifier.
-  """
-  @spec quote_name(binary()) :: binary()
-  def quote_name(name), do: ~s(") <> String.replace(name, ~s("), ~s("")) <> ~s(")
 
   # ---------- one read ----------
 
@@ -246,36 +172,13 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
   end
 
   defp catalog!(conn, spec) do
-    {schema, table} = split_table(spec.table)
+    {schema, table} = Connection.split_table(spec.table)
 
-    with {:ok, %{rows: rows}} <- catalog(conn, schema, table),
+    with {:ok, %{rows: rows}} <- Connection.catalog(conn, schema, table),
          {:ok, plan} <- plan(spec, rows) do
       plan
     else
       {:error, reason} -> DBConnection.rollback(conn, reason)
-    end
-  end
-
-  @doc """
-  The catalog's rows for `table` in `schema` (`nil`: the search path): one per
-  column, in column order, as `plan/2` and `kinds/1` read them; none for a
-  missing table.
-  """
-  @spec catalog(DBConnection.conn(), binary() | nil, binary()) ::
-          {:ok, Postgrex.Result.t()} | {:error, term()}
-  def catalog(conn, schema, table), do: Postgrex.query(conn, @catalog, [relation(schema, table)])
-
-  @doc "A table as `to_regclass` and a statement read it, each name quoted."
-  @spec relation(binary() | nil, binary()) :: binary()
-  def relation(nil, table), do: quote_name(table)
-  def relation(schema, table), do: quote_name(schema) <> "." <> quote_name(table)
-
-  @doc "A table written `name` or `schema.name`, as `{schema or nil, name}`."
-  @spec split_table(binary()) :: {binary() | nil, binary()}
-  def split_table(table) do
-    case table_names(table) do
-      [name] -> {nil, name}
-      [schema, name] -> {schema, name}
     end
   end
 
@@ -310,7 +213,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
 
     for row <- rows do
       {values, at} = Enum.split(row, width)
-      {encode(plan.columns, values), metadata(plan, at, spec), at}
+      {Connection.encode(plan.columns, values), metadata(plan, at, spec), at}
     end
   end
 
@@ -320,27 +223,4 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Query do
       "flz.msg_id" => Enum.join([spec.plugin_id, plan.relation | at], "/")
     }
   end
-
-  @doc "A row's values, read as `columns` say, as one JSON object in column order."
-  @spec encode([{binary(), term()}], list()) :: binary()
-  def encode(columns, values) do
-    columns
-    |> Enum.zip(values)
-    |> Enum.map(fn {{name, kind}, value} -> {name, value(kind, value)} end)
-    |> Jason.OrderedObject.new()
-    |> Jason.encode!()
-  end
-
-  defp value(_kind, nil), do: nil
-
-  defp value({:array, kind}, list) when is_list(list),
-    do: Enum.map(list, &value({:array, kind}, &1))
-
-  defp value({:array, kind}, value), do: value(kind, value)
-  defp value(:temporal, %module{} = value), do: module.to_iso8601(value)
-  defp value(:bytea, value), do: Base.encode64(value)
-  defp value(_kind, :NaN), do: "NaN"
-  defp value(_kind, :inf), do: "Infinity"
-  defp value(_kind, :"-inf"), do: "-Infinity"
-  defp value(_kind, value), do: value
 end

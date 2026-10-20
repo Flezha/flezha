@@ -273,7 +273,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   defp fall_through do
     quote do
       defp convert_value(field, value),
-        do: unquote(Options).convert_row(field, value, @__provider_options__)
+        do: unquote(Options).convert_row(field, value, @__provider_options__, @__provider_name__)
 
       @doc false
       @spec __convert__(atom(), term()) :: {:ok, term()} | {:error, term()}
@@ -282,7 +282,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   end
 
   @row_keys [:type, :default, :required, :min, :max, :values, :internal, :transient, :live, :doc]
-  @row_types [:int, :bool, :string, :names, :enum, :pid, :json, :map, :list, :any]
+  @row_types [:int, :bool, :string, :names, :enum, :pid, :json, :headers, :map, :list, :any]
 
   defp validate_rows!(env, rows) do
     Enum.each(rows, fn

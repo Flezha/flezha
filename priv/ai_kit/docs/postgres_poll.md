@@ -22,14 +22,11 @@ oldest first, and injects each row as one JSON object.
 | --- | --- | --- | --- | --- |
 | `database` | string | none | yes | Database name |
 | `username` | string | none | yes | Role the plugin connects as |
-| `password` | string | none | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | none | no | Environment variable holding the password instead |
+| `password` | string | none | no | The password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password, read at every connect and preferred over an inline one |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
-| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every row is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | Entry channel every row is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `table` | string | none | yes | The table to read: `name` or `schema.name`, case-sensitive |
 | `id_column` | string | none | yes | A column that is unique and grows with new rows |
 | `timestamp_column` | string | none | no | A column the writer sets on insert and on update; updated rows come again |
@@ -40,8 +37,11 @@ oldest first, and injects each row as one JSON object.
 | `timestamp_delay_ms` | int | `0` | no | Rows whose timestamp is younger than this are left for a later read |
 | `commit_interval_ms` | int | `1000` | no | Longest a new cursor waits to be committed while full batches are read, unless the relay's input is durable |
 | `query_timeout_ms` | int | `30000` | no | Statement timeout of one read |
-| `failure_threshold` | int | `3` | no | Consecutive failed reads or refused rows before the plugin reports unhealthy |
-| `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from `interval_ms` |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every row is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every row is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
+| `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from the plugin's read interval |
 <!-- provider-options:end -->
 
 ## Example

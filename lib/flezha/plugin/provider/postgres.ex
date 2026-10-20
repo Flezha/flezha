@@ -17,34 +17,16 @@ defmodule Flezha.Plugin.Provider.Postgres do
   alias Flezha.Plugin.Provider.Postgres.SinkWorker
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.State.Outbox
 
   use ProviderBehaviour,
     options:
       Connection.rows() ++
         [
-          plugin_id: [type: :string, doc: "Plugin id; defaults to a generated one"],
           pool_size: [type: :int, default: 2, min: 1, doc: "Connections in the plugin's pool"],
           linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
           max_batch: [type: :int, default: 500, min: 1, doc: "Records in one flush transaction"],
-          queue_max: [
-            type: :int,
-            default: 10_000,
-            min: 1,
-            doc: "Records held before enqueue blocks"
-          ],
-          retry_backoff_ms: [
-            type: :int,
-            default: 250,
-            min: 1,
-            doc: "First delay after a failed flush"
-          ],
-          retry_max_backoff_ms: [
-            type: :int,
-            default: 5_000,
-            min: 1,
-            doc: "Ceiling for that delay"
-          ],
           unhealthy_after_ms: [
             type: :int,
             default: 30_000,
@@ -52,7 +34,8 @@ defmodule Flezha.Plugin.Provider.Postgres do
             doc: "Age of the last commit past which a backed-up output plugin is unhealthy"
           ],
           auto_create: [type: :bool, default: false, doc: "Create the target tables when missing"]
-        ],
+        ] ++
+        Options.plugin_id("a generated one") ++ Options.queue([:queue_max]) ++ Options.retry(),
     worker: [module: SinkWorker, restart: :permanent]
 
   @impl true

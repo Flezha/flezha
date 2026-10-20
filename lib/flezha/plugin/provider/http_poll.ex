@@ -29,57 +29,24 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   use ProviderBehaviour,
     feeds: true,
     shareable: true,
-    options: [
-      url: [type: :string, required: true, doc: "The resource to GET each interval"],
-      # One of the two is required and a row can only say so of itself, so each
-      # says it of the pair — this is what both user surfaces render.
-      channel: [
-        type: :names,
-        doc:
-          "The channel this plugin is attached to: the entry channel the body is injected on, and one name. Required, unless `channel_in` names it"
-      ],
-      channel_in: [
-        type: :names,
-        doc:
-          "Entry channel the body is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it"
-      ],
-      plugin_id: [type: :string, doc: "Plugin id; defaults to the id it was enabled under"],
-      headers: [type: :json, default: %{}, doc: "Request headers, as a JSON object"],
-      interval_ms: [type: :int, default: 60_000, doc: "Milliseconds between polls"],
-      timeout_ms: [type: :int, default: 10_000, min: 1, doc: "Budget for one request"],
-      max_body_bytes: [
-        type: :int,
-        default: 1_048_576,
-        min: 1,
-        max: @max_body_ceiling_bytes,
-        doc: "Largest body accepted before the poll is refused"
-      ],
-      failure_threshold: [
-        type: :int,
-        default: 3,
-        min: 1,
-        doc: "Consecutive failed polls before the plugin reports unhealthy"
-      ],
-      idle_after_ms: [
-        type: :int,
-        default: 0,
-        min: 0,
-        doc:
-          "Age of the last settled poll past which the source is idle; 0 derives it from `interval_ms`"
-      ]
-    ],
+    options:
+      [
+        url: [type: :string, required: true, doc: "The resource to GET each interval"],
+        headers: [type: :headers, default: %{}, doc: "Request headers, as a JSON object"],
+        interval_ms: [type: :int, default: 60_000, doc: "Milliseconds between polls"],
+        timeout_ms: [type: :int, default: 10_000, min: 1, doc: "Budget for one request"],
+        max_body_bytes: [
+          type: :int,
+          default: 1_048_576,
+          min: 1,
+          max: @max_body_ceiling_bytes,
+          doc: "Largest body accepted before the poll is refused"
+        ]
+      ] ++
+        ProviderOptions.channel(:in, "response body") ++
+        ProviderOptions.plugin_id("the id it was enabled under") ++
+        ProviderOptions.failure_threshold() ++ ProviderOptions.idle_after(),
     worker: [module: PollWorker, restart: :temporary]
-
-  # A channel written as an atom, which an Elixir-side spec may carry. It hands
-  # the name back to the row rather than answering a binary of its own, so every
-  # spelling reaches the option's type and resolves to the same shape.
-  #
-  # An empty name was refused by a clause here, then by the shared channel
-  # resolution, and is now refused by the row's `:names` type. That is wider than
-  # either: it reaches `build/1`, the CLI struct builder the resolution never
-  # ran for.
-  defp convert_value(field, value) when field in [:channel, :channel_in] and is_atom(value),
-    do: convert_value(field, Atom.to_string(value))
 
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first
@@ -92,13 +59,11 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     with :ok <- ProviderBehaviour.require_entry_channel(opts, __MODULE__),
          {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
          {:ok, url} <- HttpFetch.validate_url(raw_url, "http_poll"),
-         {:ok, headers} <- HttpFetch.validate_headers(opts.headers, "http_poll"),
          :ok <- validate_interval(opts.interval_ms),
          :ok <- validate_budget(opts) do
       {:ok,
        Map.merge(opts, %{
          url: url,
-         headers: headers,
          plugin_id: opts.plugin_id || opts[:source_plugin_id] || redact(url)
        })}
     end

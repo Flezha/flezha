@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Changed: options several plugins take are declared once, and one credential row
+
+- **BREAKING:** the Kafka option `sasl_password_env` is now `password_env`; an enable naming
+  `sasl_password_env` is refused as an option the provider does not read. Both Kafka providers
+  gain `password`, and a password written inside `auth` is held as that row: the prepared
+  options carry `password: "**redacted**"` and an `auth` without one.
+- When both an inline `password` and `password_env` are set, `password_env` wins for every
+  provider, as it already did for Kafka and as it does after a restart, when only the variable
+  is left. Before, Postgres, the Postgres CDC and RabbitMQ providers used the inline one.
+- `channel`, `channel_in`, `channel_out`, `plugin_id`, `failure_threshold`, `idle_after_ms`,
+  the queue rows and the retry rows read the same help text for every provider, with only the
+  noun changed; no default changed. The file sink accepts `channel` beside `channel_out`, as
+  every other output plugin does, and every provider takes a channel written as an atom, as
+  four sources already did.
+- Header options (`headers`, `subscription_headers`) are a `headers` row type, checked by the
+  option table; the Kafka and RabbitMQ producers no longer call into the HTTP plugins'
+  validator, and `Flezha.Plugin.Provider.HttpFetch.validate_headers/3` is gone.
+- The Postgres CDC package reads tables through `Flezha.Plugin.Provider.Postgres.Connection`,
+  which now holds the shared name checks, catalog read, select list and row encoding;
+  `Flezha.Plugin.Provider.PostgresPoll.Query` keeps only the poll source's own SQL. A test
+  fails when a package names a core module off the declared package surface.
+
 ### Changed: one judgement of an orderly exit, and an orderly plugin worker stop is no crash
 
 - `Flezha.SDK.SafeCall` gains `orderly?/1` (`:normal`, `:shutdown`, `{:shutdown, _}`, and a

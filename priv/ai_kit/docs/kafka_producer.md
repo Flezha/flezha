@@ -25,27 +25,20 @@ the durability trade-offs, and how broker clients are shared.
 | --- | --- | --- | --- | --- |
 | `hosts` | names | none | yes | `host:port` names, comma-separated or as a list |
 | `auth` | map | none | no | SASL configuration, as a `KafkaEx.Auth.Config` or a map |
-| `sasl_password_env` | string | none | no | Environment variable holding the SASL password, preferred over an inline one |
+| `password` | string | none | no | The SASL password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the SASL password, read at every connect and preferred over an inline one |
 | `use_ssl` | bool | none | no | TLS to the brokers |
 | `ssl_options` | list | none | no | Erlang `:ssl` options for that connection |
 | `topic` | string | none | yes | Destination topic |
-| `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
-| `channel` | names | none | no | The channel this plugin is attached to: only records naming it are produced. Several names, comma-separated, produce them all |
-| `channel_out` | names | none | no | Produce only records whose metadata channel matches; the explicit spelling. Several names, comma-separated, produce them all |
 | `partition` | int | none | no | A fixed destination partition for every record; unset, `partitioner` chooses |
 | `partitioner` | enum | `:murmur2` | no | Without `partition`: `murmur2` sends a keyed record where Kafka's Java client would and an unkeyed one to the sticky partition; `sticky` sends every record to the sticky partition, which moves after each batch |
 | `compression` | enum | `:none` | no | Batch compression; `zstd` needs Kafka 2.1 or later; `snappy` and `lz4` are refused, the client library encodes them only with native code |
-| `headers` | json | `%{}` | no | Static record headers, a JSON object of strings; names starting `flz.` and `flezha.dedup_key` are refused |
+| `headers` | headers | `%{}` | no | Static record headers, a JSON object of strings; names starting `flz.` and `flezha.dedup_key` are refused |
 | `required_acks` | int | `-1` | no | Broker acks; -1 is acks=all |
 | `retries` | int | `5` | no | Attempts per batch before parking it |
-| `retry_backoff_ms` | int | `100` | no | First delay between retries |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 | `delivery_timeout_ms` | int | `30000` | no | Total budget for one batch before it is parked |
 | `linger_ms` | int | `10` | no | How long a batch waits to fill |
 | `max_batch_bytes` | int | `1048576` | no | Largest record batch produced, in encoded bytes |
-| `queue_max` | int | `10000` | no | Records held before the policy applies |
-| `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: block, drop the oldest, or drop the newest |
-| `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before the record overflows, or an enqueue before it is refused |
 | `idempotent` | bool | `true` | no | Use the broker's idempotent producer session |
 | `max_in_flight` | int | none | no | Batches in flight; derived as 5 with `idempotent`, else 1 |
 | `auto_create_topic` | bool | `true` | no | Create the topic when missing |
@@ -56,6 +49,14 @@ the durability trade-offs, and how broker clients are shared.
 | `request_timeout_ms` | int | `10000` | no | Budget the broker is asked to honour for one produce request |
 | `dispatch_timeout_ms` | int | `10000` | no | Budget for one in-flight batch before it is treated as lost |
 | `metadata_update_interval` | int | none | no | How often the shared broker client refreshes metadata |
+| `channel` | names | none | no | The channel this plugin is attached to: only a record naming it reaches the plugin. Several names, comma-separated, take them all |
+| `channel_out` | names | none | no | Only a record whose metadata channel matches reaches the plugin; the explicit spelling of `channel`. Several names, comma-separated, take them all |
+| `plugin_id` | string | none | no | Plugin id; defaults to a generated one |
+| `retry_backoff_ms` | int | `100` | no | First delay before a failed attempt is made again |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
+| `queue_max` | int | `10000` | no | Outputs the queue holds before it is full |
+| `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: make the dispatch wait, drop the oldest, or drop the newest |
+| `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before its output overflows |
 <!-- provider-options:end -->
 
 ## Example

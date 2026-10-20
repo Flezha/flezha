@@ -86,6 +86,18 @@ defmodule Flezha.ErrorCatalogueTest do
     assert twice == [], inspect(twice, pretty: true)
   end
 
+  # Fails when: a refusal the core makes for a plugin package loses its code.
+  test "the core reasons a plugin package gives map to their codes" do
+    for {reason, code} <- [
+          {{:partitioned_host, %{provider: "kafka_consumer", relay: "op"}},
+           "plugin.partitioned_host"},
+          {{:invalid_option_value, :queue, ""}, "plugin.option_invalid"},
+          {{:headers_invalid, "kafka", :headers}, "plugin.headers_invalid"}
+        ] do
+      assert %Flezha.Error{code: ^code} = Flezha.Error.from_reason(reason, nil)
+    end
+  end
+
   test "an unknown hook is refused in the one catalogued shape wherever it is named" do
     catalog = Flezha.Relay.Overwatch.__extensions_catalog__()
     table = Flezha.Plugin.Extension.Table.new(catalog)

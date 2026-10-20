@@ -24,16 +24,16 @@ and health, then telemetry and limits.
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `path` | string | none | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
-| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id the plugin is enabled under |
 | `start_at` | enum | `"beginning"` | no | Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened |
 | `poll_interval_ms` | int | `1000` | no | Milliseconds between looks for new bytes |
 | `max_line_bytes` | int | `1048576` | no | Longest line accepted; a longer one stops the reader at the offset it starts at |
 | `read_chunk_bytes` | int | `65536` | no | Bytes read at a time, and never more than one read ahead of the last delivered line |
 | `commit_interval_ms` | int | `1000` | no | Longest a delivered line's offset waits to be committed while the reader has not caught up; what a crash can re-deliver |
-| `failure_threshold` | int | `3` | no | Consecutive failed reads or refused ingests before the plugin reports unhealthy |
-| `idle_after_ms` | int | `0` | no | Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms` |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
+| `idle_after_ms` | int | `0` | no | Age of the last settled read past which the source is idle; 0 derives it from the plugin's read interval |
 <!-- provider-options:end -->
 
 ### `relay_file_output`
@@ -42,17 +42,18 @@ and health, then telemetry and limits.
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `path` | string | none | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
-| `channel_out` | names | none | no | Write only records whose metadata channel matches. Several names, comma-separated, write them all |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id the plugin is enabled under |
 | `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename` |
 | `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
 | `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120 |
 | `linger_ms` | int | `25` | no | How long a batch waits to fill |
 | `max_batch` | int | `500` | no | Records in one write |
-| `queue_max` | int | `10000` | no | Records held before enqueue blocks |
-| `retry_backoff_ms` | int | `250` | no | First delay after a failed write |
-| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 | `unhealthy_after_ms` | int | `30000` | no | Age of the last durable write past which a backed-up output plugin is unhealthy |
+| `channel` | names | none | no | The channel this plugin is attached to: only a record naming it reaches the plugin. Several names, comma-separated, take them all |
+| `channel_out` | names | none | no | Only a record whose metadata channel matches reaches the plugin; the explicit spelling of `channel`. Several names, comma-separated, take them all |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `queue_max` | int | `10000` | no | Outputs the queue holds before it is full |
+| `retry_backoff_ms` | int | `250` | no | First delay before a failed attempt is made again |
+| `retry_max_backoff_ms` | int | `5000` | no | Ceiling for that delay |
 <!-- provider-options:end -->
 
 ## Example

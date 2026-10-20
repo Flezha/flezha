@@ -45,87 +45,60 @@ defmodule Flezha.Plugin.Provider.File do
     alias Flezha.Plugin.Provider.File, as: FilePlugin
     alias Flezha.Plugin.Provider.File.ReadWorker
     alias Flezha.Plugin.ProviderBehaviour
+    alias Flezha.Plugin.ProviderBehaviour.Options
 
     use ProviderBehaviour,
       name: "file_source",
       feeds: true,
-      options: [
-        path: [
-          type: :string,
-          required: true,
-          doc:
-            "The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix"
-        ],
-        channel: [
-          type: :names,
-          doc:
-            "The channel this plugin is attached to: the entry channel every line is injected on, and one name. Required, unless `channel_in` names it"
-        ],
-        channel_in: [
-          type: :names,
-          doc:
-            "Entry channel every line is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it"
-        ],
-        plugin_id: [
-          type: :string,
-          doc: "Plugin id; defaults to the id the plugin is enabled under"
-        ],
-        start_at: [
-          type: :enum,
-          values: ["beginning", "end"],
-          default: "beginning",
-          doc:
-            "Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened"
-        ],
-        poll_interval_ms: [
-          type: :int,
-          default: 1_000,
-          min: 1,
-          doc: "Milliseconds between looks for new bytes"
-        ],
-        max_line_bytes: [
-          type: :int,
-          default: 1_048_576,
-          min: 1,
-          doc: "Longest line accepted; a longer one stops the reader at the offset it starts at"
-        ],
-        read_chunk_bytes: [
-          type: :int,
-          default: 65_536,
-          min: 1,
-          doc:
-            "Bytes read at a time, and never more than one read ahead of the last delivered line"
-        ],
-        commit_interval_ms: [
-          type: :int,
-          default: 1_000,
-          min: 1,
-          doc:
-            "Longest a delivered line's offset waits to be committed while the reader has not caught up; what a crash can re-deliver"
-        ],
-        failure_threshold: [
-          type: :int,
-          default: 3,
-          min: 1,
-          doc: "Consecutive failed reads or refused ingests before the plugin reports unhealthy"
-        ],
-        idle_after_ms: [
-          type: :int,
-          default: 0,
-          min: 0,
-          doc:
-            "Age of the last settled poll past which the reader is idle; 0 derives it from `poll_interval_ms`"
-        ],
-        # The committed offset, written back by the reader and read on every
-        # restart path, rather than an option a user writes.
-        offset: [type: :int, min: 0, internal: true]
-      ],
+      options:
+        [
+          path: [
+            type: :string,
+            required: true,
+            doc:
+              "The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix"
+          ],
+          start_at: [
+            type: :enum,
+            values: ["beginning", "end"],
+            default: "beginning",
+            doc:
+              "Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened"
+          ],
+          poll_interval_ms: [
+            type: :int,
+            default: 1_000,
+            min: 1,
+            doc: "Milliseconds between looks for new bytes"
+          ],
+          max_line_bytes: [
+            type: :int,
+            default: 1_048_576,
+            min: 1,
+            doc: "Longest line accepted; a longer one stops the reader at the offset it starts at"
+          ],
+          read_chunk_bytes: [
+            type: :int,
+            default: 65_536,
+            min: 1,
+            doc:
+              "Bytes read at a time, and never more than one read ahead of the last delivered line"
+          ],
+          commit_interval_ms: [
+            type: :int,
+            default: 1_000,
+            min: 1,
+            doc:
+              "Longest a delivered line's offset waits to be committed while the reader has not caught up; what a crash can re-deliver"
+          ],
+          # The committed offset, written back by the reader and read on every
+          # restart path, rather than an option a user writes.
+          offset: [type: :int, min: 0, internal: true]
+        ] ++
+          Options.channel(:in, "line") ++
+          Options.plugin_id("the id it was enabled under") ++
+          Options.failure_threshold() ++ Options.idle_after(),
       worker: [module: ReadWorker, restart: :temporary]
-
-    # A channel written as an atom, which an Elixir-side spec may carry, handed
-    # back to the row as the string its type converts.
-    defp convert_value(field, value) when field in [:channel, :channel_in] and is_atom(value),
-      do: convert_value(field, Atom.to_string(value))
 
     @doc """
     Validate and resolve. Reads nothing: the worker opens the file at
@@ -214,69 +187,52 @@ defmodule Flezha.Plugin.Provider.File do
     alias Flezha.Plugin.Provider.File.WriteWorker
     alias Flezha.Plugin.Provider.WorkerSup
     alias Flezha.Plugin.ProviderBehaviour
+    alias Flezha.Plugin.ProviderBehaviour.Options
     alias Flezha.State.Outbox
 
     use ProviderBehaviour,
       name: "file_sink",
-      options: [
-        path: [
-          type: :string,
-          required: true,
-          doc:
-            "The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under"
-        ],
-        channel_out: [
-          type: :names,
-          doc:
-            "Write only records whose metadata channel matches. Several names, comma-separated, write them all"
-        ],
-        plugin_id: [
-          type: :string,
-          doc: "Plugin id; defaults to the id the plugin is enabled under"
-        ],
-        commit: [
-          type: :enum,
-          values: ["append", "rename"],
-          default: "append",
-          doc:
-            "The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename`"
-        ],
-        roll_after_ms: [
-          type: :int,
-          default: 10_000,
-          min: 1,
-          doc:
-            "Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation"
-        ],
-        roll_bytes: [
-          type: :int,
-          default: 67_108_864,
-          min: 1,
-          doc:
-            "Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120"
-        ],
-        linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
-        max_batch: [type: :int, default: 500, min: 1, doc: "Records in one write"],
-        queue_max: [
-          type: :int,
-          default: 10_000,
-          min: 1,
-          doc: "Records held before enqueue blocks"
-        ],
-        retry_backoff_ms: [
-          type: :int,
-          default: 250,
-          min: 1,
-          doc: "First delay after a failed write"
-        ],
-        retry_max_backoff_ms: [type: :int, default: 5_000, min: 1, doc: "Ceiling for that delay"],
-        unhealthy_after_ms: [
-          type: :int,
-          default: 30_000,
-          min: 1,
-          doc: "Age of the last durable write past which a backed-up output plugin is unhealthy"
-        ]
-      ],
+      options:
+        [
+          path: [
+            type: :string,
+            required: true,
+            doc:
+              "The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under"
+          ],
+          commit: [
+            type: :enum,
+            values: ["append", "rename"],
+            default: "append",
+            doc:
+              "The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename`"
+          ],
+          roll_after_ms: [
+            type: :int,
+            default: 10_000,
+            min: 1,
+            doc:
+              "Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation"
+          ],
+          roll_bytes: [
+            type: :int,
+            default: 67_108_864,
+            min: 1,
+            doc:
+              "Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120"
+          ],
+          linger_ms: [type: :int, default: 25, min: 1, doc: "How long a batch waits to fill"],
+          max_batch: [type: :int, default: 500, min: 1, doc: "Records in one write"],
+          unhealthy_after_ms: [
+            type: :int,
+            default: 30_000,
+            min: 1,
+            doc: "Age of the last durable write past which a backed-up output plugin is unhealthy"
+          ]
+        ] ++
+          Options.channel(:out, "record") ++
+          Options.plugin_id("the id it was enabled under") ++
+          Options.queue([:queue_max]) ++ Options.retry(),
       worker: [module: WriteWorker, restart: :temporary]
 
     @doc """

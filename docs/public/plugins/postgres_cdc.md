@@ -22,14 +22,11 @@ see [postgres_poll.md](postgres_poll.md).
 | --- | --- | --- | --- | --- |
 | `database` | string | none | yes | Database name |
 | `username` | string | none | yes | Role the plugin connects as |
-| `password` | string | none | no | Password, redacted once the plugin is prepared |
-| `password_env` | string | none | no | Environment variable holding the password instead |
+| `password` | string | none | no | The password, redacted once the plugin is prepared |
+| `password_env` | string | none | no | Environment variable holding the password, read at every connect and preferred over an inline one |
 | `hostname` | string | `"localhost"` | no | Database host |
 | `port` | int | `5432` | no | TCP port |
 | `ssl` | bool | `false` | no | TLS to the server |
-| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every change is injected on, and one name. Required, unless `channel_in` names it |
-| `channel_in` | names | none | no | Entry channel every change is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
-| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `slot` | string | none | yes | The replication slot, one per binding: lower-case letters, digits and underscores, at most 58; the first copy reads through a temporary `<slot>_copy` |
 | `publication` | string | none | yes | The publication to read |
 | `tables` | names | none | no | With it, the publication is created `FOR TABLE` these, `name` or `schema.name`, when it does not exist |
@@ -39,7 +36,10 @@ see [postgres_poll.md](postgres_poll.md).
 | `commit_interval_ms` | int | `5000` | no | Longest the read position waits to be confirmed while changes stream, unless the relay's input is durable |
 | `max_lag_bytes` | int | `1073741824` | no | Write-ahead log the slot may hold back before the plugin reports unhealthy |
 | `lag_check_ms` | int | `30000` | no | How often the slot's lag is read |
-| `failure_threshold` | int | `3` | no | Refused hand-overs in a row before the plugin reports unhealthy |
+| `channel` | names | none | no | The channel this plugin is attached to: the entry channel every change is injected on, and one name. Required, unless `channel_in` names it |
+| `channel_in` | names | none | no | Entry channel every change is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it |
+| `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
+| `failure_threshold` | int | `3` | no | Failures in a row before the plugin reports unhealthy |
 <!-- provider-options:end -->
 
 ## Example

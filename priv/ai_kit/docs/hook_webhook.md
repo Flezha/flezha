@@ -20,7 +20,7 @@ a URL. `Flezha.Plugin.Provider.HookWebhook` is its provider, under the provider 
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `url` | string | none | yes | Where each event is POSTed: http or https, with a host and no credentials |
-| `headers` | json | `%{}` | no | Request headers, as a JSON object; never logged |
+| `headers` | headers | `%{}` | no | Request headers, as a JSON object; never logged |
 | `timeout_ms` | int | `5000` | no | Budget for one request |
 | `retries` | int | `2` | no | Retries of a 429, a 5xx, a timeout or a transport error, after 1 s and then 5 s |
 <!-- provider-options:end -->

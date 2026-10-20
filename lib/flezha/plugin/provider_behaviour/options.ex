@@ -8,6 +8,10 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   help screen and the documented table) that are derived from the same rows
   rather than written twice.
 
+  The rows several providers take are declared here once, as fragments a
+  declaration splices into its `options:`: the channel, `plugin_id`, health,
+  queue and retry rows, and the credential row `secret/2`.
+
   `Flezha.Plugin.ProviderBehaviour` delegates its public surface here, so a
   provider and its callers still name one module.
   """
@@ -22,6 +26,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # never works in is refused as an unknown option.
   @channel_rows [channel: :either, channel_in: :in, channel_out: :out]
   @explicit_key for {key, job} <- @channel_rows, job != :either, do: {job, key}
+  @channel_keys Keyword.keys(@channel_rows)
 
   import ProviderBehaviour,
     only: [
@@ -56,6 +61,201 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   @doc "Every declared option's default, by name."
   @spec defaults(module()) :: %{atom() => term()}
   def defaults(module), do: Map.new(rows(module), fn {name, row} -> {name, row[:default]} end)
+
+  # ---------- rows several providers share ----------
+
+  @queue_rows [
+    queue_max: [
+      type: :int,
+      default: 10_000,
+      min: 1,
+      doc: "Outputs the queue holds before it is full"
+    ],
+    queue_max_bytes: [
+      type: :int,
+      default: 67_108_864,
+      min: 1,
+      doc: "Output bytes the queue holds before it is full"
+    ],
+    queue_overflow: [
+      type: :enum,
+      values: [:drop_nothing, :drop_oldest, :drop_newest],
+      default: :drop_nothing,
+      doc: "What a full queue does: make the dispatch wait, drop the oldest, or drop the newest"
+    ],
+    queue_block_timeout_ms: [
+      type: :int,
+      default: 5_000,
+      min: 1,
+      doc: "How long a dispatch waits on a full queue before its output overflows"
+    ]
+  ]
+
+  @redacted "**redacted**"
+
+  @doc """
+  The rows naming the channel a plugin is attached to, for the jobs it does:
+  `:in` (`channel`, `channel_in`), `:out` (`channel`, `channel_out`) or `:both`.
+  `noun` is what one record is to this plugin, as its help says it.
+  """
+  @spec channel(:in | :out | :both, binary()) :: keyword()
+  def channel(:in, noun) do
+    [
+      channel:
+        channel_row(
+          "The channel this plugin is attached to: the entry channel every #{noun} is injected on, and one name. Required, unless `channel_in` names it"
+        ),
+      channel_in:
+        channel_row(
+          "Entry channel every #{noun} is injected on, and one name; the explicit spelling of `channel`. Required, unless `channel` names it"
+        )
+    ]
+  end
+
+  def channel(:out, noun) do
+    [
+      channel:
+        channel_row(
+          "The channel this plugin is attached to: only a #{noun} naming it reaches the plugin. Several names, comma-separated, take them all"
+        ),
+      channel_out:
+        channel_row(
+          "Only a #{noun} whose metadata channel matches reaches the plugin; the explicit spelling of `channel`. Several names, comma-separated, take them all"
+        )
+    ]
+  end
+
+  def channel(:both, noun) do
+    [
+      channel:
+        channel_row(
+          "The channel this plugin is attached to: every inbound #{noun} is injected on it and only an output naming it reaches the plugin. One name, since it names the entry channel too"
+        ),
+      channel_in:
+        channel_row(
+          "Entry channel every inbound #{noun} is injected on, for a plugin whose two names differ. One name"
+        ),
+      channel_out:
+        channel_row(
+          "Only an output whose metadata channel matches reaches the plugin, for a plugin whose two names differ. Several names, comma-separated, take them all"
+        )
+    ]
+  end
+
+  defp channel_row(doc), do: [type: :names, doc: doc]
+
+  @doc "The `plugin_id` row; `default` says what an unset id becomes."
+  @spec plugin_id(binary()) :: keyword()
+  def plugin_id(default),
+    do: [plugin_id: [type: :string, doc: "Plugin id; defaults to #{default}"]]
+
+  @doc "The `failure_threshold` row."
+  @spec failure_threshold() :: keyword()
+  def failure_threshold do
+    [
+      failure_threshold: [
+        type: :int,
+        default: 3,
+        min: 1,
+        doc: "Failures in a row before the plugin reports unhealthy"
+      ]
+    ]
+  end
+
+  @doc "The `idle_after_ms` row of a source."
+  @spec idle_after() :: keyword()
+  def idle_after do
+    [
+      idle_after_ms: [
+        type: :int,
+        default: 0,
+        min: 0,
+        doc:
+          "Age of the last settled read past which the source is idle; 0 derives it from the plugin's read interval"
+      ]
+    ]
+  end
+
+  @doc "The queue rows named by `keys`, in their declared order; every one by default."
+  @spec queue([atom()]) :: keyword()
+  def queue(keys \\ Keyword.keys(@queue_rows)), do: Keyword.take(@queue_rows, keys)
+
+  @doc """
+  The retry rows, `retry_backoff_ms` and `retry_max_backoff_ms`, with `defaults`
+  (keyed by those names) replacing 250 and 5 000.
+  """
+  @spec retry(keyword()) :: keyword()
+  def retry(defaults \\ []) do
+    defaults = Keyword.validate!(defaults, retry_backoff_ms: 250, retry_max_backoff_ms: 5_000)
+
+    [
+      retry_backoff_ms: [
+        type: :int,
+        default: defaults[:retry_backoff_ms],
+        min: 1,
+        doc: "First delay before a failed attempt is made again"
+      ],
+      retry_max_backoff_ms: [
+        type: :int,
+        default: defaults[:retry_max_backoff_ms],
+        min: 1,
+        doc: "Ceiling for that delay"
+      ]
+    ]
+  end
+
+  @doc """
+  A credential's rows: `name`, a literal value redacted once prepared;
+  `<name>_env`, an environment variable read at every connect and preferred over
+  the literal; and `<name>_secret`, the transient row `hold_secret/2` keeps the
+  literal in. `what` names the credential in the help.
+  """
+  @spec secret(atom(), binary()) :: keyword()
+  def secret(name, what) do
+    [
+      {name, [type: :string, doc: "The #{what}, redacted once the plugin is prepared"]},
+      {env_row(name),
+       [
+         type: :string,
+         doc:
+           "Environment variable holding the #{what}, read at every connect and preferred over an inline one"
+       ]},
+      {held_row(name), [type: :any, internal: true, transient: true]}
+    ]
+  end
+
+  @doc """
+  `opts` with a literal `name` moved into its transient row, inside a closure,
+  and replaced by `**redacted**`. A plugin prepared again from these opts keeps
+  the secret it holds.
+  """
+  @spec hold_secret(map(), atom()) :: map()
+  def hold_secret(opts, name) do
+    case Map.get(opts, name) do
+      value when is_binary(value) and value not in ["", @redacted] ->
+        opts |> Map.put(name, @redacted) |> Map.put(held_row(name), fn -> value end)
+
+      _none_or_placeholder ->
+        opts
+    end
+  end
+
+  @doc """
+  The credential `name` of prepared `opts` as a closure, resolved when called:
+  `<name>_env` read then, else the held literal, else `nil`. The environment
+  wins because it is all a plugin restarted from its persisted opts still has.
+  """
+  @spec secret_fun(map(), atom()) :: (-> binary() | nil)
+  def secret_fun(opts, name) do
+    case {Map.get(opts, env_row(name)), Map.get(opts, held_row(name))} do
+      {env, _} when is_binary(env) and env != "" -> fn -> System.get_env(env) end
+      {_, held} when is_function(held, 0) -> held
+      _ -> fn -> nil end
+    end
+  end
+
+  defp env_row(name), do: :"#{name}_env"
+  defp held_row(name), do: :"#{name}_secret"
 
   @doc """
   Build `module`'s struct from a CLI string map, coercing each field through
@@ -406,17 +606,41 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   does not interpret — passes through: only a value a user supplied for a
   declared option can be wrong.
   """
-  @spec convert_row(atom(), term(), [{atom(), keyword()}]) :: {:ok, term()} | {:error, term()}
-  def convert_row(field, value, rows) do
+  @spec convert_row(atom(), term(), [{atom(), keyword()}], binary() | nil) ::
+          {:ok, term()} | {:error, term()}
+  def convert_row(field, value, rows, provider \\ nil) do
     case Keyword.fetch(rows, field) do
       :error ->
         {:ok, value}
 
       {:ok, row} ->
-        with {:ok, coerced} <- coerce(row[:type], field, value, row),
-             do: bound(coerced, field, row)
+        if row[:type] == :headers,
+          do: headers(field, value, provider),
+          else:
+            with(
+              {:ok, coerced} <- coerce(row[:type], field, value, row),
+              do: bound(coerced, field, row)
+            )
     end
   end
+
+  # A header map, or the JSON object a CLI flag delivers it as, with names and
+  # values as strings. Its refusal names the provider and never echoes a value,
+  # which may be a credential; only a string that is not JSON at all is echoed.
+  defp headers(field, value, provider) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, decoded} -> headers(field, decoded, provider)
+      {:error, _} -> refuse_value(field, value)
+    end
+  end
+
+  defp headers(field, value, provider) when is_map(value) and not is_struct(value) do
+    if Enum.all?(value, fn {_name, v} -> is_binary(v) or is_number(v) end),
+      do: {:ok, Map.new(value, fn {name, v} -> {to_string(name), to_string(v)} end)},
+      else: {:error, {:headers_invalid, provider, field}}
+  end
+
+  defp headers(field, _value, provider), do: {:error, {:headers_invalid, provider, field}}
 
   defp coerce(:int, field, value, _row), do: parse_int(value, field)
   defp coerce(:bool, field, value, _row), do: parse_bool(value, field)
@@ -435,6 +659,11 @@ defmodule Flezha.Plugin.ProviderBehaviour.Options do
   # re-prepared from the options it already holds — carries. `:list` cannot do
   # the first and this cannot replace it: its two rows are fed programmatically
   # and neither wants a string split.
+  # A channel written as an atom, which an Elixir-side spec may carry, is the
+  # name its string spells.
+  defp coerce(:names, field, value, row) when field in @channel_keys and is_atom(value),
+    do: coerce(:names, field, Atom.to_string(value), row)
+
   defp coerce(:names, field, value, _row) when is_binary(value),
     do: names(field, value, String.split(value, ","))
 

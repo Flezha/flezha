@@ -78,12 +78,18 @@ in; a project outside the Flezha repository depends on `flezha` by git or Hex in
 | `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, `{kind, "what it says"}`, or `{kind, meaning: "what it says", label:, outcome:, sentence:}` | none |
 
 An option row takes `type` (`:int`, `:bool`, `:string`, `:names`, `:enum`, `:json`,
-`:map`, `:list`, `:pid`, `:any`), `default`, `required`, `min` and `max`, `values` for an
-enum, `doc` (the sentence `flz plugin help` and the catalogue's option table show),
+`:headers`, `:map`, `:list`, `:pid`, `:any`), `default`, `required`, `min` and `max`, `values`
+for an enum, `doc` (the sentence `flz plugin help` and the catalogue's option table show),
 `internal` (not settable by a user), `transient` (held in memory, never persisted, such as
 a resolved credential) and `live`. From the rows the declaration derives the provider's
 struct, its help screen and a strict allow-list: an option the provider does not declare is
 refused at enable rather than ignored.
+
+An option several providers take is declared once in `Flezha.Plugin.ProviderBehaviour.Options`
+and spliced into `options:`: `channel/2`, `plugin_id/1`, `failure_threshold/0`,
+`idle_after/0`, `queue/1`, `retry/1`, and `secret/2` for a credential (an inline value
+redacted once prepared, `<name>_env` read at every connect, and the transient row
+`hold_secret/2` keeps the value in; `secret_fun/2` resolves it).
 
 A row with `live: true` can be changed on a running plugin by `flz plugin update`; the
 provider then implements `reconfigure/2`, which the controller calls with the old and the
