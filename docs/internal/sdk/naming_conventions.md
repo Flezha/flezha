@@ -1,10 +1,17 @@
 # SDK Naming Conventions
 
 For SDK implementers adding or reviewing public surface. These twelve rules
-name every public SDK method, error and callback, mirrored 1:1 across the Rust
-(`sdk/rust/`) and Java (`sdk/java/`) SDKs, so a new name is decided by one
-standard rather than per change. Code comments cite the rules by number; the
-numbering is stable.
+name every public SDK method, error and callback in all seven SDKs (Python,
+Ruby, PHP, Node, Elixir, Java, Rust), each in its own casing, so a new name is
+decided by one standard rather than per change. Code comments cite the rules by
+number; the numbering is stable.
+
+The check is `test/fixtures/sdk_public_names.txt`: one row per concept with
+each SDK's public spelling, and the internals no SDK exports as `!` rows. Every
+SDK's surface test reads its column (the readers are listed in the file's
+header), so a renamed concept, a second spelling or a re-exported internal
+fails that SDK's suite. A concept added to one SDK adds its row in the same
+change.
 
 ## The rules
 
@@ -33,8 +40,9 @@ declaration.
 
 ### 3. The lifecycle verb set is `start()` / `run()` / `awaitTermination()` / `close()`
 
-Identical names in both SDKs (`await_termination` in Rust snake_case; Rust's
-`close()` is `Drop`). gRPC's `Server.start()` / `Server.awaitTermination()` is
+Identical names in all seven SDKs, each in its own casing (`await_termination`
+in Python, Ruby, Elixir and Rust); Rust's `close()` is `Drop`. A shutdown has
+one verb: no SDK keeps a `stop` or `drain` beside `close`. gRPC's `Server.start()` / `Server.awaitTermination()` is
 the direct precedent. `run()` is pure sugar (`start()` then
 `awaitTermination()`), never an independent implementation, so the two can
 never drift.

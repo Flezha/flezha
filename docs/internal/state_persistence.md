@@ -562,7 +562,7 @@ the runner with `Recovery.resolve_runner/1` and calls `Commands.dispatch_compact
 
 ## Dynamic-cell hard delete
 
-A dynamic-mode Tasklet that opts into an idle TTL (`cell_idle_ttl()` returning a duration;
+A dynamic-mode Tasklet that opts into an idle TTL (`idle_ttl()` returning a duration;
 default none) has its idle, persistence-enabled Cells evicted by the SDK's idle sweep, which ships a
 `delete_cell_state` frame (payload-id `Wire.payload_id_delete_cell_state/0`, body the bare
 `cell_id`) on the secondary stream under the durable guarantee class, so an eviction with no

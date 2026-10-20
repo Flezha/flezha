@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed: one spelling per concept, internals hidden
+
+- **BREAKING (Python):** `relay(id=)` is `relay(factory_id=)`; a tasklet's `state=`/`change=`
+  are `state_type=`/`change_type=`; `Runner.drain` and `Runner.stop` are one `Runner.close`;
+  `compact_after_bytes` is a tasklet setting, not a `Channels` call; `DROPPED`,
+  `Ctx.settle_return` and `Ctx.effect_record` are no longer public.
+- **BREAKING (Ruby):** `Runner#boot` is `Runner#start`, `drain` is `close` and `stop` is private;
+  `Ctx#emit_to` is gone (`emit(value, channel:)`); `Edge#close_on`, `Ctx#effect_record` and the
+  `changes`/`outputs`/`timers` readers are private; `compact_after_bytes` is a tasklet setting.
+- **BREAKING (PHP):** `Runner::stop` is `Runner::close`; `Ctx::emitKeyed` is gone
+  (`emit($value, key: ...)`); `Flezha\Timer` is `Flezha\TimerFiring`; `compactAfterBytes` is a
+  `#[Task]` argument, not a `Graph\Builder` call; the runner's thread bridge, `Dropped`, `Fanned`
+  and `Ctx::effectRecord` are `@internal`.
+- **BREAKING (Node):** `Runner.stop` is `Runner.close`; `start()` resolves once the runner serves,
+  `awaitTermination()` once it has shut down, and `run()` is the two; `cells: { keys, cellsFor }`
+  is `cellKeys` and `cellsFor` on the definition; `Ctx.emitTo` is gone (`emit(v, { channel })`);
+  `compactAfterBytes` is a definition field; `Registry`, `toHostClassDecl`, `validate`,
+  `FORMAT_ID_MSGPACK`, `SDK_LANG_NODE`, `loadNative`, `nativePackageName` and `DELAY_WARN_MS` are no
+  longer exported.
+- **BREAKING (Rust):** `#[flezha::relay(id)]` is `factory_id`; `#[flezha::tasklet]`'s `keys` and
+  `capacity` are `cell_keys` and `mailbox_capacity`; `Tasklet::cell_idle_ttl()` is `idle_ttl()`;
+  `Ctx::replay()` is new; the `pb`, `transport`, `service`, `errors` and `command` re-exports and
+  `relay::dispatcher`, `cell::header`, `cell::flusher` are no longer public.
+- **BREAKING (Java):** `@com.flezha.sdk.authoring.Relay(id)` is `@ShortRelay(factoryId)`;
+  `@Tasklet.Spec(keys, capacity)` is `cellKeys`, `mailboxCapacity`; `getNamespace()`/`getRelays()`
+  are `namespace()`/`relays()`; `Ctx.replaying()` is `replay()` and `activationToken()`,
+  `inputOffset()` leave `Ctx`; `Change.coalesceKey()` and `CoalesceKey` are gone, their Kryo slot
+  reserved so saved state still decodes; `flezha-sdk-api` is the module `com.flezha.sdk.api`,
+  which exports `com.flezha.sdk.internal` to the runtime only.
+- **BREAKING (Python, Ruby, PHP, Node, Java, Rust):** a control handle's `list_relays` and
+  `list_plugins` read `Relay.list` and `PluginManager.enabled` and answer one row per relay or
+  plugin, not ids.
+
 ### Changed: the console's reach at the door
 
 - **BREAKING (flezha_ui):** a caller from the web console (`source: :ui`) reaches what the

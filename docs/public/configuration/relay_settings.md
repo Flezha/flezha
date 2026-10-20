@@ -736,8 +736,8 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 | Override | Default | What it does |
 |---|---|---|
 | `compact_after_bytes()` (`compactAfterBytes`) | 8 MiB, in lockstep with `:default_compact_after_bytes` | Per-Cell WAL size reported to the controller as the snapshot-compaction trigger. |
-| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell: the declared value, else `FLEZHA_MAILBOX_CAPACITY`, else the default. Rust sets it with the `capacity` key on `#[flezha::tasklet]`. |
-| `cell_idle_ttl()` (`cellIdleTtl`; Elixir `idle_ttl_seconds/0`) | `None` — no eviction | Evict a dynamic Cell after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
+| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell: the declared value, else `FLEZHA_MAILBOX_CAPACITY`, else the default. Rust sets it with the `mailbox_capacity` key on `#[flezha::tasklet]`. |
+| `idle_ttl()` (`cellIdleTtl`; Elixir `idle_ttl_seconds/0`) | `None` — no eviction | Evict a dynamic Cell after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
 | `max_cells()` (Elixir `max_cells/0`) | `100_000` | Soft cap on live dynamic Cells per Tasklet; new keys past it are dropped. |
 | `CLOCK` (set by a written `event_time`, or the `logical_clock` key) | wall clock | Wall clock, event time or logical clock; decides `ctx.now()` and event-time ordering. |
 

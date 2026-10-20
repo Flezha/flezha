@@ -129,9 +129,9 @@ three types, and §2.2 says where the rest comes from.
 | `fn event_time`, else `logical_clock`, else nothing | `CLOCK`: `EventTime`, `Logical`, else `Wall`        |
 | `fn init_state`, else nothing                       | `init_state` returning `State::default()`           |
 | `fn compensate` / `fn cells_for` / `fn max_cells` / `fn mailbox_capacity` | the matching `*_OVERRIDDEN` flag set to `true` |
-| `capacity = N`                                      | `mailbox_capacity()` and its flag                   |
-| `max_cells = N`, `idle_ttl_seconds = N`             | `max_cells()` and its flag, `cell_idle_ttl()`       |
-| `keys = [..]` with a written `fn cells_for`         | `cell_keys()`, `CELLS_FOR_OVERRIDDEN`               |
+| `mailbox_capacity = N`                              | `mailbox_capacity()` and its flag                   |
+| `max_cells = N`, `idle_ttl_seconds = N`             | `max_cells()` and its flag, `idle_ttl()`            |
+| `cell_keys = [..]` with a written `fn cells_for`    | `cell_keys()`, `CELLS_FOR_OVERRIDDEN`               |
 | `schema_version`, `min_readable_schema_version`, `compact_after_bytes`, `max_timers_per_cell` | the item of that name |
 | `on_full = …` / `onFull = "…"` (short form only)    | overflow policy of the generated entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
 | `input = "…"` (short form only)                     | name of the generated entry channel (§5); absent, that channel is named `input` |
@@ -377,7 +377,7 @@ A Tasklet can act because time passed, not only because an input arrived:
 `ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) —
 `timer_at_event_time(ctx, ts)` / `timer_after(ctx, ms)` (Elixir, imported by `use`) —
 register a per-Cell deadline, and `Tasklet::on_timer` /
-`Tasklet.onTimer` / `on_timer/4` handles the firing with the same state and
+`Tasklet.onTimer` / `on_timer/3` handles the firing with the same state and
 context `run` gets.
 Registration returns the absolute timestamp it is scheduled at; that value is
 the handle a cancellation takes. The cap (`max_timers_per_cell`) and the
@@ -399,7 +399,7 @@ Three rules make the callback part of the determinism contract:
    would rebuild a pending set the live run never had.
 
 `on_timer`'s default panics (Rust) / throws (Java) naming the Tasklet, and
-a firing on an Elixir Tasklet without `on_timer/4` parks non-retryably
+a firing on an Elixir Tasklet without `on_timer/3` parks non-retryably
 naming the Tasklet and the callback: registration is a runtime call, so a
 Tasklet that registers a timer without handling it cannot be refused at
 build time. Full contract, including which
@@ -421,10 +421,10 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 | Opt-in (Rust / Java)                                                         | Generated trait surface                                                               |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | none                                                                         | single-cell (empty `cell_keys()`)                                                 |
-| `keys = [..]` + a written `cells_for` / `@Tasklet.Spec(keys = {..})` + a written `cellsFor` | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` (Rust), the written `cells_for` routes |
-| `idle_ttl_seconds = s` / `max_cells = n` (Rust; dynamic knobs)            | `cell_idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java writes `@Tasklet.Spec(idleTtlSeconds = s, maxCells = n)`; Elixir writes `use Flezha.SDK.Tasklet, idle_ttl_seconds: s, max_cells: n` |
+| `cell_keys = [..]` + a written `cells_for` / `@Tasklet.Spec(cellKeys = {..})` + a written `cellsFor` | `cell_keys()` = keys, `CELLS_FOR_OVERRIDDEN = true` (Rust), the written `cells_for` routes |
+| `idle_ttl_seconds = s` / `max_cells = n` (Rust; dynamic knobs)            | `idle_ttl()` / `max_cells()` overrides — the KEY is not here. Java writes `@Tasklet.Spec(idleTtlSeconds = s, maxCells = n)`; Elixir writes `use Flezha.SDK.Tasklet, idle_ttl_seconds: s, max_cells: n` |
 
-Declaring only one of `keys` / `cells_for` is refused. Static keying is
+Declaring only one of `cell_keys` / `cells_for` is refused. Static keying is
 declared **on the tasklet**; dynamic keying is declared **on the wiring** —
 `.key_by(f)` / `.keyBy(f)` on the stream that feeds it
 ([`stream_transforms.md`](stream_transforms.md)). The sugar therefore offers no
@@ -512,9 +512,9 @@ is an address a user types and a rename must not move it.
 
 | SDK | Flow short form | Steps short form |
 | --- | --- | --- |
-| Rust | `#[flezha::relay(id = "echo", output = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::relay(..., run = steps)]` |
-| Java | `@Relay(id = "echo", output = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@Relay(..., run = @Run(steps = @Steps))` |
-| Python | `@flezha.relay(id="echo", output="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.relay(..., run="steps")` |
+| Rust | `#[flezha::relay(factory_id = "echo", output = "out", input = "in")] fn echo(s: String) -> String`, or the same attribute on an `impl Tasklet for Echo` block | `#[flezha::relay(..., run = steps)]` |
+| Java | `@ShortRelay(factoryId = "echo", output = "out", input = "in") class Echo implements Tasklet<String, Void, String> { void run(String s, Ctx<Void, String> ctx) }` | `@ShortRelay(..., run = @Run(steps = @Steps))` |
+| Python | `@flezha.relay(factory_id="echo", output="out", input="in", codec="text") def echo(s: str) -> str`, or the same decorator on a class whose `run(self, s, ctx)` emits through `ctx` | `@flezha.relay(..., run="steps")` |
 | Node | `defineRelay({ factoryId: 'echo', output: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineRelay({ ..., steps: {} })` |
 | Ruby | `class Echo < Flezha::Relay; factory_id "echo"; output "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
 | PHP | `#[Relay(factoryId: 'echo', output: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Relay { public function run(mixed $s, Ctx $ctx): void }` | `#[Relay(..., run: 'steps')]` |
@@ -747,7 +747,7 @@ relay.
 **Authored (Rust):**
 
 ```rust
-#[flezha::tasklet(name = "static_entry_tasklet", keys = ["a", "b", "c", "d"])]
+#[flezha::tasklet(name = "static_entry_tasklet", cell_keys = ["a", "b", "c", "d"])]
 impl Tasklet for StaticEntry {
     type Input = String;
     type Output = String;

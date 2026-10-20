@@ -75,7 +75,7 @@ default); a new key past the cap is dropped and counted in `inputs_dropped_cappe
 stage is done when every cell it sent work to has finished, and its commit names each of those
 cells once.
 
-An idle keyed cell is removed after its `cell_idle_ttl()` only between passes, and never while
+An idle keyed cell is removed after its `idle_ttl()` only between passes, and never while
 the class's `on_failure` could still need it: under `undo_all` every cell that ran a tasklet
 with an undo is kept until the instance ends, under `keep_progress` only the running pass's
 cells are. A stage entry counts its cells in 16 bits, so one pass of one tasklet runs at most

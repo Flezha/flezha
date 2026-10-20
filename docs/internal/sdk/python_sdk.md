@@ -98,7 +98,7 @@ def word_count(c: Channels) -> None:
   raises `FlezhaError` coded `part.no_output` when the output channel does not
   end in an output (a call end is not one), and `part.outside_invocation`
   through a context kept past its invocation.
-- **State starts from the state class.** It is `state=`, else the state
+- **State starts from the state class.** It is `state_type=`, else the state
   argument of `run`'s context hint, else what `init_state` returns. A new
   cell's state is `init_state(cell_key)` when the class writes one, and
   otherwise the state class called with no arguments, the origin for a
@@ -134,18 +134,18 @@ The keywords `flezha.tasklet` takes beside `name`:
 
 `@flezha.relay` declares a whole single-tasklet relay when it decorates
 a tasklet's body instead of a channels body: one declaration, no
-`flezha.tasklet` beside it. `id` is the factory id and is always written; `output`, `input`
+`flezha.tasklet` beside it. `factory_id` is always written; `output`, `input`
 and `codec` (the entry codec `Channels.input` takes) are optional, and so are
 the tasklet's own keywords (`cell_keys`, `logical_clock`, `idle_ttl_seconds`,
 `mailbox_capacity` and the rest `flezha.tasklet` takes, except `name`).
 
 ```python
-@flezha.relay(id="upcase", output="out", codec="text")
+@flezha.relay(factory_id="upcase", output="out", codec="text")
 def upcase(value: str) -> str:
     return value.upper()
 
 
-@flezha.relay(id="place", run="steps", output="placed", input="order", codec="text")
+@flezha.relay(factory_id="place", run="steps", output="placed", input="order", codec="text")
 def place(order: str) -> str:
     return order
 
@@ -173,7 +173,7 @@ A class body is how a one-tasklet relay with state is written, from
 `sdk/python/test_app/fixtures.py`:
 
 ```python
-@flezha.relay(id="sugar_store_input", output="sugar_store_sink", codec="text")
+@flezha.relay(factory_id="sugar_store_input", output="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
@@ -192,8 +192,8 @@ plugin channel, which is how a relay that only keeps state is written.
 The generated relay is the one you would have written by hand with that
 single tasklet: an entry channel named `input` (or the `input` keyword's
 value) decoded by `codec`, the tasklet, a plugin output named by `output` when one
-is written, a factory id equal to `id`, and the class settings it writes, as
-the full form takes them. The tasklet is named `id` verbatim, so growing out of the short form
+is written, a factory id equal to `factory_id`, and the class settings it writes, as
+the full form takes them. The tasklet is named after `factory_id` verbatim, so growing out of the short form
 keeps every cell's state where it was, and `upcase.tasklet` wires it into
 another relay's channels body. A steps short form is a `once` steps relay,
 run once over its first message: `flz relay start --text '<payload>'`, or
@@ -202,7 +202,7 @@ instance is accepted and never read. With `each` written it loops, still
 one declaration:
 
 ```python
-@flezha.relay(id="chat", run={"steps": {"each": "per_input"}}, output="replies", codec="text")
+@flezha.relay(factory_id="chat", run={"steps": {"each": "per_input"}}, output="replies", codec="text")
 def chat(turn: str) -> str:
     return turn
 ```
@@ -217,7 +217,7 @@ that also declares `channels`) and `topology.output_without_type` (an `output` o
 with no return annotation, or `None`, or on a class whose context names no
 output) are raised where the decorator runs, and
 `topology.duplicate_factory_id` where a second relay under one factory id is
-registered. A missing `id`, and `output`, `input`, `codec` or a tasklet keyword
+registered. A missing `factory_id`, and `output`, `input`, `codec` or a tasklet keyword
 on a channels body, are refused where the decorator runs too, as is `run`,
 `durable`, `output`, `input` or `codec` on `flezha.tasklet`.
 
@@ -287,7 +287,7 @@ plugin wire — is refused at the `register_factory` call site, naming the handl
 and the defect, before any input is served. That pairing is what this SDK has
 in place of the Rust SDK's `tests/ui` compile-fail pins.
 
-The state type is what the context hint names, or `state=`, and the change
+The state type is what the context hint names, or `state_type=`, and the change
 type is what `apply_change` folds, so a declaration cannot disagree with the
 code. A `TypedDict` is a plain dict at run time and is stored as one.
 

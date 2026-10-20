@@ -418,7 +418,7 @@ namespace = ARGV[0] || "default"
 
 runner = Flezha.create_runner(namespace).register_factory(EchoRelay)
 
-runner.boot
+runner.start
 runner.await_termination
 ```
 
@@ -426,7 +426,7 @@ Full file: [`runner.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/exa
 
 `tasklet_name` is not `name`, which is the class's own name in Ruby. Which
 optional hooks a tasklet has is read from the methods it defines, so with no
-`init_state` and no `apply_change` it keeps nothing. `boot` connects and
+`init_state` and no `apply_change` it keeps nothing. `start` connects and
 starts serving, and `await_termination` blocks until shutdown and then drains;
 `run` is the two in one call. Classes are registered explicitly: nothing is
 autoloaded, and what runs is what you named.
@@ -557,7 +557,7 @@ The echo, written short:
 ### Java
 
 ```java
-@Relay(id = "echo", input = "in", output = "out")
+@ShortRelay(factoryId = "echo", input = "in", output = "out")
 public class Echo implements Tasklet<String, Void, String> {
     @Override
     public void run(String value, Ctx<Void, String> ctx) throws TaskletException {
@@ -569,7 +569,7 @@ public class Echo implements Tasklet<String, Void, String> {
 ### Rust
 
 ```rust
-#[flezha_runner::relay(id = "echo", input = "in", output = "out")]
+#[flezha_runner::relay(factory_id = "echo", input = "in", output = "out")]
 fn echo_relay(value: String) -> String {
     format!("echo: {value}")
 }
@@ -593,7 +593,7 @@ export const echo = defineRelay({
 ### Python
 
 ```python
-@flezha.relay(id="echo", input="in", output="out", codec="text")
+@flezha.relay(factory_id="echo", input="in", output="out", codec="text")
 def echo(value: str) -> str:
     return f"echo: {value}"
 ```

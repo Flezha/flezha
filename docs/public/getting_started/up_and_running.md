@@ -388,7 +388,7 @@ namespace = ARGV[0] || "default"
 # the relays this runner serves
 runner = Flezha.create_runner(namespace).register_factory(EchoRelay)
 
-runner.boot # connects to the controller
+runner.start # connects to the controller
 
 runner.await_termination
 ```

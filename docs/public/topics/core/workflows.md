@@ -457,7 +457,7 @@ public function run(mixed $input, Ctx $ctx): void
     $ctx->timerAfter(10_000);                            // the paper exchange answers ten seconds later
 }
 
-public function onTimer(Timer $timer, Ctx $ctx): void
+public function onTimer(TimerFiring $timer, Ctx $ctx): void
 {
     $placed = $ctx->state['placed'];
     $quantity = $placed['order']['quantity'];

@@ -37,7 +37,6 @@ sdk/node/src/definition.ts::defineTasklet 66
 sdk/node/src/dispatch.ts::answer 54
 sdk/node/src/dispatch.ts::runWork 65
 sdk/php/src/Graph/ChannelSpec.php::__construct 63
-sdk/python/src/flezha/relay.py::relay 61
 sdk/rust/macros/src/relay.rs::parse 63
 sdk/rust/src/relay/builder.rs::build_topology_with_settings 62
 sdk/rust/src/relay/builder.rs::channel_descriptor 52

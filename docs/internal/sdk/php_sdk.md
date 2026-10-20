@@ -38,7 +38,7 @@ use Flezha\Ctx;
 use Flezha\Flezha;
 use Flezha\Graph\Builder;
 use Flezha\Tasklet;
-use Flezha\Timer;
+use Flezha\TimerFiring;
 
 #[Task(name: 'session', idleTtlSeconds: 3_600)]
 final class Session extends Tasklet
@@ -72,7 +72,7 @@ final class Session extends Tasklet
         $ctx->change(['kind' => 'event', 'deadline' => $ctx->timerAfter(self::QUIET_MS)]);
     }
 
-    public function onTimer(Timer $timer, Ctx $ctx): void
+    public function onTimer(TimerFiring $timer, Ctx $ctx): void
     {
         $events = $ctx->state['events'];
         $ctx->change(['kind' => 'closed', 'deadline' => null]);
@@ -109,7 +109,7 @@ implementation therefore cannot disagree.
   the class, and a subclass writes its own: every other `#[Task]` argument is
   merged down the class hierarchy, `name` never is.
 - **`run` returns `void`.** A value leaves a tasklet only through
-  `$ctx->emit()` or `$ctx->emitKeyed()`, and an input that should produce
+  `$ctx->emit()`, with its `key`, `channel` and `metadata` arguments, and an input that should produce
   nothing simply emits nothing. PHP itself refuses a `run` that returns a value.
 - **`$ctx->part($value)` previews the output while `run` is still working.**
   It sends `$value` on the tasklet's own output channel, encoded as

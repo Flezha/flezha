@@ -202,7 +202,7 @@ impl Change<Candles> for Closed {
 #[derive(Default)]
 pub struct Ohlc;
 
-#[tasklet(name = "ohlc_op", keys = ["1m", "1h", "1d", "1w"])]
+#[tasklet(name = "ohlc_op", cell_keys = ["1m", "1h", "1d", "1w"])]
 impl Tasklet for Ohlc {
     type Input = f64;
     type Output = Vec<u8>;
@@ -257,12 +257,12 @@ suffixed `Tasklet`. The function returns its output: a value emits, an
 `Option` emits when present, `()` declares no output.
 
 ```rust
-#[flezha_runner::relay(id = "upcase", output = "out")]
+#[flezha_runner::relay(factory_id = "upcase", output = "out")]
 fn upcase(value: String) -> String {
     value.to_uppercase()
 }
 
-#[flezha_runner::relay(id = "place", output = "placed", input = "order")]
+#[flezha_runner::relay(factory_id = "place", output = "placed", input = "order")]
 fn place(order: String) -> String {
     order
 }
@@ -283,7 +283,7 @@ another relay's `channels()` body like any tasklet. A steps short form
 is a `once` steps relay, run once over its first message: `flz relay start
 <id> --text '<payload>'`, or a start followed by `flz relay send`; a second
 message to a `once` instance is accepted and never read. It may declare
-another loop mode, `#[flezha_runner::relay(id = "chat", output =
+another loop mode, `#[flezha_runner::relay(factory_id = "chat", output =
 "replies", each = "per_input")]`, and then runs once per message.
 
 A one-tasklet relay with state or hooks puts the same attribute on its
@@ -307,7 +307,7 @@ impl Change<Seen> for Ticked {
 #[derive(Default)]
 pub struct Counter;
 
-#[flezha_runner::relay(id = "counter", input = "ticks")]
+#[flezha_runner::relay(factory_id = "counter", input = "ticks")]
 impl Tasklet for Counter {
     type Input = String;
     type State = Seen;
@@ -483,7 +483,7 @@ Concurrent producers for a fresh key share one slot. Declaring `.key_by` into
 a Tasklet with a non-empty `cell_keys()` is refused
 (`TopologyIssue::KeyByOnUnkeyableTarget`). Two per-Tasklet knobs:
 
-- `cell_idle_ttl() -> Option<Duration>` — default `None`, no eviction and no
+- `idle_ttl() -> Option<Duration>` — default `None`, no eviction and no
   sweep. `Some(ttl)` arms one idle sweep per Tasklet on the poll core's
   deferred-wake list every `min(ttl / 4, 30 s)` (at least 1 ms;
   `FLEZHA_REAP_INTERVAL_MS` overrides), run by the poller that promotes it; a

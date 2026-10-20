@@ -55,7 +55,7 @@ and a replay of history schedules a past instant, which fires at once.
 | Node | `ctx.timerAfter(ms)` | `ctx.timerAtEventTime(ts)` | `ctx.cancelTimer(kind, ts)` | `onTimer` |
 | Python | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer` |
 | Ruby | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer` |
-| PHP | `$ctx->timerAfter($ms)` | `$ctx->timerAtEventTime($ts)` | `$ctx->cancelTimer($kind, $ts)` | `onTimer(Timer $timer, Ctx $ctx)` |
+| PHP | `$ctx->timerAfter($ms)` | `$ctx->timerAtEventTime($ts)` | `$ctx->cancelTimer($kind, $ts)` | `onTimer(TimerFiring $timer, Ctx $ctx)` |
 | Elixir | `timer_after(ctx, ms)` | `timer_at_event_time(ctx, ts)` | `cancel_processing_time_timer(ctx, ts)`, `cancel_event_time_timer(ctx, ts)` | `on_timer/4` |
 
 In the host SDKs, `kind` is `"processing_time"` or `"event_time"`. The Elixir functions are
@@ -147,7 +147,7 @@ sets a timer, and `onTimer` reads the answer and ends the instance:
         $ctx->timerAfter(10_000);                            // the paper exchange answers ten seconds later
     }
 
-    public function onTimer(Timer $timer, Ctx $ctx): void
+    public function onTimer(TimerFiring $timer, Ctx $ctx): void
     {
         $placed = $ctx->state['placed'];
         $quantity = $placed['order']['quantity'];
@@ -204,7 +204,7 @@ uses a timer.
 ## Limits
 
 - **Eviction discards a cell's timers.** A tasklet that sets timers and declares
-  `cell_idle_ttl` is declaring them disposable.
+  `idle_ttl` is declaring them disposable.
 - **A live move to another runner does not carry pending timers.** The move ships the state
   alone; the timers are still on disk, so a later restore rebuilds them. A compaction where the
   relay moved keeps them too: it writes the pending timers again above its snapshot.

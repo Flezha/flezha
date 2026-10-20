@@ -332,8 +332,9 @@ await runner.send('my_echo', 'hello world', 'in', { msgId: 'hello-1' });
 ```
 
 Full file: [`runner.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/runner.mjs).
-`run()` resolves once the runner is connected and serving, so the calls go
-after it. Each call is a promise of the controller's result.
+Use `start()` rather than `run()`: `run()` is `start()` followed by
+`awaitTermination()` and resolves only at shutdown, so the calls go between
+the two. Each call is a promise of the controller's result.
 
 ### Python
 
@@ -357,7 +358,7 @@ runner.send_to("my_echo", "hello world", "in", msg_id: "hello-1")
 ```
 
 Full file: [`runner.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/runner.rb).
-`boot` rather than `run`, because `run` is `boot` followed by
+`start` rather than `run`, because `run` is `start` followed by
 `await_termination`. It is `send_to` rather than `send`, which every Ruby
 object already has.
 

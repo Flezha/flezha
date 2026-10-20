@@ -142,7 +142,7 @@ Every SDK ships the smallest `compact_after_bytes` across the class's Tasklets i
   `Serialize + DeserializeOwned + Send + Sync + 'static`, and `State` is
   `Serialize + DeserializeOwned` so the runtime can also serialise it for `CellState` and
   migration.
-- **Java.** Built-in Kryo registrations (`RestoreInitPayload`, `CoalesceKey`, primitive arrays,
+- **Java.** Built-in Kryo registrations (`RestoreInitPayload`, a reserved slot, primitive arrays,
   boxed numbers, `String`, `Optional`, the common `java.util` collections, `Instant`,
   `ArrayDeque`) take fixed low ids, and discovered user types take name-derived ids in a band
   above them. Java timer coverage lives in `ActivationDispatcherTest`; `HarnessBehaviourTest` is

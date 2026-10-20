@@ -149,7 +149,7 @@ $stdout.sync = true
 runner = Flezha.create_runner(ARGV[0] || "trading")
                .register_factory(TradeWatcherRelay)
                .register_factory(OrderExecutorRelay)
-               .boot
+               .start
 
 runner.await_termination
 ```

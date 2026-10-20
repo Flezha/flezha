@@ -16,7 +16,7 @@ and the commands that test the SDK are in its [`README.md`](../../../sdk/java/RE
 Authoring surface: one tasklet form, a class implementing
 `Tasklet<Input, State, Output>` and carrying `@Tasklet.Spec`, wired by a
 `Relay` in `channels(ChannelBuilder)` under the settings tree its `run()` and
-`durable()` declare; and the `@Relay` short form. Nothing is generated: the
+`durable()` declare; and the `@ShortRelay` short form. Nothing is generated: the
 class you write is the class every call names. See
 [`authoring_contract.md`](authoring_contract.md) for the rules every SDK shares
 and [`state_persistence.md`](state_persistence.md) for the state and Kryo side.
@@ -82,8 +82,8 @@ The relay names that class: `.into(TrackPrices.class)`.
 | Member | Meaning | Default |
 |---|---|---|
 | `name` | the durable name the state is saved under, never derived from the class | required |
-| `keys` | static cell keys, with a written `cellsFor` | none |
-| `capacity` | per-cell mailbox capacity | unset: `FLEZHA_MAILBOX_CAPACITY`, else 1024 |
+| `cellKeys` | static cell keys, with a written `cellsFor` | none |
+| `mailboxCapacity` | per-cell mailbox capacity | unset: `FLEZHA_MAILBOX_CAPACITY`, else 1024 |
 | `maxCells` | dynamic-mode soft cap on live cells | 100 000 |
 | `idleTtlSeconds` | whole seconds a dynamic cell may sit idle before eviction | 0, no eviction |
 | `maxTimersPerCell` | pending timers per cell | 10 000 |
@@ -236,13 +236,13 @@ range is refused by the core by name.
 
 ## The short form
 
-A tasklet class annotated `@Relay` (`com.flezha.sdk.authoring`) is a whole
+A tasklet class annotated `@ShortRelay` (`com.flezha.sdk.authoring`) is a whole
 relay: one class, no hand-written relay beside it. The class you wrote is
 what you register. `registerFactory` reads the annotation and declares the
 relay; nothing is generated.
 
 ```java
-@Relay(id = "upcase", output = "out")
+@ShortRelay(factoryId = "upcase", output = "out")
 public class Upcase implements Tasklet<String, Void, String> {
     @Override
     public void run(String value, Ctx<Void, String> ctx) throws TaskletException {
@@ -250,7 +250,7 @@ public class Upcase implements Tasklet<String, Void, String> {
     }
 }
 
-@Relay(id = "place", output = "placed", input = "order", run = @Run(steps = @Steps))
+@ShortRelay(factoryId = "place", output = "placed", input = "order", run = @Run(steps = @Steps))
 public class Place implements Tasklet<String, Void, String> {
     @Override
     public void run(String order, Ctx<Void, String> ctx) throws TaskletException {
@@ -267,7 +267,7 @@ Flezha.createRunner("default")
 The relay is the one you would have written by hand with that single
 tasklet: an entry channel named `input`, or the `input` element's value; the
 class; a plugin output named by `output` when one is written; a `factoryId()` equal
-to `id`; and the settings tree the annotation writes. The short form takes the
+to `factoryId`; and the settings tree the annotation writes. The short form takes the
 class settings the full form takes, as nested annotations whose members exist
 only under their parent: `run = @Run(flow = @Flow(effectivelyOnce =
 @EffectivelyOnce(checkpoint = @Checkpoint(every = 100))))`, `run = @Run(steps =
@@ -282,9 +282,9 @@ read. `each = Each.PER_INPUT` runs `run` once per message, and the instance does
 not complete after the first. `onFull` sets the entry channel's overflow policy.
 `LocalRelay.start(Upcase.class)` runs a short form locally the same way.
 
-The tasklet is named after the `id`, so a short form needs no `@Tasklet.Spec`.
-It carries one only for settings (`keys`, `capacity`, `maxCells`, ...), and then
-its `name` must equal the `id`, or registration fails with
+The tasklet is named after the `factoryId`, so a short form needs no `@Tasklet.Spec`.
+It carries one only for settings (`cellKeys`, `mailboxCapacity`, `maxCells`, ...), and then
+its `name` must equal the `factoryId`, or registration fails with
 `ShortFormNameMismatch`: one relay, one name. The output type is the class's
 `Output`, and a keyed emit is the body's `ctx.emitKeyed`.
 
@@ -292,7 +292,7 @@ its `name` must equal the `id`, or registration fails with
 tasklet and no plugin channel: the relay that only keeps state.
 
 ```java
-@Relay(id = "counter", input = "ticks")
+@ShortRelay(factoryId = "counter", input = "ticks")
 public class Counter implements Tasklet<String, Counter.Seen, Void> {
 
     public static class Seen {
@@ -324,11 +324,11 @@ A called input's first output answers its caller and still reaches the output's 
 output chain on a call to another relay and answers an `EntryChannel` of
 `Response<Req, Answer>`: [`sending_and_calling.md`](../../public/topics/core/sending_and_calling.md#calls).
 
-`id` must be written: the factory id is an address a user types, and a
-class rename must not move it. The written `id` also names the tasklet, so a
+`factoryId` must be written: the factory id is an address a user types, and a
+class rename must not move it. The written `factoryId` also names the tasklet, so a
 Java tasklet's state is saved under the same name its Rust twin uses. The
 refusals are raised when the class is registered, each naming the class: an
-absent `id`; `topology.short_form_with_topology` (an annotated class that also implements
+absent `factoryId`; `topology.short_form_with_topology` (an annotated class that also implements
 `Relay`); `topology.output_without_type` (an `output` on a
 class whose `Output` is `Void`); and `ShortFormNameMismatch`. A second relay
 under a factory id the runner holds fails `registerFactory` with

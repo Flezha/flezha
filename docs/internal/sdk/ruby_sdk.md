@@ -72,7 +72,7 @@ end
 ```
 
 **A value leaves a tasklet only through its context**: `ctx.emit`, with its
-`key:`, `channel:` and `metadata:` keywords, or `ctx.emit_to(channel, value)`.
+`key:`, `channel:` and `metadata:` keywords.
 What `run`, `on_timer` and `compensate` answer is ignored. Every Ruby method
 answers its last expression, so a `run` whose last line computes a value is
 ordinary Ruby, and the SDK neither emits nor refuses it; `Split` above could
@@ -359,12 +359,14 @@ transport, flusher, the runner loop — and `fork(2)` does not carry them, so a
 child would connect to nothing and serve nothing. The SDK records the process
 that started the core and raises, naming this rule, on any core call from
 another process; a documented rule alone would not survive contact with Puma
-cluster mode. `Runner#boot` and `Runner#run` both take the core, so a user
+cluster mode. `Runner#start` and `Runner#run` both take the core, so a user
 who forks starts one in each child.
 
-`Runner#run` is `Runner#boot` followed by `Runner#await_termination`, which
-waits for shutdown and then drains. A host that wants the runner connected
-before it does work of its own, control calls for one, calls the two apart.
+`Runner#run` is `Runner#start` followed by `Runner#await_termination`, which
+waits for shutdown and then calls `Runner#close`: it drains what is in flight
+and releases the core. A host that wants the runner connected before it does
+work of its own, control calls for one, calls the two apart, and stops the
+runner with `Runner#close`.
 
 The SDK spawns no processes. Process count is the orchestrator's decision, and
 each process is one runner — which is what HRW placement spreads across.

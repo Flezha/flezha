@@ -139,7 +139,7 @@ flowchart TB
   plural (`cells_for`).
 - **Dynamic**: one cell per key. The edge's `key_by(input)` sends each input
   to exactly one cell, created the first time its key is seen. Cells stay
-  until the tasklet declares `cell_idle_ttl()`; then a cell idle for that long
+  until the tasklet declares `idle_ttl()`; then a cell idle for that long
   is dropped, and a later input with the same key starts a fresh one.
 
 The full vocabulary is in the

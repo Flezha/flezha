@@ -62,9 +62,14 @@ await runner.registerFactory('./candles.js');
 await runner.run();
 ```
 
+`run()` is `start()`, which resolves once the runner is connected and serving,
+followed by `awaitTermination()`, which resolves once it has shut down. A host
+that works between the two, making control calls for one, calls them apart,
+and `close()` stops the runner and releases the core.
+
 **A value leaves a tasklet only through its context.** `ctx.emit(value)`
 sends one value on the tasklet's output, with `{ key, channel, metadata }` as
-options, and `ctx.emitTo(channel, value)` names one of several. `run`,
+options. `run`,
 `onTimer` and `compensate` are typed to return `void | Promise<void>`, so
 TypeScript refuses one that returns a value. Plain JavaScript runs no type
 checker, and the SDK ignores what a hook returns: a `.mjs` tasklet whose last
@@ -97,7 +102,8 @@ an `emit` on it does not compile.
   without `initState` is refused.
 - The cell mode is read from the wiring. A tasklet reached through `keyBy`,
   on a stream or on a merge, gets a cell per key; one reached by no `keyBy`
-  has one cell; `cells: { keys, cellsFor }` declares a fixed key set, and
+  has one cell; `cellKeys` declares a fixed key set, `cellsFor` the keys of it
+  an input belongs to, and
   `keyBy` into one is refused as `topology.key_by_on_unkeyable_target`. The mode belongs to
   the node, so one definition can be keyed in one relay and single in
   another.

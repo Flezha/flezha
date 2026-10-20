@@ -372,7 +372,7 @@ the controller. A partition member is listed by its member id, such as
 | SDK | Spelling |
 | --- | --- |
 | Rust | `runner.relays()?`, a `Vec<String>` |
-| Java | `runner.getRelays()`, a `List<String>` |
+| Java | `runner.relays()`, a `List<String>` |
 | Node | `runner.relays()` |
 | Python | `runner.relays()` |
 | Ruby | `runner.relays` |

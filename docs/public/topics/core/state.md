@@ -51,7 +51,7 @@ How many cells a tasklet gets is decided in the relay, not in the tasklet:
   made the first time a message with that key arrives
   ([`streams.md`](streams.md#keys-and-cells)).
 - **Without it,** a tasklet has a single cell that handles every message.
-- **With fixed cell keys** declared on the tasklet (`keys`, `cell_keys` or
+- **With fixed cell keys** declared on the tasklet (`cell_keys` or
   `cellKeys`, with a `cellsFor` function that routes each input), it has that
   set of cells and no other.
 
@@ -76,10 +76,11 @@ new keys past it are dropped). An idle dynamic cell can be evicted after
   growing collection on every message makes every record as large as the
   collection. The usual shapes are in
   [the authoring contract](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/authoring_contract.md#31-keyed-and-collection-changes).
-- **Coalescing is opt-in.** A change that declares a `coalesce_key`
-  (`coalesceKey`) collapses with the other changes sharing that key within one
+- **Coalescing is opt-in, in the Rust SDK.** A Rust change that declares a
+  `coalesce_key` collapses with the other changes sharing that key within one
   flush window, keeping the most recent. That suits "the current value of X",
-  and is wrong for "+1" deltas. Changes without a key are kept as written.
+  and is wrong for "+1" deltas. Changes without a key, and every change in the
+  other SDKs, are kept as written.
 - **Three clocks** serve `ctx.now()`: the wall clock (the default, read once
   per invocation), event time (read off each input, declared by writing an
   `event_time` function) and a logical clock (the cell's change counter,
