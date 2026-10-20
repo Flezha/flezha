@@ -14,7 +14,7 @@ use super::decl::HostClock;
 use crate::channel::ChannelDescriptor;
 use crate::poll_core::EnginePayload;
 use crate::relay::instance::RelayInstance;
-use crate::relay::topology::{CellMode, RelayTopology};
+use crate::relay::topology::{CellMode, TaskletDescriptor};
 use crate::schema;
 use crate::util::LockRecover;
 
@@ -85,11 +85,11 @@ pub struct PrepareCrossing {
 const PREPARE_BATCH_MAX: usize = 256;
 
 /// `(want_keys, want_event_time)`; `(false, false)` is no crossing.
-pub fn prepare_wants(topology: &RelayTopology, channel: &ChannelDescriptor) -> (bool, bool) {
+pub fn prepare_wants(tasklets: &[TaskletDescriptor], channel: &ChannelDescriptor) -> (bool, bool) {
     let mut want_keys = false;
     let mut want_event_time = false;
     for edge in &channel.consumers {
-        let Some(desc) = topology.tasklet(edge.tasklet) else {
+        let Some(desc) = tasklets.get(edge.tasklet as usize) else {
             continue;
         };
         let Some(facts) = desc.host_facts.as_ref() else {
@@ -115,8 +115,7 @@ pub fn stage_prepare(
     channel: &ChannelDescriptor,
     entries: Vec<StagedEntry>,
 ) -> Vec<StagedEntry> {
-    let (want_keys, want_event_time) = prepare_wants(&instance.topology, channel);
-    if !want_keys && !want_event_time {
+    if channel.prepare_wants == (false, false) {
         return entries;
     }
     {
@@ -129,7 +128,7 @@ pub fn stage_prepare(
             .queued
             .extend(entries);
     }
-    submit_next_crossing(instance, channel_id, want_keys, want_event_time);
+    submit_next_crossing(instance, channel_id, channel.prepare_wants);
     Vec::new()
 }
 
@@ -150,8 +149,7 @@ pub fn deferred_end_replay_slice(instance: &Arc<RelayInstance>) {
 fn submit_next_crossing(
     instance: &Arc<RelayInstance>,
     channel_id: u32,
-    want_keys: bool,
-    want_event_time: bool,
+    (want_keys, want_event_time): (bool, bool),
 ) {
     let entries = {
         let mut state = instance.host_prepare.lock_recover();
@@ -185,10 +183,9 @@ pub(super) fn apply_prepare_outcome(
     let PrepareCrossing {
         instance,
         channel,
-        want_keys,
-        want_event_time,
         entries,
         reply,
+        ..
     } = crossing;
     if let Some(reply) = reply {
         let _ = reply.send(answers);
@@ -206,21 +203,13 @@ pub(super) fn apply_prepare_outcome(
         }
         match answer {
             Ok(ans) => deliver_prepared(&instance, channel, channel_desc, entry, ans),
-            Err(e) => hand_prepare_ladder(
-                Arc::clone(&instance),
-                channel,
-                want_keys,
-                want_event_time,
-                entry,
-                e,
-            ),
+            Err(e) => hand_prepare_ladder(Arc::clone(&instance), channel, entry, e),
         }
     }
     finish_crossing(
         &instance,
         channel,
-        want_keys,
-        want_event_time,
+        channel_desc.prepare_wants,
         replay_resolved,
     );
     Ok(())
@@ -284,8 +273,6 @@ fn deliver_prepared(
 fn hand_prepare_ladder(
     instance: Arc<RelayInstance>,
     channel_id: u32,
-    want_keys: bool,
-    want_event_time: bool,
     entry: StagedEntry,
     first_error: schema::WorkError,
 ) {
@@ -293,7 +280,7 @@ fn hand_prepare_ladder(
         (instance.topology.channel(channel_id)).expect("prepare channel present in topology");
     let label = format!("prepare for channel `{}`", channel.name);
     let (held, staged, mut asked) = (Arc::clone(&instance), entry.clone(), None);
-    let wants = (want_keys, want_event_time);
+    let wants = channel.prepare_wants;
     let attempt = move || re_cross(&held, channel_id, wants, &staged, &mut asked);
     let end = entry.stage.map(|node| {
         let failed = Arc::clone(&instance);
@@ -384,8 +371,7 @@ fn re_cross(
 fn finish_crossing(
     instance: &Arc<RelayInstance>,
     channel_id: u32,
-    want_keys: bool,
-    want_event_time: bool,
+    wants: (bool, bool),
     replay_resolved: usize,
 ) {
     let fire_broadcast = {
@@ -398,7 +384,7 @@ fn finish_crossing(
             && state.pending_replay_end
             && std::mem::take(&mut state.pending_replay_end)
     };
-    submit_next_crossing(instance, channel_id, want_keys, want_event_time);
+    submit_next_crossing(instance, channel_id, wants);
     if fire_broadcast {
         crate::routing::end_replay_slice(instance);
     }

@@ -156,6 +156,8 @@ fn build_channel(
             max_attempts: channel_decl.retry_max,
             backoff_base_ms: channel_decl.retry_backoff_ms,
         },
+        // Known once the tasklets are built.
+        prepare_wants: (false, false),
         // Host inter-task values are bytes already; the journal codec is
         // the lossless HostPayload wrapper, so a durable chained loop
         // can re-seed exactly what the live handoff carried.

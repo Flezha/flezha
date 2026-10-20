@@ -164,6 +164,7 @@ fn parsing_steps(id: &'static str) -> Arc<RelayInstance> {
                 max_attempts: 2,
                 backoff_base_ms: 1,
             },
+            prepare_wants: (false, false),
             codec: None,
         }],
         name_to_id: HashMap::from([("in", 0)]),

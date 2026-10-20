@@ -675,9 +675,12 @@ fn register(derived: Derived) -> Result<(), Error> {
         ..
     } = derived;
     let class = resolve_class_facts(&decl, &run, durable.keeps());
-    let (channels, name_to_id) = build_channels(&decl, &derived_channels);
+    let (mut channels, name_to_id) = build_channels(&decl, &derived_channels);
     let (tasklets, tasklet_name_to_id) =
         build_tasklets(&decl, &class, &channels, &derived_channels, &modes);
+    for channel in &mut channels {
+        channel.prepare_wants = super::prepare_wants(&tasklets, channel);
+    }
     let mut topology = RelayTopology {
         sdk_lang: decl.sdk_lang,
         channels,

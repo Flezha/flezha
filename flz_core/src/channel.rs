@@ -289,6 +289,10 @@ pub struct ChannelDescriptor {
     pub keyed: bool,
     pub overflow_policy: OverflowPolicy,
     pub retry: RetryPolicy,
+    /// `(want_keys, want_event_time)`: what a host prepare crossing asks of
+    /// this channel's payloads, fixed when the topology is built; `(false,
+    /// false)` is no crossing.
+    pub prepare_wants: (bool, bool),
     /// Byte codec for inter-tasklet payloads, derived by the runtime and
     /// declared by no SDK. `Some` exactly when `kind` is
     /// [`ChannelKind::InterTasklet`], because that is the channel the journal
