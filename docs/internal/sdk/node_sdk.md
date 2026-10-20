@@ -269,17 +269,17 @@ SDK can see says whether a short form emits. The manifest leaves
 | Number | What sets it | What it bounds |
 | --- | --- | --- |
 | **1024** | `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, enforced by the core at handout | Concurrent activations. Not the fetcher count, not the loop count. |
-| **2** | fetch threads, `.fetchers(n)` | How many native threads may sit inside `poll` at once. A fetcher never runs user code, so two cover the hand-off latency of one being between polls. Raising it does not raise concurrency. |
+| **2** | fetch threads: `.fetchers(n)` is the base this host hands the core's pool governor, `FLEZHA_WORKER_POOL_SIZE` overrides it | How many native threads poll at once. A fetcher never runs user code, so two cover the hand-off latency of one being between polls; the governor adds one per starvation observation up to the ceiling and retires it after 30 s idle ([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)). Raising it does not raise concurrency. |
 | **0** | dispatch loops, `.workers(n)` / `FLEZHA_NODE_WORKERS` | **Compute parallelism.** `0` is the default and means the main event loop: compute parallelism of **one**. `n > 0` means `n` worker threads and compute parallelism `n`. |
-| **2**, growing to **20** | `FLEZHA_WORKER_POOL_SIZE`, `FLEZHA_WORKER_POOL_MAX` (default 10× the base) | Native threads for blocking core calls, above all `complete`. It grows on demand and threads above the base retire after a 30-second idle streak. |
+| **2**, growing to **20** | the governor's base, ceiling and retire time | Native threads for blocking core calls, above all `complete`. It grows on a queued call no thread is free for, which the core cannot see, and threads above the base retire after 30 s idle. |
 
 Concurrency is bounded by the core's in-flight cap, never by the fetcher or
 loop count. I/O-bound handlers reach that cap on one loop. Compute-bound
 handlers do not, because they hold the loop while they compute — which is what
 the loop count is for.
 
-**250 ms** is the poll timeout, and therefore the bound on how quickly a
-shutdown request is observed.
+**250 ms** is the governor's poll timeout, and therefore the bound on how
+quickly a shutdown request is observed.
 
 ## Which dispatch configuration
 

@@ -96,3 +96,40 @@ fn the_first_take_starts_holding_and_each_take_hands_out_what_was_held() {
     };
     assert_eq!(stderr, ["[flezha] before any take"]);
 }
+
+/// An idle runner's notices reach a draining host within the supervisor wait:
+/// the pool's supervisor answers idle at least once a wait, and the host takes
+/// the notices on every answer.
+#[test]
+fn an_idle_pools_supervisor_answers_within_its_wait() {
+    let Some(stderr) = stderr_of_child("an_idle_pools_supervisor_answers_within_its_wait") else {
+        let ctx = veneer::CtxPtr::of(veneer::context_new(flz_core::SCHEMA_VERSION).unwrap());
+        assert_eq!(
+            veneer::pool_supervise(ctx).ok(),
+            Some(FLZ_POOL_STOP),
+            "no pool is open"
+        );
+        let policy = veneer::pool_open(ctx, 1).expect("the pool opens");
+        assert_eq!(
+            (policy[0], policy[2]),
+            (1, 250),
+            "the base and the poll timeout"
+        );
+        assert_eq!(veneer::take_notices(), []);
+        notice(
+            Level::Warn,
+            "flz_core::control_unit",
+            "Connection attempt 2 failed",
+        );
+
+        let asked = std::time::Instant::now();
+        assert_eq!(veneer::pool_supervise(ctx).ok(), Some(FLZ_POOL_IDLE));
+        assert!(asked.elapsed() < std::time::Duration::from_secs(2));
+        let taken = veneer::take_notices();
+        assert_eq!(taken.len(), 1, "{taken:?}");
+        assert_eq!(taken[0].text, "Connection attempt 2 failed");
+        veneer::context_free(ctx);
+        return;
+    };
+    assert_eq!(stderr, Vec::<String>::new());
+}

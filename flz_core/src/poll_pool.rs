@@ -64,6 +64,8 @@ pub struct Governor {
     /// tests shorten it through [`Governor::new`].
     pub retire_after: Duration,
     live: AtomicUsize,
+    stopped: AtomicBool,
+    at_ceiling: AtomicBool,
     /// The last answer was a top-up: answer the next one without a wait, so a
     /// pool short by several is restored at once. Any departure clears it, so
     /// a spawn that keeps failing is retried once per wait, not in a hot loop.
@@ -86,24 +88,29 @@ impl Governor {
             ceiling: ceiling.max(base),
             retire_after,
             live: AtomicUsize::new(base),
+            stopped: AtomicBool::new(false),
+            at_ceiling: AtomicBool::new(false),
             topping_up: AtomicBool::new(false),
         })
     }
 
-    /// Spawn the base workers and run the supervisor on a thread of its own:
-    /// the whole pool for a host whose workers are threads it can spawn.
+    /// Spawn the base workers, then supervise, on a thread of its own: the
+    /// whole pool for a host whose workers are threads it can spawn, started
+    /// the same way from a thread that may not spawn them itself.
     pub fn start(self: &Arc<Self>, core: &'static PollCore, spawner: impl Spawner) {
-        for _ in 0..self.base {
-            self.spawn_or_leave(&spawner, false);
-        }
         let governor = Arc::clone(self);
         std::thread::Builder::new()
             .name("flz-poll-supervisor".to_string())
-            .spawn(move || loop {
-                match governor.supervise(core) {
-                    Supervise::Spawn { grown } => governor.spawn_or_leave(&spawner, grown),
-                    Supervise::Idle => {}
-                    Supervise::Stop => return,
+            .spawn(move || {
+                for _ in 0..governor.base {
+                    governor.spawn_or_leave(&spawner, false);
+                }
+                loop {
+                    match governor.supervise(core) {
+                        Supervise::Spawn { grown } => governor.spawn_or_leave(&spawner, grown),
+                        Supervise::Idle => {}
+                        Supervise::Stop => return,
+                    }
                 }
             })
             .expect("spawn poll supervisor");
@@ -112,11 +119,7 @@ impl Governor {
     fn spawn_or_leave(&self, spawner: &impl Spawner, grown: bool) {
         if let Err(e) = spawner.spawn(grown) {
             self.left();
-            tracing::warn!(
-                target: "flezha::dispatch",
-                error = %e,
-                "could not spawn a poll worker"
-            );
+            flz_transport::notice!(Warn, "could not spawn a poll worker: {e}");
         }
     }
 
@@ -130,7 +133,7 @@ impl Governor {
     /// dwell, so the next thread is at least a dwell away and only if the
     /// runner is still stuck.
     pub fn supervise(&self, core: &PollCore) -> Supervise {
-        if core.is_shut_down() {
+        if self.stopped() || core.is_shut_down() {
             return Supervise::Stop;
         }
         if self.topping_up.swap(false, Ordering::AcqRel) {
@@ -139,14 +142,26 @@ impl Governor {
             }
         }
         let starvation = core.wait_starvation(SUPERVISOR_WAIT);
-        if matches!(starvation, Starvation::ShuttingDown) {
+        if matches!(starvation, Starvation::ShuttingDown) || self.stopped() {
             return Supervise::Stop;
         }
         if let Some(answer) = self.top_up() {
             return answer;
         }
-        if matches!(starvation, Starvation::Observed) && self.reserve(self.ceiling) {
-            return Supervise::Spawn { grown: true };
+        if matches!(starvation, Starvation::Observed) {
+            if self.reserve(self.ceiling) {
+                self.at_ceiling.store(false, Ordering::Release);
+                return Supervise::Spawn { grown: true };
+            }
+            // Latched: a sustained wedge would say this once a second forever.
+            if !self.at_ceiling.swap(true, Ordering::AcqRel) {
+                flz_transport::notice!(
+                    Warn,
+                    "the core is starving and the worker pool is at its ceiling of {}; raise \
+                     FLEZHA_WORKER_POOL_MAX, or find what is holding the handlers",
+                    self.ceiling
+                );
+            }
         }
         Supervise::Idle
     }
@@ -159,10 +174,10 @@ impl Governor {
             return None;
         }
         self.topping_up.store(true, Ordering::Release);
-        tracing::warn!(
-            target: "flezha::dispatch",
-            base = self.base,
-            "replaced a poll worker that left the pool"
+        flz_transport::notice!(
+            Warn,
+            "replaced a poll worker that left a pool of base {}",
+            self.base
         );
         Some(Supervise::Spawn { grown: false })
     }
@@ -185,10 +200,27 @@ impl Governor {
         grown && *idle >= self.retire_after
     }
 
-    /// A seat released: a worker that left, or a spawn that failed.
-    pub fn left(&self) {
-        self.live.fetch_sub(1, Ordering::AcqRel);
+    /// End this pool while the core runs on, as a local run's end does: the
+    /// supervisor's next answer, at most [`SUPERVISOR_WAIT`] away, is `Stop`.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+    }
+
+    fn stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
+    }
+
+    /// The seats taken now: the workers alive and any spawn under way.
+    pub fn live(&self) -> usize {
+        self.live.load(Ordering::Acquire)
+    }
+
+    /// A seat released: a worker that left, or a spawn that failed. Answers
+    /// the seats still taken.
+    pub fn left(&self) -> usize {
+        let live = self.live.fetch_sub(1, Ordering::AcqRel) - 1;
         self.topping_up.store(false, Ordering::Release);
+        live
     }
 
     /// One worker's loop on the calling thread, `run` answering each
@@ -224,8 +256,8 @@ impl Drop for Seat<'_> {
     fn drop(&mut self) {
         self.0.left();
         if std::thread::panicking() {
-            tracing::error!(
-                target: "flezha::dispatch",
+            flz_transport::notice!(
+                Error,
                 "a poll worker panicked out of its loop; the supervisor will replace it"
             );
         }

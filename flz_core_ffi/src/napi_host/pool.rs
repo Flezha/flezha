@@ -9,12 +9,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use flz_core::util::env_parse_positive;
+use flz_core::poll_pool::Governor;
 
 use super::DEFAULT_FETCHERS;
-
-/// How long a thread above the base may sit idle before it retires.
-const IDLE_RETIRE: Duration = Duration::from_secs(30);
 
 /// `(live, busy, peak, queued)` — the pool's own bookkeeping, which is what
 /// both `settle` and `hostStats` report on.
@@ -53,12 +50,6 @@ pub(crate) struct BlockingPool {
 }
 
 impl BlockingPool {
-    pub(crate) fn new(base: usize, ceiling: usize) -> Arc<Self> {
-        Self::with_retire(base, ceiling, IDLE_RETIRE)
-    }
-
-    /// The retirement streak is a parameter only so a test can watch a grown
-    /// thread retire without waiting out the production streak.
     pub(crate) fn with_retire(base: usize, ceiling: usize, idle_retire: Duration) -> Arc<Self> {
         let base = base.max(1);
         let pool = Arc::new(Self {
@@ -197,15 +188,13 @@ impl BlockingPool {
 
 static POOL: OnceLock<Arc<BlockingPool>> = OnceLock::new();
 
-/// The process's blocking pool, sized from the existing worker-pool
-/// configuration rather than a knob minted for Node:
-/// `FLEZHA_WORKER_POOL_SIZE` is the base and `FLEZHA_WORKER_POOL_MAX` the
-/// ceiling, defaulting to ten times the base and never below it.
+/// The process's blocking pool, sized by the governor's policy rather than a
+/// knob minted for Node: its base, ceiling and retire time. Its growth stays
+/// its own, on a queued job, because the core cannot see this queue.
 pub(crate) fn blocking_pool() -> &'static Arc<BlockingPool> {
     POOL.get_or_init(|| {
-        let base = env_parse_positive("FLEZHA_WORKER_POOL_SIZE", DEFAULT_FETCHERS as usize);
-        let ceiling = env_parse_positive("FLEZHA_WORKER_POOL_MAX", base * 10);
-        BlockingPool::new(base, ceiling)
+        let policy = Governor::from_env(DEFAULT_FETCHERS as usize);
+        BlockingPool::with_retire(policy.base, policy.ceiling, policy.retire_after)
     })
 }
 #[cfg(test)]

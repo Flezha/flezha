@@ -8,8 +8,9 @@
 //!   all `complete`; it grows, because a fixed pool whose every thread parks
 //!   pushing to one consumer has no thread left to run the completion that
 //!   would drain it.
-//! * **The supervisor** parks in the core's starvation wait and answers an
-//!   observation with one more fetcher.
+//! * **The governor** (`flz_core::poll_pool`) sizes the fetchers: its
+//!   supervisor answers a starvation observation with one more fetcher and a
+//!   short pool with a replacement, and a grown fetcher retires when idle.
 //!
 //! Dispatch targets are threadsafe-function handles, one per registered event
 //! loop; `pick_loop` keeps a cell on the loop that holds its state.
@@ -17,11 +18,12 @@
 mod pool;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use flz_core::poll_pool::{self, Governor};
 use flz_core::schema;
-use flz_core::util::env_parse_positive;
+use flz_core::util::LockRecover;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
     ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
@@ -31,18 +33,6 @@ pub(crate) use pool::blocking_pool;
 
 use crate::napi_glue::{context, Values};
 use crate::veneer::{self, notice, shape, CtxPtr, Polled, Refusal};
-use crate::{FLZ_POLL_SHUTTING_DOWN, FLZ_STARVATION_OBSERVED};
-
-/// Poll timeout per turn. Bounds how fast a shutdown request is observed —
-/// documented as that bound, because it is what a user waits out.
-const POLL_TIMEOUT_MS: u64 = 250;
-
-/// The supervisor's park length. Only bounds how often it re-arms; the core
-/// decides when the wait returns.
-const SUPERVISOR_WAIT_MS: u64 = 1_000;
-
-/// How long `stopHost` waits for the fetchers and the pool to drain.
-const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Fetchers started at boot when the caller names no count — Java's
 /// `DEFAULT_FETCHER_COUNT`, for the same reason: a fetcher never runs user
@@ -163,11 +153,19 @@ pub fn dispatch_loop_count() -> u32 {
 // ---------------------------------------------------------------------------
 
 static CLOSING: AtomicBool = AtomicBool::new(true);
-static LIVE_FETCHERS: AtomicUsize = AtomicUsize::new(0);
-static FETCHER_CEILING: AtomicUsize = AtomicUsize::new(0);
+/// The fetchers' pool while the host runs; a later start replaces it.
+static GOVERNOR: Mutex<Option<Arc<Governor>>> = Mutex::new(None);
 static FETCHERS_STARTED: AtomicU32 = AtomicU32::new(0);
 static HANDED_OFF: AtomicUsize = AtomicUsize::new(0);
 static ABANDONED: AtomicUsize = AtomicUsize::new(0);
+
+fn governor() -> Option<Arc<Governor>> {
+    GOVERNOR.lock_recover().clone()
+}
+
+fn fetchers() -> usize {
+    governor().map_or(0, |g| g.live())
+}
 
 fn abandon_quietly(token: u64) {
     let Ok(ctx) = context() else { return };
@@ -249,54 +247,46 @@ fn hand_off(token: u64, activation: schema::Activation) -> bool {
     false
 }
 
-/// One fetcher turn. `false` ends the thread.
-fn fetch_turn(ctx: CtxPtr) -> bool {
-    match veneer::poll(ctx, POLL_TIMEOUT_MS) {
-        Ok(Polled::Timeout) => true,
-        Ok(Polled::ShuttingDown) => false,
+/// One fetcher turn: `None` ends the thread, else whether the poll timed out.
+fn fetch_turn(ctx: CtxPtr) -> Option<bool> {
+    match veneer::poll(ctx, poll_pool::POLL_TIMEOUT.as_millis() as u64) {
+        Ok(Polled::Timeout) => Some(true),
+        Ok(Polled::ShuttingDown) => None,
         Ok(Polled::Activation(act)) => {
             let token = act.token;
             hand_off(token, act);
-            true
+            Some(false)
         }
         Err(Refusal::Shape(message)) => {
             log_line(3, &message);
-            true
+            Some(false)
         }
         Err(refusal) => {
             log_line(3, &format!("core poll failed: {refusal}"));
-            true
+            Some(false)
         }
     }
 }
 
-fn fetch_loop() {
-    let Ok(ctx) = context() else {
-        LIVE_FETCHERS.fetch_sub(1, Ordering::AcqRel);
-        return;
-    };
-    let ended_cleanly = loop {
-        if CLOSING.load(Ordering::Acquire) {
-            break true;
-        }
-        // A panic crossing a fetcher would unwind out of a thread the runner
-        // needs; catching it here is what makes "a fetch thread that ends on
-        // an error is replaced" reachable rather than a process abort.
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fetch_turn(ctx))) {
-            Ok(true) => continue,
-            Ok(false) => break true,
-            Err(_) => {
-                log_line(3, "fetcher panicked; starting a replacement");
-                break false;
+fn fetch_loop(governor: &Governor, grown: bool) {
+    if let Ok(ctx) = context() {
+        let mut idle = Duration::ZERO;
+        while !CLOSING.load(Ordering::Acquire) {
+            // A panic crossing a fetcher would unwind out of a thread the
+            // runner needs; caught, the fetcher leaves and the governor
+            // replaces it.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fetch_turn(ctx))) {
+                Ok(Some(false)) => idle = Duration::ZERO,
+                Ok(Some(true)) if !governor.idle_turn(grown, &mut idle) => {}
+                Ok(_) => break,
+                Err(_) => {
+                    log_line(3, "fetcher panicked; the pool replaces it");
+                    break;
+                }
             }
         }
-    };
-    let remaining = LIVE_FETCHERS.fetch_sub(1, Ordering::AcqRel) - 1;
-    if !ended_cleanly && !CLOSING.load(Ordering::Acquire) {
-        start_fetcher();
-        return;
     }
-    if remaining == 0 && !CLOSING.load(Ordering::Acquire) {
+    if governor.left() == 0 && !CLOSING.load(Ordering::Acquire) {
         // Worth a line: the core has stopped handing out work. On a
         // controller-requested stop this is the only way the runner learns
         // it; on the host's own stop it is what the fetchers were kept
@@ -306,70 +296,19 @@ fn fetch_loop() {
     }
 }
 
-/// Start one fetcher, counted before the spawn so a failed spawn cannot leave
-/// the host believing it has a poller it does not.
-fn start_fetcher() -> bool {
-    LIVE_FETCHERS.fetch_add(1, Ordering::AcqRel);
-    match std::thread::Builder::new()
-        .name(format!(
-            "flz-fetcher-{}",
-            FETCHERS_STARTED.fetch_add(1, Ordering::Relaxed) + 1
-        ))
-        .spawn(fetch_loop)
-    {
-        Ok(_) => true,
-        Err(e) => {
-            LIVE_FETCHERS.fetch_sub(1, Ordering::AcqRel);
-            log_line(3, &format!("could not start a fetcher: {e}"));
-            false
-        }
-    }
+/// Start one fetcher into the seat the governor reserved for it.
+fn start_fetcher(governor: Arc<Governor>, grown: bool) -> std::io::Result<()> {
+    let number = FETCHERS_STARTED.fetch_add(1, Ordering::Relaxed) + 1;
+    std::thread::Builder::new()
+        .name(format!("flz-fetcher-{number}"))
+        .spawn(move || fetch_loop(&governor, grown))
+        .map(drop)
 }
 
-/// The starvation supervisor: park in the core's wait, and answer every
-/// observation with one more fetcher up to the ceiling.
-///
-/// This covers what the core can see — work queued with no thread inside
-/// `poll`, which for this host means a direct activation (a restore fold, a
-/// snapshot request, a steps relay step) arriving while every fetcher is between
-/// polls. It is not a substitute for the pool's growth rule: the core cannot
-/// see the host's completion queue, and this thread cannot see the core's.
-fn supervise_loop() {
-    let Ok(ctx) = context() else { return };
-    let mut at_ceiling_logged = false;
-    while !CLOSING.load(Ordering::Acquire) {
-        let Ok(outcome) = veneer::wait_starvation(ctx, SUPERVISOR_WAIT_MS) else {
-            continue;
-        };
-        if outcome == FLZ_POLL_SHUTTING_DOWN {
-            return;
-        }
-        if outcome != FLZ_STARVATION_OBSERVED || CLOSING.load(Ordering::Acquire) {
-            continue;
-        }
-        let ceiling = FETCHER_CEILING.load(Ordering::Acquire);
-        if LIVE_FETCHERS.load(Ordering::Acquire) >= ceiling {
-            if !at_ceiling_logged {
-                log_line(
-                    2,
-                    &format!(
-                        "starvation observed with the fetcher set at its ceiling ({ceiling}); \
-                         raise FLEZHA_WORKER_POOL_MAX if the work is blocked rather than wedged"
-                    ),
-                );
-                at_ceiling_logged = true;
-            }
-            continue;
-        }
-        if start_fetcher() {
-            at_ceiling_logged = false;
-        }
-    }
-}
-
-/// Start the native half of the host: `fetchers` poll threads and one
-/// starvation supervisor. At least one dispatch target must be registered
-/// first, or the first activation would have nowhere to go.
+/// Start the native half of the host: the governor's base of fetchers over
+/// `fetchers` (the caller's default) and its supervisor. At least one
+/// dispatch target must be registered first, or the first activation would
+/// have nowhere to go.
 #[napi]
 pub fn start_host(fetchers: Option<u32>) -> Result<()> {
     context()?;
@@ -385,24 +324,18 @@ pub fn start_host(fetchers: Option<u32>) -> Result<()> {
             "the native host is already running",
         ));
     }
-    let count = fetchers.filter(|n| *n > 0).unwrap_or(DEFAULT_FETCHERS) as usize;
-    let ceiling = env_parse_positive("FLEZHA_WORKER_POOL_MAX", count * 10).max(count);
-    FETCHER_CEILING.store(ceiling, Ordering::Release);
+    let base = fetchers.filter(|n| *n > 0).unwrap_or(DEFAULT_FETCHERS);
+    let governor = Governor::from_env(base as usize);
+    if let Some(previous) = GOVERNOR.lock_recover().replace(Arc::clone(&governor)) {
+        previous.stop();
+    }
     // The pool exists before the first activation can be handed off, so a
     // completion never waits on a cold start.
     let _ = blocking_pool();
-    for _ in 0..count {
-        start_fetcher();
-    }
-    std::thread::Builder::new()
-        .name("flz-starvation-supervisor".into())
-        .spawn(supervise_loop)
-        .map_err(|e| {
-            Error::new(
-                Status::GenericFailure,
-                format!("could not start the starvation supervisor: {e}"),
-            )
-        })?;
+    let seats = Arc::clone(&governor);
+    governor.start(flz_core::poll_core::global(), move |grown| {
+        start_fetcher(Arc::clone(&seats), grown)
+    });
     Ok(())
 }
 
@@ -415,6 +348,9 @@ pub fn start_host(fetchers: Option<u32>) -> Result<()> {
 #[napi]
 pub fn stop_fetching() {
     CLOSING.store(true, Ordering::Release);
+    if let Some(governor) = governor() {
+        governor.stop();
+    }
 }
 
 /// Stop fetching, release every dispatch target and drain the blocking pool.
@@ -432,14 +368,13 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
     std::thread::Builder::new()
         .name("flz-host-stop".into())
         .spawn(move || {
-            let deadline = std::time::Instant::now() + DRAIN_TIMEOUT;
-            while LIVE_FETCHERS.load(Ordering::Acquire) > 0 && std::time::Instant::now() < deadline
-            {
+            let deadline = std::time::Instant::now() + poll_pool::DRAIN_BOUND;
+            while fetchers() > 0 && std::time::Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }
             // Only now: a fetcher leaving early on this flag would take the
             // last poller the shutdown sequence needs with it.
-            CLOSING.store(true, Ordering::Release);
+            stop_fetching();
             // Releasing every target un-refs the loops the host was keeping
             // alive, so a drained runner's process can exit on its own. What
             // a target still held is abandoned rather than left to retire its
@@ -450,7 +385,7 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
                 abandon_held_by(id);
             }
             let pool = blocking_pool();
-            pool.drain(DRAIN_TIMEOUT);
+            pool.drain(poll_pool::DRAIN_BOUND);
             pool.close();
             deferred.resolve(|_| Ok(()));
         })
@@ -492,8 +427,8 @@ pub struct JsHostStats {
 pub fn host_stats() -> JsHostStats {
     let (pool_size, pool_busy, pool_peak, pool_queued) = blocking_pool().snapshot();
     JsHostStats {
-        fetchers: LIVE_FETCHERS.load(Ordering::Acquire) as u32,
-        fetcher_ceiling: FETCHER_CEILING.load(Ordering::Acquire) as u32,
+        fetchers: fetchers() as u32,
+        fetcher_ceiling: governor().map_or(0, |g| g.ceiling) as u32,
         dispatch_loops: targets().len() as u32,
         pool_size,
         pool_busy,

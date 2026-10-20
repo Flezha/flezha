@@ -423,10 +423,13 @@ activation over as a message, the worker runs your tasklet and completes it, and
 does the thread poll again, so no wait for an activation holds a BEAM scheduler. The core
 never hands out two activations for one Cell at once, however many workers there are.
 
-- `FLEZHA_WORKER_POOL_SIZE` / `worker_pool_size`: The workers a runner starts with.
-- `FLEZHA_WORKER_POOL_MAX` / `worker_pool_max`: The most it grows to when the core reports every worker held.
-
-Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
+How many workers is the core's pool governor's
+([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)), over the
+schedulers online as this runtime's base: its supervisor, a thread of the native library, asks
+the pool process for each worker, one more when the core reports every worker held, and a
+grown worker's thread stops it after the governor's idle time. `FLEZHA_WORKER_POOL_SIZE` and
+`FLEZHA_WORKER_POOL_MAX` size it; their types and defaults are in
+[Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 A worker that crashes is replaced, and the activation it held is failed back to the core's
 retry ladder. A tasklet that raises, throws or answers `{:error, _}` retries up to

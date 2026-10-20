@@ -76,8 +76,6 @@ use flz_core::ErrorModel;
 
 /// Poll produced an activation; the out buffer holds its encoded bytes.
 pub const FLZ_POLL_ACTIVATION: i32 = 1;
-/// The starvation wait observed starvation: the host owes a thread.
-pub const FLZ_STARVATION_OBSERVED: i32 = 1;
 /// Poll timed out with no work.
 pub const FLZ_POLL_TIMEOUT: i32 = 0;
 /// The context is shutting down; every blocked poller is released.
@@ -149,6 +147,8 @@ pub struct FlzContext {
     /// The spawn handles of every outstanding activation, by number.
     spawns: DashMap<u64, Arc<Mutex<SpawnHandle>>>,
     last_spawn: AtomicU64,
+    /// The poll-worker pool [`flz_core_pool_open`] opened last.
+    pool: Mutex<Option<Arc<flz_core::poll_pool::Governor>>>,
 }
 
 /// Where a registered sink's releases go: the host takes them back through

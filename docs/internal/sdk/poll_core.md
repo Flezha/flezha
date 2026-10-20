@@ -63,15 +63,27 @@ and take the cap like a flow relay's.
 
 **The SDK brings the threads**, with whatever its runtime does best. The count
 is a servicing detail, not a limit on concurrency — that limit is the core's
-one number. The shipped hosts differ completely and none knows about the
-others:
+one number. **How many is the core's pool governor's** (`flz_core::poll_pool`),
+one policy for every host: the base and the ceiling from
+`FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX` (ten times the base,
+never below it) over the default base the host passes; a poll turn of 250 ms;
+a supervisor that parks in the starvation wait for at most 1 s and answers
+each observation with one more worker up to the ceiling and a pool below its
+base with a replacement; a worker above the base retired after 30 s of
+timed-out polls; and a drain bound of 5 s. A Rust host (the Rust SDK, the Node
+addon's fetchers, the Elixir NIF's pollers) hands the governor a `Spawner`; a
+C ABI host (Python, Ruby, PHP, Java) opens the pool with `flz_core_pool_open`,
+answers `flz_core_pool_supervise` from a thread of its own and gives a seat
+back with `flz_core_pool_left`. A host keeps only how it spawns a worker and
+what the worker runs. The hosts differ completely in that and none knows about
+the others:
 
 | Host | Threading model | Knobs |
 | ---- | --------------- | ----- |
 | Rust | A base pool of poll workers plus one supervisor thread parked in the core's **starvation wait**. Each observation spawns one more worker up to the ceiling; workers above the base retire after an idle streak, so a workload that never starves observes exactly the base pool. | `FLEZHA_WORKER_POOL_SIZE` (default: available parallelism, 2 if unknown), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
-| Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`), plus one platform **supervisor** thread parked in the starvation wait that starts one more fetcher per observation, up to the ceiling. | `FLEZHA_WORKER_POOL_SIZE` (default 2, `FlezhaEnv.DEFAULT_FETCHER_COUNT`), `FLEZHA_WORKER_POOL_MAX` (default 10× the count, never below it) |
+| Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`), plus one platform **supervisor** thread parked in the starvation wait that starts one more fetcher per observation, up to the ceiling. | `FLEZHA_WORKER_POOL_SIZE` (default 2), `FLEZHA_WORKER_POOL_MAX` (default 10× the count, never below it) |
 | Node | Java's shape, with a hard constraint where Java has a choice. Native fetcher threads the SDK owns — never libuv's shared pool — loop `poll → decode → hand off → poll` and hand each activation to one **event loop**: the main one by default, or one of N `worker_threads`. Blocking calls run on a **growable** native pool, because `complete` parks under `DropNothing` and a fixed pool whose every thread parks pushing to one consumer has no thread left for the completion that would drain it. One supervisor parks in the starvation wait. | `FLEZHA_NODE_WORKERS` (default 0 = the main loop), `FLEZHA_WORKER_POOL_SIZE` (default 2), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
-| PHP | Two shapes behind one seam, because a stock PHP process runs one thread of PHP code and only a thread-safe build lifts it. `SyncExecutor` (the default) loops `poll → dispatch → complete` on the calling thread — one loop, no supervisor, and cores come from more processes. `SwooleExecutor` runs the same loop on a pool of `Swoole\Thread`s over one shared context, each thread bootstrapping the entry script and *attaching* to the context by its address; the main thread is the supervisor, parked in the starvation wait, and adds a thread per observation. | `FLEZHA_PHP_EXECUTOR` (`sync` — the default — or `swoole`), `FLEZHA_MAX_ACTIVATIONS` (default unlimited) |
+| PHP | Two shapes behind one seam, because a stock PHP process runs one thread of PHP code and only a thread-safe build lifts it. `SyncExecutor` (the default) loops `poll → dispatch → complete` on the calling thread — one loop, no supervisor, and cores come from more processes. `SwooleExecutor` runs the same loop on a pool of `Swoole\Thread`s over one shared context, each thread bootstrapping the entry script and *attaching* to the context by its address; the main thread is the supervisor, parked in the starvation wait, and adds a thread per observation. | `FLEZHA_PHP_EXECUTOR` (`sync` — the default — or `swoole`), `FLEZHA_MAX_ACTIVATIONS` (default unlimited); under `swoole`, `FLEZHA_WORKER_POOL_SIZE` (default 1), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
 | Ruby | The Rust host's shape, because MRI's situation is the Rust host's: an MRI thread is a real OS thread with a real stack, so hand-off would buy nothing and cost a thread per activation. A base pool of Ruby threads each loop `poll → dispatch → complete` **on themselves**, plus one supervisor parked in the starvation wait. Every blocking core call runs with the **GVL released**, so the lock bounds the handler body and nothing else. An opt-in `Fiber::Scheduler` executor hands off through a `Thread::Queue`, with the fetcher still a real thread. | `FLEZHA_WORKER_POOL_SIZE` (default: the machine's processor count), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it), `FLEZHA_RUBY_EXECUTOR` (`threads` — the default — or `fibers`) |
 | Python | The Rust host's shape, for the reason CPython's situation is the Rust host's: a CPython thread is a real OS thread with a real stack, so hand-off would buy nothing and cost a thread per activation. A base pool of Python threads each loop `poll → dispatch → complete` **on themselves**, plus one supervisor parked in the starvation wait. Every blocking core call runs with the **GIL released**, so the lock bounds the handler body and nothing else — and the free-threaded wheel tier lifts even that. An opt-in asyncio executor hands each activation to one shared loop through `run_coroutine_threadsafe`, with the fetcher still a real thread and the completion on the loop thread; the supervisor's answer under *either* executor is one more fetch-and-run thread, because a stalled loop cannot rescue itself. | `FLEZHA_WORKER_POOL_SIZE` (default: the machine's processor count), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it), `FLEZHA_PYTHON_EXECUTOR` (`thread` — the default — or `asyncio`) |
 
@@ -91,7 +103,7 @@ what carries ingress backpressure to the controller. See "Backpressure without
 holding a thread" below.
 
 **A poll host brings a supervisor.** Not "may": a host that ships a fixed
-worker count and never parks a thread in `wait_starvation` has no answer at all
+worker count and runs no supervisor has no answer at all
 when every worker is held — it processes nothing, recovers from nothing, and
 reports nothing. Java shipped exactly that shape and measured 0 of 20 payloads
 delivered against a consumer nobody was draining; with the supervisor the same
@@ -106,10 +118,10 @@ thread about to take work. So a poller that blocks anywhere inside `poll` both
 stops the runner and hides that it has, which is why nothing on the poll path
 may wait for anything (see the deferred-wake list below).
 
-Starvation is exposed as a blocking wait a host thread may park in
-(`PollCore::wait_starvation`, C ABI `flz_core_wait_starvation`), never as a
-callback: the core calls no host code, and a host that cannot starve simply
-never calls it. It answers in the same three-way shape as `poll` —
+Starvation is exposed as a blocking wait a thread may park in
+(`PollCore::wait_starvation`, which the governor's supervisor parks in; a C ABI
+host reaches it through `flz_core_pool_supervise`), never as a callback: the
+core calls no host code. It answers in the same three-way shape as `poll` —
 `Observed` / `Timeout` / `ShuttingDown` — so a supervisor loop is structurally
 a worker loop and ends with the runner.
 
@@ -351,7 +363,8 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | `flz_core_schema_version`, `flz_core_context_new`, `flz_core_init_error`, `flz_core_last_error` | Version negotiation and error text |
 | `flz_core_error_document` | The JSON error document the catalogue renders for a code and its details: how a host renders a refusal it makes itself |
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
-| `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
+| `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_buf_free` | The loop |
+| `flz_core_pool_open`, `flz_core_pool_supervise`, `flz_core_pool_left` | The pool governor: its policy over the host's default base, one decision per supervisor wait (`FLZ_POOL_IDLE` 0, `FLZ_POOL_SPAWN_BASE` 1, `FLZ_POOL_STOP` 2, `FLZ_POOL_SPAWN_GROWN` 3; a spawn answer has reserved its seat), and a seat given back |
 | `flz_core_spawn_request`, `flz_core_spawn_result` | Tasklet-requested spawn: a request that answers a handle at once, and a read of that handle with a timeout (0 never waits) |
 | `flz_core_part` | A part of the invocation of work item `item` of the live activation `token`: numbered, stamped and written at once, never waited on. `FLZ_OK` for a part sent or dropped; `FLZ_ERR` with `part.no_output` or `part.outside_invocation` (a token no longer outstanding, an item it does not hold) |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
@@ -390,8 +403,8 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 - `flz_core_poll` blocks up to its timeout and answers `FLZ_POLL_ACTIVATION`
   (1), `FLZ_POLL_TIMEOUT` (0) or `FLZ_POLL_SHUTTING_DOWN` (2); **shutdown wakes
   every blocked poller promptly** with that distinguishable status.
-  `flz_core_wait_starvation` answers `FLZ_STARVATION_OBSERVED` (1) in the same
-  shape. Unpolled work follows the durability rules (journaled
+  `flz_core_pool_supervise` answers `FLZ_POOL_STOP` (2) then. Unpolled work
+  follows the durability rules (journaled
   controller-side, re-forwarded on the next bind).
 - Ownership: whoever allocates frees. Activation buffers the core hands out are
   freed with `flz_core_buf_free`.
@@ -512,10 +525,10 @@ rather than a review.
 
 Two things differ from the Java binding, both following from the event loop:
 
-1. **`poll` and `wait_starvation` are not exported to JavaScript.** They are
-   driven from native fetcher threads inside the binding, which is also what
-   keeps them off the runtime's shared I/O threadpool — four threads that
-   `fs`, `dns` and `crypto` also use.
+1. **`poll` and the pool entries are not exported to JavaScript.** Native
+   fetcher threads inside the binding poll, sized by the governor, which is
+   also what keeps them off the runtime's shared I/O threadpool — four threads
+   that `fs`, `dns` and `crypto` also use.
 2. **The activation is decoded on the Rust side** and reaches JavaScript as a
    structured object rather than bytes, so the SDK carries no second
    implementation of the postcard contract. Payload `Vec`s move into `Buffer`s

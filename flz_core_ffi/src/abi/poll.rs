@@ -1,15 +1,17 @@
-//! Polling activations and answering them, and the calls an outstanding
-//! activation makes inside its invocation.
+//! Polling activations and answering them, the pool of workers that poll,
+//! and the calls an outstanding activation makes inside its invocation.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
-use flz_core::poll_core::{Polled, Starvation};
+use flz_core::poll_core::Polled;
+use flz_core::poll_pool::{self, Governor, Supervise};
 use flz_core::schema;
+use flz_core::util::LockRecover;
 
 use crate::{
     hand_out, Error, FlzContext, Outstanding, FLZ_ERR, FLZ_OK, FLZ_POLL_ACTIVATION,
-    FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT, FLZ_STARVATION_OBSERVED,
+    FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
 };
 
 /// Block for up to `timeout_ms` for one activation. On
@@ -46,29 +48,83 @@ pub unsafe extern "C" fn flz_core_poll(
     }
 }
 
-/// Block for up to `timeout_ms` until the core observes starvation: work has
-/// been queued (or a deferred wake is due) with no thread inside `poll` and
-/// the jobs-underway cap not reached. Answers in the same three-way shape as
-/// [`flz_core_poll`] — [`FLZ_STARVATION_OBSERVED`], [`FLZ_POLL_TIMEOUT`], or
-/// [`FLZ_POLL_SHUTTING_DOWN`] — so a supervisor loop ends with the runner.
+/// [`flz_core_pool_supervise`]: nothing to spawn this wait.
+pub const FLZ_POOL_IDLE: i32 = 0;
+/// Spawn a worker that never retires, into the seat already reserved for it.
+pub const FLZ_POOL_SPAWN_BASE: i32 = 1;
+/// The pool is over; the supervisor leaves.
+pub const FLZ_POOL_STOP: i32 = 2;
+/// Spawn a worker that leaves after the retire time of timed-out polls, into
+/// the seat already reserved for it.
+pub const FLZ_POOL_SPAWN_GROWN: i32 = 3;
+
+/// Open this context's poll-worker pool over the host's own `default_base`
+/// and write its policy to `policy_out`: the base, the ceiling, then the poll
+/// timeout, retire time and drain bound in milliseconds. The base and the
+/// ceiling come from `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX`.
+/// The base seats are taken: the host spawns `base` workers next. A second
+/// open replaces the pool.
 ///
-/// For hosts whose fetch threads can be occupied by user code: they grow
-/// their pool on an observation. A host that hands every activation to a
-/// cheap concurrency primitive (virtual threads, goroutines, an event loop)
-/// returns to `poll` immediately and never needs to call this.
+/// # Safety
+/// `ctx` must be live; `policy_out` must point at five writable `u32`s.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_pool_open(
+    ctx: *mut FlzContext,
+    default_base: u32,
+    policy_out: *mut [u32; 5],
+) -> i32 {
+    live!(ctx);
+    let Some(policy_out) = policy_out.as_mut() else {
+        return FLZ_ERR;
+    };
+    let governor = Governor::from_env(default_base.max(1) as usize);
+    let ms = |d: Duration| d.as_millis() as u32;
+    let (base, ceiling) = (governor.base as u32, governor.ceiling as u32);
+    let retire = ms(governor.retire_after);
+    *policy_out = [
+        base,
+        ceiling,
+        ms(poll_pool::POLL_TIMEOUT),
+        retire,
+        ms(poll_pool::DRAIN_BOUND),
+    ];
+    *ctx.pool.lock_recover() = Some(governor);
+    FLZ_OK
+}
+
+/// The pool's next decision, at most the supervisor wait (1 s) away:
+/// [`FLZ_POOL_SPAWN_GROWN`], [`FLZ_POOL_SPAWN_BASE`] (a worker that left is
+/// replaced), [`FLZ_POOL_IDLE`] or [`FLZ_POOL_STOP`], which a context with no
+/// open pool answers too. A spawn answer has reserved its seat; a spawn that
+/// fails gives it back through [`flz_core_pool_left`].
 ///
 /// # Safety
 /// `ctx` must be a live pointer from [`flz_core_context_new`].
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_wait_starvation(ctx: *mut FlzContext, timeout_ms: u64) -> i32 {
-    if ctx.is_null() {
-        return FLZ_ERR;
+pub unsafe extern "C" fn flz_core_pool_supervise(ctx: *mut FlzContext) -> i32 {
+    live!(ctx);
+    let Some(governor) = ctx.pool.lock_recover().clone() else {
+        return FLZ_POOL_STOP;
+    };
+    match governor.supervise(flz_core::poll_core::global()) {
+        Supervise::Spawn { grown: true } => FLZ_POOL_SPAWN_GROWN,
+        Supervise::Spawn { grown: false } => FLZ_POOL_SPAWN_BASE,
+        Supervise::Idle => FLZ_POOL_IDLE,
+        Supervise::Stop => FLZ_POOL_STOP,
     }
-    match flz_core::poll_core::global().wait_starvation(Duration::from_millis(timeout_ms)) {
-        Starvation::Observed => FLZ_STARVATION_OBSERVED,
-        Starvation::Timeout => FLZ_POLL_TIMEOUT,
-        Starvation::ShuttingDown => FLZ_POLL_SHUTTING_DOWN,
+}
+
+/// Give back one seat: a worker that left, or a spawn that failed.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`flz_core_context_new`].
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_pool_left(ctx: *mut FlzContext) -> i32 {
+    live!(ctx);
+    if let Some(governor) = ctx.pool.lock_recover().as_ref() {
+        governor.left();
     }
+    FLZ_OK
 }
 
 /// Complete an activation with an encoded [`schema::ActivationResult`].

@@ -514,11 +514,15 @@ All three are checked by `Executors::swoole()` before the runner connects, and
 the failure names what is missing and how to get it.
 `docker/dev/Dockerfile.php --target zts` builds an image with all three.
 
-The pool starts at one thread and grows on the core's own signal rather than a
-guess: a supervisor blocks in `flz_core_wait_starvation` — which answers when
-work is queued and no thread is inside `poll`, precisely a PHP thread sitting
-inside a user's PDO call — and adds a thread per observation up to
-`swoole_cpu_num()`.
+How many threads is the core's pool governor's
+([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)),
+over this host's base of one: the main thread is the supervisor, blocked in
+`flz_core_pool_supervise` — whose starvation wait answers when work is queued
+and no thread is inside `poll`, precisely a PHP thread sitting inside a user's
+PDO call — and starts the thread each answer asks for. A grown thread leaves
+after the governor's idle time. The supervisor gives back the seat of every
+thread it finds ended, because a fatal error ends a thread with no `finally`
+run.
 
 **That growth rule is why the threaded arm is not a free win, and the numbers
 say so.** Measured with `mix bench --runtime php`, arms interleaved on one

@@ -347,8 +347,7 @@ fn read_bytes(what: &str, value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
-// The context object. Every method below corresponds to exactly one C entry
-// point.
+// The context object: every method below is exactly one C entry point.
 // ---------------------------------------------------------------------------
 
 /// The one context this host holds, as an opaque Python object.
@@ -407,8 +406,7 @@ impl Core {
         }
     }
 
-    /// Declare one host class from its JSON declaration. Raises the core's
-    /// refusal.
+    /// Declare one host class from its JSON declaration; raises the core's refusal.
     fn declare_class(&self, json: &[u8]) -> PyResult<()> {
         Ok(veneer::declare_class(self.ptr()?, json)?)
     }
@@ -507,12 +505,18 @@ impl Core {
         }
     }
 
-    /// Park up to `timeout_ms` until the core observes starvation. Answers the
-    /// ABI's three-way status directly (`1` observed, `0` timeout, `2` shutting
-    /// down), so a supervisor loop allocates nothing per park.
-    fn wait_starvation(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<i32> {
+    /// The pool's policy over this host's default base, in `flz_core_pool_open`'s order.
+    fn pool_open(&self, default_base: u32) -> PyResult<[u32; 5]> {
+        Ok(veneer::pool_open(self.ptr()?, default_base)?)
+    }
+
+    fn pool_supervise(&self, py: Python<'_>) -> PyResult<i32> {
         let ctx = self.ptr()?;
-        Ok(py.detach(move || veneer::wait_starvation(ctx, timeout_ms))?)
+        Ok(py.detach(move || veneer::pool_supervise(ctx))?)
+    }
+
+    fn pool_left(&self) -> PyResult<()> {
+        Ok(veneer::pool_left(self.ptr()?)?)
     }
 
     /// Answer one activation. Blocking: under the default `DropNothing`

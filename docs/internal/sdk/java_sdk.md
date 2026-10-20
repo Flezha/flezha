@@ -132,15 +132,18 @@ thread per activation runs the dispatch, encodes the result and calls
 `complete` itself. Fetchers stay platform threads because `FlzCore.poll` blocks
 in native code and a native frame pins its carrier.
 
-One platform **supervisor** thread parks in `FlzCore.waitStarvation` and starts
-one more fetcher on every `STARVATION_OBSERVED`, up to a ceiling. It is not
-optional: a virtual thread parked inside `complete` — pushing into a consumer
-nobody is draining — holds its fetcher's handout, and with every fetcher held
-the runner processes nothing and reports nothing. Without the supervisor that
-probe delivered 0 of 20 payloads and stayed wedged. Growth is self-limiting:
-each new fetcher's own `poll` entry restarts the core's dwell. What it does not
-buy is a thread against user code that never returns — that is the conformance
-`pool_wedge` condition, and no ceiling outruns it.
+How many fetchers is the core's pool governor's
+([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)),
+over this host's base of 2: a fetcher never runs user code, so two saturate the
+core's handout. One platform **supervisor** thread answers
+`FlzCore.poolSupervise` and starts the fetcher each answer asks for; a grown
+fetcher retires after the governor's idle time. It is not optional: a virtual
+thread parked inside `complete` — pushing into a consumer nobody is draining —
+holds its fetcher's handout, and with every fetcher held the runner processes
+nothing and reports nothing. Without the supervisor that probe delivered 0 of
+20 payloads and stayed wedged. What it does not buy is a thread against user
+code that never returns — that is the conformance `pool_wedge` condition, and
+no ceiling outruns it.
 
 **With `FLEZHA_DROP_NOTHING_NONPARKING` on, `complete` does not park on a full
 consumer** (the switch is off by default during rollout). The kernel holds an
@@ -153,14 +156,10 @@ are minted by `flz_core`'s heartbeat, which this SDK also uses unchanged. The st
 supervisor stays exactly as load-bearing: with the flag off it is still the only
 rescue, and it is what the holdback's bound falls back on.
 
-- `FLEZHA_WORKER_POOL_SIZE`: Fetchers started at boot.
-- `FLEZHA_WORKER_POOL_MAX`: Ceiling the supervisor may grow to.
-
-Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
-
-Every growth is logged at `INFO`; the first refusal at the ceiling is logged at
-`WARN` and latched, so a sustained wedge names itself once instead of once a
-second.
+`FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX` size it; their types
+and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
+The governor's notices, a replaced fetcher and the first refusal at the
+ceiling (latched), reach this SDK's logger through the supervisor.
 
 ## Diagnostics
 

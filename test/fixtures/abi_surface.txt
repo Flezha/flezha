@@ -36,6 +36,9 @@ flz_core_local_stop
 flz_core_monotonic_nanos
 flz_core_part
 flz_core_poll
+flz_core_pool_left
+flz_core_pool_open
+flz_core_pool_supervise
 flz_core_relays
 flz_core_response_decode
 flz_core_schema_version
@@ -48,5 +51,4 @@ flz_core_start
 flz_core_start_with
 flz_core_take_notices
 flz_core_undeclare_class
-flz_core_wait_starvation
 flz_core_watch_stdin_eof

@@ -9,7 +9,7 @@
 use std::ffi::CString;
 
 use jni::objects::{JByteArray, JClass, JIntArray, JString, JThrowable, JValue};
-use jni::sys::{jboolean, jbyteArray, jint, jlong, jlongArray, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use jni::JNIEnv;
 
 use crate::veneer::{self, with_buffer, CtxPtr, Refusal};
@@ -308,24 +308,45 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poll(
     }
 }
 
-/// Park up to `timeout_ms` until the core observes starvation. Answers the
-/// ABI's three-way status directly (`1` observed, `0` timeout, `2` shutting
-/// down) rather than an object, so a supervisor loop costs one JNI call per
-/// park and allocates nothing.
+/// Open the context's poll-worker pool and write its policy into `policy`:
+/// base, ceiling, poll timeout, retire time and drain bound, in that order.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_waitStarvation(
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poolOpen(
     mut env: JNIEnv,
     _class: JClass,
     ctx: jlong,
-    timeout_ms: jlong,
+    default_base: jint,
+    policy: JIntArray,
+) {
+    let opened = veneer::pool_open(ctx_of(ctx), default_base.max(1) as u32).and_then(|p| {
+        env.set_int_array_region(&policy, 0, &p.map(|f| f as jint))
+            .map_err(|e| Refusal::Shape(format!("pool policy unwritable: {e}")))
+    });
+    report(&mut env, opened);
+}
+
+/// The pool's next decision as the ABI's status, so a supervisor loop costs
+/// one JNI call per answer and allocates nothing.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poolSupervise(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
 ) -> jint {
-    match veneer::wait_starvation(ctx_of(ctx), timeout_ms.max(0) as u64) {
-        Ok(status) => status,
-        Err(refusal) => {
-            throw(&mut env, &refusal);
-            FLZ_POLL_TIMEOUT
-        }
-    }
+    veneer::pool_supervise(ctx_of(ctx)).unwrap_or_else(|refusal| {
+        throw(&mut env, &refusal);
+        crate::FLZ_POOL_IDLE
+    })
+}
+
+/// Give back one seat of the pool: a fetcher that left, or one that never started.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poolLeft(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+) {
+    report(&mut env, veneer::pool_left(ctx_of(ctx)));
 }
 
 /// Complete an activation with a postcard-encoded `ActivationResult`.

@@ -392,43 +392,41 @@ pool is, and four processes serve about 800.
 ## The threading host
 
 A base pool of Ruby threads, each looping `poll -> dispatch -> complete` on
-itself, plus one supervisor parked in the core's starvation wait. Each
-starvation observation starts one more worker up to a ceiling; workers above
-the base retire after an idle streak.
-
-- `FLEZHA_WORKER_POOL_SIZE`: Base workers.
-- `FLEZHA_WORKER_POOL_MAX`: The ceiling.
-
-Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
-
-These are the Rust host's knobs, deliberately: this host is the Rust host's
-model, and a second vocabulary for the same decision makes a fleet harder to
-reason about. The SDK introduces no additional pool knob.
+itself, plus one supervisor thread that answers the core's pool governor
+(`pool_supervise`, at most a second apart), starts the worker each answer asks
+for and writes the core's notices on every answer. How many workers is the
+governor's ([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)),
+over this host's base of the processor count; a grown worker leaves after the
+governor's idle time. `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX`
+size it; their types and defaults are in
+[Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
+The SDK introduces no pool knob of its own.
 
 Java's hand-off model is not used here, and the reason is the reason behind
 both shipped hosts. Java hands each activation to a virtual thread because a
 parked virtual thread costs a stack and nothing else — which is also exactly
-why Java never starves and never calls `wait_starvation`. An MRI thread is a
+why Java's fetchers never wait on user code. An MRI thread is a
 real OS thread with a real stack, so hand-off would buy nothing and cost a
 thread per activation up to the core's in-flight cap.
 
 ### The GVL, and the interrupt bound
 
-Every blocking core call — `poll`, `wait_starvation` and `complete` — runs
+Every blocking core call — `poll`, `pool_supervise` and `complete` — runs
 with the GVL released, through one function in the veneer. `poll` is the sharp
 one: a poller waiting on an idle core with the lock held would freeze every
 other thread in the VM, fetchers included.
 
 `flz_core_shutdown` wakes *every* poller, so the ABI has no per-thread wake and
 none is in scope to add. Each `poll` is therefore bounded by a timeout, and
-that timeout — **250 ms** — is the documented upper bound on how quickly
+that timeout — the governor's **250 ms** — is the documented upper bound on how quickly
 `Thread#kill`, `Interrupt` and runner close are observed. A stated bound, not
 an accident.
 
 ### The drain is bounded
 
 Shutdown — a signal, closed standard input, or the controller's own stop —
-drains what is in flight and then exits. That drain is bounded at **5 seconds**,
+drains what is in flight and then exits. That drain is bounded at the
+governor's **5 seconds**,
 and the bound is not a nicety: a handler that never returns holds its worker
 forever, so an unbounded drain means a runner that never leaves, and a harness
 or orchestrator that stops runners by closing their pipes leaks a process per
@@ -452,7 +450,10 @@ The fiber executor keeps a real thread fetching — `poll` blocks in native code
 and fetching on a runtime's shared I/O pool starves everything else that pool
 serves — and hands activations to fibers through a `Thread::Queue`, which is
 scheduler-aware. It needs a `Fiber::Scheduler`: add the `async` gem, or pass
-`executor(:fibers, scheduler: -> { MyScheduler.new })`.
+`executor(:fibers, scheduler: -> { MyScheduler.new })`. It answers the same
+governor: a base seat is a fetcher, and a grown seat a worker that dispatches
+on itself, because a scheduler stalled in a parked completion cannot rescue
+itself.
 
 **No executor may observe or affect per-cell ordering.** Exclusivity is the
 core's handout guarantee — one outstanding activation per Cell — and an
@@ -493,8 +494,8 @@ hard runtime requirement, and the gem installs and runs without it.
 The default logger writes to standard error at `warn` and above; set
 `FLEZHA_LOG_LEVEL` or pass `runner.logger(your_logger)`. A logger needs only
 `debug` / `info` / `warn` / `error`. The core's notices reach the same logger,
-written by the starvation supervisor on each wake (by a thread of its own under
-the fiber executor) and when a run stops; the local-mode banner at `error`.
+written by the pool supervisor on each answer, under either executor, and when
+a run stops; the local-mode banner at `error`.
 
 The startup line reports the executor, the worker count and the resulting JIT
 state, so a measurement can never be ambiguous about which it was taken under.

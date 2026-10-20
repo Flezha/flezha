@@ -42,7 +42,7 @@ struct Pool {
 
 impl Pool {
     fn live(&self) -> usize {
-        self.governor.live.load(Ordering::Acquire)
+        self.governor.live()
     }
 }
 
@@ -95,6 +95,31 @@ fn supervise_grows_to_the_ceiling_and_a_departure_frees_headroom() {
     assert_eq!(governor.supervise(&core), Supervise::Stop);
 }
 
+/// A pool held at its ceiling says so once, not once per wait.
+#[test]
+fn a_starving_pool_at_its_ceiling_says_so_once() {
+    const NAME: &str = "poll_pool::tests::a_starving_pool_at_its_ceiling_says_so_once";
+    if crate::test_support::passes_alone(NAME).is_some() {
+        return;
+    }
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let into = Arc::clone(&seen);
+    flz_transport::notice::set_hook(Box::new(move |_, _, text| {
+        into.lock().unwrap().push(text.to_string());
+    }));
+    let core = PollCore::new();
+    let governor = Governor::new(1, 1, RETIRE_AFTER);
+    let (_i, slot) = build_slot("poll-pool-at-ceiling");
+    push_input(&core, &slot, 1);
+
+    for _ in 0..3 {
+        assert_eq!(governor.supervise(&core), Supervise::Idle);
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert!(seen[0].contains("ceiling of 1"), "{seen:?}");
+}
+
 /// A shrunken pool that still keeps up starves nobody, so no starvation
 /// signal would ever replace a dead worker: the supervisor restores the base
 /// on its own, every missing seat back to back rather than one per wait.
@@ -112,12 +137,23 @@ fn supervise_restores_a_short_pool_without_waiting_between_seats() {
         started.elapsed() < SUPERVISOR_WAIT / 2,
         "the second missing seat waited for a supervisor turn"
     );
-    assert_eq!(governor.live.load(Ordering::Acquire), 2);
+    assert_eq!(governor.live(), 2);
     assert_eq!(
         governor.supervise(&core),
         Supervise::Idle,
         "the base is whole"
     );
+}
+
+/// A host whose pool ends while the core runs on, as a local run's does,
+/// gets `Stop`, and a short pool is not topped up behind its drain.
+#[test]
+fn a_stopped_pool_answers_stop_while_the_core_runs_on() {
+    let core = PollCore::new();
+    let governor = Governor::new(1, 2, RETIRE_AFTER);
+    governor.left();
+    governor.stop();
+    assert_eq!(governor.supervise(&core), Supervise::Stop);
 }
 
 /// The whole point of the adaptive pool: with every base worker blocked in
@@ -168,7 +204,7 @@ fn a_worker_that_unwinds_frees_its_seat() {
 
     assert!(died.is_err(), "the worker really did unwind");
     assert_eq!(
-        governor.live.load(Ordering::Acquire),
+        governor.live(),
         1,
         "an unwinding worker must release its seat"
     );

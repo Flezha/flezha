@@ -19,9 +19,8 @@ use flz_core::schema;
 pub use flz_transport::notice;
 
 use crate::{
-    FlzContext, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN, FLZ_EFFECT_UNRECORDED, FLZ_OK,
+    FlzContext, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN, FLZ_EFFECT_UNRECORDED, FLZ_ERR, FLZ_OK,
     FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT, FLZ_SPAWN_PENDING,
-    FLZ_STARVATION_OBSERVED,
 };
 
 /// Which bindings reach an entry beside a host that binds the C ABI itself,
@@ -106,7 +105,9 @@ pub const SURFACE: &[Entry] = surface![
     (local_run_until_idle, true, Every),
     (local_stop, false, Every),
     (poll, true, Every),
-    (wait_starvation, true, Every),
+    (pool_open, false, Every),
+    (pool_supervise, true, Every),
+    (pool_left, false, Every),
     (complete, true, Every),
     (abandon, false, Every),
     (shutdown, false, Every),
@@ -308,16 +309,25 @@ pub fn poll(ctx: CtxPtr, timeout_ms: u64) -> Result<Polled<schema::Activation>, 
     }
 }
 
-/// Park up to `timeout_ms` for a starvation observation; answers the ABI's
-/// three-way status (`FLZ_STARVATION_OBSERVED`, `FLZ_POLL_TIMEOUT`,
-/// `FLZ_POLL_SHUTTING_DOWN`) so a supervisor loop allocates nothing per park.
-pub fn wait_starvation(ctx: CtxPtr, timeout_ms: u64) -> Result<i32, Refusal> {
-    match unsafe { crate::flz_core_wait_starvation(ctx.get(), timeout_ms) } {
-        status @ (FLZ_STARVATION_OBSERVED | FLZ_POLL_TIMEOUT | FLZ_POLL_SHUTTING_DOWN) => {
-            Ok(status)
-        }
-        _ => Err(core(ctx)),
+/// Open the context's poll-worker pool over the host's `default_base`: its
+/// policy in [`crate::flz_core_pool_open`]'s order.
+pub fn pool_open(ctx: CtxPtr, default_base: u32) -> Result<[u32; 5], Refusal> {
+    let mut policy = [0; 5];
+    let status = unsafe { crate::flz_core_pool_open(ctx.get(), default_base, &mut policy) };
+    verdict(ctx, status).map(|()| policy)
+}
+
+/// The pool's next decision as the ABI's status (`FLZ_POOL_*`), so a
+/// supervisor loop allocates nothing per answer.
+pub fn pool_supervise(ctx: CtxPtr) -> Result<i32, Refusal> {
+    match unsafe { crate::flz_core_pool_supervise(ctx.get()) } {
+        FLZ_ERR => Err(core(ctx)),
+        status => Ok(status),
     }
+}
+
+pub fn pool_left(ctx: CtxPtr) -> Result<(), Refusal> {
+    verdict(ctx, unsafe { crate::flz_core_pool_left(ctx.get()) })
 }
 
 pub fn complete(ctx: CtxPtr, result: &schema::ActivationResult) -> Result<(), Refusal> {

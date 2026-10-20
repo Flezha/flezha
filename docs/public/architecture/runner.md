@@ -277,7 +277,9 @@ An SDK other than Rust reaches the kernel through `flz_core_ffi`
    whose runtime keeps its own copy of the environment hands the connection
    settings, the wait among them, to `flz_core_start_with` instead.
 4. `flz_core_poll` and `flz_core_complete` (or `flz_core_abandon`), from any
-   thread. A host that can starve also calls `flz_core_wait_starvation`.
+   thread, on the workers the pool governor asks for: `flz_core_pool_open`,
+   then `flz_core_pool_supervise` from a thread of its own and
+   `flz_core_pool_left` as each worker leaves.
    `flz_core_declare_class` and `flz_core_undeclare_class` stay legal: after
    start the core sends the controller the runner's full factory set, and the
    runner's coordinator refuses to undeclare a class while instances of it
@@ -318,7 +320,9 @@ per SDK.
 The surface you write against (tasklets, the graph builder), the state and
 channel codecs, how the poll loop fits the language's concurrency, errors in
 the language's own style, and the test harness. This is the code that should
-feel native.
+feel native. How many poll workers run is not on that list: the core's pool
+governor sizes every SDK's pool by one policy, and a host keeps only how it
+spawns a worker and what the worker runs.
 
 What a host keeps beside that is small: a registry its executor serves from,
 which a factory change after start updates as it tells the core, and handing
@@ -387,13 +391,14 @@ The rules every SDK follows:
   derivation rules. A new refusal is one variant and one fixture row, not an
   edit to seven builders.
 - **A host that brings its own workers replaces them.** A worker that leaves
-  for any reason other than shutdown is replaced without user action. Every
+  for any reason other than shutdown is replaced without user action: the
+  governor answers the next supervisor wait with a replacement. Every
   activation a host takes is answered exactly once (complete, fail or
   abandon) through a guard that also runs when the code unwinds, because an
   unanswered activation keeps its cell reserved for the life of the process.
-  A host with a worker set also runs a **starvation supervisor**: one thread
-  parked in `wait_starvation` that starts one more worker per observation, up
-  to a declared ceiling. Rust, Java, Node, Ruby, Python, Elixir and the PHP
+  A host with a worker set also runs the governor's **supervisor**: one
+  thread whose wait on the core's starvation signal answers one more worker
+  per observation, up to the ceiling. Rust, Java, Node, Ruby, Python, Elixir and the PHP
   SDK's `SwooleExecutor` have one. The PHP SDK's default `SyncExecutor` runs one
   loop per process, so its unit of replacement is the process, which the
   orchestrator already restarts. Every host reports `inflight` and

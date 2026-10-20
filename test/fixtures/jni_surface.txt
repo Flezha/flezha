@@ -25,7 +25,9 @@ localRunUntilIdle|flz_core_local_run_until_idle
 localStop|flz_core_local_stop
 poll|flz_core_poll
 complete|flz_core_complete
-waitStarvation|flz_core_wait_starvation
+poolOpen|flz_core_pool_open
+poolSupervise|flz_core_pool_supervise
+poolLeft|flz_core_pool_left
 abandon|flz_core_abandon
 spawnRequest|flz_core_spawn_request
 spawnResult|flz_core_spawn_result

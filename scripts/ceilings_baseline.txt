@@ -51,7 +51,6 @@ lib/flezha/state/paths.ex 822
 lib/flezha/state/task_journal.ex 1008
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
 sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 52
-sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51
 sdk/node/src/definition.ts::defineTasklet 66
 sdk/node/src/dispatch.ts::answer 54
 sdk/node/src/dispatch.ts::runWork 65

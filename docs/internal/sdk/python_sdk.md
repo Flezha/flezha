@@ -377,13 +377,14 @@ a later change cannot reintroduce it.
 ## Concurrency, as arithmetic
 
 The default host is a base pool of Python threads, each looping
-`poll → dispatch → complete` **on itself**, plus one supervisor thread parked in
-the core's starvation wait. It is `flz_core/src/poll_pool.rs`
-transliterated, and it reads that host's environment rather than inventing a
-vocabulary:
+`poll → dispatch → complete` **on itself**, plus one supervisor thread that
+answers the core's pool governor (`pool_supervise`, at most a second apart) and
+writes the core's notices on every answer. How many threads is the governor's
+([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)),
+over this host's base of the processor count:
 
 - `FLEZHA_WORKER_POOL_SIZE`: Base worker threads.
-- `FLEZHA_WORKER_POOL_MAX`: The ceiling the supervisor grows to.
+- `FLEZHA_WORKER_POOL_MAX`: The ceiling the governor grows to.
 - `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`: The core's in-flight cap.
 - `FLEZHA_PYTHON_EXECUTOR`: `thread` (default) or `asyncio`.
 
@@ -431,11 +432,11 @@ consumer mailbox, the routing push parks the completing thread — and
 by draining the consumer inline, takes a Rust function pointer and is **not
 reachable over the C ABI**. A host whose only thread is parked in a completion
 is therefore not entering `poll`, which is exactly what the core reports as
-starvation, and the worker the supervisor starts is what drains the consumer
-and releases the producer.
+starvation, and the worker the governor then asks for is what drains the
+consumer and releases the producer.
 
 So there is no pool configuration without a supervisor, and no single-threaded
-mode. Both executors run one, and under both the worker it starts is a real
+mode. Both executors run one, and under both a grown seat is a real
 fetch-and-run **thread**: a stalled event loop cannot rescue itself.
 
 ### The executor seam
@@ -501,8 +502,8 @@ the `flezha` logger nor the root logger has a handler, it gives the `flezha`
 logger one writing to standard error at `FLEZHA_LOG_LEVEL` (`warn` when unset),
 the level every other SDK starts at; an application's own configuration wins.
 `flezha.configure_logging()` sets that default explicitly. The core's notices
-reach the `flezha.core` logger, written by the starvation supervisor on each
-wake and when a run stops; the local-mode banner at `ERROR`.
+reach the `flezha.core` logger, written by the pool supervisor on each answer
+and when a run stops; the local-mode banner at `ERROR`.
 
 No OpenTelemetry: no SDK ships spans, and adding them to one binding is the
 exact asymmetry the lockstep rule exists to prevent. When they land, they land

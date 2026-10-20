@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Changed: one pool policy for every SDK's poll workers
+
+- The core's pool governor sizes every SDK's poll workers: the base and the ceiling from
+  `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX` over each runtime's own default base, a
+  250 ms poll turn (the Rust SDK's was 200 ms), a supervisor answer at least once a second, a
+  worker above the base retired after 30 s idle (Python and Ruby retired one after 2 s; Java's,
+  Elixir's and PHP's grown workers never retired), a pool below its base topped up on the next
+  answer, a base worker that fails to start retried on the next answer, and a 5 s drain bound.
+- The governor writes its notices to every host's log: a replaced worker, and once per episode a
+  pool held at its ceiling. The hosts' own ceiling warnings and Java's line per grown fetcher go.
+- The C ABI gains `flz_core_pool_open`, `flz_core_pool_supervise` and `flz_core_pool_left` and
+  loses `flz_core_wait_starvation` (Java `FlzCore.waitStarvation`, Python and Ruby
+  `wait_starvation`). Python, Ruby and PHP write the core's notices on every supervisor answer,
+  so an idle runner's notices reach its log within a second.
+- Java: `FlezhaEnv`, with `DEFAULT_FETCHER_COUNT`, is removed; the base of 2 is what the host
+  hands the governor.
+- PHP: `Executors::swoole()` and `SwooleExecutor` lose `$maxThreads`; the ceiling is
+  `FLEZHA_WORKER_POOL_MAX` (ten times the base of 1 by default).
+- Python's executors lose `base=` and `ceiling=`, and `FLEZHA_PYTHON_EXECUTOR` is read in one
+  place. Ruby's `ThreadExecutor` loses `base:` and `ceiling:`, and `FiberExecutor` loses
+  `fetchers:` and runs the governor's supervisor too: a grown seat is a worker that dispatches on
+  itself.
+- Elixir: `Flezha.SDK.Pool.sizes/0` is removed, and the application env keys `worker_pool_size`
+  and `worker_pool_max` are no longer read; the core reads the variables.
+- Node: `.fetchers(n)` is the base the host hands the governor, so `FLEZHA_WORKER_POOL_SIZE`
+  now overrides it, and the fetchers retire and are replaced as every other SDK's workers are.
+
 ### Fixed: a returning controller's longer copy yields to the history its relay continued
 
 - A Cell's lineage file and its remote manifest entry carry a lineage id, minted at the Cell's

@@ -420,12 +420,20 @@ fn poll(timeout_ms: u64) -> Result<Value, Error> {
     }
 }
 
-/// Park up to `timeout_ms` until the core observes starvation. Answers the
-/// ABI's three-way status directly (`1` observed, `0` timeout, `2` shutting
-/// down), so a supervisor loop allocates nothing per park.
-fn wait_starvation(timeout_ms: u64) -> Result<i32, Error> {
+/// Open the context's poll-worker pool over this host's default base:
+/// `[base, ceiling, poll_timeout_ms, retire_ms, drain_ms]`.
+fn pool_open(default_base: u32) -> Result<Vec<u32>, Error> {
+    Ok(veneer::pool_open(context()?, default_base)?.to_vec())
+}
+
+/// The pool's next decision as the ABI's status, at most a second away.
+fn pool_supervise() -> Result<i32, Error> {
     let ctx = context()?;
-    without_gvl(move || veneer::wait_starvation(ctx, timeout_ms)).map_err(Error::from)
+    without_gvl(move || veneer::pool_supervise(ctx)).map_err(Error::from)
+}
+
+fn pool_left() -> Result<(), Error> {
+    Ok(veneer::pool_left(context()?)?)
 }
 
 /// Answer one activation. Blocking, and this is the entry point the GVL rule
@@ -677,7 +685,9 @@ pub fn init(ruby: &Ruby) -> Result<(), Error> {
     native.define_module_function("local_run_until_idle", function!(local_run_until_idle, 1))?;
     native.define_module_function("local_stop", function!(local_stop, 0))?;
     native.define_module_function("poll", function!(poll, 1))?;
-    native.define_module_function("wait_starvation", function!(wait_starvation, 1))?;
+    native.define_module_function("pool_open", function!(pool_open, 1))?;
+    native.define_module_function("pool_supervise", function!(pool_supervise, 0))?;
+    native.define_module_function("pool_left", function!(pool_left, 0))?;
     native.define_module_function("complete", function!(complete, 1))?;
     native.define_module_function("abandon", function!(abandon, 1))?;
     native.define_module_function("shutdown", function!(shutdown, 0))?;

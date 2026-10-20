@@ -35,6 +35,7 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
         local_outputs: Mutex::new(None),
         spawns: DashMap::new(),
         last_spawn: AtomicU64::new(0),
+        pool: Mutex::new(None),
     }))
 }
 

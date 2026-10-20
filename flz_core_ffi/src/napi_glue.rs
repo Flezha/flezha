@@ -702,8 +702,8 @@ pub struct JsNativeExport {
 ///
 /// * the veneer adds no ABI surface — every export names an existing entry
 ///   point or is host bookkeeping that reaches none;
-/// * no blocking entry point is synchronously reachable — `poll` and
-///   `waitStarvation` are absent from the exports entirely, and every export
+/// * no blocking entry point is synchronously reachable — `poll` and the
+///   pool's supervisor are absent from the exports entirely, and every export
 ///   marked blocking returns a promise.
 #[napi]
 pub fn native_surface() -> Vec<JsNativeExport> {
@@ -715,12 +715,13 @@ pub fn native_surface() -> Vec<JsNativeExport> {
 }
 
 /// How JavaScript spells a surface entry: in camel case, with the event-loop
-/// rule applied. `poll` and the starvation wait are never exported, nor the
-/// notice queue (Node's notices reach its log callback), and the spawn result
-/// read is two exports, one per timeout.
+/// rule applied. `poll` and the pool entries are never exported (the native
+/// host polls and governs its own fetchers), nor the notice queue (Node's
+/// notices reach its log callback), and the spawn result read is two exports,
+/// one per timeout.
 fn spelled(entry: &crate::veneer::Entry) -> Vec<JsNativeExport> {
     match entry.name {
-        "poll" | "wait_starvation" | "take_notices" => Vec::new(),
+        "poll" | "pool_open" | "pool_supervise" | "pool_left" | "take_notices" => Vec::new(),
         // A read that always passes a timeout of zero never waits.
         "spawn_result" => vec![
             export("spawnTryResult", Some(entry.abi), false),
