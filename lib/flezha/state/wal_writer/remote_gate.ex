@@ -25,7 +25,7 @@ defmodule Flezha.State.WalWriter.RemoteGate do
 
   alias Flezha.Config.Backoff
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.Process.{Timer, Watch}
+  alias Flezha.Process.{DurableTasks, Timer, Watch}
   alias Flezha.State.{DurabilityTier, Paths, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Settlement}
 
@@ -179,7 +179,7 @@ defmodule Flezha.State.WalWriter.RemoteGate do
     for cell_id <- :ets.select(@owed, [{{{relay_class, :_, :_}, :_}, [], [{:element, 1, :"$_"}]}]),
         owed = take_owed(cell_id),
         owed != %{} do
-      Task.start(fn ->
+      DurableTasks.start(fn ->
         tag =
           if DurabilityTier.commit_sync(cell_id) == :ok,
             do: :credit_drained,

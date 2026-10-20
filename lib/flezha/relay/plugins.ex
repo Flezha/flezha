@@ -16,6 +16,7 @@ defmodule Flezha.Relay.Plugins do
   holds only what carries logic of its own.
   """
 
+  alias Flezha.Process.DurableTasks
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
   alias Flezha.Plugin
@@ -363,7 +364,10 @@ defmodule Flezha.Relay.Plugins do
     shared? = Table.joined?(state.extensions, plugin_id)
 
     owner = if shared?, do: {:plugin, plugin_id}, else: state.id
-    Task.start(fn -> PluginManager.persist_opt(state.namespace, owner, plugin_id, key, value) end)
+
+    DurableTasks.start(fn ->
+      PluginManager.persist_opt(state.namespace, owner, plugin_id, key, value)
+    end)
 
     %{state | extensions: Table.put_plugin_opt(state.extensions, plugin_id, key, value)}
   end

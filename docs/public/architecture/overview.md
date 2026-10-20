@@ -261,33 +261,16 @@ These eight rules hold for every relay, whatever SDK it is written in.
 ## Inside the controller
 
 The controller's top supervisor, `Flezha.Supervisor`, is one flat
-`:one_for_one` tree, and the start order matters. It is built in
-`controller_children` of `lib/flezha/application.ex`:
-
-1. `Flezha.Shutdown.SignalHandler` first, so the OS signal handlers are in
-   place before anything can see a SIGTERM.
-2. `Flezha.Service.EventManager`, `Flezha.Boot.Loader`, `Flezha.Identificator`,
-   `Flezha.Convergence.Snapshot` (the published health table) and
-   `Flezha.Cluster.Directory`.
-3. The remote durability tier's children, only when a backend is configured.
-   They come before the hubs, because a hub must not open its registry file
-   before the remote copy of it has been restored.
-4. `Flezha.Service.HubManager`, `Flezha.Observability.Supervisor`,
-   `Flezha.Shutdown.Coordinator`, `Flezha.Runner.FleetSupervisor`,
-   `Flezha.Runner.FleetManager` and `Flezha.Cluster.Orchestrator`. Cluster
-   formation starts before the transport, so a hub is never created on a node
-   that has not joined its cluster yet.
-5. `Flezha.AuthZ.Supervisor`, then the starter that brings up the declared
-   hubs.
-6. `Flezha.Transport.Server`, one per transport (UDS, QUIC).
-7. The plugin side: `Flezha.Service.Calls`, `Flezha.Observability.HookSink`,
-   one worker supervisor per plugin family, and `Flezha.Service.PortPilot`.
-8. The state side: `Flezha.State.Supervisor` with its writer registry, then
-   `Flezha.State.FsyncBatcher`, `Flezha.State.Retention`,
-   `Flezha.State.Watchdog` and `Flezha.Dlq.Store`.
-9. `Flezha.Convergence.Loop`, after the state side it heals.
-10. The schedule store and hub, and `Flezha.Healthz.Server` when `/healthz`
-    is enabled.
+`:one_for_one` tree that starts its children in order and stops them in
+reverse. The order is one list of rows in `controller_children` of
+[`lib/flezha/application.ex`](https://github.com/flezha/flezha/blob/main/lib/flezha/application.ex),
+each with the reason it sits where it does. The signal handler comes first,
+then the hubs' manager, the runner fleet and cluster formation, then the plugin
+side, then the state side (the writers and `Flezha.Dlq.Store`) and the
+supervisor of durable work. Only after those come the starter of the declared
+hubs, the transports and the runner launcher, so no hub or runner reaches a
+writer before it exists, and on a stop the durable work finishes before the
+writers close.
 
 Below that tree, three sorts of process come and go:
 

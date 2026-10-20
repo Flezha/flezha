@@ -2,11 +2,11 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
   @moduledoc """
   The controller's start order, pinned.
 
-  `Flezha.Application.controller_children/0` decides the whole boot sequence and
-  four comments in that file explain why one child must precede another — none
-  of which the compiler can see. A silent reorder surfaces as an intermittent
-  boot failure, never as a test failure, so the ordered id list is asserted here
-  literally.
+  `Flezha.Application.controller_children/0` decides the whole boot sequence,
+  and the comment on a row says why it sits where it does, which the compiler
+  cannot see. A silent reorder surfaces as an
+  intermittent boot failure, never as a test failure, so the ordered id list is
+  asserted here literally.
   """
 
   # Pins `:flezha` application env for the duration of a test.
@@ -36,8 +36,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Runner.FleetManager,
     Flezha.Cluster.Orchestrator,
     Flezha.AuthZ.Supervisor,
-    Flezha.Service.HubManager.Starter,
-    {Flezha.Transport.Server, :uds},
     Flezha.Service.Calls,
     Flezha.Observability.HookSink,
     # One worker family per provider that declares a worker, from the provider
@@ -54,7 +52,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Plugin.Provider.Websocket.WorkerSup,
     # The running copies of shareable plugins, one per plugin on this controller.
     Flezha.Plugin.Shared.WorkerSup,
-    Flezha.Service.PortPilot,
     Flezha.Relay.MessageHandlerTaskSup,
     Flezha.State.WriterRegistry,
     Flezha.State.Supervisor,
@@ -62,6 +59,10 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.State.Retention,
     Flezha.State.Watchdog,
     Flezha.Dlq.Store,
+    Flezha.Process.DurableTasks,
+    Flezha.Service.HubManager.Starter,
+    {Flezha.Transport.Server, :uds},
+    Flezha.Service.PortPilot,
     Flezha.Convergence.Loop,
     Flezha.Schedule.Store,
     Flezha.Schedule.Hub,
@@ -78,38 +79,6 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
 
   test "the controller starts its children in exactly this order" do
     assert ids() == @order
-  end
-
-  test "SignalHandler is first, so a SIGTERM is never delivered to an unhandled node" do
-    assert hd(ids()) == Flezha.Shutdown.SignalHandler
-  end
-
-  test "the Coordinator follows HubManager, because the drain queries the hub" do
-    order = ids()
-
-    assert Enum.find_index(order, &(&1 == Flezha.Service.HubManager)) <
-             Enum.find_index(order, &(&1 == Flezha.Shutdown.Coordinator))
-  end
-
-  test "cluster formation precedes the transport, so no hub is created unclustered" do
-    order = ids()
-
-    assert Enum.find_index(order, &(&1 == Flezha.Cluster.Orchestrator)) <
-             Enum.find_index(order, &(&1 == {Flezha.Transport.Server, :uds}))
-  end
-
-  test "the Snapshot precedes every hub, so no hub fires recovery telemetry into nothing" do
-    order = ids()
-
-    assert Enum.find_index(order, &(&1 == Flezha.Convergence.Snapshot)) <
-             Enum.find_index(order, &(&1 == Flezha.Service.HubManager))
-  end
-
-  test "the hub starter follows AuthZ, because the catalog is one of its two sources" do
-    order = ids()
-
-    assert Enum.find_index(order, &(&1 == Flezha.AuthZ.Supervisor)) <
-             Enum.find_index(order, &(&1 == Flezha.Service.HubManager.Starter))
   end
 
   test "the hub starter is absent when auto-restore is off" do

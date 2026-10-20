@@ -26,7 +26,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lookup
   alias Flezha.Relay.Replay
-  alias Flezha.Process.Watch
+  alias Flezha.Process.{DurableTasks, Watch}
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager.Marks
@@ -626,16 +626,13 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
-  # Run the file teardown off this channel's loop: it stops the writer and
-  # unlinks files, which we never want to gate the output-carrying channel on.
-  defp delete_cell(cell_id) do
-    spawn(fn -> Flezha.State.Supervisor.delete_cell(cell_id) end)
-  end
-
+  # The teardown stops the writer and unlinks files, so it runs off this
+  # channel's loop, never gating the output-carrying channel.
   def handle_delete_cell_state(state, frame) do
     case Wire.decode_cell_id(frame) do
       {:ok, {rc, _sh, _pk} = cell_id} ->
-        if admit(state, rc, :delete_cell_state), do: delete_cell(cell_id)
+        if admit(state, rc, :delete_cell_state),
+          do: DurableTasks.start(fn -> Flezha.State.Supervisor.delete_cell(cell_id) end)
 
       {:error, reason} ->
         undecodable(state, "delete_cell_state", reason)

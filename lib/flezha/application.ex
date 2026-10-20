@@ -7,6 +7,7 @@ defmodule Flezha.Application do
   alias Flezha.Boot.StateRootLock
   alias Flezha.Config
   alias Flezha.Diagnostics.MemoryReporter
+  alias Flezha.Process.DurableTasks
   alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
   alias Flezha.Shutdown
@@ -103,166 +104,83 @@ defmodule Flezha.Application do
       Coordinator.finalise()
   end
 
-  # The controller tree, in start order. Every entry's position is load-bearing;
-  # the ordered id list is pinned by `Flezha.Boot.ApplicationChildrenTest`.
+  # The controller tree, in start order and stopped in reverse. A row is
+  # `{child | (-> [child]), gate}`, gate `:always`, a config key or a predicate;
+  # the comment above a row says why it sits there. The id list is pinned by
+  # `Flezha.Boot.ApplicationChildrenTest`.
   @doc false
   def controller_children() do
-    children =
-      core_children() ++
-        DurabilityTier.children() ++
-        service_children() ++
-        authz_children() ++
-        hub_starter_children() ++
-        transport_children() ++
-        plugin_children() ++
-        Flezha.State.Supervisor.application_children() ++
-        state_children() ++
-        convergence_loop_children() ++
-        schedule_children() ++
-        healthz_children() ++
-        memory_reporter_children()
-
-    prepend_testnet(children)
-  end
-
-  # SignalHandler is started FIRST so OS signal handlers are installed before any
-  # other service can observe a delivered SIGTERM.
-  defp core_children do
     [
-      Flezha.Shutdown.SignalHandler,
-      Flezha.Service.EventManager,
-      Flezha.Boot.Loader,
-      Flezha.Identificator,
-      # Owns the recovery-state cache + the published convergence
-      # snapshot; must be up before any hub fires recovery telemetry.
-      Flezha.Convergence.Snapshot,
-      # The cluster directory scope must be up before its writers:
-      # HubManager joins hub pids, FleetManager joins capability groups.
-      Flezha.Cluster.Directory
+      # Listening before anything connects; the module compiles in :test only.
+      {{Flezha.Testnet, []}, &testnet?/0},
+      # Before any other service can observe a SIGTERM.
+      {Flezha.Shutdown.SignalHandler, :always},
+      {Flezha.Service.EventManager, :always},
+      {Loader, :always},
+      {Flezha.Identificator, :always},
+      # Owns the recovery-state cache, up before any hub fires recovery telemetry.
+      {Flezha.Convergence.Snapshot, :always},
+      # Before its writers: HubManager joins hub pids, FleetManager capability groups.
+      {Flezha.Cluster.Directory, :always},
+      # Its boot-time cspec hydration lands before a hub opens its `registry.dets`.
+      {&DurabilityTier.children/0, :always},
+      {Flezha.Service.HubManager, :always},
+      {Flezha.Observability.Supervisor, :always},
+      # After HubManager, because the drain queries the hub.
+      {Coordinator, :always},
+      {Flezha.Runner.FleetSupervisor, :always},
+      {FleetManager, :always},
+      # Before the transports, so no hub is created on a node not yet clustered.
+      {Flezha.Cluster.Orchestrator, :always},
+      {Flezha.AuthZ.Supervisor, :authz_application_managed},
+      {Flezha.Service.Calls, :always},
+      {Flezha.Observability.HookSink, :always},
+      {&worker_families/0, :always},
+      {{Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}, :always},
+      {&Flezha.State.Supervisor.application_children/0, :always},
+      {Flezha.State.FsyncBatcher, :always},
+      {Flezha.State.Retention, :always},
+      {Flezha.State.Watchdog, :always},
+      {Flezha.Dlq.Store, :always},
+      # Stopped before the state side, so durable work ends while the writers are open.
+      {DurableTasks, :always},
+      # No hub or runner may reach a writer before the state side exists; the starter also
+      # follows AuthZ, whose catalog is one source of the declared set.
+      {Flezha.Service.HubManager.Starter, :auto_restore_enabled},
+      {&transport_children/0, :always},
+      # Launches runners, which dial the transports.
+      {Flezha.Service.PortPilot, :always},
+      # After the state side it heals.
+      {Flezha.Convergence.Loop, :convergence_health_enabled},
+      {Flezha.Schedule.Store, :schedule_application_managed},
+      {Flezha.Schedule.Hub, :schedule_application_managed},
+      {Flezha.Healthz.Server, :healthz_enabled},
+      {MemoryReporter, &memory_reporter?/0}
     ]
+    |> Enum.flat_map(&row_children/1)
   end
 
-  # After `DurabilityTier.children()`, whose boot-time cspec hydration must land
-  # before ProcessHub opens `registry.dets` at hub start.
-  defp service_children do
-    [
-      Flezha.Service.HubManager,
-      Flezha.Observability.Supervisor,
-      # Right after HubManager, because the drain queries the hub.
-      Flezha.Shutdown.Coordinator,
-      Flezha.Runner.FleetSupervisor,
-      FleetManager,
-      # Cluster formation must start BEFORE the transport accepts runner
-      # connects, so a hub is never created on a not-yet-clustered node.
-      # `Flezha.Convergence.Loop` (started after the State trio below)
-      # owns all bind/rebind/plugin-restart healing.
-      Flezha.Cluster.Orchestrator
-    ]
-  end
-
-  defp plugin_children do
-    worker_families =
-      Enum.map(
-        Flezha.Plugin.Providers.worker_families(),
-        &{Flezha.Plugin.Provider.WorkerSup, name: &1}
-      )
-
-    [
-      Flezha.Service.Calls,
-      Flezha.Observability.HookSink
-    ] ++
-      worker_families ++
-      [
-        Flezha.Service.PortPilot,
-        {Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}
-      ]
-  end
-
-  defp state_children do
-    [
-      Flezha.State.FsyncBatcher,
-      Flezha.State.Retention,
-      Flezha.State.Watchdog,
-      Flezha.Dlq.Store
-    ]
-  end
-
-  # Flezha.Testnet only compiles in :test (test/helpers/); ensure_loaded?
-  # gates the child spec so prod boots without the module. Prepended, never
-  # appended: the harness must be listening before anything connects.
-  defp prepend_testnet(children) do
-    if Config.get(:testnet_enabled) and
-         Code.ensure_loaded?(Flezha.Testnet) do
-      [{Flezha.Testnet, []} | children]
-    else
-      children
+  defp row_children({child, gate}) do
+    cond do
+      !open?(gate) -> []
+      is_function(child, 0) -> child.()
+      true -> [child]
     end
   end
 
-  # Authn/authz supervisor is omitted from the global application
-  # tree when `:authn_authz, :application_managed` is `false` so
-  # unit tests can bring up isolated AuthState/RoleStore/etc.
-  # against a per-test tmp `auth_dir`. The flag defaults `true` so
-  # production and dev boot the subsystem unconditionally.
-  defp authz_children do
-    if Config.get(:authz_application_managed) do
-      [Flezha.AuthZ.Supervisor]
-    else
-      []
-    end
-  end
+  defp open?(:always), do: true
+  defp open?(gate) when is_function(gate, 0), do: gate.()
+  defp open?(key), do: Config.get(key)
 
-  # The declared set's hubs, given an owner off the boot path. After
-  # `authz_children()` because the namespace catalog is one of the two sources
-  # the declared set is derived from. Rides the auto-restore kill-switch: a
-  # node told not to bring things back by itself creates no hub at boot, and
-  # the readiness row reads the same switch.
-  defp hub_starter_children do
-    if Config.get(:auto_restore_enabled) do
-      [Flezha.Service.HubManager.Starter]
-    else
-      []
-    end
-  end
+  defp testnet?(), do: Config.get(:testnet_enabled) and Code.ensure_loaded?(Flezha.Testnet)
 
-  defp memory_reporter_children do
-    case MemoryReporter.configured_interval_ms() do
-      {:ok, _ms} -> [Flezha.Diagnostics.MemoryReporter]
-      :disabled -> []
-    end
-  end
+  defp memory_reporter?(), do: match?({:ok, _ms}, MemoryReporter.configured_interval_ms())
 
-  # Opt the convergence Loop into the supervision tree. Default `true`
-  # in prod; tests turn it off so the global app boot does not tick
-  # across suites. The `Snapshot` it publishes to is always started.
-  defp convergence_loop_children do
-    if Config.get(:convergence_health_enabled) do
-      [Flezha.Convergence.Loop]
-    else
-      []
-    end
-  end
-
-  # Like authz: omitted when `:schedules, :application_managed` is `false`
-  # so tests can bring up isolated Store/Hub singletons against a per-test
-  # tmp dir. The Hub owner starts the `:flz_schedules` hub off the boot path.
-  defp schedule_children do
-    if Config.get(:schedule_application_managed) do
-      [Flezha.Schedule.Store, Flezha.Schedule.Hub]
-    else
-      []
-    end
-  end
-
-  # `convergence-self-healing` §4.6-4.7: opt-in `/healthz`
-  # listener. Off by default — only flezha_market opts in via its
-  # ConfigMap so bare-metal users keep their own probe shape.
-  defp healthz_children do
-    if Config.get(:healthz_enabled) do
-      [Flezha.Healthz.Server]
-    else
-      []
-    end
+  defp worker_families() do
+    Enum.map(
+      Flezha.Plugin.Providers.worker_families(),
+      &{Flezha.Plugin.Provider.WorkerSup, name: &1}
+    )
   end
 
   defp transport_children do

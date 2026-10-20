@@ -26,7 +26,7 @@ defmodule Flezha.State.DurabilityTier do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Relay.ClassRegistry
-  alias Flezha.Process.Cspec
+  alias Flezha.Process.{Cspec, DurableTasks}
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
   alias Flezha.State.Paths
@@ -471,7 +471,7 @@ defmodule Flezha.State.DurabilityTier do
     caller = self()
 
     {:ok, _pid} =
-      Task.start(fn -> send(caller, {:remote_committed, tag, commit_sync(subject)}) end)
+      DurableTasks.start(fn -> send(caller, {:remote_committed, tag, commit_sync(subject)}) end)
 
     :ok
   end

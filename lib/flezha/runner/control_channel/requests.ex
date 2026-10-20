@@ -21,6 +21,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.Process.DurableTasks
   alias Flezha.Relay.Migration
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
@@ -145,7 +146,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
          relay_id,
          overwatch
        ) do
-    Task.start(fn ->
+    DurableTasks.start(fn ->
       drain_owed_outputs(runner_id, relay_id)
 
       case RelayManager.stop_relay(namespace, relay_id, reason: :completed, overwatch: overwatch) do
@@ -245,7 +246,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     namespace = state.namespace
     park = %{wake_deadline_ms: deadline}
 
-    Task.start(fn ->
+    DurableTasks.start(fn ->
       # Journaled before the park is recorded, and before the suspension asks
       # the log whether input is still owed: a message the run parked unread
       # is consumed, not owed, and the journal keeps that across a restart.
