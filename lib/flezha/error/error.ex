@@ -141,8 +141,9 @@ defmodule Flezha.Error do
   its own state never reaches one: a detail filled from a term that is not
   plain data, and the `reason` of an internal code, whose keys beyond the
   declared ones are dropped. Each reads as naming the controller's log, which
-  records its code and details once, prefixed by `what`. Any other error is
-  answered as it is.
+  records its code and details once, prefixed by `what`, under one pointer id
+  both carry (`(ref <id>)`, and the line's `log_ref` metadata). Any other error
+  is answered as it is.
   """
   @spec withheld(t(), String.t()) :: t()
   def withheld(%__MODULE__{code: code, details: details, terms: terms} = error, what) do
@@ -155,8 +156,9 @@ defmodule Flezha.Error do
     if withheld == [] do
       error
     else
-      Logger.error("#{what}: #{code} #{details_json(error)}")
-      pointers = Map.new(withheld, &{&1, @log_pointer})
+      ref = Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+      Logger.error("#{what}: #{code} #{details_json(error)} (ref #{ref})", log_ref: ref)
+      pointers = Map.new(withheld, &{&1, "#{@log_pointer} (ref #{ref})"})
       new(code, kept |> Map.merge(pointers) |> Map.take(["reason" | Map.keys(kept)]))
     end
   end

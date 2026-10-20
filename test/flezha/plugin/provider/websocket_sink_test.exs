@@ -315,8 +315,8 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
       refute_receive {:"$gen_cast", {:outbox_confirmed, _}}, 200
     end
 
-    test "an exhausted frame is parked with its cell and channel, and answers its hold",
-         %{cell_id: cell_id} do
+    test "an exhausted frame is parked as websocket.unacknowledged, and answers its hold",
+         %{cell_id: {rc, _, _} = cell_id} do
       opts = required_opts()
 
       {{:reply, _frames, sent}, _ref} =
@@ -333,8 +333,12 @@ defmodule FlezhaTest.Plugin.Provider.WebsocketSinkTest do
         end)
 
       assert log =~ "parked undeliverable output"
-      assert log =~ "ws_sink_unacknowledged"
+      assert log =~ "(websocket.unacknowledged)"
       assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
+      assert [%{"attempts" => attempts} = entry] = Flezha.Dlq.Store.list(rc)
+
+      assert %{"code" => "websocket.unacknowledged", "details" => %{"attempts" => ^attempts}} =
+               Jason.decode!(entry["error"])
     end
 
     defp required_opts do

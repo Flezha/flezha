@@ -583,7 +583,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
         ExUnit.CaptureLog.capture_log(fn ->
           assert %{error: error} = send_dead_letter(ctx, ctx.inst, 0, "ref-dl-refused")
           assert error.code == "commit.turn_not_parked"
-          assert error.details_json == ~s({"reason":"the controller's log names the cause"})
+          assert error.details_json =~ ~s({"reason":"the controller's log names the cause (ref )
         end)
 
       assert length(String.split(log, "s3cr3t-7f3a")) == 2

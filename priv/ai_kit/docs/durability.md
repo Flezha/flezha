@@ -252,7 +252,7 @@ payload            {"channel": "trade", "data": [{"symbol": "EUR/USD", "price": 
 
 | Command | What it does |
 | --- | --- |
-| `flz dlq list [<relay>]` | the entries parked, with cell, channel, generation, age and error |
+| `flz dlq list [<relay>]` | the entries parked, with cell, channel, generation, age and error; an output a sink gave up on carries its [error](../../errors.md) object, such as `kafka.exhausted` |
 | `flz dlq show <entry>` | one entry, with its payload |
 | `flz dlq replay <entry>` | sends it through the ordinary input path again, as a new input; a replay that fails again re-parks with `generation` one higher |
 | `flz dlq drop <entry>` | removes it, audited |

@@ -17,6 +17,7 @@ defmodule Flezha.State.Outbox do
   require Logger
 
   alias Flezha.Dlq.Entry, as: DlqEntry
+  alias Flezha.Error
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.State.Wire
   alias Flezha.State.{Paths, WriterRegistry}
@@ -232,10 +233,11 @@ defmodule Flezha.State.Outbox do
   A hold whose retry budget is permanently exhausted: park the payload through
   the dead-letter store — attributed to the output's own Cell and channel —
   then answer the hold so the cursor advances past exactly the parked range.
-  Loud and replayable, never a silent drop.
+  Loud and replayable, never a silent drop. The entry's `error` is `error`'s
+  catalogue object.
   """
-  @spec park(map(), binary() | nil, term(), non_neg_integer()) :: :ok
-  def park(metadata, payload, error, attempts) when is_map(metadata) do
+  @spec park(map(), binary() | nil, Error.t(), non_neg_integer()) :: :ok
+  def park(metadata, payload, %Error{} = error, attempts) when is_map(metadata) do
     with token when is_binary(token) <- ack(metadata),
          {:ok, %{owner: {rc, sh, pk}}} <- decode(token) do
       entry =
@@ -244,7 +246,7 @@ defmodule Flezha.State.Outbox do
           tasklet_id: sh,
           cell_key: pk,
           channel: Map.get(metadata, "channel", ""),
-          error: error,
+          error: Error.object(error),
           attempts: attempts,
           payload: payload
         })
@@ -254,7 +256,7 @@ defmodule Flezha.State.Outbox do
           Logger.error(
             "[outbox] parked undeliverable output #{rc}/#{sh}/#{pk} " <>
               "seq=#{Map.get(metadata, "flz.seq")} epoch=#{Map.get(metadata, "flz.epoch")} " <>
-              "after #{attempts} attempt(s): #{inspect(error)} — dead-letter #{ref}"
+              "after #{attempts} attempt(s): #{error.message} (#{error.code}) — dead-letter #{ref}"
           )
 
           confirm(metadata)

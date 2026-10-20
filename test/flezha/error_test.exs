@@ -74,12 +74,13 @@ defmodule Flezha.ErrorTest do
   test "a networked caller reads no term of the controller's own, and the log keeps it" do
     internal = Error.new("relay.start_failed", relay: "o1", reason: "vault key s3cr3t-7f3a")
     term = Error.new("commit.turn_not_parked", reason: {:exit, "vault key s3cr3t-7f3a"})
-    pointer = "the controller's log names the cause"
+    pointer = ~r/^the controller's log names the cause \(ref [0-9a-f]{8}\)$/
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert Error.withheld(internal, "door").details == %{"relay" => "o1", "reason" => pointer}
-        assert Error.withheld(term, "wire").details == %{"reason" => pointer}
+        assert %{"relay" => "o1", "reason" => door} = Error.withheld(internal, "door").details
+        assert %{"reason" => wire} = Error.withheld(term, "wire").details
+        assert door =~ pointer and wire =~ pointer
       end)
 
     assert log =~ "door: " and log =~ "wire: "
@@ -88,6 +89,21 @@ defmodule Flezha.ErrorTest do
     unknown = %Error{code: "runtime.newer", class: :internal, details: %{"reason" => "x"}}
     others = [Error.new("call.unavailable", relay: "o1", reason: "parked"), unknown]
     assert Enum.map(others, &Error.withheld(&1, "door")) == others
+  end
+
+  # Fails when: the pointer a caller reads names a line other than its own, in
+  # the log's text or its `log_ref` metadata.
+  test "a withheld reason's pointer id is the one its log line carries" do
+    error = Error.new("relay.start_failed", relay: "o1", reason: "boom")
+
+    {withheld, log} =
+      ExUnit.CaptureLog.with_log([format: "$metadata| $message", metadata: [:log_ref]], fn ->
+        Error.withheld(error, "door")
+      end)
+
+    assert [_, ref] = Regex.run(~r/names the cause \(ref (\w{8})\)$/, withheld.details["reason"])
+    assert log =~ "log_ref=#{ref} | door: relay.start_failed "
+    assert log =~ ~s|"reason":"boom"} (ref #{ref})|
   end
 
   test "a detail that is not plain data is carried as text" do

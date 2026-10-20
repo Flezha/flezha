@@ -16,7 +16,7 @@ the durability trade-offs, and how broker clients are shared.
 | Ships | package `flezha_kafka` |
 | Shareable | yes: every relay bound to it publishes through one producer per controller, or one in the cluster with `--single` |
 | Partitioned relays | allowed: each member runs a producer of its own |
-| Durability | a delivery-guaranteed output is confirmed when its batch is acked and parked when it is given up; an effectively-once relay's records carry a `flezha.dedup_key` header |
+| Durability | a delivery-guaranteed output is confirmed when its batch is acked and parked as `kafka.exhausted` when it is given up; an effectively-once relay's records carry a `flezha.dedup_key` header |
 
 ## Options
 
@@ -269,8 +269,8 @@ than one that serves until its queue fills.
 
 Every drop and overflow is counted in `stats/1`'s `dropped_total` and emits
 `[:flezha, :plugin, :kafka, :overflowed]`. A delivery-guaranteed record that overflows under
-`:drop_nothing` is parked with the reason `queue_full`. Dropping one under `:drop_oldest` or
-`:drop_newest` is alarm-grade: it logs at `error`, tags the event `guaranteed: true`, and
+`:drop_nothing` is parked as `kafka.exhausted` with the reason `queue_full`. Dropping one
+under `:drop_oldest` or `:drop_newest` is alarm-grade: it logs at `error`, tags the event `guaranteed: true`, and
 leaves the record's outbox cursor where it is, so the loss shows as an outbox that stops
 draining until the entry is re-driven.
 

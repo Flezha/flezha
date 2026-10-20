@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed: every sink park carries a code, and a withheld reason carries a pointer
+
+- **BREAKING:** the dead-letter `error` of a Kafka or websocket output a sink gave up on is now
+  the catalogue error object, as `http_push` and RabbitMQ parks already were: `kafka.exhausted`
+  with the raw `reason` (such as `queue_full`), and `websocket.unacknowledged` with `attempts`.
+  It was the reason term's text (`queue_full`, `ws_sink_unacknowledged`).
+- A reason withheld from a caller over the network now reads
+  `the controller's log names the cause (ref <id>)`, and the one log line recording it carries
+  the same id in its text and its `log_ref` metadata.
+
 ### Changed: the controller's own plugins derive their telemetry from their declarations
 
 - A provider declaration accepts `emits:` (a log level for a shared verb, such as

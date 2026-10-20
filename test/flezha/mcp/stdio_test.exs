@@ -199,7 +199,7 @@ defmodule Flezha.Mcp.StdioTest do
       refute line =~ "s3cr3t"
       assert %{"isError" => true, "structuredContent" => %{"error" => error}} = result(line)
       assert error["code"] == "internal.uncatalogued"
-      assert error["details"] == %{"reason" => "the controller's log names the cause"}
+      assert %{"reason" => "the controller's log names the cause (ref " <> _} = error["details"]
       assert log =~ "Relay.api failed for a mcp caller"
       assert log =~ "vault key s3cr3t-7f3a"
     end

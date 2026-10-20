@@ -37,6 +37,7 @@ SDK. A program acts on the `code` and the `class`.
    1. [http_push](#http_push)
    1. [input](#input)
    1. [internal](#internal)
+   1. [kafka](#kafka)
    1. [listener](#listener)
    1. [mcp](#mcp)
    1. [namespace](#namespace)
@@ -57,6 +58,7 @@ SDK. A program acts on the `code` and the `class`.
    1. [template](#template)
    1. [topology](#topology)
    1. [usage](#usage)
+   1. [websocket](#websocket)
 
 ## Classes and exit codes
 
@@ -293,6 +295,12 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `internal.uncatalogued` | internal | 1 | an unexpected failure: {reason} |  |
+
+### kafka
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `kafka.exhausted` | unavailable | 7 | the output was not delivered to the Kafka broker: {reason} |  |
 
 ### listener
 
@@ -818,3 +826,9 @@ SDK raises or returns its one error type carrying them.
 | `usage.unknown_command` | invalid | 2 | '{word}' is not a {command} command; use one of {allowed} | `{command} help` |
 | `usage.unknown_option` | invalid | 2 | unknown option '{option}' | `{usage}` |
 | `usage.unknown_word` | invalid | 2 | unknown {noun} '{value}'; use one of {allowed} |  |
+
+### websocket
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `websocket.unacknowledged` | unavailable | 7 | the websocket peer acknowledged no send of the output in {attempts} attempt(s) |  |

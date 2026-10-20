@@ -298,8 +298,9 @@ requires a subscribe handshake sees it first. Nothing is dropped:
 - at the bound, the enqueueing caller is **parked** until the queue drains, so
   back-pressure reaches the relay rather than a frame reaching the floor;
 - a `"required"` frame whose retry budget is spent is **parked in the
-  dead-letter store**, attributed to the output's own cell and channel, and
-  its hold is then answered so the cursor advances past exactly that range;
+  dead-letter store** as `websocket.unacknowledged`, attributed to the
+  output's own cell and channel, and its hold is then answered so the cursor
+  advances past exactly that range;
 - nothing is ever handed to the connection library's public send, whose
   disconnected path discards a frame with no error, no callback and no log.
 

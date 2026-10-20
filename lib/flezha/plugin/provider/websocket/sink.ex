@@ -333,7 +333,8 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
 
   defp park(state, {{_type, body}, metadata, _req_id}, attempts) do
     emit(:failed, %{parked: 1}, state)
-    Outbox.park(metadata, body, :ws_sink_unacknowledged, attempts)
+    error = Flezha.Error.new("websocket.unacknowledged", %{attempts: attempts})
+    Outbox.park(metadata, body, error, attempts)
   end
 
   # The prefix is derived from the provider's id; nothing here names a root.

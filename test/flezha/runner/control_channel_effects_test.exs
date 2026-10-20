@@ -88,7 +88,7 @@ defmodule FlezhaTest.Runner.ControlChannelEffectsTest do
       capture_log(fn ->
         assert %RunnerCommands.EffectResultAck{error: error} = keep(ctx, "ref-internal", "answer")
         assert error.code == "runner.bad_reply"
-        assert error.details_json == ~s({"reason":"the controller's log names the cause"})
+        assert error.details_json =~ ~s({"reason":"the controller's log names the cause (ref )
       end)
 
     assert length(String.split(log, "s3cr3t-7f3a")) == 2

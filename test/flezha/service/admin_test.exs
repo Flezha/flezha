@@ -366,7 +366,7 @@ defmodule Flezha.Service.AdminTest do
             assert {:error, %Flezha.Error{code: ^code} = error} =
                      Admin.call("Relay.api", ~s(["#{@ns}", "o1"]), as(:http), :given)
 
-            assert error.details["reason"] == "the controller's log names the cause"
+            assert error.details["reason"] =~ "the controller's log names the cause (ref "
             refute Flezha.Error.object(error) =~ "s3cr3t"
           end)
 
@@ -386,8 +386,8 @@ defmodule Flezha.Service.AdminTest do
             assert {:error, %Flezha.Error{code: ^code} = error} = door("Relay.api", ~s(["o1"]))
             wire = Flezha.Error.to_wire(error)
 
-            assert Jason.decode!(wire.details_json)["reason"] ==
-                     "the controller's log names the cause"
+            assert Jason.decode!(wire.details_json)["reason"] =~
+                     "the controller's log names the cause (ref "
 
             refute wire.details_json =~ "s3cr3t"
           end)

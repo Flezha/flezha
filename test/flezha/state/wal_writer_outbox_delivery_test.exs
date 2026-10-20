@@ -135,15 +135,17 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     # Parking an undeliverable output logs at :error by design — assert that
     # user-facing line instead of letting it reach the console unasserted.
+    exhausted = Flezha.Error.new("kafka.exhausted", %{reason: :broker_gone})
+
     log =
       capture_log(fn ->
-        :ok = Outbox.park(md_doomed, "doomed", :broker_gone, 6)
+        :ok = Outbox.park(md_doomed, "doomed", exhausted, 6)
         :ok = Outbox.confirm(md_fine)
         :ok = WalWriter.fsync(pid)
       end)
 
     assert log =~ "parked undeliverable output"
-    assert log =~ "broker_gone"
+    assert log =~ "Kafka broker: broker_gone (kafka.exhausted)"
 
     assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
 
@@ -151,7 +153,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert entry["cell_key"] == "k1"
     assert entry["channel"] == "out"
     assert entry["attempts"] == 6
-    assert entry["error"] =~ "broker_gone"
+    assert entry["error"] == Flezha.Error.object(exhausted)
     assert {:ok, _entry, "doomed"} = DlqStore.get("#{rc}/task/#{entry["id"]}")
   end
 

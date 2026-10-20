@@ -477,7 +477,7 @@ defmodule Flezha.Plugin.Provider.HttpSend do
   # answers already settled, and a payload never sent made none.
   defp park(state, entry, {code, details}) do
     attempts = if entry.first_at, do: max(entry.attempt, 1), else: 0
-    Outbox.park(entry.metadata, entry.body, Error.object(Error.new(code, details)), attempts)
+    Outbox.park(entry.metadata, entry.body, Error.new(code, details), attempts)
     state
   end
 
