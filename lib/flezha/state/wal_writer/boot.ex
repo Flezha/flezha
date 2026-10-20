@@ -86,20 +86,25 @@ defmodule Flezha.State.WalWriter.Boot do
   Registry-registered before it touches disk: a
   `Flezha.State.Supervisor.find_or_start/1` from a StreamChannel never blocks,
   and appends queue in this writer's mailbox rather than the channel's.
+  `:dropped` when the Cell's state is deleted while the writer starts.
   """
   def open(state) do
     :ok = WriterRegistry.await_files(state.cell_id)
     unit = commit_unit(state.cell_id)
     state = %{state | commit_unit: unit, remote: RemoteGate.new(state.cell_id, unit)}
     File.mkdir_p!(Path.dirname(state.wal_path))
-    {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
 
-    case RecordFrame.scan_for_last_valid_seq(file, state.wal_path) do
-      {:ok, last_seq} ->
-        opened(%{state | file_handle: file}, file, max(last_seq, snapshot_seq(state.cell_id)))
+    # The directory gone again is that delete: never a writer that recreates it.
+    with {:ok, file} <- :file.open(state.wal_path, [:raw, :read, :write, :binary]) do
+      case RecordFrame.scan_for_last_valid_seq(file, state.wal_path) do
+        {:ok, last_seq} ->
+          opened(%{state | file_handle: file}, file, max(last_seq, snapshot_seq(state.cell_id)))
 
-      {:error, refusal} ->
-        refused(%{state | file_handle: file}, refusal)
+        {:error, refusal} ->
+          refused(%{state | file_handle: file}, refusal)
+      end
+    else
+      {:error, :enoent} -> :dropped
     end
   end
 

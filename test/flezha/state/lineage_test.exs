@@ -295,7 +295,7 @@ defmodule Flezha.State.LineageTest do
           assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
         end)
 
-      assert log =~ "MatchError"
+      assert log =~ "{:error, :eisdir}"
       assert records(ctx.cell_id) == 0
 
       File.rmdir!(Paths.lineage_path(ctx.cell_id))

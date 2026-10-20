@@ -262,7 +262,9 @@ offset, so a power loss cannot keep the dedup file's copy and lose it. A Cell wi
 at its writer's next dedup write; an unreadable one reads as none. The first record a writer
 appends to a Cell with no `id`, or to a landed copy, first installs a new random `id` (the mint,
 `Epoch.open_window/1`): the old id goes on the `trail` with the seq it forked at (16 kept) and
-`landed` is cleared; a failed install fails that append and restarts the writer.
+`landed` is cleared; a failed install fails that append and restarts the writer. A writer that
+finds its Cell's directory gone (the relay's state deleted under it) treats the Cell as dropped:
+it refuses the record, gives back its stream credit and stops without a restart.
 `Lineage.read/1` takes the higher epoch of the two files with that file's folded offset (the
 lineage file's on a tie); a
 dedup file ahead means a build without lineage records ran since, and the lineage record is

@@ -16,9 +16,10 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
   alias Flezha.AuthZ.Quotas
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Shutdown
-  alias Flezha.State.{InputLog, Paths, Supervisor, TaskJournal}
+  alias Flezha.State.{InputLog, Paths, Supervisor, TaskJournal, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.Telemetry
 
   defp state_dir_step(), do: Enum.filter(Teardown.shutdown_steps(), &(&1.name == :state_dir))
@@ -99,6 +100,43 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
 
     assert closed?(instance)
     refute File.exists?(Paths.class_dir(instance))
+  end
+
+  # fails when: a writer a late record started while the stop deleted its
+  # relay's tree crashes on its next record, or keeps that record's stream credit.
+  test "a writer whose Cell the stop deleted under it refuses its next record and stops" do
+    instance = "teardown_late_#{System.unique_integer([:positive])}"
+    cell_id = {instance, "t", "k1"}
+    {:ok, writer} = Supervisor.find_or_start(cell_id)
+    _booted = :sys.get_state(writer)
+    :ok = Paths.delete_class_dir(instance)
+    ref = Process.monitor(writer)
+
+    credit = %{channel: self(), session: :s, wire_size: 9}
+    WalWriter.append_async(writer, 0, TestHelpers.stub_header(), "x", nil, credit)
+
+    assert_receive {:DOWN, ^ref, :process, ^writer, :normal}
+    assert_receive {:credit_drained, :s, 9, ^cell_id}
+    refute File.exists?(Paths.class_dir(instance))
+  end
+
+  # fails when: a relay still waiting for a runner holds its supervisor's stop
+  # unread until the shutdown bound kills it, skipping its teardown.
+  test "a stop reaches a relay still waiting for its runner between polls" do
+    test_pid = self()
+
+    waiter =
+      :proc_lib.spawn(fn ->
+        Process.flag(:trap_exit, true)
+        send(test_pid, :waiting)
+        RelayManager.await_runner("teardown_no_runners", "f", "r", 30_000, fn _ -> false end)
+      end)
+
+    ref = Process.monitor(waiter)
+    assert_receive :waiting
+    Process.exit(waiter, :shutdown)
+
+    assert_receive {:DOWN, ^ref, :process, ^waiter, :shutdown}, 1_000
   end
 
   # fails when: the step runs on the node that issued the stop, which for a

@@ -314,7 +314,12 @@ defmodule Flezha.State.WalWriter do
   end
 
   @impl true
-  def handle_continue(:open, state), do: {:noreply, Boot.open(state)}
+  def handle_continue(:open, state) do
+    case Boot.open(state) do
+      :dropped -> {:stop, :normal, state}
+      state -> {:noreply, state}
+    end
+  end
 
   # Everything that writes to the WAL file or cuts it. A refused writer answers
   # each of them with its refusal; the read-only status calls still answer.
@@ -393,7 +398,7 @@ defmodule Flezha.State.WalWriter do
 
         case handle_call({:append, seq, header, body, nil}, from, state) do
           {:reply, :ok, state} -> answer(state, from, {:ok, seq}, opts)
-          {:reply, error, state} -> {:reply, error, state}
+          refused -> refused
         end
     end
   end
@@ -576,6 +581,9 @@ defmodule Flezha.State.WalWriter do
 
       {:reply, _result, new_state} ->
         {:noreply, RemoteGate.released(new_state, credit_opts)}
+
+      {:stop, reason, _refused, new_state} ->
+        {:stop, reason, RemoteGate.released(new_state, credit_opts)}
     end
   end
 
@@ -727,10 +735,21 @@ defmodule Flezha.State.WalWriter do
 
   # ---------- Append / realign ----------
 
+  # One open per fsync window: `pending_since_us` is nil exactly when nothing
+  # written since the last sync is waiting on the batcher, and the open starts
+  # it. A dropped Cell's writer refuses the record and stops.
+  defp write_record(%{pending_since_us: nil} = state, seq, header, change_bytes, runner_id, now) do
+    case Epoch.open_window(state) do
+      {:ok, state} ->
+        state = %{state | pending_since_us: System.monotonic_time(:microsecond)}
+        write_record(state, seq, header, change_bytes, runner_id, now)
+
+      :dropped ->
+        {:stop, :normal, {:error, :dropped}, state}
+    end
+  end
+
   defp write_record(state, seq, header, change_bytes, runner_id, now) do
-    # One open per fsync window: `pending_since_us` is nil exactly when
-    # nothing written since the last sync is waiting on the batcher.
-    state = if state.pending_since_us == nil, do: Epoch.open_window(state), else: state
     record = Frame.encode_record(seq, header, change_bytes)
     :ok = :file.write(state.file_handle, record)
     size = byte_size(record)
@@ -753,7 +772,6 @@ defmodule Flezha.State.WalWriter do
         last_advance_at: now,
         owning_runner: runner_id || state.owning_runner,
         pending_bytes: new_pending,
-        pending_since_us: state.pending_since_us || System.monotonic_time(:microsecond),
         oldest_unsnapshotted_at: state.oldest_unsnapshotted_at || now
     }
 

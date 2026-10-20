@@ -52,7 +52,8 @@ recorded runner on a placed row and waits for nothing. The Overwatch's own bind 
 runner: `Flezha.Relay.Lifecycle.bind/3` calls
 `Flezha.Service.RelayManager.Placement.await_runner/5`, which asks
 `FleetManager.resolve_runner/4` until a ready runner answers or `overwatch_runner_wait_ms` runs
-out, and then holds the relay unbound. The fleet manager filters its runners with
+out, and then holds the relay unbound. A stop from the Overwatch's supervisor that arrives
+between polls ends the wait as that stop, so the relay's teardown still runs. The fleet manager filters its runners with
 `placeable_runners/3`, ranks them by a rendezvous hash of the relay id and caps each runner's
 share by load, in one call (`Flezha.Runner.FleetManager.Load.place/3`). A wake
 (`Flezha.Relay.Suspend.wake/2`) and the loop's rebind (`Flezha.Convergence.Heal`) take a runner

@@ -66,6 +66,8 @@ defmodule Flezha.Service.RelayManager.Placement do
   Every attempt is capped at the smaller of #{Durations.get(:runner_poll_call_ms)} ms
   and what is left of `timeout_ms`, floored at #{Durations.get(:runner_min_call_ms)} ms,
   so a blocked `FleetManager` can overrun the deadline by at most that floor.
+  A trapping caller whose supervisor stops it between polls exits with that
+  stop's reason.
   """
   @spec await_runner(
           String.t(),
@@ -108,8 +110,22 @@ defmodule Flezha.Service.RelayManager.Placement do
     if System.monotonic_time(:millisecond) + Durations.get(:runner_poll_interval_ms) >= deadline do
       {:error, last_reason}
     else
-      Process.sleep(Durations.get(:runner_poll_interval_ms))
+      pause(Durations.get(:runner_poll_interval_ms))
       do_await_runner(namespace, factory_id, relay_id, deadline, ready_fun)
+    end
+  end
+
+  # The wait runs inside the caller's callback, where a supervisor's stop sits
+  # unread until its shutdown bound kills the caller and skips its `terminate/2`;
+  # a stop that arrives between polls ends the wait as that stop.
+  defp pause(interval_ms) do
+    [parent | _] = Process.get(:"$ancestors", [nil])
+    parent = if is_atom(parent), do: Process.whereis(parent), else: parent
+
+    receive do
+      {:EXIT, ^parent, reason} -> exit(reason)
+    after
+      interval_ms -> :ok
     end
   end
 

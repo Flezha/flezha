@@ -99,13 +99,17 @@ defmodule Flezha.State.WalWriter.Epoch do
   # The first record of a window marks the Cell dirty; while `mint?` (a landed
   # copy, or no lineage id yet) a new id is installed first. A failed install raises:
   # a refusal would be a result on every append; the restart mints at the resent record.
+  # A directory gone is the Cell deleted under this writer, which is `:dropped`.
   def open_window(%{mint?: true, lineage: lineage} = state) do
     fork = %{lineage | epoch: state.outbox_epoch, folded_offset: state.folded_offset}
-    {:ok, state} = Settlement.put_lineage(state, Lineage.mint(fork, state.last_persisted_seq))
-    open_window(%{state | mint?: false})
+
+    case Settlement.put_lineage(state, Lineage.mint(fork, state.last_persisted_seq)) do
+      {:ok, state} -> open_window(%{state | mint?: false})
+      {:error, :enoent} -> :dropped
+    end
   end
 
-  def open_window(state), do: tap(state, &FsyncBatcher.mark_dirty(&1.cell_id))
+  def open_window(state), do: {:ok, tap(state, &FsyncBatcher.mark_dirty(&1.cell_id))}
 
   # The half a realign and a rewind share: re-seat the outbox cursors on the
   # lineage record's epoch, which keys an output regenerated above the boundary
