@@ -90,7 +90,7 @@ fn end(inst: &Arc<RelayInstance>, status: &'static str, result: Vec<u8>) {
 }
 
 fn arm(inst: &Arc<RelayInstance>, deadline: Deadline, after: Duration) {
-    let due = crate::util::wall_now_ms().saturating_add(after.as_millis() as u64);
+    let due = crate::relay::due_after(after);
     crate::poll_core::global().arm_instance(Arc::downgrade(inst), inst.seq, deadline, due);
 }
 

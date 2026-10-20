@@ -41,12 +41,10 @@ impl PollCore {
                 // The consumer's wait list is what normally brings us back;
                 // this only bounds how long a lost wake could hold the Cell.
                 self.wakes.record(
-                    WakeKey {
-                        due_at_ms: crate::util::wall_now_ms() + PUSH_RETRY_BACKOFF_MS,
-                        tiebreak: WakeTiebreak::Retry(
-                            self.next_wake.fetch_add(1, Ordering::Relaxed),
-                        ),
-                    },
+                    WakeKey::after(
+                        PUSH_RETRY_BACKOFF_MS,
+                        WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed)),
+                    ),
                     Wake::PushRetry(Arc::clone(slot)),
                 );
                 self.notify_waiters();

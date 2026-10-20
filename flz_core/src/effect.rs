@@ -154,7 +154,7 @@ pub struct StagedInterval<C> {
     pub edges: Vec<EdgeRecord>,
     pub offset: Option<u64>,
     pub inputs: u32,
-    /// `None` exactly when the interval is closed.
+    /// On the monotonic clock; `None` exactly when the interval is closed.
     pub opened_at_ms: Option<u64>,
     /// The last folded invocation's clock value, which a deadline close
     /// carries too.
@@ -383,7 +383,7 @@ impl<B: Bodies> EffectBuffer<B> {
     pub fn close_interval(&mut self, policy: CheckpointPolicy) -> bool {
         let Some(record) = self
             .staged
-            .close_on_deadline(policy, crate::util::wall_now_ms())
+            .close_on_deadline(policy, crate::util::monotonic_ms() as u64)
         else {
             return false;
         };
@@ -547,11 +547,11 @@ pub fn settle_effects<B: Bodies>(
         // parked, in which case the record MUST ship so the dead-letter park
         // and the consumed-offset advance stay atomic.
         effects.parked = dlq.is_some();
-        if let Some(record) =
-            buffer
-                .staged
-                .fold(policy.checkpoint, effects, crate::util::wall_now_ms())
-        {
+        if let Some(record) = buffer.staged.fold(
+            policy.checkpoint,
+            effects,
+            crate::util::monotonic_ms() as u64,
+        ) {
             buffer.effects.push(EffectEntry::from_shipped(record, dlq));
             if !buffer.staged.is_open() {
                 buffer.holds.append(&mut buffer.staged_holds);

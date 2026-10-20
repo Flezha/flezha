@@ -1,6 +1,6 @@
 //! The core's one deferred-wake list: retry backoffs, processing-time timer
 //! deadlines, interval closes, push re-arms and instance deadlines, keyed by
-//! due time. It owns no
+//! clock lane, then due time. It owns no
 //! thread — entries are promoted by whichever poller next enters or wakes —
 //! and nothing in a promotion waits for mailbox room: a firing that cannot be
 //! admitted is re-recorded strictly later, so the list IS the holdback.
@@ -22,28 +22,87 @@ use crate::util::LockRecover;
 /// strictly non-zero so a pass cannot re-service the entry it just deferred.
 const WAKE_RETRY_BACKOFF_MS: u64 = 5;
 
-/// A deferred wake's place: due time, then a total tie-break.
+/// The clock a wake's due time is on. A processing-time timer's
+/// `scheduled_at` is wall time, which the controller re-arms across restarts;
+/// every other wake is a span from now, kept on the monotonic clock so a
+/// wall-clock step cannot move it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Lane {
+    Wall,
+    Mono,
+}
+
+impl Lane {
+    const ALL: [Lane; 2] = [Lane::Wall, Lane::Mono];
+
+    pub(super) fn now_ms(self) -> u64 {
+        match self {
+            Lane::Wall => crate::util::wall_now_ms(),
+            Lane::Mono => crate::util::monotonic_ms() as u64,
+        }
+    }
+
+    /// The least key due at `due_at_ms` on this lane: `Retry(0)` is the
+    /// least tie-break.
+    fn floor(self, due_at_ms: u64) -> WakeKey {
+        WakeKey {
+            lane: self,
+            due_at_ms,
+            tiebreak: WakeTiebreak::Retry(0),
+        }
+    }
+}
+
+/// A deferred wake's place: its lane, due time, then a total tie-break.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct WakeKey {
+    lane: Lane,
     pub(super) due_at_ms: u64,
     pub(super) tiebreak: WakeTiebreak,
 }
 
+impl WakeKey {
+    /// Due at `due_at_ms` on the tie-break's lane.
+    pub(super) fn at(due_at_ms: u64, tiebreak: WakeTiebreak) -> Self {
+        Self {
+            lane: tiebreak.lane(),
+            due_at_ms,
+            tiebreak,
+        }
+    }
+
+    /// Due `delay_ms` from now on the tie-break's lane.
+    pub(super) fn after(delay_ms: u64, tiebreak: WakeTiebreak) -> Self {
+        let due_at_ms = tiebreak.lane().now_ms().saturating_add(delay_ms);
+        Self::at(due_at_ms, tiebreak)
+    }
+}
+
+/// `Retry` comes first, so `Retry(0)` is the least value ([`Lane::floor`]).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum WakeTiebreak {
+    /// Recording order; a slot's gates stay held across its backoff, so a
+    /// second retry for the same cell cannot exist.
+    Retry(u64),
     /// The Cell's identity: arming `(cell, scheduled_at)` is an idempotent
     /// replace, and the instance id inside it keeps two instances sharing a
     /// `TaskletId` from disarming each other's timers.
     Timer(Arc<Vec<u8>>),
-    /// Recording order; a slot's gates stay held across its backoff, so a
-    /// second retry for the same cell cannot exist.
-    Retry(u64),
     /// The Cell whose open checkpoint interval is due to close; distinct
     /// from `Timer` so the two cannot evict each other on one millisecond.
     Interval(Arc<Vec<u8>>),
     /// One deadline of one instance, by its seq: re-arming it replaces the
     /// entry.
     Instance(u64, Deadline),
+}
+
+impl WakeTiebreak {
+    fn lane(&self) -> Lane {
+        match self {
+            WakeTiebreak::Timer(_) => Lane::Wall,
+            _ => Lane::Mono,
+        }
+    }
 }
 
 pub(super) enum Wake {
@@ -74,29 +133,31 @@ pub(super) enum Wake {
 /// The deferred-wake list; recording an entry returns at once.
 pub(super) struct DeferredWake {
     entries: Mutex<BTreeMap<WakeKey, Wake>>,
-    /// Due time of the earliest entry (`u64::MAX` when empty), so the poll
-    /// path decides "nothing is due" with one load.
-    earliest: AtomicU64,
+    /// Due time of each lane's earliest entry (`u64::MAX` when empty), so
+    /// the poll path decides "nothing is due" with two loads and reads a
+    /// lane's clock only while it holds an entry.
+    earliest: [AtomicU64; 2],
 }
 
 impl DeferredWake {
     pub(super) fn new() -> Self {
         Self {
             entries: Mutex::new(BTreeMap::new()),
-            earliest: AtomicU64::new(u64::MAX),
+            earliest: [AtomicU64::new(u64::MAX), AtomicU64::new(u64::MAX)],
         }
     }
 
     pub(super) fn record(&self, key: WakeKey, wake: Wake) {
+        let lane = key.lane;
         let mut entries = self.entries.lock_recover();
         entries.insert(key, wake);
-        self.refresh(&entries);
+        self.refresh(&entries, lane);
     }
 
     fn remove(&self, key: &WakeKey) {
         let mut entries = self.entries.lock_recover();
         entries.remove(key);
-        self.refresh(&entries);
+        self.refresh(&entries, key.lane);
     }
 
     /// Drop every timer armed for one Cell: eviction is destructive, so
@@ -114,7 +175,9 @@ impl DeferredWake {
         for key in doomed {
             entries.remove(&key);
         }
-        self.refresh(&entries);
+        for lane in Lane::ALL {
+            self.refresh(&entries, lane);
+        }
     }
 
     /// Remove `slot`'s pending retry, the twin of [`Self::discard_cell`] for
@@ -126,36 +189,49 @@ impl DeferredWake {
             .find(|(_, wake)| matches!(wake, Wake::Retry(armed) if Arc::ptr_eq(armed, slot)))
             .map(|(key, _)| key.clone());
         let taken = key.is_some_and(|key| entries.remove(&key).is_some());
-        self.refresh(&entries);
+        self.refresh(&entries, Lane::Mono);
         taken
     }
 
-    /// Whether anything came due, as one load on the cached earliest.
-    pub(super) fn any_due(&self, now: u64) -> bool {
-        self.earliest.load(Ordering::Acquire) <= now
+    /// `lane`'s cached earliest, and the lane's `clock` read beside it; `None`
+    /// when the lane is empty, without a clock read.
+    fn lane_clock(&self, lane: Lane, clock: &impl Fn(Lane) -> u64) -> Option<(u64, u64)> {
+        let earliest = self.earliest[lane as usize].load(Ordering::Acquire);
+        (earliest != u64::MAX).then(|| (earliest, clock(lane)))
     }
 
-    fn take_due(&self, now: u64) -> Vec<(WakeKey, Wake)> {
-        if !self.any_due(now) {
-            return Vec::new();
-        }
-        let mut entries = self.entries.lock_recover();
+    /// Whether anything came due on either lane.
+    pub(super) fn any_due(&self) -> bool {
+        Lane::ALL.into_iter().any(|lane| {
+            self.lane_clock(lane, &Lane::now_ms)
+                .is_some_and(|(earliest, now)| earliest <= now)
+        })
+    }
+
+    fn take_due(&self, clock: &impl Fn(Lane) -> u64) -> Vec<(WakeKey, Wake)> {
         let mut due = Vec::new();
-        while let Some((key, wake)) = entries.pop_first() {
-            if key.due_at_ms > now {
-                entries.insert(key, wake);
-                break;
+        for lane in Lane::ALL {
+            let Some((earliest, now)) = self.lane_clock(lane, clock) else {
+                continue;
+            };
+            if earliest > now {
+                continue;
             }
-            due.push((key, wake));
+            let mut entries = self.entries.lock_recover();
+            let range = lane.floor(0)..lane.floor(now.saturating_add(1));
+            due.extend(entries.extract_if(range, |_, _| true));
+            self.refresh(&entries, lane);
         }
-        self.refresh(&entries);
         due
     }
 
     /// Until the earliest entry comes due; `None` when empty.
-    fn next_due_in(&self, now: u64) -> Option<Duration> {
-        let due = self.earliest.load(Ordering::Acquire);
-        (due != u64::MAX).then(|| Duration::from_millis(due.saturating_sub(now)))
+    fn next_due_in(&self) -> Option<Duration> {
+        Lane::ALL
+            .into_iter()
+            .filter_map(|lane| self.lane_clock(lane, &Lane::now_ms))
+            .map(|(earliest, now)| Duration::from_millis(earliest.saturating_sub(now)))
+            .min()
     }
 
     /// Processing-time timers armed, counted from the entries so the number
@@ -168,11 +244,13 @@ impl DeferredWake {
             .count()
     }
 
-    fn refresh(&self, entries: &BTreeMap<WakeKey, Wake>) {
+    fn refresh(&self, entries: &BTreeMap<WakeKey, Wake>, lane: Lane) {
         let earliest = entries
-            .first_key_value()
+            .range(lane.floor(0)..)
+            .next()
+            .filter(|(k, _)| k.lane == lane)
             .map_or(u64::MAX, |(k, _)| k.due_at_ms);
-        self.earliest.store(earliest, Ordering::Release);
+        self.earliest[lane as usize].store(earliest, Ordering::Release);
     }
 }
 
@@ -182,7 +260,7 @@ impl PollCore {
     /// which both callers hold, so locking here would close a cycle.
     pub(super) fn park_slice(&self, deadline: Instant, now: Instant) -> Duration {
         let mut wait = deadline.saturating_duration_since(now);
-        if let Some(until_due) = self.wakes.next_due_in(crate::util::wall_now_ms()) {
+        if let Some(until_due) = self.wakes.next_due_in() {
             wait = wait.min(until_due);
         }
         wait
@@ -193,8 +271,12 @@ impl PollCore {
     /// inside, so one held on a full mailbox would stop the runner and hide
     /// it. A firing that cannot be admitted is re-recorded later instead.
     pub(super) fn promote_due(&self) {
-        let now = crate::util::wall_now_ms();
-        for (key, wake) in self.wakes.take_due(now) {
+        self.promote_due_by(&Lane::now_ms);
+    }
+
+    /// [`Self::promote_due`] at the times `clock` reads for each lane.
+    pub(super) fn promote_due_by(&self, clock: &impl Fn(Lane) -> u64) {
+        for (key, wake) in self.wakes.take_due(clock) {
             if let Wake::Instance { instance, deadline } = wake {
                 if let Some(instance) = instance.upgrade() {
                     crate::relay::sleep::deadline_due(&instance, deadline, key.due_at_ms);
@@ -205,7 +287,7 @@ impl PollCore {
                 continue;
             };
             if crate::admission::try_admit(&slot, item).is_err() {
-                self.defer_wake(now, key.tiebreak, retry);
+                self.defer_wake(key.tiebreak, retry);
             }
         }
     }
@@ -269,24 +351,19 @@ impl PollCore {
     /// Put a wake the target had no room for back on the list, due after
     /// [`WAKE_RETRY_BACKOFF_MS`] — strictly later, or `park_slice` would
     /// return zero and spin the promoter.
-    fn defer_wake(&self, now: u64, tiebreak: WakeTiebreak, wake: Wake) {
-        self.wakes.record(
-            WakeKey {
-                due_at_ms: now + WAKE_RETRY_BACKOFF_MS,
-                tiebreak,
-            },
-            wake,
-        );
+    fn defer_wake(&self, tiebreak: WakeTiebreak, wake: Wake) {
+        self.wakes
+            .record(WakeKey::after(WAKE_RETRY_BACKOFF_MS, tiebreak), wake);
     }
 
     /// Arm one processing-time timer; re-arming `(cell, scheduled_at)`
     /// replaces the entry.
     pub fn arm_timer(&self, slot: &Arc<CellSlot>, scheduled_at: u64, stream: Arc<FlezhaStream>) {
         self.wakes.record(
-            WakeKey {
-                due_at_ms: scheduled_at,
-                tiebreak: WakeTiebreak::Timer(Arc::clone(&slot.cell_identity)),
-            },
+            WakeKey::at(
+                scheduled_at,
+                WakeTiebreak::Timer(Arc::clone(&slot.cell_identity)),
+            ),
             Wake::Timer {
                 slot: Arc::downgrade(slot),
                 stream,
@@ -296,13 +373,14 @@ impl PollCore {
         self.notify_waiters();
     }
 
-    /// Arm a Cell's interval close; re-arming replaces the entry.
+    /// Arm a Cell's interval close at `deadline_ms` on the monotonic clock;
+    /// re-arming replaces the entry.
     pub fn arm_interval_close(&self, slot: &Arc<CellSlot>, deadline_ms: u64) {
         self.wakes.record(
-            WakeKey {
-                due_at_ms: deadline_ms,
-                tiebreak: WakeTiebreak::Interval(Arc::clone(&slot.cell_identity)),
-            },
+            WakeKey::at(
+                deadline_ms,
+                WakeTiebreak::Interval(Arc::clone(&slot.cell_identity)),
+            ),
             Wake::CloseInterval {
                 slot: Arc::downgrade(slot),
             },
@@ -313,14 +391,15 @@ impl PollCore {
     /// Disarm one timer. Idempotent; no notify, since dropping an entry can
     /// only lengthen a wait, never miss one.
     pub fn disarm_timer(&self, cell: &Arc<Vec<u8>>, scheduled_at: u64) {
-        self.wakes.remove(&WakeKey {
-            due_at_ms: scheduled_at,
-            tiebreak: WakeTiebreak::Timer(Arc::clone(cell)),
-        });
+        self.wakes.remove(&WakeKey::at(
+            scheduled_at,
+            WakeTiebreak::Timer(Arc::clone(cell)),
+        ));
     }
 
-    /// Arm one of the deadlines of the instance numbered `seq`. A promotion
-    /// decides whether it still applies.
+    /// Arm one of the deadlines of the instance numbered `seq`, due at
+    /// `due_at_ms` on the monotonic clock. A promotion decides whether it
+    /// still applies.
     pub fn arm_instance(
         &self,
         instance: Weak<crate::relay::instance::RelayInstance>,
@@ -329,10 +408,7 @@ impl PollCore {
         due_at_ms: u64,
     ) {
         self.wakes.record(
-            WakeKey {
-                due_at_ms,
-                tiebreak: WakeTiebreak::Instance(seq, deadline),
-            },
+            WakeKey::at(due_at_ms, WakeTiebreak::Instance(seq, deadline)),
             Wake::Instance { instance, deadline },
         );
         self.notify_waiters();
@@ -356,10 +432,10 @@ impl PollCore {
 
     /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.
     pub fn disarm_instance(&self, seq: u64, deadline: Deadline, due_at_ms: u64) {
-        self.wakes.remove(&WakeKey {
+        self.wakes.remove(&WakeKey::at(
             due_at_ms,
-            tiebreak: WakeTiebreak::Instance(seq, deadline),
-        });
+            WakeTiebreak::Instance(seq, deadline),
+        ));
     }
 
     /// The deadlines armed for the instance numbered `seq`, with their due

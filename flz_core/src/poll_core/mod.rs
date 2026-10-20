@@ -498,10 +498,10 @@ impl PollCore {
             return Answered::Released;
         }
         self.wakes.record(
-            WakeKey {
-                due_at_ms: crate::util::wall_now_ms().saturating_add(delay.as_millis() as u64),
-                tiebreak: WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed)),
-            },
+            WakeKey::after(
+                delay.as_millis() as u64,
+                WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed)),
+            ),
             Wake::Retry(Arc::clone(&slot)),
         );
         self.notify_waiters();

@@ -2,6 +2,7 @@
 //! mailbox defers instead of parking on, and how a wake is scoped,
 //! disarmed and discarded.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -126,7 +127,7 @@ fn a_due_firing_into_a_full_mailbox_defers_instead_of_parking() {
 fn a_due_interval_close_into_a_full_mailbox_defers_instead_of_parking() {
     let core = PollCore::new();
     let (_i, slot) = full_slot("poll-wake-full-close");
-    core.arm_interval_close(&slot, crate::util::wall_now_ms() - 1);
+    core.arm_interval_close(&slot, crate::util::monotonic_ms() as u64);
 
     let started = Instant::now();
     assert!(matches!(
@@ -158,7 +159,7 @@ fn a_due_wake_is_owed_one_thread_until_a_poll_entry_or_a_dwell() {
     let dwell = crate::poll_core::starvation::STARVATION_DWELL;
     let core = PollCore::new();
     let (_i, slot) = full_slot("poll-wake-owed-once");
-    core.arm_interval_close(&slot, crate::util::wall_now_ms() - 1);
+    core.arm_interval_close(&slot, crate::util::monotonic_ms() as u64);
     // A zero wait evaluates once and answers: no park, no timing.
     let owed = |core: &PollCore, wait| matches!(core.wait_starvation(wait), Starvation::Observed);
 
@@ -291,4 +292,32 @@ fn re_arming_an_instance_deadline_leaves_one_entry() {
         core.instance_deadlines(seq),
         vec![(Deadline::Complete, base + 40)]
     );
+}
+
+/// Each wake is due on its own lane's clock: a retry on the monotonic clock
+/// whatever the wall time reads, a processing-time timer on the wall clock
+/// whatever the monotonic one reads.
+#[test]
+fn a_retry_is_due_on_the_monotonic_clock_and_a_timer_on_the_wall_clock() {
+    let core = PollCore::new();
+    let (_ir, retrying) = slow_retry_slot("poll-lane-retry");
+    let act = queue_and_hand_out(&core, &retrying, &unix_stream(), 1);
+    let (token, _slot, items) = act.into_work().expect("work activation");
+    core.retry_after_failure(token, items, "boom".into());
+    let (_it, timed) = build_slot("poll-lane-timer");
+    arm_due_timer(&core, &timed, crate::util::wall_now_ms() + 600_000);
+
+    core.promote_due_at(u64::MAX >> 1, 0);
+    assert_eq!(core.timers_armed(), 0, "the timer is due on the wall clock");
+    assert!(
+        retrying.drain_active.load(Ordering::Acquire),
+        "a wall-clock jump does not end the retry's backoff"
+    );
+
+    core.promote_due_at(0, u64::MAX >> 1);
+    assert!(
+        !retrying.drain_active.load(Ordering::Acquire),
+        "the retry is due on the monotonic clock"
+    );
+    assert!(!core.wakes.take_retry(&retrying), "and left the list");
 }

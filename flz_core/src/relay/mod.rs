@@ -34,6 +34,12 @@ pub enum Deadline {
     Complete,
 }
 
+/// The due time `after` from now on the monotonic clock instance deadlines
+/// keep.
+pub(crate) fn due_after(after: Duration) -> u64 {
+    (crate::util::monotonic_ms() as u64).saturating_add(after.as_millis() as u64)
+}
+
 /// Arm `deadline` `after` from now in place of the due `held` keeps (`0`
 /// when none is armed), so a re-arm leaves one entry.
 pub(crate) fn rearm(
@@ -42,7 +48,7 @@ pub(crate) fn rearm(
     held: &AtomicU64,
     after: Duration,
 ) {
-    let due = crate::util::wall_now_ms().saturating_add(after.as_millis() as u64);
+    let due = due_after(after);
     let old = held.swap(due, Ordering::AcqRel);
     crate::poll_core::global().rearm_instance(
         Arc::downgrade(inst),

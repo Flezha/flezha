@@ -75,7 +75,7 @@ impl PollCore {
         // A due wake needs no dwell: every `poll` pass promotes what has come
         // due, so an entry still sitting there proves no pass has happened
         // since it did.
-        if self.wakes.any_due(crate::util::wall_now_ms()) {
+        if self.wakes.any_due() {
             return self.owed_for_wake(now);
         }
         // A direct activation — a host crossing, a steps relay undo — is runnable

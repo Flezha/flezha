@@ -14,6 +14,15 @@ impl PollCore {
         self.promote_due();
     }
 
+    /// [`Self::promote_due_wakes`] with the wall and monotonic clocks reading
+    /// `wall` and `mono`.
+    pub(crate) fn promote_due_at(&self, wall: u64, mono: u64) {
+        self.promote_due_by(&|lane| match lane {
+            super::wake::Lane::Wall => wall,
+            super::wake::Lane::Mono => mono,
+        });
+    }
+
     /// The first queued leave for `relay`; nothing else queued is touched.
     pub(crate) fn take_leave(&self, relay: &str) -> Option<EngineActivation> {
         self.take_direct(|act| match &act.payload {
