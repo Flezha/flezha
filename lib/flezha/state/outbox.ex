@@ -1,6 +1,8 @@
 defmodule Flezha.State.Outbox do
   @moduledoc """
-  The delivery-confirmation seam over a Cell's flush cursor (whose file
+  Two jobs for a Cell's durable outputs: the identity each one carries
+  (`output_stamps/1`, `output_identity/1`), and the delivery token that
+  confirms it, the seam over the Cell's flush cursor (whose file
   `Flezha.State.Lineage` owns).
 
   The cursor is durable proof that a sink HAS the output, so it advances on the

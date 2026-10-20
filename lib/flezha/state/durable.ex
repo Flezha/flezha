@@ -64,8 +64,10 @@ defmodule Flezha.State.Durable do
 
   @table [
     {:wal, "lib/flezha/state/wal_writer.ex", :record, :batched, ".rewriting", false, true},
-    {:input_log, "lib/flezha/state/input_log.ex", :record, :batched, ".rewriting", false, true},
-    {:effects_log, "lib/flezha/state/input_log.ex", :record, :inline, ".rewriting", false, true},
+    {:input_log, "lib/flezha/state/input_log/server.ex", :record, :batched, ".rewriting", false,
+     true},
+    {:effects_log, "lib/flezha/state/input_log/server.ex", :record, :inline, ".rewriting", false,
+     true},
     {:task_journal, "lib/flezha/state/task_journal.ex", :record, :batched, ".rewriting", false,
      true},
     {:snapshot, "lib/flezha/state/snapshot.ex", :whole, :inline, ".tmp", false, true},
@@ -84,7 +86,7 @@ defmodule Flezha.State.Durable do
      true},
     {:file_sink_progress, "lib/flezha/plugin/provider/file/storage/local.ex", :whole, :inline,
      ".tmp", false, false},
-    {:landed_mark, "lib/flezha/state/paths.ex", :whole, :inline, ".tmp", false, true}
+    {:landed_mark, "lib/flezha/state/adoption.ex", :whole, :inline, ".tmp", false, true}
   ]
 
   @rows Map.new(@table, fn row ->

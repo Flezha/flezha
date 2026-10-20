@@ -23,7 +23,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.{DurabilityTier, Lineage}
+  alias Flezha.State.{DurabilityTier, Lineage, Ref}
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
@@ -336,7 +336,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
         :yes -> ship_and_record(state, ref)
       end
 
-    {result, settle_release(state, Artifact.state_key(ref))}
+    {result, settle_release(state, Ref.state_key(ref))}
   end
 
   # A reference is owed while it has unshipped progress and nobody else holds
@@ -390,7 +390,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # both bid `{:claim, 1}` and the strict compare-and-set picks one.
   defp entitled?(state, ref) do
     entry = manifest_for(state, ref)
-    adopted? = MapSet.member?(state.adopted, Artifact.state_key(ref))
+    adopted? = MapSet.member?(state.adopted, Ref.state_key(ref))
 
     # `guard_for/2` is the one place the owner comparison is made, so the
     # decision to ship and the guard the write carries can never disagree.
@@ -404,7 +404,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   end
 
   defp continued?(entry, ref),
-    do: Lineage.relation(entry.lineage, Artifact.lineage(ref)) == :descendant
+    do: Lineage.relation(entry.lineage, Ref.lineage(ref)) == :descendant
 
   defp do_ship(state, ref) do
     if Artifact.whole_payload?(ref) do
@@ -457,14 +457,14 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # dropped records above a seq, a compaction dropped them below one — and only
   # then extended with the cut being shipped.
   defp ship_seq_addressed(state, ref) do
-    snapshots = Artifact.snapshots(ref)
+    snapshots = Ref.snapshots(ref)
     bounds = Artifact.seq_bounds(ref)
 
     if snapshots == [] and bounds == :empty do
       :nothing_to_ship
     else
-      epoch = Artifact.epoch(ref)
-      local = %{epoch: epoch, markers: Artifact.markers(ref), lineage: Artifact.lineage(ref)}
+      epoch = Ref.epoch(ref)
+      local = %{epoch: epoch, markers: Ref.markers(ref), lineage: Ref.lineage(ref)}
       manifest = state |> manifest_for(ref) |> Manifest.rebase(local.lineage)
       local_top = Artifact.top_seq(snapshots, bounds)
 

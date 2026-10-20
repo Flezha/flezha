@@ -4,15 +4,10 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   onto on disk, how a seq range is read out of it, how a fetched one is written
   back.
 
-  **Seq-addressed** references are read as a range of WAL records —
-  `{:cell, cell_id}` (a Cell's WAL and snapshots; a steps instance's
-  task-journal is this shape too, under `Paths`'s reserved cell key) and
-  `{:input_log, relay_class}`. **Whole-payload** ones are the
-  files they name, packed by `pack/1`: `{:cspec, {hub_id, writer}}`, `{:dlq,
-  {relay_class, tasklet_id}}`, `{:effects_log, relay_class}` and `{:control,
-  {store, writer}}`, each keyed by its writer or claim-fenced because their
-  replicas are per-node. The effect log is whole because a truncation rewrites
-  it, renumbering its records.
+  **Seq-addressed** references (a kind with a WAL, `Flezha.State.Ref`) are read
+  as a range of WAL records. **Whole-payload** ones are the files they name,
+  packed by `pack/1`, each keyed by its writer or claim-fenced because their
+  replicas are per-node.
 
   Record bundles are read at ship time and re-framed, never copied as file byte
   ranges: compaction and correction rewrite the live WAL in place, so a byte
@@ -24,80 +19,16 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   alias Flezha.State.Frame
   alias Flezha.State.Wire
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.Store
-  alias Flezha.State.{Lineage, Paths, RecordFrame, Restore}
+  alias Flezha.State.{Lineage, Paths, RecordFrame, Ref}
 
   @type ref :: Manifest.ref()
-
-  @whole_payload_kinds [:cspec, :dlq, :effects_log, :control]
-
-  # The control-plane stores that ship, as `store => files`. Each is a
-  # node-local DETS registry a replacement controller needs in order to come
-  # back as itself rather than as a blank cluster.
-  #
-  # The file list is explicit rather than a directory scan, and that is the
-  # security boundary: `bootstrap.token` lives beside these and is a plaintext
-  # one-shot secret that must never leave the node. A resurrected controller
-  # reads "already claimed" out of `state.dets`, so it never needs the token
-  # back.
-  # Which layout subtree each durable control-store group lives in. The group
-  # NAME is durable — it rides an artifact ref and a manifest key — so it stays
-  # written down; the files inside it are each store's own `filename/0`,
-  # gathered through `Flezha.State.Store`, so a store added to a subtree ships
-  # with it instead of being listed a second time here.
-  @control_subtrees %{"authz" => :auth, "schedules" => :schedules}
-
-  @doc "Local WAL path of `ref`, or `nil` for a whole-file reference."
-  @spec wal_path(ref()) :: binary() | nil
-  def wal_path({:cell, cell_id}), do: Paths.wal_path(cell_id)
-  def wal_path({:input_log, relay_class}), do: Paths.input_log_path(relay_class)
-  def wal_path(_ref), do: nil
 
   @doc """
   Whether `ref` is packed whole rather than read as a seq range — the one place
   the two artifact families are told apart.
   """
   @spec whole_payload?(ref()) :: boolean()
-  def whole_payload?(ref) when is_tuple(ref), do: elem(ref, 0) in @whole_payload_kinds
-
-  @doc """
-  The files making up a whole-payload artifact as `{root, names}` — only the
-  names that exist and hold bytes right now — or `nil` for a seq-addressed one.
-
-  This is the only per-artifact knowledge in the packing path: adding a
-  whole-payload artifact is a clause here, not a mechanism.
-  """
-  @spec payload_files(ref()) :: {binary(), [binary()]} | nil
-  def payload_files({:cspec, {hub_id, _writer}}),
-    do: present(Layout.file(:process_hub, hub_id), [Layout.hub_registry_file()])
-
-  def payload_files({:dlq, {relay_class, tasklet_id}}) do
-    root = Dlq.Store.task_dir(relay_class, tasklet_id)
-
-    case File.ls(root) do
-      {:ok, names} -> present(root, names)
-      {:error, _} -> {root, []}
-    end
-  end
-
-  def payload_files({:effects_log, relay_class}),
-    do: present(Paths.class_dir(relay_class), ["effects.log"])
-
-  def payload_files({:control, {store, _writer}}),
-    do: present(control_root(store), Store.filenames_in(subtree_of(store)))
-
-  def payload_files(_ref), do: nil
-
-  # The subtree, not the owner: reaching into `AuthZ.Config` and
-  # `Schedule.Store` for a directory was this module asking two services where
-  # their files are, when one table already says.
-  defp control_root(store), do: Layout.dir(subtree_of(store))
-
-  defp subtree_of(store), do: Map.fetch!(@control_subtrees, store)
-
-  defp present(root, names) do
-    {root, Enum.filter(names, &non_empty?(Path.join(root, &1)))}
-  end
+  def whole_payload?(ref) when is_tuple(ref), do: Ref.wal_path(ref) == nil
 
   @doc """
   Every hub whose registry cspec exists on this node, stamped with `writer`.
@@ -110,7 +41,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def cspec_refs(writer) when is_binary(writer) do
     case File.ls(cspec_root()) do
       {:ok, entries} ->
-        entries |> Enum.map(&{:cspec, {&1, writer}}) |> Enum.filter(&has_local_state?/1)
+        entries |> Enum.map(&{:cspec, {&1, writer}}) |> Enum.filter(&Ref.has_local_state?/1)
 
       {:error, _} ->
         []
@@ -120,7 +51,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc """
   Every parked-failure set of `relay_class` with a directory on this node.
 
-  Deliberately not filtered by `has_local_state?/1`: an emptied set has to stay
+  Deliberately not filtered by `Ref.has_local_state?/1`: an emptied set has to stay
   in the sweep so its remote entry stops naming a blob whose entries the user
   has since resolved. `Flezha.Dlq.Store` removes its directory only once that
   has landed.
@@ -149,80 +80,12 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec control_refs(binary()) :: [ref()]
   def control_refs(writer) when is_binary(writer) do
-    @control_subtrees
-    |> Map.keys()
+    Ref.Control.stores()
     |> Enum.map(&{:control, {&1, writer}})
-    |> Enum.filter(&has_local_state?/1)
+    |> Enum.filter(&Ref.has_local_state?/1)
   end
-
-  @doc """
-  The on-disk state key `ref` lives under — the directory name that
-  `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit a relay is
-  adopted as.
-  """
-  @spec state_key(ref()) :: binary()
-  def state_key({:cell, {class, _tasklet, _cell_key}}), do: class
-  def state_key({:input_log, class}), do: class
-  def state_key({:effects_log, class}), do: class
-  def state_key({:cspec, {hub_id, _writer}}), do: hub_id
-  def state_key({:dlq, {class, _tasklet}}), do: class
-  def state_key({:control, {store, _writer}}), do: store
 
   defp cspec_root(), do: Layout.dir(:process_hub)
-
-  @doc "Local snapshot files of `ref`, oldest first. Only Cells have them."
-  @spec snapshots(ref()) :: [{non_neg_integer(), binary()}]
-  def snapshots({:cell, cell_id}), do: Paths.snapshot_files(cell_id)
-  def snapshots(_ref), do: []
-
-  @doc """
-  The WAL-owner epoch a manifest write is conditioned on.
-
-  This is the existing local fencing epoch (`Flezha.State.Lineage`), read without
-  a live writer so a ship never depends on one. References with no dedup file —
-  the reserved journal identity, the input log, the cspec — report `0`;
-  their remote lineage is then ordered by write order rather than fenced, which
-  is exactly the reach the local epoch machinery already has.
-  """
-  @spec epoch(ref()) :: non_neg_integer()
-  def epoch({:cell, cell_id}), do: Lineage.progress(cell_id).epoch
-  def epoch(_ref), do: 0
-
-  @doc """
-  `ref`'s saga compensation markers — which of its undo hooks have been
-  intended and which have already run.
-
-  They are presence-only files that no state change implies, and the resumed
-  steps driver reads them off `RestoreInitState` to decide whether to
-  compensate or resume forward. A recovery that restored the data without them
-  resumes forward past a rollback it owes, so they travel on the manifest
-  rather than as blobs.
-  """
-  @spec markers(ref()) :: Manifest.markers()
-  def markers({:cell, cell_id}), do: Paths.compensation_markers(cell_id)
-  def markers(_ref), do: %{intent: false, done: false}
-
-  @doc """
-  Whether `ref` has anything durable on disk right now. For a Cell this is
-  `Restore.has_persisted_state?/1` — the same predicate the bind-time restore
-  filters on, so the tier and the restore path can never disagree about which
-  Cells exist.
-  """
-  @spec has_local_state?(ref()) :: boolean()
-  def has_local_state?({:cell, cell_id}), do: Restore.has_persisted_state?(cell_id)
-
-  def has_local_state?(ref) do
-    case payload_files(ref) do
-      nil -> non_empty?(wal_path(ref))
-      {_root, names} -> names != []
-    end
-  end
-
-  defp non_empty?(nil), do: false
-
-  defp non_empty?(path) do
-    match?({:ok, %{size: size}} when size > 0, File.stat(path))
-  end
 
   @doc """
   How new `ref`'s local copy is: its WAL-owner epoch, then the highest seq it
@@ -233,7 +96,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec freshness(ref()) :: {non_neg_integer(), integer()} | :unreadable
   def freshness(ref) do
-    {epoch(ref), top_seq(snapshots(ref), seq_bounds(ref))}
+    {Ref.epoch(ref), top_seq(Ref.snapshots(ref), seq_bounds(ref))}
   rescue
     RuntimeError -> :unreadable
   end
@@ -243,22 +106,14 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def freshness_of(relay_class),
     do: Map.new(Paths.durable_refs(relay_class), &{&1, freshness(&1)})
 
-  @doc "`ref`'s lineage (`%{id, trail}`), `nil` for none: only a Cell's writer mints one."
-  @spec lineage(ref()) :: %{id: binary(), trail: list()} | nil
-  def lineage({:cell, cell_id}) do
-    %{record: record} = Lineage.read(cell_id)
-    if record.id, do: Map.take(record, [:id, :trail])
-  end
-
-  def lineage(_ref), do: nil
-
-  @doc "`lineage/1` of every durable reference `relay_class` holds on this node."
+  @doc "`Ref.lineage/1` of every durable reference `relay_class` holds on this node."
   @spec lineage_of(binary()) :: %{ref() => map() | nil}
-  def lineage_of(relay_class), do: Map.new(Paths.durable_refs(relay_class), &{&1, lineage(&1)})
+  def lineage_of(relay_class),
+    do: Map.new(Paths.durable_refs(relay_class), &{&1, Ref.lineage(&1)})
 
   @doc """
   Whether one relay's copy marked `theirs` replaces the local copy marked
-  `ours` (both `%{ref => marker}`, lineages `%{ref => lineage/1}`): each of its
+  `ours` (both `%{ref => marker}`, lineages `%{ref => Ref.lineage/1}`): each of its
   markers can be read, it shares a reference with ours unless ours is empty, and
   on each shared one it continues ours, is unrelated, moved past the fork ours
   continues it from, or, of one lineage, is at least as new (a tie goes to it).
@@ -354,7 +209,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   # whole-file reference has no records at all. A refused record raises rather
   # than shipping the prefix before it as the whole WAL.
   defp fold_wal(ref, acc, fun) do
-    case wal_path(ref) do
+    case Ref.wal_path(ref) do
       nil -> acc
       path -> RecordFrame.fold_path!(path, acc, fun)
     end
@@ -374,17 +229,19 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def write_wal(_ref, <<>>), do: :ok
 
   def write_wal(ref, bytes) do
-    case wal_path(ref) do
+    case Ref.wal_path(ref) do
       nil -> {:error, :not_seq_addressed}
       path -> atomic_write(path, bytes)
     end
   end
 
   @spec write_snapshot(ref(), non_neg_integer(), binary()) :: :ok | {:error, term()}
-  def write_snapshot({:cell, cell_id}, seq, bytes),
-    do: atomic_write(Paths.snapshot_path(cell_id, seq), bytes)
-
-  def write_snapshot(_ref, _seq, _bytes), do: {:error, :not_snapshotted}
+  def write_snapshot(ref, seq, bytes) do
+    case Ref.snapshot_path(ref, seq) do
+      nil -> {:error, :not_snapshotted}
+      path -> atomic_write(path, bytes)
+    end
+  end
 
   @doc """
   A whole-payload artifact's bytes: every file it names, in one blob.
@@ -398,7 +255,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec pack(ref()) :: {:ok, binary()} | :empty | {:error, term()}
   def pack(ref) do
-    case payload_files(ref) do
+    case Ref.payload_files(ref) do
       nil -> {:error, :not_whole_payload}
       {_root, []} -> :empty
       {root, names} -> read_all(root, names)
@@ -415,7 +272,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec unpack(ref(), binary()) :: :ok | {:error, term()}
   def unpack(ref, bytes) do
-    with {root, _names} <- payload_files(ref),
+    with {root, _names} <- Ref.payload_files(ref),
          {:ok, files} when is_map(files) <- decode_payload(bytes) do
       Enum.reduce_while(files, :ok, fn {name, content}, :ok ->
         if Path.basename(name) == name and name not in [".", ".."] do

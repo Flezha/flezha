@@ -20,7 +20,7 @@ defmodule Flezha.State.Paths do
   """
 
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.State.Durable
+  alias Flezha.State.{Durable, Ref}
 
   @type cell_id ::
           {relay_class :: binary(), tasklet_id :: binary(), cell_key :: binary()}
@@ -115,11 +115,9 @@ defmodule Flezha.State.Paths do
   @claims_table :flezha_state_namespaces
 
   # The siblings a class directory is set aside under while a newer copy of its
-  # state is fetched, and discarded under once that copy is in place
-  # (`Flezha.State.Adoption`); no scanner reads either as a class.
-  @set_aside ".superseded"
-  @discarded ".discarded"
-  @landed ".landed"
+  # state is fetched, discarded under once that copy is in place, and the record
+  # of its landing (`Flezha.State.Adoption`); no scanner reads one as a class.
+  @aside %{set_aside: ".superseded", discarded: ".discarded", landed: ".landed"}
 
   @doc """
   Create the class→namespace claims table. Called once by
@@ -406,7 +404,7 @@ defmodule Flezha.State.Paths do
   Every on-disk path that belongs to one Cell (WAL, all snapshots, the
   outbox-dedup and lineage files, both compensation markers), whether or not
   the file exists: the one definition of "this Cell's durable set", shared by
-  the hard-delete path and the cross-controller transfer (`durable_files/1`).
+  the hard-delete path and the cross-controller transfer (`Flezha.State.Ref.files/1`).
   """
   @spec cell_files(cell_id()) :: [binary()]
   def cell_files({_, _, _} = pid) do
@@ -446,107 +444,34 @@ defmodule Flezha.State.Paths do
     for(cell <- Enum.uniq(cells_of(relay_class) ++ journal), do: {:cell, cell}) ++ logs
   end
 
-  @doc "Every path `ref` is made of, whether or not the file exists."
-  @spec durable_files(durable_ref()) :: [binary()]
-  def durable_files({:cell, cell_id}), do: cell_files(cell_id)
-  def durable_files({:input_log, relay_class}), do: [input_log_path(relay_class)]
-  def durable_files({:effects_log, relay_class}), do: [effects_log_path(relay_class)]
-
   @doc """
-  Resolve one basename of `ref` back to its full path, or `nil` when the
-  reference's layout does not produce that name.
-
-  The `nil` is a guard, not a convenience: the cross-controller transfer takes
-  the name off the wire, and joining it onto a directory would let a peer
-  address any path on the node. Snapshots are rebuilt from the seq in the name
-  rather than matched, since a node can legitimately be asked for a snapshot it
-  does not hold yet.
+  Remove `ref`'s files (`Flezha.State.Ref.files/1`; missing ones are ignored),
+  pruning the directories they leave empty: the hard delete of a Cell
+  (`Flezha.State.Supervisor.delete_cell/1`) and the name a peer calls over RPC
+  (`WalTransfer.move_cell/3`).
   """
-  @spec durable_file_path(durable_ref(), binary()) :: binary() | nil
-  def durable_file_path({:cell, {_, _, cell_key} = pid} = ref, name) when is_binary(name) do
-    named(ref, name) || snapshot_file_path(pid, cell_key, name)
-  end
-
-  def durable_file_path({kind, _relay_class} = ref, name)
-      when kind in [:input_log, :effects_log] and is_binary(name),
-      do: named(ref, name)
-
-  defp named(ref, name), do: Enum.find(durable_files(ref), &(Path.basename(&1) == name))
-
-  @doc "Remove `ref`'s files, pruning the directories they leave empty."
   @spec delete_durable(durable_ref()) :: :ok
-  def delete_durable({:cell, cell_id}), do: delete_files(cell_id)
-
-  def delete_durable({kind, relay_class} = ref) when kind in [:input_log, :effects_log] do
-    ref |> durable_files() |> Enum.each(&File.rm/1)
-    prune_class_dir(relay_class)
-  end
-
-  @doc "Where `relay_class`'s directory is set aside while a newer copy replaces it."
-  @spec set_aside_dir(binary()) :: binary()
-  def set_aside_dir(relay_class), do: class_dir(relay_class) <> @set_aside
-
-  @doc "Rename `relay_class`'s directory aside (`set_aside_dir/1`)."
-  @spec set_aside(binary()) :: :ok
-  def set_aside(relay_class),
-    do: File.rename!(class_dir(relay_class), set_aside_dir(relay_class))
-
-  @doc """
-  Put a set-aside copy back in place of whatever an interrupted or failed
-  adoption left in the class directory, and finish removing a discarded one;
-  a no-op when neither exists. An empty copy put back leaves no class
-  directory, as on the node that held nothing before the adoption.
-  """
-  @spec restore_set_aside(binary()) :: :ok
-  def restore_set_aside(relay_class) do
-    {:ok, _} = File.rm_rf(class_dir(relay_class) <> @discarded)
-    aside = set_aside_dir(relay_class)
-
-    if File.exists?(aside) do
-      {:ok, _} = File.rm_rf(class_dir(relay_class))
-      File.rename!(aside, class_dir(relay_class))
-      _ = File.rmdir(class_dir(relay_class))
-    end
-
-    :ok
+  def delete_durable(ref) do
+    files = Ref.files(ref)
+    Enum.each(files, &File.rm/1)
+    # Deleted state stops counting as durable evidence of prior intent
+    # (intent-mismatch detection); rmdir fails harmlessly while a sibling Cell
+    # or Tasklet still holds files.
+    files |> Enum.map(&Path.dirname/1) |> Enum.uniq() |> Enum.each(&File.rmdir/1)
+    prune_class_dir(Ref.state_key(ref))
   end
 
   @doc """
-  Remove a set-aside copy and its landing record (`mark_landed/2`) once what it
-  keeps is copied back. A crash part-way leaves a discarded copy, which the
-  next `restore_set_aside/1` finishes removing, never puts back.
+  Where `relay_class`'s directory is set aside (`:set_aside`) or discarded
+  (`:discarded`) while a newer copy replaces it, and where its landing is
+  recorded (`:landed`).
   """
-  @spec drop_set_aside(binary()) :: :ok
-  def drop_set_aside(relay_class) do
-    aside = set_aside_dir(relay_class)
-    discarded = class_dir(relay_class) <> @discarded
+  @spec aside_path(binary(), :set_aside | :discarded | :landed) :: binary()
+  def aside_path(relay_class, which), do: class_dir(relay_class) <> Map.fetch!(@aside, which)
 
-    if File.exists?(aside), do: File.rename!(aside, discarded)
-    _ = File.rm(class_dir(relay_class) <> @landed)
-    {:ok, _} = File.rm_rf(discarded)
-    :ok
-  end
-
-  @doc """
-  Record that the copy replacing `relay_class`'s set-aside one has landed,
-  with the paths (relative to the class directory) to copy back from it.
-  """
-  @spec mark_landed(binary(), [binary()]) :: :ok | {:error, term()}
-  def mark_landed(relay_class, kept) do
-    bytes = :erlang.term_to_binary(kept)
-    atomic_install(class_dir(relay_class) <> @landed, &:file.write(&1, bytes), :landed_mark)
-  end
-
-  @doc "The paths `mark_landed/2` recorded, or `:none` when no landing is recorded."
-  @spec landed_kept(binary()) :: {:ok, [binary()]} | :none
-  def landed_kept(relay_class) do
-    case File.read(class_dir(relay_class) <> @landed) do
-      {:ok, bytes} -> {:ok, :erlang.binary_to_term(bytes, [:safe])}
-      {:error, _} -> :none
-    end
-  end
-
-  defp snapshot_file_path(pid, cell_key, name) do
+  @doc "The path of `pid`'s snapshot file `name`, `nil` when `name` is no snapshot's."
+  @spec snapshot_file_path(cell_id(), binary()) :: binary() | nil
+  def snapshot_file_path({_, _, cell_key} = pid, name) do
     if seq = snapshot_seq(cell_key, name), do: snapshot_path(pid, seq)
   end
 
@@ -567,24 +492,6 @@ defmodule Flezha.State.Paths do
         cell_key <- cell_keys_in(Path.join(class_dir, tasklet_id)),
         uniq: true,
         do: {relay_class, tasklet_id, cell_key}
-  end
-
-  @doc """
-  Remove every on-disk file for one Cell (`cell_files/1`); missing files are
-  ignored. Used by the dynamic-mode hard-delete path
-  (`Flezha.State.Supervisor.delete_cell/1`).
-  """
-  @spec delete_files(cell_id()) :: :ok
-  def delete_files({relay_class, _, _} = pid) do
-    pid
-    |> cell_files()
-    |> Enum.each(&File.rm/1)
-
-    # Prune now-empty parent dirs so deleted state stops counting as durable
-    # evidence of prior intent (intent-mismatch detection); rmdir fails
-    # harmlessly while a sibling Cell or Tasklet still holds files.
-    _ = File.rmdir(state_dir(pid))
-    prune_class_dir(relay_class)
   end
 
   defp prune_class_dir(relay_class) do
@@ -703,7 +610,7 @@ defmodule Flezha.State.Paths do
           class <- list_dir(dir),
           class_dir = Path.join(dir, class),
           File.dir?(class_dir),
-          not String.ends_with?(class, [@set_aside, @discarded]),
+          not String.ends_with?(class, [@aside.set_aside, @aside.discarded]),
           do: {class, class_dir}
 
     Enum.uniq_by(found, &elem(&1, 0))
@@ -768,12 +675,6 @@ defmodule Flezha.State.Paths do
     _ = File.rm(in_progress)
     err
   end
-
-  @doc """
-  Snapshot files for a single Cell, sorted by seq ascending.
-  """
-  @spec snapshot_files(cell_id()) :: [{seq :: non_neg_integer(), path :: binary()}]
-  def snapshot_files(pid), do: snapshot_paths(pid)
 
   @spec encode_cell_key(binary()) :: binary()
   def encode_cell_key(key) do

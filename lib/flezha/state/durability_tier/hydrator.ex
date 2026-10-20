@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal, WalWriter}
+  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, Ref, TaskJournal, WalWriter}
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
@@ -220,7 +220,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   end
 
   defp apply_manifest(module, opts, %Manifest{ref: ref} = manifest) do
-    if Artifact.has_local_state?(ref) do
+    if Ref.has_local_state?(ref) do
       :ok
     else
       case land(module, opts, manifest) do

@@ -45,7 +45,7 @@ a claims ETS table (`:flezha_state_namespaces`, keyed `{state_root, class}`) →
 → `_system`. A Relay records the claim when it binds; a class owned by another namespace
 refuses with `{:namespace_conflict, class, owner}`, which makes cross-namespace state hijack
 impossible at the path seam; a class found under `_system` is adopted (one atomic rename) by the
-first real claimant; `Paths.delete_files/1` releases the claim once the class directory is
+first real claimant; `Paths.delete_durable/1` releases the claim once the class directory is
 gone. `Flezha.Boot.StatePathMigrator` runs at `Application.start/2` and lifts an older tree under
 `_system/`; the `.layout` marker, not the tree shape, makes re-runs no-ops. The `runner_id` is
 never part of the layout: a restarted runner's state ships to it on attach via `RestoreInitState`.
@@ -558,7 +558,7 @@ and the controller writes none. `StreamChannel` honours it only for a class
 with the `:dynamic_cells?` capability — any other kind gets a warning and is ignored, so a
 durable steps relay's state is never dropped out from under it — and routes it to
 `Flezha.State.Supervisor.delete_cell/1`, which closes the writer, drops the `FsyncBatcher` dirty
-mark, unlinks every path in `Paths.cell_files/1` (`Paths.delete_files/1`) and drops the
+mark, unlinks every path in `Paths.cell_files/1` (`Paths.delete_durable/1`) and drops the
 Cell's input-log watermark entry (`InputLog.forget_cell/2`). The delete is idempotent. A later
 input for the same key cold-starts a fresh Cell from seq 0; there is no restore-from-disk on
 recreate. `flz state delete` calls the same function and prints a confirmation.

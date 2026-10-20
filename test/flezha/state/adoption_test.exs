@@ -18,7 +18,7 @@ defmodule FlezhaTest.State.AdoptionTest do
     :ok = Lineage.put(cell_id, %{Lineage.mint(Lineage.read(cell_id).record, -1) | epoch: 0})
     old = File.read!(Paths.wal_path(cell_id))
     lineage = File.read!(Paths.lineage_path(cell_id))
-    File.rename!(Paths.class_dir(class), Paths.set_aside_dir(class))
+    File.rename!(Paths.class_dir(class), Paths.aside_path(class, :set_aside))
     %{class: class, cell_id: cell_id, old: old, lineage: lineage}
   end
 
@@ -34,24 +34,24 @@ defmodule FlezhaTest.State.AdoptionTest do
   test "the next arrival brings back the copy a crash left set aside", ctx do
     TestHelpers.write_wal({ctx.class, "task", "partial"}, 0..1, "landed")
 
-    assert :ok = Adoption.adopt_newest(ctx.class, nil)
+    assert :ok = Adoption.adopt_newest(ctx.class, :backend)
 
     assert File.read!(Paths.wal_path(ctx.cell_id)) == ctx.old
     assert File.read!(Paths.lineage_path(ctx.cell_id)) == ctx.lineage
     refute File.exists?(Paths.wal_path({ctx.class, "task", "partial"}))
-    refute File.exists?(Paths.set_aside_dir(ctx.class))
+    refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
   end
 
   # fails when: a crash after the newer copy landed puts the stale copy back,
   # or leaves the half-removed one beside the class.
   test "a copy discarded before a crash stays discarded", ctx do
     discarded = Paths.class_dir(ctx.class) <> ".discarded"
-    File.rename!(Paths.set_aside_dir(ctx.class), discarded)
+    File.rename!(Paths.aside_path(ctx.class, :set_aside), discarded)
     TestHelpers.write_wal(ctx.cell_id, 0..5, "newer")
     newer = File.read!(Paths.wal_path(ctx.cell_id))
     refute Enum.any?(Paths.relay_classes(), &String.starts_with?(&1, ctx.class <> "."))
 
-    assert :ok = Adoption.adopt_newest(ctx.class, nil)
+    assert :ok = Adoption.adopt_newest(ctx.class, :backend)
 
     assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
     refute File.exists?(discarded)
@@ -62,32 +62,32 @@ defmodule FlezhaTest.State.AdoptionTest do
   test "with nothing to compare against no local copy is read", ctx do
     reject(&Artifact.freshness_of/1)
 
-    assert :ok = Adoption.adopt_newest(ctx.class, nil)
+    assert :ok = Adoption.adopt_newest(ctx.class, :backend)
   end
 
   # fails when: a crash while the newer copy's missing files are copied back
   # puts the stale copy back over the newer one that had landed.
   test "a crash during the copy-back finishes it and keeps the newer copy", ctx do
     live = Paths.class_dir(ctx.class)
-    File.rename!(Paths.set_aside_dir(ctx.class), live)
+    File.rename!(Paths.aside_path(ctx.class, :set_aside), live)
     carl = {ctx.class, "task", "carl"}
     TestHelpers.write_wal(carl, 0..1, "only_here")
     carl_bytes = File.read!(Paths.wal_path(carl))
     File.write!(Path.join(live, "kind"), "steps")
     kept = Enum.map([Paths.wal_path(carl), Path.join(live, "kind")], &Path.relative_to(&1, live))
-    :ok = Paths.set_aside(ctx.class)
+    File.rename!(live, Paths.aside_path(ctx.class, :set_aside))
     TestHelpers.write_wal(ctx.cell_id, 0..5, "newer")
     newer = File.read!(Paths.wal_path(ctx.cell_id))
-    :ok = Paths.mark_landed(ctx.class, kept)
-    File.cp!(Path.join(Paths.set_aside_dir(ctx.class), "kind"), Path.join(live, "kind"))
+    :ok = Adoption.mark_landed(ctx.class, kept)
+    File.cp!(Path.join(Paths.aside_path(ctx.class, :set_aside), "kind"), Path.join(live, "kind"))
 
-    assert :ok = Adoption.adopt_newest(ctx.class, nil)
+    assert :ok = Adoption.adopt_newest(ctx.class, :backend)
 
     assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
     assert File.read!(Paths.wal_path(carl)) == carl_bytes
     assert File.read!(Path.join(live, "kind")) == "steps"
-    refute File.exists?(Paths.set_aside_dir(ctx.class))
-    assert Paths.landed_kept(ctx.class) == :none
+    refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
+    assert Adoption.landed_kept(ctx.class) == :none
   end
 
   describe "comparing two copies of one relay" do

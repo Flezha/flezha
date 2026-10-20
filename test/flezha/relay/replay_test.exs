@@ -68,7 +68,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     relay = adopt("ohlc#p1", state_source_node: @peer)
 
-    assert_received {:adopted, @peer, "ohlc#p1", _}
+    assert_received {:adopted, {:node, @peer}, "ohlc#p1", _}
     refute Keyword.has_key?(relay.opts, :state_source_node)
   end
 
@@ -77,7 +77,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     adopt("ohlc#p1", state_source_node: @peer, relay_class: "shared_class")
 
-    assert_received {:adopted, @peer, "shared_class", _}
+    assert_received {:adopted, {:node, @peer}, "shared_class", _}
   end
 
   test "a member placed on the assembling node adopts from no node" do
@@ -85,7 +85,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     adopt("ohlc#p0", state_source_node: node())
 
-    assert_received {:adopted, nil, "ohlc#p0", _}
+    assert_received {:adopted, :backend, "ohlc#p0", _}
   end
 
   test "a relay that was never rescaled adopts from no node" do
@@ -93,7 +93,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     adopt("plain", [])
 
-    assert_received {:adopted, nil, "plain", _}
+    assert_received {:adopted, :backend, "plain", _}
   end
 
   # fails when: a pull that did not land drops its source, so the relay binds
@@ -103,12 +103,12 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     relay = adopt("ohlc#p1", state_source_node: @peer)
     owner = self()
-    assert_received {:adopted, @peer, "ohlc#p1", ^owner}
+    assert_received {:adopted, {:node, @peer}, "ohlc#p1", ^owner}
     assert relay.opts[:state_source_node] == @peer
 
     task = spawn(fn -> :ok end)
     Replay.adopt_unlanded_state(state("ohlc#p1"), relay, task)
-    assert_received {:adopted, @peer, "ohlc#p1", ^task}
+    assert_received {:adopted, {:node, @peer}, "ohlc#p1", ^task}
   end
 
   # fails when: the bind adopts again over a copy that is already here, so a
@@ -129,7 +129,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
 
     Replay.adopt_unlanded_state(state("cold"), state("cold").builder, self())
 
-    assert_received {:adopted, nil, "cold", _}
+    assert_received {:adopted, :backend, "cold", _}
   end
 
   # fails when: every bind of a class that keeps no state lists the backend.

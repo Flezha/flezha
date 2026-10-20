@@ -29,7 +29,7 @@ defmodule Flezha.State.DurabilityTier do
   alias Flezha.Process.{Cspec, DurableTasks}
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Shipper}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.Paths
+  alias Flezha.State.{Paths, Ref}
   alias Flezha.State.PersistenceResolver
 
   # Bounded by the slowest plausible ship, not tuned: both backends time out at
@@ -345,7 +345,7 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec refs_of_state_key(binary()) :: [Artifact.ref()]
   def refs_of_state_key(state_key) when is_binary(state_key) do
-    Enum.filter(Paths.durable_refs(state_key), &Artifact.has_local_state?/1) ++
+    Enum.filter(Paths.durable_refs(state_key), &Ref.has_local_state?/1) ++
       Artifact.dlq_refs(state_key)
   end
 

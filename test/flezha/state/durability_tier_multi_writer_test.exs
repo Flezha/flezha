@@ -28,7 +28,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   alias Flezha.Shutdown
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{Adoption, Lineage, Paths, TestHelpers, WalWriter}
+  alias Flezha.State.{Adoption, Lineage, Paths, Ref, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.{NodeTestHelper, OverwatchHost}
 
@@ -418,7 +418,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
 
       # The relay moves back: the bind adopts the newer copy, then the lineage.
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
       GenServer.cast(Shipper, {:adopt, ctx.class})
       TestHelpers.append_wal(ctx.cell_id, 6..7)
 
@@ -481,7 +481,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert %{superseded_by: @peer_writer} = status_of(k2)
 
       # The relay comes back through the bind: the newer copy, then the lineage.
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
       assert File.read!(Paths.wal_path(k2_id)) == newer
       Shipper.adopt(ctx.class)
       assert :ok = Shipper.ship_now(k2)
@@ -560,7 +560,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       assert %{owner: @peer_writer} = Stub.stored_manifest(ref)
 
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
       assert File.read!(Paths.wal_path(ctx.cell_id)) == continued
     end
 
@@ -718,11 +718,11 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       sidecar = Path.join(Paths.class_dir(ctx.class), "kind")
       File.write!(sidecar, "flow")
 
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
 
       assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
       assert File.read!(sidecar) == "flow", "a class-level sidecar is not part of the copy"
-      refute File.exists?(Paths.set_aside_dir(ctx.class))
+      refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
     end
 
     test "CONTROL: a local copy newer than the remote one is kept", ctx do
@@ -732,7 +732,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       TestHelpers.append_wal(ctx.cell_id, 4..7)
       local = File.read!(Paths.wal_path(ctx.cell_id))
 
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
       assert File.read!(Paths.wal_path(ctx.cell_id)) == local
     end
 
@@ -745,7 +745,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       :ok = Shipper.sweep_now()
       File.rm_rf!(Paths.class_dir(ctx.class))
 
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
       assert File.read!(Paths.wal_path(ctx.cell_id)) == shipped
     end
 
@@ -758,16 +758,16 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       {:ok, _} = start_supervised(Shipper)
       Shipper.adopt(ctx.class)
       :ok = Shipper.sweep_now()
-      assert %{id: id} = Artifact.lineage(ref)
+      assert %{id: id} = Ref.lineage(ref)
 
       for seqs <- [2..3, 4..5] do
         File.rm_rf!(Paths.class_dir(ctx.class))
-        assert :ok = Adoption.adopt_newest(ctx.class, nil)
+        assert :ok = Adoption.adopt_newest(ctx.class, :backend)
         write_through_writer(ctx.cell_id, seqs)
         :ok = Shipper.sweep_now()
       end
 
-      assert Artifact.lineage(ref) == %{id: id, trail: []}
+      assert Ref.lineage(ref) == %{id: id, trail: []}
       assert %{lineage: %{id: ^id}} = shipped = Stub.stored_manifest(ref)
       assert Manifest.shipped_through(shipped) == 5
     end
@@ -780,9 +780,9 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       shipped = peer_takes_turns(ctx, 0..3)
       File.mkdir_p!(Path.dirname(Paths.wal_path(ctx.cell_id)))
       File.write!(Paths.wal_path(ctx.cell_id), shipped)
-      assert Artifact.lineage(ref) == nil
+      assert Ref.lineage(ref) == nil
 
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
       assert %{lineage: %{id: id}} = Stub.stored_manifest(ref)
       assert %{id: ^id, landed: true, epoch: 0} = Lineage.read(ctx.cell_id).record
       assert File.read!(Paths.wal_path(ctx.cell_id)) == shipped
@@ -798,7 +798,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       TestHelpers.write_wal({ctx.class, "task", "k2"}, 0..1)
       {:ok, _} = start_supervised(Shipper)
       :ok = Shipper.sweep_now()
-      Enum.each(Paths.durable_files(ref), &File.rm/1)
+      Enum.each(Ref.files(ref), &File.rm/1)
       relay = %Flezha.Relay.Builder{id: ctx.class, factory_id: "f"}
 
       Replay.adopt_unlanded_state(
@@ -819,7 +819,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       TestHelpers.write_wal(unshipped, 0..1, "local")
       local = File.read!(Paths.wal_path(unshipped))
 
-      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert :ok = Adoption.adopt_newest(ctx.class, :backend)
 
       assert File.read!(Paths.wal_path(ctx.cell_id)) == newer
       assert File.read!(Paths.wal_path(unshipped)) == local
@@ -834,12 +834,12 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       Stub.delete(newest_range_blob(ref), [])
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, nil) end)
+      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, :backend) end)
 
       assert log =~ "which the backend does not hold"
       assert log =~ "did not land whole; the local copy stays"
       assert File.read!(Paths.wal_path(ctx.cell_id)) == stale
-      refute File.exists?(Paths.set_aside_dir(ctx.class))
+      refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
     end
 
     # fails when: a node that held nothing keeps the part of a newer lineage
@@ -851,11 +851,11 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       Stub.delete(newest_range_blob({:cell, other}), [])
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, nil) end)
+      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(ctx.class, :backend) end)
 
       refute File.exists?(Paths.wal_path(ctx.cell_id))
       refute File.exists?(Paths.class_dir(ctx.class))
-      refute File.exists?(Paths.set_aside_dir(ctx.class))
+      refute File.exists?(Paths.aside_path(ctx.class, :set_aside))
       assert log =~ "which the backend does not hold"
       assert log =~ "did not land whole"
     end
@@ -870,7 +870,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       on_exit(NodeTestHelper.override_log_level(:warning))
 
       capture_log(fn ->
-        Adoption.adopt_newest(ctx.class, nil)
+        Adoption.adopt_newest(ctx.class, :backend)
         refute File.exists?(Paths.wal_path(ctx.cell_id))
 
         assert Replay.resume_cell_count(ctx.class) == 0

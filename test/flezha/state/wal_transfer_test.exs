@@ -219,7 +219,9 @@ defmodule FlezhaTest.State.WalTransferTest do
     on_exit(NodeTestHelper.override_log_level(:warning))
 
     log =
-      capture_log(fn -> assert :ok = Adoption.adopt_newest(class, :"nobody@127.0.0.1") end)
+      capture_log(fn ->
+        assert :ok = Adoption.adopt_newest(class, {:node, :"nobody@127.0.0.1"})
+      end)
 
     assert log =~ "could not be asked for its copy"
     assert log =~ "the local copy is bound unchecked"
@@ -240,13 +242,13 @@ defmodule FlezhaTest.State.WalTransferTest do
       peer = move_root_to_peer(:waltransfer6)
       TestHelpers.write_wal(cell_id, 0..3, "stale")
 
-      assert :ok = Adoption.adopt_newest(class, peer)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer})
       assert File.read!(Paths.wal_path(cell_id)) == newer
-      refute File.exists?(Paths.set_aside_dir(class))
+      refute File.exists?(Paths.aside_path(class, :set_aside))
 
       TestHelpers.append_wal(cell_id, 6..7, "local")
       local = File.read!(Paths.wal_path(cell_id))
-      assert :ok = Adoption.adopt_newest(class, peer)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer})
       assert File.read!(Paths.wal_path(cell_id)) == local
     end
 
@@ -263,7 +265,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       {:ok, writer} = Supervisor.find_or_start(cell_id)
       ref = Process.monitor(writer)
 
-      assert :ok = Adoption.adopt_newest(class, peer)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer})
 
       assert_received {:DOWN, ^ref, :process, ^writer, :normal}
       assert File.read!(Paths.wal_path(cell_id)) == newer
@@ -286,7 +288,7 @@ defmodule FlezhaTest.State.WalTransferTest do
         call_original(WalTransfer, :pull_relay, [source, class])
       end)
 
-      assert :ok = Adoption.adopt_newest(class, peer)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer})
 
       assert_received {:late, late, ref}
       assert_received {:DOWN, ^ref, :process, ^late, :normal}
@@ -306,7 +308,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       on_exit(fn -> Flezha.Relay.ClassRegistry.delete(class) end)
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, peer) end)
+      log = capture_log(fn -> assert :ok = Adoption.adopt_newest(class, {:node, peer}) end)
 
       assert log =~ "the relay is bound on this node; the local copy stays"
       assert File.read!(Paths.wal_path(cell_id)) == stale
@@ -324,7 +326,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       :ok = Flezha.Relay.ClassRegistry.put_overwatch(class, bound, nil)
       on_exit(fn -> Flezha.Relay.ClassRegistry.delete(class) end)
 
-      assert :ok = Adoption.adopt_newest(class, peer, bound)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer}, bound)
       assert File.read!(Paths.wal_path(cell_id)) == newer
     end
 
@@ -342,7 +344,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       TestHelpers.write_wal(carl, 0..2, "only_here")
       carl_bytes = File.read!(Paths.wal_path(carl))
 
-      assert :ok = Adoption.adopt_newest(class, peer)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer})
 
       assert File.read!(Paths.wal_path(cell_id)) == source
       assert File.read!(Paths.wal_path(carl)) == carl_bytes
@@ -364,14 +366,15 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(class, peer) end)
+      log =
+        capture_log(fn -> assert :not_landed = Adoption.adopt_newest(class, {:node, peer}) end)
 
       assert log =~ "did not land whole; the local copy stays"
 
       assert {File.read!(Paths.wal_path(cell_id)), File.read!(Paths.input_log_path(class))} ==
                stale
 
-      refute File.exists?(Paths.set_aside_dir(class))
+      refute File.exists?(Paths.aside_path(class, :set_aside))
     end
 
     # fails when: a node that held nothing keeps the part of a moving relay's
@@ -391,12 +394,13 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      log = capture_log(fn -> assert :not_landed = Adoption.adopt_newest(class, peer) end)
+      log =
+        capture_log(fn -> assert :not_landed = Adoption.adopt_newest(class, {:node, peer}) end)
 
       refute File.exists?(Paths.journal_path(class))
       refute File.exists?(Paths.wal_path(cell_id))
       refute File.exists?(Paths.class_dir(class))
-      refute File.exists?(Paths.set_aside_dir(class))
+      refute File.exists?(Paths.aside_path(class, :set_aside))
       assert log =~ "did not land whole"
     end
 
@@ -459,7 +463,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       peer = move_root_to_peer(:waltransfer9)
       TestHelpers.write_wal(cell_id, 0..5, "local")
 
-      assert :ok = Adoption.adopt_newest(class, peer)
+      assert :ok = Adoption.adopt_newest(class, {:node, peer})
       assert File.read!(Paths.wal_path(cell_id)) == source
     end
   end

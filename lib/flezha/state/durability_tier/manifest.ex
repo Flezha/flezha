@@ -17,7 +17,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   side, disjoint and ordered, so hydration concatenates them verbatim.
   """
 
-  alias Flezha.State.{Lineage, Paths}
+  alias Flezha.State.{Lineage, Paths, Ref}
 
   @magic "FLZM"
   @version 1
@@ -30,13 +30,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   # owner's claim would never land.
   @cut_keys ~w(epoch snapshots ranges file source_offsets markers owner claim lineage)a
 
-  @type ref ::
-          {:cell, Paths.cell_id()}
-          | {:input_log, binary()}
-          | {:effects_log, binary()}
-          | {:cspec, {binary(), binary()}}
-          | {:dlq, {binary(), binary()}}
-          | {:control, {binary(), binary()}}
+  @type ref :: Ref.t()
 
   @type range :: %{
           from: non_neg_integer(),
@@ -246,27 +240,10 @@ defmodule Flezha.State.DurabilityTier.Manifest do
 
   # ---------- keys ----------
 
-  # Every artifact class, as `tag => {kind, identity segments}`. The tag is the
-  # first path segment of every key the class owns; the count is how many
-  # segments its identity takes, so `path_of/1` and `ref_of_blob_key/1` are two
-  # readings of one table rather than hand-written inverses that can drift. A
-  # new artifact class is a row here plus an `Artifact.payload_files/1` clause.
-  #
-  # Which classes carry a writer in their identity is the ownership model in
-  # one line: the cspec and the control-plane stores are per-writer replicas of
-  # something no node replicates for another, while a Cell's state and an
-  # relay's parked failures belong to whichever node runs it and are
-  # arbitrated by the claim counter instead.
-  @classes %{
-    "e" => {:cell, 3},
-    "i" => {:input_log, 1},
-    "f" => {:effects_log, 1},
-    "c" => {:cspec, 2},
-    "d" => {:dlq, 2},
-    "p" => {:control, 2}
-  }
-
-  @tags Map.new(@classes, fn {tag, {kind, _segments}} -> {kind, tag} end)
+  # The kind table (`Flezha.State.Ref`) read both ways: by tag to name a key's
+  # reference, by kind to name a reference's key.
+  @classes Map.new(Ref.kinds(), fn {kind, {tag, segments}} -> {tag, {kind, segments}} end)
+  @tags Map.new(Ref.kinds(), fn {kind, {tag, _segments}} -> {kind, tag} end)
 
   @doc "Storage key of `ref`'s manifest entry."
   @spec key(ref()) :: binary()

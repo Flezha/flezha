@@ -155,7 +155,7 @@ defmodule Flezha.State.PathsTest do
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "bytes")
 
-      :ok = Paths.delete_files(cell_id)
+      :ok = Paths.delete_durable({:cell, cell_id})
 
       # Hand-built for the same reason as the adoption case above.
       refute File.dir?(Path.join([base, "team-a", "gone-op"]))

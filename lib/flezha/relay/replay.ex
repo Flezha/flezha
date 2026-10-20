@@ -174,11 +174,11 @@ defmodule Flezha.Relay.Replay do
   @spec adopt_moved_state(Overwatch.t(), Flezha.Relay.Builder.t(), term(), pid()) ::
           Flezha.Relay.Builder.t()
   def adopt_moved_state(%Overwatch{} = state, relay, hub_pid, owner \\ self()) do
-    source = moved_from(hub_pid) || foreign_state_source(relay.opts)
+    source = moved_from(hub_pid) || foreign_state_source(relay.opts) || :backend
     relay = drop_source(relay)
 
-    case Adoption.adopt_newest(Overwatch.relay_class(state), source, owner) do
-      :not_landed when source != nil -> put_in(relay.opts[:state_source_node], source)
+    case {Adoption.adopt_newest(Overwatch.relay_class(state), source, owner), source} do
+      {:not_landed, {:node, node}} -> put_in(relay.opts[:state_source_node], node)
       _landed_or_from_the_backend -> relay
     end
   end
@@ -202,7 +202,7 @@ defmodule Flezha.Relay.Replay do
 
   defp drop_source(relay), do: %{relay | opts: Keyword.delete(relay.opts, :state_source_node)}
 
-  defp moved_from({:ok, pid}) when is_pid(pid) and node(pid) != node(), do: node(pid)
+  defp moved_from({:ok, pid}) when is_pid(pid) and node(pid) != node(), do: {:node, node(pid)}
   defp moved_from(_here_or_nowhere), do: nil
 
   # `:state_source_node` names the node a relay's durable state was last
@@ -210,7 +210,7 @@ defmodule Flezha.Relay.Replay do
   # where the ordinary restore looks.
   defp foreign_state_source(relay_opts) do
     case Keyword.get(relay_opts, :state_source_node) do
-      source when is_atom(source) and not is_nil(source) and source != node() -> source
+      source when is_atom(source) and not is_nil(source) and source != node() -> {:node, source}
       _ -> nil
     end
   end

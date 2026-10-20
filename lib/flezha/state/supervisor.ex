@@ -67,7 +67,7 @@ defmodule Flezha.State.Supervisor do
       :error ->
         spec =
           case cell_id do
-            {relay_class, :input_log} -> {Flezha.State.InputLog, relay_class}
+            {relay_class, :input_log} -> {Flezha.State.InputLog.Server, relay_class}
             _ -> {WalWriter, cell_id}
           end
 
@@ -82,7 +82,7 @@ defmodule Flezha.State.Supervisor do
   @doc """
   Hard-delete a Cell's persisted state: stop its `WalWriter` (if
   running), drop any pending `FsyncBatcher` dirty mark, and remove the
-  on-disk files (`Flezha.State.Paths.cell_files/1`). Idempotent — deleting a
+  on-disk files (`Flezha.State.Paths.delete_durable/1`). Idempotent — deleting a
   never-seen / already-gone cell_id succeeds (`:ok`), which is what the SDK
   reaper's fire-and-forget send and the `flz state delete` CLI both rely on.
   """
@@ -95,7 +95,7 @@ defmodule Flezha.State.Supervisor do
 
     RemoteGate.release_owed(cell_id)
     FsyncBatcher.forget(cell_id)
-    Paths.delete_files(cell_id)
+    Paths.delete_durable({:cell, cell_id})
     # Its counters are what lists it as a Cell with persisted state.
     Metrics.drop_cell(cell_id)
 

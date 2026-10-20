@@ -24,7 +24,7 @@ defmodule Flezha.State.WalTransfer do
 
   alias Flezha.Config.Durations
   alias Flezha.State.DurabilityTier.Artifact
-  alias Flezha.State.{Lineage, Paths}
+  alias Flezha.State.{Lineage, Paths, Ref}
 
   @chunk_bytes 64 * 1024
 
@@ -36,21 +36,21 @@ defmodule Flezha.State.WalTransfer do
   @spec manifest(ref()) :: [binary()]
   def manifest(ref) do
     ref
-    |> Paths.durable_files()
+    |> Ref.files()
     |> Enum.filter(&File.regular?/1)
     |> Enum.map(&Path.basename/1)
   end
 
   @doc """
   One slice of `name` under `ref`. `name` arrives over the wire, so it is
-  resolved through `Paths.durable_file_path/2` — never joined onto the state
+  resolved through `Ref.file_path/2` — never joined onto the state
   directory, which would let a peer read arbitrary paths off this node.
   """
   @spec read_chunk(ref(), binary(), non_neg_integer()) ::
           {:ok, binary()} | :eof | {:error, term()}
   def read_chunk(ref, name, offset)
       when is_binary(name) and is_integer(offset) and offset >= 0 do
-    case Paths.durable_file_path(ref, name) do
+    case Ref.file_path(ref, name) do
       nil -> {:error, :not_in_manifest}
       path -> pread(path, offset)
     end
@@ -187,14 +187,14 @@ defmodule Flezha.State.WalTransfer do
 
   def move_cell(source_node, source, destination)
       when source_node in [nil] or source_node == node() do
-    files = Enum.filter(Paths.durable_files(source), &File.exists?/1)
+    files = Enum.filter(Ref.files(source), &File.exists?/1)
 
     if files == [] do
       {:ok, 0}
     else
       moved =
         Enum.count(files, fn path ->
-          case Paths.durable_file_path(destination, Path.basename(path)) do
+          case Ref.file_path(destination, Path.basename(path)) do
             nil ->
               false
 
@@ -265,7 +265,7 @@ defmodule Flezha.State.WalTransfer do
   # `Paths.atomic_install/3` owns the `.transferring` → fsync → rename dance;
   # this only fills the handle it is given.
   defp pull_file(source_node, ref, name, timeout, destination) do
-    case Paths.durable_file_path(destination, name) do
+    case Ref.file_path(destination, name) do
       nil ->
         {:error, {:unknown_file, name}}
 

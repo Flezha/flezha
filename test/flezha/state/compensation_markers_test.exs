@@ -37,9 +37,9 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     File.write!(Paths.compensation_marker_path(seg, :done), "")
     assert Paths.compensation_markers(seg) == %{intent: true, done: true}
 
-    # delete_files/1 (the "remove every file for a Cell" contract) reclaims the
-    # markers too, so a recreated Cell never sees a stale one.
-    Paths.delete_files(seg)
+    # The "remove every file for a Cell" contract reclaims the markers too, so
+    # a recreated Cell never sees a stale one.
+    Paths.delete_durable({:cell, seg})
     assert Paths.compensation_markers(seg) == %{intent: false, done: false}
   end
 
