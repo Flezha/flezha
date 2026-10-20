@@ -351,9 +351,10 @@ that controller owns. Clear a relocated tree by path, with the controller down.
 Graceful shutdown is on by default. A controller that is told to stop runs
 three phases:
 
-1. **Quiesce.** The node plans nothing new onto itself: a relay start
-   there answers `shutting_down`, and new runner connections are refused.
-   Running relays and connected runners are not touched.
+1. **Quiesce.** The node plans nothing new onto itself: from here until the
+   node stops, a relay start there answers `shutting_down` and new runner
+   connections are refused. Running relays and connected runners are not
+   touched.
 2. **Drain.** Each relay it hosts moves to a peer controller while it is
    still alive, namespace by namespace, concurrently. A relay in the
    middle of critical work can defer its move (below); whatever still defers at

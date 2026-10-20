@@ -1,6 +1,6 @@
 defmodule Flezha.Shutdown do
   @moduledoc """
-  Teardown at every scope as one walk: `run/3` folds the `Flezha.Shutdown.Step`
+  Teardown at every scope as one walk: `run/5` folds the `Flezha.Shutdown.Step`
   implementations of a scope in their declared order, each once, each bounded,
   stopping at the budget and naming the steps that did not run. The user's
   relay stop, the Overwatch's own terminate, the namespace stop and the
@@ -53,11 +53,15 @@ defmodule Flezha.Shutdown do
   `steps` defaults to the scope's declared steps; passing a list folds exactly
   those, which is how the fold itself is driven apart from what a scope
   happens to declare.
+
+  `opts[:on_error]` is `:halt` (the default) or `:continue`, which records a
+  failed step and runs the next while the budget lasts.
   """
-  @spec run(scope(), term(), non_neg_integer(), [Flezha.Shutdown.Step.t()]) ::
+  @spec run(scope(), term(), non_neg_integer(), [Flezha.Shutdown.Step.t()] | nil, keyword()) ::
           {:ok, report()} | {:partial, report()}
-  def run(scope, target, budget_ms, steps \\ nil) when is_integer(budget_ms) do
+  def run(scope, target, budget_ms, steps \\ nil, opts \\ []) when is_integer(budget_ms) do
     deadline = now_ms() + budget_ms
+    halt_on_error? = Keyword.get(opts, :on_error, :halt) == :halt
     quiesce(scope, target)
 
     report =
@@ -67,16 +71,9 @@ defmodule Flezha.Shutdown do
         fn step, acc ->
           remaining = deadline - now_ms()
 
-          cond do
-            acc.errors != [] or acc.skipped != [] ->
-              skip(acc, step)
-
-            remaining <= 0 ->
-              skip(acc, step)
-
-            true ->
-              apply_step(acc, step, target, remaining)
-          end
+          if (halt_on_error? and acc.errors != []) or acc.skipped != [] or remaining <= 0,
+            do: skip(acc, step),
+            else: apply_step(acc, step, target, remaining)
         end
       )
       |> finish()
@@ -102,7 +99,10 @@ defmodule Flezha.Shutdown do
   end
 
   defp failed(acc, step, reason) do
-    Logger.warning("[shutdown] step #{step.scope}/#{step.name} failed: #{inspect(reason)}")
+    if step.scope != :start do
+      Logger.warning("[shutdown] step #{step.scope}/#{step.name} failed: #{inspect(reason)}")
+    end
+
     %{acc | errors: [{step.name, reason} | acc.errors]}
   end
 
@@ -180,13 +180,12 @@ defmodule Flezha.Shutdown do
   end
 
   @doc """
-  Whether `scope`'s `target` is being torn down: the node once the coordinator
-  has quiesced, a namespace while its walk runs (or the node is quiesced).
+  Whether `scope`'s `target` is being torn down: the node from the
+  coordinator's quiesce until it stops, a namespace while its walk runs (or
+  the node is quiesced).
   """
   @spec quiesced?(scope(), term()) :: boolean()
-  def quiesced?(:node, _target) do
-    lookup({:node, :phase}) in [:quiescing, :draining, :finalising]
-  end
+  def quiesced?(:node, _target), do: lookup({:node, :phase}) not in [nil, :idle]
 
   def quiesced?(:namespace, namespace) do
     quiesced?(:node, nil) or lookup({:namespace, to_string(namespace)}) == true
@@ -198,11 +197,15 @@ defmodule Flezha.Shutdown do
   @spec node_phase(atom()) :: :ok
   def node_phase(phase) when is_atom(phase), do: insert({:node, :phase}, phase)
 
-  @doc "Create the quiesce table. Called once, by the process that outlives every walk."
+  @doc "Create the quiesce table unless it exists; the application's start owns it."
   @spec create_table() :: :ok
   def create_table() do
-    _ = :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
-    insert({:node, :phase}, :idle)
+    if :ets.whereis(@table) == :undefined do
+      _ = :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
+      insert({:node, :phase}, :idle)
+    end
+
+    :ok
   end
 
   defp quiesce(:namespace, %{namespace: namespace}),

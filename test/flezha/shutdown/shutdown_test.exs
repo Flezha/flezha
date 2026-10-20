@@ -1,6 +1,6 @@
 defmodule Flezha.ShutdownTest do
   @moduledoc """
-  The shutdown plan's walk (`Flezha.Shutdown.run/4`): the steps of a scope run
+  The shutdown plan's walk (`Flezha.Shutdown.run/5`): the steps of a scope run
   in their declared order, each once, each handed the budget still remaining; a
   step that fails halts the walk and the report names what did not run; a
   namespace reads as quiesced for exactly the walk's duration. And the half of
@@ -12,12 +12,15 @@ defmodule Flezha.ShutdownTest do
   # async: false: Mimic global mode; the live coordinator; the loop's registered name.
   use ExUnit.Case, async: false
   use Mimic
+  import ExUnit.CaptureLog, only: [capture_log: 1]
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Intent, Planner}
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
+  alias Flezha.Shutdown.Coordinator
+  alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper}
 
   setup :set_mimic_global_until_exit
 
@@ -97,6 +100,35 @@ defmodule Flezha.ShutdownTest do
       assert report.errors == []
       assert {:messages, []} = Process.info(self(), :messages), "a step ran past the budget"
     end
+
+    test "a walk told to continue runs past a failed step and names it" do
+      steps = steps([{:first, 10, :ok}, {:second, 20, :raise}, {:third, 30, :ok}])
+
+      assert {:partial, report} =
+               Shutdown.run(:namespace, %{namespace: @namespace}, 5_000, steps,
+                 on_error: :continue
+               )
+
+      assert report.ran == [:first, :third]
+      assert [{:second, {:error, %RuntimeError{}}}] = report.errors
+      assert report.skipped == []
+      assert_receive {:step, :third, true, _}
+    end
+
+    test "a :start step's refusal is answered, not logged; a teardown step's failure is" do
+      refusal = %{scope: :start, order: 10, name: :quota, run: fn _, _ -> {:error, :full} end}
+
+      log =
+        AuthTestHelper.capture_log_at(:warning, fn ->
+          assert {:partial, %{errors: [quota: :full]}} =
+                   Shutdown.run(:start, %{}, 5_000, [refusal])
+
+          assert {:partial, _} = walk([{:second, 20, :raise}])
+        end)
+
+      assert log =~ "[shutdown] step namespace/second failed"
+      refute log =~ "start/quota"
+    end
   end
 
   describe "the namespace walk" do
@@ -118,13 +150,52 @@ defmodule Flezha.ShutdownTest do
     end
   end
 
-  test "the node reads as quiesced through every namespace once the coordinator quiesces" do
+  test "the node reads as quiesced through every namespace from quiesce until it stops" do
     refute Shutdown.quiesced?(:node, nil)
-    Shutdown.node_phase(:quiescing)
     on_exit(fn -> Shutdown.node_phase(:idle) end)
 
-    assert Shutdown.quiesced?(:node, nil)
-    assert Shutdown.quiesced?(:namespace, "any")
+    for phase <- [:quiescing, :done] do
+      Shutdown.node_phase(phase)
+      assert Shutdown.quiesced?(:node, nil), "#{phase}"
+      assert Shutdown.quiesced?(:namespace, "any"), "#{phase}"
+    end
+  end
+
+  describe "boot" do
+    test "a coordinator restart does not reopen admission" do
+      on_exit(fn -> Shutdown.node_phase(:idle) end)
+      Shutdown.node_phase(:quiescing)
+
+      old = Process.whereis(Coordinator)
+      ref = Process.monitor(old)
+
+      log =
+        capture_log(fn ->
+          Process.exit(old, :kill)
+          assert_receive {:DOWN, ^ref, :process, ^old, :killed}
+
+          assert NodeTestHelper.wait_until(
+                   fn -> Process.whereis(Coordinator) not in [nil, old] end,
+                   5_000
+                 )
+        end)
+
+      assert log =~ "Flezha.Shutdown.Coordinator"
+      assert %{shutdown_in_progress: false} = Coordinator.status()
+      assert Shutdown.quiesced?(:node, nil)
+    end
+
+    @tag :multi_node
+    test "a booted controller has discovered its steps before any walk asks" do
+      {peer_pid, peer} = NodeTestHelper.start_peer_node(:shutdown_steps_boot)
+      on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
+
+      cached = :erpc.call(peer, :persistent_term, :get, [{Shutdown, :steps}, nil])
+      assert is_list(cached), "the steps are discovered at boot"
+
+      assert Enum.map(cached, &{&1.scope, &1.name}) ==
+               Enum.map(Shutdown.all_steps(), &{&1.scope, &1.name})
+    end
   end
 
   describe "the drain exception" do

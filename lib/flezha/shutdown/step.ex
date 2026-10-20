@@ -3,17 +3,18 @@ defmodule Flezha.Shutdown.Step do
   The one shape a teardown step has, declared by the module that owns the
   resource it tears down.
 
-  A module declares its steps with `shutdown_steps/0`; `Flezha.Shutdown.run/3`
+  A module declares its steps with `shutdown_steps/0`; `Flezha.Shutdown.run/5`
   discovers every declaring module and folds the steps of one scope in their
   declared order, each once, each bounded, so no stop path names a step and a
   new resource with a teardown is one new step. Scopes nest downward: a
   `:node` drain moves every relay, a `:namespace` stop takes its runners,
   plugins and hub, an `:relay` stop takes one relay's children, disk
   and quota, and a `:process` teardown is what the Overwatch itself owes when
-  it exits.
+  it exits. A `:start` walk takes what a relay start holds; its `{:error, _}`
+  is a refusal the caller answers, not a fault.
   """
 
-  @type scope :: :process | :relay | :namespace | :node
+  @type scope :: :start | :process | :relay | :namespace | :node
 
   @typedoc """
   One step: its scope, its order within that scope (unique), a name for the

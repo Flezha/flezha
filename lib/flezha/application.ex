@@ -10,6 +10,7 @@ defmodule Flezha.Application do
   alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
 
@@ -52,6 +53,9 @@ defmodule Flezha.Application do
     # provider table, whose worker families the tree supervises.
     _ = PackageLoader.load_all()
 
+    # Owned here, for the application's life: a coordinator restart must not reopen admission.
+    :ok = Shutdown.create_table()
+
     children = controller_children()
 
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
@@ -62,6 +66,8 @@ defmodule Flezha.Application do
     # supervisor that never started replaces that reason with `:noproc`.
     with {:ok, _pid} = result <- Supervisor.start_link(children, opts) do
       :ok = PackageLoader.announce()
+      # Discovery loads every module; paid here rather than by the first stop or start.
+      _ = Shutdown.all_steps()
       # Here and nowhere earlier: `start_link/2` has returned, so every child
       # started, and this call blocks on the Loader until its boot continuation
       # finished. Publishing from the continuation itself would claim a

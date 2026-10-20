@@ -133,10 +133,7 @@ defmodule Flezha.Shutdown.Coordinator do
   # ---------- GenServer ----------
 
   @impl true
-  def init(_) do
-    Shutdown.create_table()
-    {:ok, %__MODULE__{}}
-  end
+  def init(_), do: {:ok, %__MODULE__{}}
 
   @impl true
   def handle_call({:shutdown, reason, opts}, from, %__MODULE__{phase: :idle} = state) do
@@ -192,9 +189,11 @@ defmodule Flezha.Shutdown.Coordinator do
   end
 
   def handle_call(:status, _from, state) do
+    phase = external_phase(state.phase)
+
     reply = %{
-      shutdown_in_progress: state.phase in [:quiescing, :draining, :finalising],
-      shutdown_phase: external_phase(state.phase),
+      shutdown_in_progress: phase != nil,
+      shutdown_phase: phase,
       signal_handler_status: SignalHandler.status(),
       graceful_shutdown_enabled: Config.get(:graceful_shutdown_enabled),
       graceful_shutdown_timeout_ms: configured_timeout_ms()

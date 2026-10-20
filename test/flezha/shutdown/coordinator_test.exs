@@ -20,10 +20,11 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   setup :verify_on_exit!
 
   setup do
-    # The application boots a Coordinator under `Flezha.Supervisor`.
-    # Each test resets it to `:idle` by killing the process — the
-    # supervisor restarts it via :one_for_one.
+    # The application boots a Coordinator under `Flezha.Supervisor`;
+    # each test starts from `:idle`.
     reset_coordinator!()
+    # A finished shutdown keeps admission closed, so no test may leave one behind.
+    on_exit(&reset_coordinator!/0)
     :ok
   end
 
@@ -44,6 +45,19 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "false at idle, for the node and for any namespace" do
       refute Shutdown.quiesced?(:node, nil)
       refute Shutdown.quiesced?(:namespace, "default")
+    end
+
+    test "a finished shutdown keeps admission closed until the node stops" do
+      stub(HubManager, :get_running_namespaces, fn -> [] end)
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+      stub(FsyncBatcher, :flush_all, fn -> :ok end)
+      stub(TransportServer, :stop_all, fn -> :ok end)
+
+      assert :ok = Coordinator.shutdown(:cli, force: true, timeout_ms: 5_000)
+
+      assert %{shutdown_in_progress: false} = Coordinator.status()
+      assert Shutdown.quiesced?(:node, nil)
+      assert Shutdown.admit(:namespace, "x") == {:error, :shutting_down}
     end
   end
 

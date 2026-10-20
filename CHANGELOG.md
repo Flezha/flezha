@@ -10,6 +10,12 @@
   `malformed_frames` count in `driver_stats`. The controller skipped such a frame, and kept the
   pairs before a cut one.
 
+### Fixed: a controller that finished its shutdown still refuses starts
+
+- A relay start or a runner connect that reached a controller after its graceful shutdown had
+  finished, but before the node stopped, was admitted; it answers `shutting_down` now. A restart
+  of the shutdown coordinator no longer reopens admission either.
+
 ### Changed: names that say what they time
 
 - **BREAKING:** `FLEZHA_RUNNER_KEEPALIVE` is `FLEZHA_RUNNER_REMOVAL_GRACE_MS` and the application
