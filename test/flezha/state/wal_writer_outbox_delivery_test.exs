@@ -256,7 +256,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
 
-  test "a held answer to a relay caller is re-dispatched until its delivery confirms it", %{
+  test "a held answer is dispatched again only when its delivery reports it lost", %{
     rc: rc,
     cell_id: cell_id
   } do
@@ -270,8 +270,13 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = Outbox.hold_delivery(md)
     settle(md)
 
-    # The delivery that held it went down with its router: the answer goes again.
+    # Its delivery worker retries it: the resettle sends no second copy.
     send(pid, :outbox_retry)
+    :ok = WalWriter.fsync(pid)
+    refute_dispatched(0)
+
+    # The router lost the worker that held it: the answer goes again.
+    :ok = WalWriter.redrive_answers(pid, "gateway")
     :ok = WalWriter.fsync(pid)
     assert {"answer", again, _} = next_output()
     assert again["flz.seq"] == md["flz.seq"]
@@ -355,8 +360,8 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
       :ok = Outbox.hold(metadata)
     end)
 
-    # The caller stays away past the resettle: the answer goes again.
-    send(pid, :outbox_retry)
+    # The router lost the delivery worker: the answer goes again.
+    :ok = WalWriter.redrive_answers(pid, "gateway")
     :ok = WalWriter.fsync(pid)
     assert {"answer", again, _} = output_again = next_output()
     assert again["flz.seq"] == md["flz.seq"]

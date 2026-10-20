@@ -249,7 +249,7 @@ answer: the relay that took the message and its verdict.
 | --- | --- |
 | `delivered` | the relay took the message |
 | `absorbed` | a repeat of a message id the relay's input log still holds; the message is not handled again |
-| `suspended` | the relay is suspended or moving; its input log holds the message until it wakes |
+| `suspended` | the relay is suspended or moving, or keeps an input log and has no runner bound yet; the log holds the message until it wakes or a runner binds |
 
 Two options ride along:
 
@@ -1114,7 +1114,7 @@ The exit code is `flz`'s for the class ([errors](../../errors.md)).
 | `call.absorbed` | conflict (6) | the input was dropped as a duplicate, or an `on_input` hook filtered it out |
 | `call.not_accepted` | conflict (6) | a `once` or `chained` steps instance has already taken its input; nothing is journaled |
 | `call.busy` | unavailable (7) | the relay already owes `call_pending_max` answers; nothing is taken in |
-| `call.unavailable` | unavailable (7) | the relay is halted or not ready, its durable append was refused, or its Overwatch went away |
+| `call.unavailable` | unavailable (7) | the relay is halted, or not ready with no input log to hold the input, its durable append was refused, or its Overwatch went away |
 | `call.target_unkeyed` | invalid (2) | a partition group was called with no key; `details.members` |
 | `relay.factory_mismatch` | conflict (6) | a factory call named an instance of another factory; nothing is delivered |
 | `topology.channel_ends_twice` | invalid (2) | a channel declares two plugin ends (raised when the relay is declared) |
@@ -1147,8 +1147,11 @@ For a durable pair:
   one `Response`.
 - The called relay holds its answer in its own outbox until the caller's Overwatch took it,
   retrying until then or until the deadline plus the margin, when it drops it as `caller_gone`; a
-  caller no longer declared in its namespace is dropped at once. An answer lost while held is
-  sent again.
+  caller no longer declared in its namespace is dropped at once. An answer whose delivery is
+  lost while it holds it (the controller's call delivery crashed) is sent again once from that
+  outbox.
+- A call to a called relay that has no runner bound yet waits: its input log holds the request,
+  the bind delivers it, and the call ends at its answer or its deadline.
 - Clocks are assumed synchronized to well within the margin.
 
 The deadline of a relay call is the caller's alone: a wall-clock time taken when the calling

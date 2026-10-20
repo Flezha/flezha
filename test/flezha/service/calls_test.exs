@@ -200,25 +200,88 @@ defmodule FlezhaTest.Service.CallsTest do
       refute_received {:"$gen_call", _, {:call_answer, _, _}}
     end
 
+    # Kill the router and wait for its supervisor's next one; the crash's log.
+    defp restart_router(router) do
+      capture_log(fn ->
+        Process.exit(router, :kill)
+
+        assert NodeTestHelper.wait_until(
+                 fn -> Process.whereis(CallDelivery.name()) not in [nil, router] end,
+                 1_000,
+                 25
+               )
+      end)
+    end
+
     test "a router that crashes takes its workers down with it" do
       {router, worker, from} = answer_in_flight("c2")
       ref = Process.monitor(worker)
 
-      log =
-        capture_log(fn ->
-          Process.exit(router, :kill)
-          assert_receive {:DOWN, ^ref, :process, ^worker, _reason}, 1_000
+      log = restart_router(router)
 
-          assert NodeTestHelper.wait_until(
-                   fn -> Process.whereis(CallDelivery.name()) not in [nil, router] end,
-                   1_000,
-                   25
-                 )
-        end)
+      assert_receive {:DOWN, ^ref, :process, ^worker, _reason}, 1_000
 
       assert log =~
                "Child Flezha.Service.Calls.Router of Supervisor Flezha.Service.Calls terminated"
 
+      GenServer.reply(from, :ok)
+    end
+
+    # The callee's live writers are the test, every other relay's the real ones.
+    defp writers_of(callee) do
+      test_pid = self()
+
+      stub(WriterRegistry, :live_writers, fn
+        ^callee -> [test_pid]
+        other -> Mimic.call_original(WriterRegistry, :live_writers, [other])
+      end)
+    end
+
+    test "a killed answer worker has the callee's writers dispatch its caller's answers again" do
+      writers_of("agent-c6")
+      {_router, worker, _from} = answer_in_flight("c6")
+
+      Process.exit(worker, :kill)
+
+      assert_receive {:"$gen_cast", {:redrive_answers, "gateway"}}, 1_000
+    end
+
+    test "an answer worker stopped idle reports nothing" do
+      on_exit(TestHelpers.override_env(:call_worker_idle_ms, 100))
+      writers_of("agent-c7")
+      {router, worker, from} = answer_in_flight("c7")
+      ref = Process.monitor(worker)
+
+      GenServer.reply(from, :ok)
+
+      assert_receive {:DOWN, ^ref, :process, ^worker, _reason}, 1_000
+      key = {:answer, @ns, "agent-c7", "gateway"}
+      gone? = fn -> not Map.has_key?(:sys.get_state(router).workers, key) end
+      assert NodeTestHelper.wait_until(gone?, 1_000, 25)
+      refute_received {:"$gen_cast", {:redrive_answers, _caller}}
+    end
+
+    test "a restarted router has every live Cell writer dispatch its answers again" do
+      test_pid = self()
+      cell = {"agent", "account", "k"}
+
+      # Only the router's start reports to the test; the controller's other
+      # readers of the registry see the real writers.
+      stub(WriterRegistry, :cell_writers, fn ->
+        if Process.whereis(CallDelivery.name()) == self() do
+          send(test_pid, {:workers_at_init, Process.whereis(Flezha.Service.Calls.Workers)})
+          [{cell, test_pid}]
+        else
+          Mimic.call_original(WriterRegistry, :cell_writers, [])
+        end
+      end)
+
+      restart_router(Process.whereis(CallDelivery.name()))
+
+      assert_receive {:workers_at_init, workers}
+      assert is_pid(workers)
+      assert_receive {:"$gen_cast", {:redrive_answers, :all}}
+      {_router, _worker, from} = answer_in_flight("c8")
       GenServer.reply(from, :ok)
     end
 

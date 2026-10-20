@@ -195,6 +195,10 @@ defmodule Flezha.State.WalWriter do
           non_neg_integer() | {:error, term()}
   def redrive_calls(server, started, id), do: call(server, {:redrive_calls, started, id})
 
+  @doc "Re-dispatch now every answer to `caller` (`:all`, any caller) whose delivery is open."
+  @spec redrive_answers(GenServer.server(), binary() | :all) :: :ok
+  def redrive_answers(server, caller), do: GenServer.cast(server, {:redrive_answers, caller})
+
   @doc """
   Where a correction for `target_event_time` must rewind to: the last seq whose
   history entirely precedes that event time, plus the input offset consumed as
@@ -556,6 +560,9 @@ defmodule Flezha.State.WalWriter do
 
   def handle_cast({:outbox_delivery_confirmed, key}, state),
     do: {:noreply, Settlement.delivery(state, key, :confirmed)}
+
+  def handle_cast({:redrive_answers, caller}, state),
+    do: {:noreply, Settlement.redrive_answers(state, caller)}
 
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do

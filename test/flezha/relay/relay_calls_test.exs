@@ -196,6 +196,18 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       refute_received {:call_event, :answer_dropped, _}
     end
 
+    test "a call to a durable target with no channel waits for its next bind", %{inst: inst} do
+      host = start_supervised!({Host, Host.state(inst, durable_steps: true, channel: nil)})
+      call = relay_call()
+
+      assert {:ok, :suspended} = GenServer.call(host, {:call, "turn", %{}, call})
+
+      token = "o:gateway:c1:0:#{call.deadline_at}:"
+      assert Map.has_key?(:sys.get_state(host).calls.rows, token)
+      assert [{0, "turn", %{"flz.reply_to" => ^token}}] = InputLog.undelivered(inst)
+      refute_received {:delivery_answer, _, _, _, _, _}
+    end
+
     test "owing call_pending_max answers, it refuses the next call and ingests nothing", %{
       inst: inst
     } do

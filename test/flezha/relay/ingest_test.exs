@@ -212,10 +212,9 @@ defmodule FlezhaTest.Relay.IngestTest do
       assert {:reply, {:error, :not_ready}, _} =
                Overwatch.handle_call({:ingest, "x", %{}}, self(), state(inst, channel: nil))
 
-      # A durable target answers `:ok` because the bind re-forwards what the
-      # log holds — which needs a channel that can still bind. A real unbound
-      # one stands in for the window between the control ack and the data
-      # stream the runner opens after it.
+      # A durable target answers `:ok` because the bind it armed re-forwards
+      # what the log holds. A real unbound channel stands in for the window
+      # between the control ack and the data stream the runner opens after it.
       {channel, _pid} = NodeTestHelper.unbound_stream_channel()
 
       {:ok, host} =
@@ -225,18 +224,7 @@ defmodule FlezhaTest.Relay.IngestTest do
       assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
     end
 
-    test "a durable target with no channel that can ever bind is refused" do
-      inst = instance_id()
-      {:ok, host} = start_supervised({Host, state(inst, durable_steps: true, channel: nil)})
-
-      # Nothing will re-forward this, so `:ok` would be the accepted-and-dropped
-      # claim the input-delivery guarantee forbids. The log still holds the
-      # payload, and a retry carrying its id is absorbed by the log's index.
-      assert {:error, :not_ready} = GenServer.call(host, {:ingest, "x", %{}})
-      assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
-    end
-
-    test "a durable target with no channel holds the input for its next bind" do
+    test "a durable target with no channel waits for its next bind" do
       # fails when: a journaled input whose re-forward has no channel to arm is
       # answered not-ready, telling the sender to retry a message the log holds.
       inst = instance_id()

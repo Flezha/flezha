@@ -376,10 +376,10 @@ defmodule Flezha.Relay.Ingest do
   # Forward what the journal answered with, and say what became of it. An unbound
   # stream is not a delivery failure for a durable target: the log holds the
   # payload and the channel's next bind re-forwards the tail above the Cell's
-  # consumed offset. `Replay.arm_bind_reforward/1` is what makes that true —
-  # the claim is only worth `:ok` once the re-forward is actually scheduled.
-  # Anything else — no durable log to hold it, or no channel that can ever bind —
-  # is refused, so the journal can never claim an input the system dropped.
+  # consumed offset. `Replay.arm_bind_reforward/1` makes that `:ok` once the
+  # re-forward is scheduled; a target with no channel yet waits `suspended`,
+  # as every bind re-forwards that tail. With no durable log to hold it the
+  # input is refused, so the journal can never claim an input the system dropped.
   defp verdict(_state, nil), do: {:ok, :absorbed}
   defp verdict(_state, :refused), do: {:error, :refused}
 
@@ -395,9 +395,11 @@ defmodule Flezha.Relay.Ingest do
   end
 
   defp undeliverable(%Overwatch{} = state) do
-    if Replay.floor_reporter(state) && Replay.arm_bind_reforward(state) == :armed,
-      do: :ok,
-      else: {:error, :not_ready}
+    cond do
+      Replay.floor_reporter(state) == nil -> {:error, :not_ready}
+      Replay.arm_bind_reforward(state) == :armed -> :ok
+      true -> {:ok, :suspended}
+    end
   end
 
   # Liveness bookkeeping for one ingress message: always an io_in with its

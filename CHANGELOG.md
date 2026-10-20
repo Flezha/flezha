@@ -15,23 +15,6 @@
   declared in another order than the tasklets they feed, or whose entry-fed tasklet also has a
   producer, gets new stage indices, so its in-flight runs must finish before the upgrade.
 
-### Changed: `flz relay call` without `--timeout` takes the controller's call deadline
-
-- `flz relay call` sends a deadline only when `--timeout` is given; without it the controller's
-  `call_channel_deadline_ms` (30000 unless set) applies, where the CLI sent its own 30000 before.
-  A `--timeout 0` is still refused.
-
-### Fixed: an HTTP relay call that is not answered in time answers `call.timeout`
-
-- `POST /v1/relays/<id>/<channel>` gives the call a deadline `call_grace_ms` below the listener's
-  `deadline_ms`, or half of it when that is longer, so a relay that does not answer is
-  `call.timeout` instead of the listener's `control.timeout`.
-
-### Fixed: a Cell outside the `default` namespace is compacted by the runner its relay is bound to
-
-- A Cell's compaction and `flz state rotate` find the runner a relay is bound to in every running
-  namespace, not only in `default`.
-
 ### Changed: one pool policy for every SDK's poll workers
 
 - The core's pool governor sizes every SDK's poll workers: the base and the ceiling from
@@ -96,6 +79,35 @@
   defaults when it closes.
 - A runner-restart realign or a correction's rewind that a crash interrupts is finished when
   the Cell's writer next starts, so the outputs it discarded are not sent again.
+
+### Changed: `flz relay call` without `--timeout` takes the controller's call deadline
+
+- `flz relay call` sends a deadline only when `--timeout` is given; without it the controller's
+  `call_channel_deadline_ms` (30000 unless set) applies, where the CLI sent its own 30000 before.
+  A `--timeout 0` is still refused.
+
+### Fixed: an HTTP relay call that is not answered in time answers `call.timeout`
+
+- `POST /v1/relays/<id>/<channel>` gives the call a deadline `call_grace_ms` below the listener's
+  `deadline_ms`, or half of it when that is longer, so a relay that does not answer is
+  `call.timeout` instead of the listener's `control.timeout`.
+
+### Fixed: a Cell outside the `default` namespace is compacted by the runner its relay is bound to
+
+- A Cell's compaction and `flz state rotate` find the runner a relay is bound to in every running
+  namespace, not only in `default`.
+
+### Fixed: a held answer to a relay call is sent again only once its delivery is lost
+
+- A durable callee's answer that its delivery is still retrying is no longer copied again by the
+  callee's outbox. The controller's call delivery reports a delivery it lost, and only then is the
+  answer sent again from the outbox.
+
+### Changed: a call to a durable relay with no runner bound waits instead of `call.unavailable`
+
+- A durable relay whose input log holds a call or a send while no runner has bound it yet keeps
+  the input for the next bind: a call waits for its answer or its deadline, and a send answers
+  `suspended`, where both were refused as unavailable before.
 
 ### Fixed: a relay stopped from another controller is announced again when it fails
 

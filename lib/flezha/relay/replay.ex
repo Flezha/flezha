@@ -574,8 +574,8 @@ defmodule Flezha.Relay.Replay do
   `:armed` means a re-forward will happen — including the race where the stream
   came up between the failed delivery and this call, settled by handing the
   Overwatch the notification it just missed. `:unarmed` means the relay has
-  no channel that can ever bind, so nothing will re-forward and the caller must
-  not report the payload accepted.
+  no channel to ask yet; the log still holds the payload, and the bind that
+  gives it one re-forwards the tail.
   """
   @spec arm_bind_reforward(Overwatch.t()) :: :armed | :unarmed
   def arm_bind_reforward(%Overwatch{channel: channel} = state) do

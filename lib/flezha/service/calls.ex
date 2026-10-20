@@ -7,10 +7,12 @@ defmodule Flezha.Service.Calls do
   target delivers requests in the order the caller's Overwatch sent them, and
   one per callee and caller delivers answers; each is started on first use and
   stops once its queue has been empty for `call_worker_idle_ms`. The router
-  answers to `Flezha.Process.CallDelivery`, the name an Overwatch reaches it by,
-  and is started first: a router that crashes takes every worker down with it,
-  so none outlives the router that knew it. A durable answer they held is
-  dispatched again by the callee's outbox; a request they held ends at its
+  answers to `Flezha.Process.CallDelivery`, the name an Overwatch reaches it by.
+  The workers' supervisor starts first and the router second, `:one_for_all`:
+  a crash of either takes every worker down, so none outlives the router that
+  knew it, and a starting router finds the supervisor it starts workers under.
+  A durable answer a lost worker held is dispatched again by the callee's
+  outbox once the router reports the loss; a request it held ends at its
   call's deadline.
   """
 
@@ -23,10 +25,10 @@ defmodule Flezha.Service.Calls do
   @impl true
   def init(nil) do
     children = [
-      {Flezha.Service.Calls.Router, supervisor: @workers},
-      {DynamicSupervisor, name: @workers, strategy: :one_for_one}
+      {DynamicSupervisor, name: @workers, strategy: :one_for_one},
+      {Flezha.Service.Calls.Router, supervisor: @workers}
     ]
 
-    Supervisor.init(children, strategy: :rest_for_one)
+    Supervisor.init(children, strategy: :one_for_all)
   end
 end

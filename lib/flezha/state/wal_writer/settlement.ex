@@ -458,13 +458,23 @@ defmodule Flezha.State.WalWriter.Settlement do
   """
   @spec redrive_calls(State.t(), integer(), binary()) :: {non_neg_integer(), State.t()}
   def redrive_calls(state, started, id) do
-    call? = &Enum.any?(&1.entry.outputs, fn output -> call_output?(output.metadata) end)
-    state = resettle(state, &(call?.(&1) and &1.at <= started and unanswered?(&1)))
+    state = resettle(state, &(calls?(&1) and &1.at <= started and unanswered?(&1)))
 
     {Enum.count(state.outbox_awaiting, fn {key, tally} ->
-       tally.pending > 0 and call?.(tally) and
+       tally.pending > 0 and calls?(tally) and
          Enum.any?(entry_outputs(state, key, tally.entry), &(Token.durable_id(elem(&1, 1)) == id))
      end), state}
+  end
+
+  @doc """
+  Re-dispatch now every entry with an open delivery hold that answers `caller`
+  (`:all`: any relay caller): the call router lost the delivery worker that
+  held it, which retried it until then.
+  """
+  @spec redrive_answers(State.t(), binary() | :all) :: State.t()
+  def redrive_answers(state, caller) do
+    answer? = &answer_output?(&1, caller)
+    resettle(state, &(deliveries(&1) > 0 and holds?(&1, answer?)))
   end
 
   defp resettle(state, due?) do
@@ -481,20 +491,30 @@ defmodule Flezha.State.WalWriter.Settlement do
     rename_inflight(state, renamed)
   end
 
-  # A chain run that never reported, or a delivery hold of a relay's call or
-  # answer still open: the caller's Overwatch keeps a call in memory and the
-  # delivery keeps an answer, so either one lost to a restart comes back only
-  # from this re-dispatch, and a live one re-takes its hold and changes nothing.
+  # A chain run that never reported, or a delivery hold of a relay's call still
+  # open: the caller's Overwatch keeps a call in memory, so one lost to a
+  # restart comes back only from this re-dispatch, and a live one re-takes its
+  # hold and changes nothing. An answer's delivery worker retries it, so only
+  # the router's report of a lost worker sends it again (`redrive_answers/2`).
   # A sink's hold waits for its sink.
   defp unanswered?(%{pending: pending}) when pending > 0, do: true
-  defp unanswered?(tally), do: deliveries(tally) > 0
+  defp unanswered?(tally), do: deliveries(tally) > 0 and calls?(tally)
 
-  defp delivery_output?(metadata), do: call_output?(metadata) or answer_output?(metadata)
+  defp calls?(tally), do: holds?(tally, &call_output?/1)
+
+  defp holds?(tally, output?), do: Enum.any?(tally.entry.outputs, &output?.(&1.metadata))
+
+  defp delivery_output?(metadata), do: call_output?(metadata) or answer_output?(metadata, :all)
 
   defp call_output?(metadata), do: List.keymember?(metadata, @call, 0)
 
-  defp answer_output?(metadata),
-    do: Token.relay_token?(elem(List.keyfind(metadata, @reply_to, 0, {@reply_to, nil}), 1))
+  defp answer_output?(metadata, caller) do
+    case List.keyfind(metadata, @reply_to, 0) do
+      {_key, token} when caller == :all -> Token.relay_token?(token)
+      {_key, token} -> match?({:ok, %{caller: ^caller}}, Token.caller_of(token))
+      nil -> false
+    end
+  end
 
   # The inflight head is the oldest dispatch, so one comparison rules the whole
   # sweep out on a healthy stream writer.

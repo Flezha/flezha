@@ -17,7 +17,11 @@ defmodule Flezha.Service.Calls.Router do
   outcome}`, retried until the caller takes it or the call's deadline plus
   `call_retention_margin_ms` has passed, when it is dropped as `caller_gone`
   and its outbox hold answered; a caller its namespace no longer declares is
-  gone at once.
+  gone at once. The worker is the answer's one retry owner: an answer worker
+  that dies other than by an orderly stop is reported to the callee's live
+  Cell writers, which dispatch its caller's held answers again, and a router
+  that starts reports to every live Cell writer, since its workers went with
+  the router before it.
   """
 
   use GenServer
@@ -31,7 +35,7 @@ defmodule Flezha.Service.Calls.Router do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Spawn
-  alias Flezha.State.Outbox
+  alias Flezha.State.{Outbox, WalWriter, WriterRegistry}
 
   @doc "Start the router; `:supervisor` names the supervisor its workers run under."
   def start_link(opts) do
@@ -41,7 +45,19 @@ defmodule Flezha.Service.Calls.Router do
 
   @impl true
   # `workers` finds a key's worker; `watch` names each worker's key.
-  def init(supervisor), do: {:ok, %{workers: %{}, watch: Watch.new(), supervisor: supervisor}}
+  def init(supervisor) do
+    redrive_every_answer()
+    {:ok, %{workers: %{}, watch: Watch.new(), supervisor: supervisor}}
+  end
+
+  # The controller starts the router before its state side: at boot no
+  # registry, and no Cell writer, exists yet.
+  defp redrive_every_answer() do
+    if Process.whereis(WriterRegistry) do
+      for {_cell, writer} <- WriterRegistry.cell_writers(),
+          do: WalWriter.redrive_answers(writer, :all)
+    end
+  end
 
   @impl true
   def handle_cast({:request, namespace, caller, request}, state) do
@@ -68,15 +84,26 @@ defmodule Flezha.Service.Calls.Router do
     :exit, _gone -> {:noreply, state}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Watch.down(state.watch, ref) do
       {[key], watch} ->
+        lost(key, reason)
         {:noreply, %{state | watch: watch, workers: Map.delete(state.workers, key)}}
 
       {_unknown, watch} ->
         {:noreply, %{state | watch: watch}}
     end
   end
+
+  # The answers a crashed worker held go again from the callee's outbox; a
+  # request it held ends at its call's deadline.
+  defp lost(_key, reason) when reason in [:normal, :shutdown], do: :ok
+  defp lost(_key, {:shutdown, _reason}), do: :ok
+
+  defp lost({:answer, _namespace, callee, caller}, _reason),
+    do: Enum.each(WriterRegistry.live_writers(callee), &WalWriter.redrive_answers(&1, caller))
+
+  defp lost({:request, _namespace, _caller, _route}, _reason), do: :ok
 
   # Requests to one target keep one order whatever their key, except a
   # factory's, where the key names the instance.
