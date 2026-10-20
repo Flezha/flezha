@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: starts, plugin copies and disables racing a move
+
+- A partition group start issued while the group rescales waits for the rescale, within the
+  start's own bound, instead of starting a fresh group over Cells already moved; past the
+  bound it is refused with the rescale's error.
+- A controller plugin's copy whose home went down follows the home that took its place, and
+  stops only when none runs.
+- A relay or plugin stop that gets no answer, as while a controller leaves, is asked again
+  within the caller's budget, so a disable no longer leaves a copy running.
+
 ### Fixed: the last member of a namespace hub keeps it
 
 - The last live member of a namespace hub keeps the hub while it holds anything: a declared

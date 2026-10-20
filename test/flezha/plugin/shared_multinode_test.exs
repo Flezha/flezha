@@ -14,6 +14,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Provider.BeamMsgForward
+  alias Flezha.Plugin.Provider.HookWebhook
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Shared
   alias Flezha.Service.HubManager
@@ -115,10 +116,29 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     end
   end
 
-  defp home_node(name) do
-    {_spec, [{node, _pid} | _]} =
-      ProcessHub.child_lookup(Identificator.hub(@namespace), {:plugin, name})
+  # A `single` websocket plugin whose home the hub placed on `peer`: the hub
+  # places a home by its name, so names are tried until one lands there.
+  defp single_home_on(peer, prefix, server) do
+    Enum.find_value(1..30, fn i ->
+      name = "#{prefix}_#{i}"
+      websocket(name, server, true)
+      assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 1 end, 10_000)
 
+      if home_node(name) == peer do
+        name
+      else
+        PluginManager.disable_plugin(@namespace, name)
+        assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 0 end, 10_000)
+        nil
+      end
+    end) || flunk("no single home landed on #{inspect(peer)}")
+  end
+
+  defp home_row(name),
+    do: ProcessHub.child_lookup(Identificator.hub(@namespace), {:plugin, name})
+
+  defp home_node(name) do
+    {_spec, [{node, _pid} | _]} = home_row(name)
     node
   end
 
@@ -208,22 +228,8 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
 
   test "a single plugin serves relays on every controller with one connection, and moves",
        %{p1: p1, p2: p2, server: server} = ctx do
-    # The hub places the home by its name: take one it placed on a peer, so
-    # that peer can be drained.
-    name =
-      Enum.find_value(1..30, fn i ->
-        name = "one_#{i}"
-        websocket(name, server, true)
-        assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 1 end, 10_000)
-
-        if home_node(name) == p1 do
-          name
-        else
-          PluginManager.disable_plugin(@namespace, name)
-          assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 0 end, 10_000)
-          nil
-        end
-      end) || flunk("no single home landed on #{inspect(p1)}")
+    # Its home on a peer, so that peer can be drained.
+    name = single_home_on(p1, "one", server)
 
     assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 1 end, 10_000)
     [first] = Agent.get(server.agent, & &1.open)
@@ -261,20 +267,7 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
        %{p1: p1, p2: p2, server: server} = ctx do
     {:ok, _} = start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
 
-    name =
-      Enum.find_value(1..30, fn i ->
-        name = "lost_#{i}"
-        websocket(name, server, true)
-        assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 1 end, 10_000)
-
-        if home_node(name) == p1 do
-          name
-        else
-          PluginManager.disable_plugin(@namespace, name)
-          assert NodeTestHelper.wait_until(fn -> WebsocketServer.open(server) == 0 end, 10_000)
-          nil
-        end
-      end) || flunk("no single home landed on #{inspect(p1)}")
+    name = single_home_on(p1, "lost", server)
 
     ops = [relay_on(p2, "l_b"), relay_on(node(), "l_c")]
     Enum.each(ops, &(:ok = PluginManager.bind_plugin(@namespace, name, &1)))
@@ -298,5 +291,49 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
 
     WebsocketServer.broadcast(server, "after-loss")
     for op <- ops, do: assert_receive({:ingested, ^op, "after-loss"}, 15_000)
+  end
+
+  test "a copy whose home went down follows the home its row names now" do
+    name = "moved_home"
+
+    {:ok, _} =
+      PluginManager.enable_plugin(name, %Plugin{
+        id: name,
+        provider: HookWebhook,
+        namespace: @namespace,
+        opts: %{url: "http://127.0.0.1:9/hooks"},
+        hooks: [{"on_dead_letter", []}]
+      })
+
+    assert NodeTestHelper.wait_until(fn -> node() in copies_on(name) end, 10_000)
+    [copy] = for pid <- Directory.plugin_hosts(@namespace, name), node(pid) == node(), do: pid
+    {_spec, [{_node, home}]} = home_row(name)
+
+    # The copy hears of a home that goes down before the one the row names
+    # now reaches it: the order a move's two homes can arrive in.
+    old_home = spawn(fn -> receive do: (:exit -> :ok) end)
+    GenServer.cast(copy, {:home, old_home})
+    send(old_home, :exit)
+
+    assert NodeTestHelper.wait_until(
+             fn -> Process.alive?(copy) and :sys.get_state(copy).home == home end,
+             5_000
+           ),
+           "the copy stopped with a home that had moved"
+  end
+
+  test "a disable sent while the home's controller leaves stops every copy",
+       %{p1: p1, server: server} = ctx do
+    name = single_home_on(p1, "leaving", server)
+    leaving = Task.async(fn -> NodeTestHelper.stop_peer_node(Map.fetch!(ctx.peers, p1), p1) end)
+
+    assert {:ok, _} = PluginManager.disable_plugin(@namespace, name)
+    Task.await(leaving, 45_000)
+
+    assert NodeTestHelper.wait_until(
+             fn -> copies_on(name) == [] and WebsocketServer.open(server) == 0 end,
+             10_000
+           ),
+           "a copy kept running after its plugin was disabled"
   end
 end

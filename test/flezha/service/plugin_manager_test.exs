@@ -365,6 +365,9 @@ defmodule Flezha.Service.PluginManagerTest do
       {:ok, copy} = Agent.start(fn -> :copy end)
       Mimic.stub(Directory, :plugin_hosts, fn @namespace, "gone_home" -> [copy] end)
 
+      # A stop that never gets an answer is asked again until its budget runs out.
+      on_exit(Flezha.State.TestHelpers.override_env(:hub_start_child_ms, 300))
+
       # The answer a stop forwarded to a start target that left gets.
       Mimic.stub(ProcessHub, :stop_children, fn _hub, [id], _opts ->
         %ProcessHub.StopResult{status: :error, errors: [{id, {:error, :no_response}}]}

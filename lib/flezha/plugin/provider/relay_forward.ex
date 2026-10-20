@@ -19,7 +19,6 @@ defmodule Flezha.Plugin.Provider.RelayForward do
 
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
@@ -311,7 +310,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   end
 
   defp group_members(namespace, target) when is_binary(namespace),
-    do: PartitionGroup.members(namespace, target)
+    do: HubManager.partition_members(namespace, target)
 
   defp group_members(_namespace, _target), do: []
 

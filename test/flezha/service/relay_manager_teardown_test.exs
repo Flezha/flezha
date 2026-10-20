@@ -188,4 +188,26 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     assert {:messages, [{:flushed, "runner-1"}, {:hub_stop, ^ids}]} =
              Process.info(self(), :messages)
   end
+
+  # fails when: a stop that got no answer is reported failed although an ask
+  # inside the same budget finds the child gone, or a retry is handed the whole
+  # budget again.
+  test "a stop that got no answer is asked again within the caller's budget" do
+    test_pid = self()
+
+    stub(ProcessHub, :stop_children, fn _hub, ids, opts ->
+      send(test_pid, {:hub_stop, ids, opts[:timeout]})
+      ids
+    end)
+
+    stub(ProcessHub.Future, :await, fn [id] ->
+      reason = if Process.put(:asked, true), do: :not_found, else: :no_response
+      %ProcessHub.StopResult{status: :error, stopped: [], errors: [{id, {:error, reason}}]}
+    end)
+
+    assert :ok = Teardown.hub_stop_children("_system", ["silent"], 5_000)
+    assert_received {:hub_stop, ["silent"], first}
+    assert_received {:hub_stop, ["silent"], second}
+    assert second < first and first <= 5_000
+  end
 end

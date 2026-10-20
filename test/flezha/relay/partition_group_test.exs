@@ -408,7 +408,7 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
   stop paths rather than doubles of them.
   """
   # async: false: writes Application env; Mimic global mode; Mimic stubs.
-  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data, :env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
@@ -429,6 +429,7 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
   alias Flezha.State.TaskJournal
   alias Flezha.State.WalTransfer
   alias FlezhaTest.Helper.FakeStartRegistry
+  alias FlezhaTest.Helper.Telemetry
 
   @namespace "rescale-test"
   @group "ohlc"
@@ -654,23 +655,7 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
     test "a second rescale of the same group is refused while one is running", %{
       registry: registry
     } do
-      parent = self()
-
-      # A helper holds the lock, standing in for the concurrent command. The
-      # requester id must be the HELPER's pid: `:global` treats a re-request by
-      # the same requester as re-entrant and grants it.
-      holder =
-        spawn_link(fn ->
-          lock = {{:flezha_partition_rescale, @namespace, @group}, self()}
-          true = :global.set_lock(lock, [node()], 0)
-          send(parent, :locked)
-
-          receive do
-            :release -> :global.del_lock(lock, [node()])
-          end
-        end)
-
-      assert_receive :locked, 1_000
+      holder = hold_group_lock()
 
       assert {:error, {:rescale_running, @namespace, @group}} =
                PartitionGroup.rescale(@namespace, @group, 2)
@@ -682,6 +667,76 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
 
       send(holder, :release)
     end
+
+    test "a start issued mid-rescale waits for it and answers the rescaled members" do
+      parent = self()
+      write_cell("ohlc#p2", "candle", "ETH-USD", "eth")
+
+      Telemetry.capture([:flezha, :backoff, :wait],
+        filter: &(&1.ladder == :no_response and &1.target == @group)
+      )
+
+      # The first move parks, so the start lands between the members' stop and
+      # their restart.
+      stub(WalTransfer, :move_cell, fn source_node, source, dest ->
+        if Process.put(:parked_once, true) == nil do
+          send(parent, {:moving, self()})
+          receive do: (:go -> :ok)
+        end
+
+        Mimic.call_original(WalTransfer, :move_cell, [source_node, source, dest])
+      end)
+
+      rescale = Task.async(fn -> PartitionGroup.rescale(@namespace, @group, 2) end)
+      assert_receive {:moving, mover}, 5_000
+
+      group = %Builder{id: @group, factory_id: @factory, run: :flow}
+      start = Task.async(fn -> PartitionGroup.start(@namespace, group, 2) end)
+      assert_receive {:telemetry, [:flezha, :backoff, :wait], _measure, _meta}, 5_000
+
+      send(mover, :go)
+      assert {:ok, %{to: 2}} = Task.await(rescale)
+
+      assert {:ok, %{members: [], already_running: ["ohlc#p0", "ohlc#p1"]}} =
+               Task.await(start)
+    end
+
+    test "a start whose bound runs out under a rescale is refused and starts nothing", %{
+      registry: registry
+    } do
+      Application.put_env(:flezha, :hub_start_child_ms, 300)
+      holder = hold_group_lock()
+      group = %Builder{id: @group, factory_id: @factory, run: :flow}
+
+      assert {:error, {:rescale_running, @namespace, @group}} =
+               PartitionGroup.start(@namespace, group, 3)
+
+      assert FakeStartRegistry.started() == []
+      assert length(:ets.tab2list(registry)) == 3
+
+      send(holder, :release)
+    end
+  end
+
+  # A helper holds the group's lock, standing in for a concurrent rescale. The
+  # requester id must be the HELPER's pid: `:global` treats a re-request by the
+  # same requester as re-entrant and grants it.
+  defp hold_group_lock() do
+    parent = self()
+
+    holder =
+      spawn_link(fn ->
+        lock = {{:flezha_partition_rescale, @namespace, @group}, self()}
+        true = :global.set_lock(lock, [node()], 0)
+        send(parent, :locked)
+
+        receive do
+          :release -> :global.del_lock(lock, [node()])
+        end
+      end)
+
+    assert_receive :locked, 1_000
+    holder
   end
 
   describe "a steps group" do

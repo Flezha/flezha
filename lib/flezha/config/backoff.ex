@@ -206,6 +206,19 @@ defmodule Flezha.Config.Backoff do
   end
 
   @doc """
+  Wait before trying `target` again and answer `true`, or answer `false` once
+  the row gives up after `failures` or the monotonic `deadline` has passed. The
+  wait never runs past the deadline.
+  """
+  @spec again?(ladder(), non_neg_integer(), term(), integer()) :: boolean()
+  def again?(ladder, failures, target, deadline) do
+    left = deadline - monotonic_ms()
+    retry? = left > 0 and not give_up?(ladder, failures)
+    if retry?, do: wait(ladder, failures + 1, target, cap: left)
+    retry?
+  end
+
+  @doc """
   Whether `failures` — the attempts already SPENT, not the 1-based attempt
   number `delay/3` takes — has reached the row's give-up bound.
   """

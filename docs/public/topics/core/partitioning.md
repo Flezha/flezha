@@ -308,7 +308,9 @@ A rescale runs in these steps:
 A crash in the middle of a rescale is recoverable: before the move nothing durable has
 changed, each cell moves as one unit, and running `flz relay scale` again finishes the
 remaining moves (`relay.rescale_move_failed` says so). Only one rescale of a group runs at a
-time, cluster-wide (`relay.rescale_running`). Forwards into the group follow it: a forwarding
+time, cluster-wide (`relay.rescale_running`). A start of the group issued meanwhile waits for
+the rescale, up to its own start bound, and is then refused the same way; a rescale issued
+while a start of the group runs is refused too. Forwards into the group follow it: a forwarding
 plugin whose members no longer match restarts and reads the member set again, a surviving
 member keeps its queued messages, and a removed member's queue goes to the new owner.
 

@@ -16,6 +16,7 @@ defmodule Flezha.Relay.PartitionGroup do
 
   require Logger
 
+  alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Dlq
   alias Flezha.Identificator
@@ -51,7 +52,9 @@ defmodule Flezha.Relay.PartitionGroup do
   refusing: only the missing members are started, and only when `partitions`
   matches the identity the survivors declare — converge never changes N,
   because changing N moves Cell state and a start never does (that is
-  `rescale/4`).
+  `rescale/4`). A start issued while the group rescales waits for the rescale,
+  within its own bound (`hub_start_child_ms`), and is otherwise refused with
+  `{:rescale_running, namespace, group}`.
 
   `plugins_json` is decoded once per member with that member's id and partition
   opts (`SpecDecoder.decode/4`), so each member's source knows
@@ -81,6 +84,14 @@ defmodule Flezha.Relay.PartitionGroup do
   end
 
   def start(namespace, relay, partitions, plugins_json) do
+    deadline = System.monotonic_time(:millisecond) + Durations.get(:hub_start_child_ms)
+
+    under_group_lock(namespace, relay.id, deadline, fn ->
+      start_or_converge(namespace, relay, partitions, plugins_json)
+    end)
+  end
+
+  defp start_or_converge(namespace, relay, partitions, plugins_json) do
     plugins = fn member_id, partition_opts ->
       identity = Partition.identity(partition_opts)
 
@@ -305,22 +316,23 @@ defmodule Flezha.Relay.PartitionGroup do
   @spec rescale(String.t(), String.t(), pos_integer(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def rescale(namespace, group_id, target, opts \\ []) do
-    # `:global` releases the lock when the holder dies, so a controller that
-    # crashes mid-rescale does not leave the group permanently un-rescalable —
-    # the re-run the crash recovery calls for is the next command.
+    under_group_lock(namespace, group_id, System.monotonic_time(:millisecond), fn ->
+      do_rescale(namespace, group_id, target, opts)
+    end)
+  end
+
+  # One cluster-wide lock per group: a rescale takes it and never waits, a
+  # start retries on the `:no_response` row until `deadline`, so it reads the
+  # members after a running rescale rather than between its stop and restart.
+  # `:global` releases the lock when the holder dies, so a controller that
+  # crashes mid-rescale does not leave the group permanently un-rescalable.
+  defp under_group_lock(namespace, group_id, deadline, fun, attempt \\ 0) do
     lock = {{:flezha_partition_rescale, namespace, group_id}, self()}
 
-    case :global.trans(
-           lock,
-           fn -> do_rescale(namespace, group_id, target, opts) end,
-           [node() | Node.list()],
-           0
-         ) do
-      :aborted ->
-        {:error, {:rescale_running, namespace, group_id}}
-
-      result ->
-        result
+    with :aborted <- :global.trans(lock, fun, [node() | Node.list()], 0) do
+      if Backoff.again?(:no_response, attempt, group_id, deadline),
+        do: under_group_lock(namespace, group_id, deadline, fun, attempt + 1),
+        else: {:error, {:rescale_running, namespace, group_id}}
     end
   end
 

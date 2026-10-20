@@ -59,6 +59,7 @@ defmodule Flezha.Plugin.Shared do
   alias Flezha.Plugin.ProviderBehaviour.Decl
   alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Plugin.Shared.Forwarder
+  alias Flezha.Process.Hub
   alias Flezha.Process.Watch
 
   @channel_opts [:channel, :channel_in, :channel_out]
@@ -186,8 +187,9 @@ defmodule Flezha.Plugin.Shared do
   @doc """
   Run the copy of the controller plugin `entry` on this controller for its
   `home`, unless this controller lacks its provider. The copy stops when the
-  home that placed it last stops: a disable stops the home, and a home that
-  starts again, or elsewhere, places its copies again.
+  home that placed it last stops and its row names no other running home: a
+  disable stops the home, and a home that starts again, or elsewhere, places
+  its copies again.
   """
   @spec place(Plugin.t(), pid()) :: :ok
   def place(%Plugin{} = entry, home) do
@@ -419,6 +421,15 @@ defmodule Flezha.Plugin.Shared do
     %{state | home: home, watch: Watch.watch(watch, home, :home)}
   end
 
+  # A home that went down may have moved: the copy follows the home its row
+  # names now, and stops only when none runs.
+  defp moved_home(state, gone) do
+    with {_spec, node_pids} <- Home.row(state.namespace, state.name),
+         home when is_pid(home) and home != gone <- Hub.live_pid(node_pids),
+         do: home,
+         else: (_none -> nil)
+  end
+
   defp hook_forwarder do
     {:ok, forwarder} = Forwarder.start_link(self())
     forwarder
@@ -530,7 +541,12 @@ defmodule Flezha.Plugin.Shared do
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
     case Watch.down(state.watch, ref) do
       {[:home], watch} ->
-        {:stop, :normal, %{state | watch: watch}}
+        state = %{state | watch: watch, home: nil}
+
+        case moved_home(state, pid) do
+          nil -> {:stop, :normal, state}
+          home -> {:noreply, watch_home(state, home)}
+        end
 
       {tags, watch} when is_list(tags) ->
         left(%{state | subscribers: Map.delete(state.subscribers, pid), watch: watch}, pid, :idle)

@@ -8,7 +8,9 @@ defmodule Flezha.Service.RelayManager.Teardown do
   """
 
   alias Flezha.AuthZ.Quotas
+  alias Flezha.Config.Backoff
   alias Flezha.Identificator
+  alias Flezha.Process.Hub
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
@@ -168,11 +170,39 @@ defmodule Flezha.Service.RelayManager.Teardown do
   # relay, plugin `:on_terminate`, table teardown — runs in its
   # `terminate/2` under the supervisor's shutdown. Best-effort callers discard
   # the verdict; a dead or mid-restart hub maps to an error, never a raise.
-  def hub_stop_children(namespace, relay_ids, timeout) do
+  # A stop that got no answer is asked again on the `:no_response` row within
+  # `timeout`, and a child a retry no longer finds was stopped by an earlier ask.
+  def hub_stop_children(namespace, relay_ids, timeout),
+    do: stop_children(namespace, relay_ids, System.monotonic_time(:millisecond) + timeout, 0)
+
+  defp stop_children(namespace, ids, deadline, attempt) do
+    with {:error, [_ | _] = errors} <- stop_once(namespace, ids, remaining(deadline)) do
+      left =
+        if attempt > 0,
+          do: Enum.reject(errors, &match?({_, {:error, :not_found}}, &1)),
+          else: errors
+
+      silent = for {id, {:error, :no_response}} <- left, do: id
+
+      cond do
+        left == [] ->
+          :ok
+
+        length(silent) == length(left) and
+            Backoff.again?(:no_response, attempt, namespace, deadline) ->
+          stop_children(namespace, silent, deadline, attempt + 1)
+
+        true ->
+          {:error, left}
+      end
+    end
+  end
+
+  defp stop_once(namespace, ids, timeout) do
     result =
       try do
         Identificator.hub(namespace)
-        |> ProcessHub.stop_children(relay_ids, awaitable: true, timeout: timeout)
+        |> ProcessHub.stop_children(ids, awaitable: true, timeout: timeout)
         |> ProcessHub.Future.await()
       catch
         kind, reason -> {:error, {kind, reason}}
@@ -195,7 +225,9 @@ defmodule Flezha.Service.RelayManager.Teardown do
     with {:error, [_ | _] = errors} <- hub_stop_children(namespace, [id], timeout) do
       gone? =
         Enum.all?(errors, &(elem(&1, 1) in [{:error, :no_response}, {:error, :not_found}])) and
-          ProcessHub.child_lookup(Identificator.hub(namespace), id, include_empty: true) == nil
+          Hub.with_live(Identificator.hub(namespace), :hub_down, fn hub_id ->
+            ProcessHub.child_lookup(hub_id, id, include_empty: true)
+          end) == nil
 
       if gone?, do: :ok, else: {:error, errors}
     end

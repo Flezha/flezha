@@ -40,15 +40,6 @@ lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Host
 lib/flezha/relay/overwatch.ex -> Flezha.Service.HubManager
 lib/flezha/relay/overwatch.ex -> Flezha.State.Outbox
 lib/flezha/relay/overwatch.ex -> Flezha.State.Paths
-lib/flezha/relay/partition_group.ex -> Flezha.Service.RelayManager.Admission
-lib/flezha/relay/partition_group.ex -> Flezha.Dlq
-lib/flezha/relay/partition_group.ex -> Flezha.Plugin.SpecDecoder
-lib/flezha/relay/partition_group.ex -> Flezha.Service.HubManager
-lib/flezha/relay/partition_group.ex -> Flezha.Service.RelayManager
-lib/flezha/relay/partition_group.ex -> Flezha.Service.PluginManager
-lib/flezha/relay/partition_group.ex -> Flezha.State.InputLog
-lib/flezha/relay/partition_group.ex -> Flezha.State.Paths
-lib/flezha/relay/partition_group.ex -> Flezha.State.WalTransfer
 lib/flezha/relay/plugins.ex -> Flezha.Plugin.Extension
 lib/flezha/relay/plugins.ex -> Flezha.Plugin.Extension.Ctx
 lib/flezha/relay/plugins.ex -> Flezha.Plugin.Extension.Table
