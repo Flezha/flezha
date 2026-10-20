@@ -67,7 +67,7 @@ stages they pass through and where results leave:
 
 ```python
 @flezha.relay("echo")
-def echo_relay(c: flezha.Channels) -> None:
+def echo_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(Echo).output("out")
 ```
 

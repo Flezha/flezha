@@ -67,7 +67,7 @@ class Tally:
 
 
 @relay("local_word_count_example")
-def word_count(c: Channels) -> None:
+def word_count(c: ChannelBuilder) -> None:
     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
     c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().output(
@@ -135,7 +135,7 @@ The keywords `flezha.tasklet` takes beside `name`:
 `@flezha.relay` declares a whole single-tasklet relay when it decorates
 a tasklet's body instead of a channels body: one declaration, no
 `flezha.tasklet` beside it. `factory_id` is always written; `output`, `input`
-and `codec` (the entry codec `Channels.input` takes) are optional, and so are
+and `codec` (the entry codec `ChannelBuilder.input` takes) are optional, and so are
 the tasklet's own keywords (`cell_keys`, `logical_clock`, `idle_ttl_seconds`,
 `mailbox_capacity` and the rest `flezha.tasklet` takes, except `name`).
 
@@ -166,7 +166,7 @@ The body is one of two:
   as a `flezha.tasklet` class declares them, and no `name`.
 
 A function is a channels body when it takes one parameter annotated
-`flezha.Channels`, or not annotated at all; any other function is a tasklet
+`flezha.ChannelBuilder`, or not annotated at all; any other function is a tasklet
 body.
 
 A class body is how a one-tasklet relay with state is written, from
@@ -233,7 +233,7 @@ the tree's own data:
     durable={"local": {"sleep_after": 10_000}},
     max_duration_ms=600_000,
 )
-def orders(c: flezha.Channels) -> None:
+def orders(c: flezha.ChannelBuilder) -> None:
     c.input("order", codec="text").into(Place).output("placed")
 ```
 

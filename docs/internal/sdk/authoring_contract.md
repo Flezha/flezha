@@ -37,7 +37,7 @@ a declaration and its implementation cannot disagree
 ([`ruby_sdk.md`](ruby_sdk.md)). The PHP SDK exposes classes too —
 `Flezha\Tasklet`, `Flezha\Relay`, `Flezha\Relay`, wired
 by the same fluent channel builder — with the scalar declarations in a
-`#[Task]` attribute and the optional hooks read from the methods a tasklet
+`#[Tasklet\Spec]` attribute and the optional hooks read from the methods a tasklet
 **overrides**, which is the closest PHP comes to Java's annotations without a
 build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
 `@flezha.tasklet`, `@flezha.state`, `@flezha.relay`,
@@ -69,7 +69,7 @@ after a restart, and nothing reports the difference until the restart.
 | Elixir | Immutability plus one recorded path. `Flezha.SDK.Ctx.apply/3` folds a change through `apply_change/2` and records it; `run/3` returns the state it produced, and the contract is that the two agree — the recorded changes are what a restore folds. In the `use` form `defchange` writes that path: each named change generates its fold clause and a recorder that journals exactly one change through `Ctx.apply/3`, and a hand-written `apply_change/2` does not compile. Deterministic effects come from the same ctx: `Ctx.stable_id/1` answers the frozen FNV-1a-128 over the Cell's identity, the invocation's starting seq and a per-invocation ordinal, and `Ctx.checkpoint/1` closes an effectively-once interval. There is no replay harness yet, so the contract is stated rather than checked. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
-| PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `Harness::assertReplayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
+| PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `TaskletTestHarness::replayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
 | Python | Runtime rejection. A class declared `@flezha.state` refuses direct attribute assignment, naming the field and the change-based path; the runtime's own path — applying a change and folding a restore — is the one exception, opened per call on the calling thread. Mutation *through* a container a state field holds is not covered, exactly as Rust's interior mutability is not. |
 
 `replay_equals` / `replayEquals()` is the gate for all seven: it folds the
@@ -92,7 +92,7 @@ backstop for what typing cannot see.
 | Elixir | no — the language cannot | registration-time refusals, plus the `use` macros' `CompileError`s for a declaration named wrongly, in `sdk/elixir/test/flezha/sdk/authoring_macros_test.exs` and `tasklet_clock_test.exs` |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
 | PHP | no — the language cannot | registration-time refusals only, in `sdk/php/tests/AuthoringTest.php` |
-| Python | yes, through the generic `Edge[T]` / `Tasklet[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
+| Python | yes, through the generic `Stream[T]` / `Tasklet[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
 
 Before writing a new SDK, read
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads):
@@ -125,7 +125,7 @@ three types, and §2.2 says where the rest comes from.
 | `type Output = O`, else nothing                     | `Output`, default `()`: no output channel           |
 | `type State = S`, else nothing                      | `State`, default `()`: stateless                    |
 | `type Change = C` (a `Change<S>`), else nothing     | `Change`, default `NoChange`: nothing journaled     |
-| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: `tasklet_name "…"` in the class body; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Task(name: …)]` |
+| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: `tasklet_name "…"` in the class body; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Tasklet\Spec(name: …)]` |
 | `fn event_time`, else `logical_clock`, else nothing | `CLOCK`: `EventTime`, `Logical`, else `Wall`        |
 | `fn init_state`, else nothing                       | `init_state` returning `State::default()`           |
 | `fn compensate` / `fn cells_for` / `fn max_cells` / `fn mailbox_capacity` | the matching `*_OVERRIDDEN` flag set to `true` |
@@ -387,8 +387,8 @@ the pending set.
 
 Three rules make the callback part of the determinism contract:
 
-1. **`fired_at` is the SCHEDULED timestamp**, never the wall clock at firing.
-   `ctx.now()` equals `fired_at` inside the callback, so a chained
+1. **The firing's `scheduled_at` is the SCHEDULED timestamp**, never the wall
+   clock at firing. `ctx.now()` equals it inside the callback, so a chained
    `ctx.timer_after(..)` schedules off the timer that woke it.
 2. **`timer_after(d)` is anchored on `ctx.now()`**, not on an ambient read —
    which is what makes a replayed invocation register the same absolute

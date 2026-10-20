@@ -322,7 +322,7 @@ class Echo:
 ```python
 # echo_relay.py: the relay
 @flezha.relay("echo")  # the name `flz relay start` takes
-def echo_relay(c: flezha.Channels) -> None:
+def echo_relay(c: flezha.ChannelBuilder) -> None:
     (
         c.input("in", codec="text")  # messages arrive on the entry channel "in"
         .into(Echo)  # each one runs through the echo tasklet
@@ -388,7 +388,7 @@ namespace = ARGV[0] || "default"
 # the relays this runner serves
 runner = Flezha.create_runner(namespace).register_factory(EchoRelay)
 
-runner.boot # connects to the controller
+runner.start # connects to the controller
 
 runner.await_termination
 ```
@@ -401,7 +401,7 @@ In your clone: `sdk/php/examples/echo` ([on GitHub](https://github.com/flezha/fl
 
 ```php
 // src/EchoTasklet.php: the tasklet
-#[Task(name: 'echo')] // state is saved under this name, so choose it once
+#[Tasklet\Spec(name: 'echo')] // state is saved under this name, so choose it once
 final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void
@@ -418,7 +418,7 @@ final class EchoTasklet extends Tasklet
 #[Relay(factoryId: 'echo')] // the name `flz relay start` takes
 final class EchoRelay extends \Flezha\Relay
 {
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('in', codec: ChannelCodec::Text) // messages arrive on the entry channel "in"
             ->into(EchoTasklet::class)             // each one runs through the echo tasklet

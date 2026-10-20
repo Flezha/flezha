@@ -51,7 +51,7 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
   defmodule Embedded do
     @moduledoc false
     @behaviour Flezha.SDK.Relay
-    import Flezha.SDK.Channels
+    import Flezha.SDK.ChannelBuilder
 
     def factory_id, do: "embedded_tally"
 
@@ -62,7 +62,7 @@ defmodule FlezhaTest.System.EmbeddedRunnerE2ETest do
   defmodule Later do
     @moduledoc false
     @behaviour Flezha.SDK.Relay
-    import Flezha.SDK.Channels
+    import Flezha.SDK.ChannelBuilder
 
     def factory_id, do: "embedded_later"
 

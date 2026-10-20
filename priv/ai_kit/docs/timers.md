@@ -36,7 +36,7 @@ When a timer is due:
 `on_timer` receives the same state and context as `run`, so a firing may record changes, emit,
 and set further timers.
 
-**`fired_at` is the scheduled time, never the wall clock.** A timer scheduled for T that fires
+**A firing's `scheduled_at` is the scheduled time, never the wall clock.** A timer scheduled for T that fires
 at T plus a little reports T, and `ctx.now()` equals it inside `on_timer`, so a chained
 `timer_after` schedules from the timer that woke it, and a replay sees the same values. How late
 a firing ran is not exposed.
@@ -50,16 +50,17 @@ and a replay of history schedules a past instant, which fires at once.
 
 | SDK | Set (processing time) | Set (event time) | Cancel | Called when due |
 | --- | --- | --- | --- | --- |
-| Rust | `ctx.timer_after(d)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_processing_time_timer(ts)`, `ctx.cancel_event_time_timer(ts)` | `on_timer(fired_at, kind, ctx)` |
-| Java | `ctx.timerAfter(d)` | `ctx.timerAtEventTime(ts)` | `ctx.cancelProcessingTimeTimer(ts)`, `ctx.cancelEventTimeTimer(ts)` | `onTimer(firedAt, kind, ctx)` |
+| Rust | `ctx.timer_after(d)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer(firing, ctx)`, `firing` a `TimerFiring` |
+| Java | `ctx.timerAfter(d)` | `ctx.timerAtEventTime(ts)` | `ctx.cancelTimer(kind, ts)` | `onTimer(TimerFiring firing, Ctx ctx)` |
 | Node | `ctx.timerAfter(ms)` | `ctx.timerAtEventTime(ts)` | `ctx.cancelTimer(kind, ts)` | `onTimer` |
-| Python | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer` |
-| Ruby | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer` |
-| PHP | `$ctx->timerAfter($ms)` | `$ctx->timerAtEventTime($ts)` | `$ctx->cancelTimer($kind, $ts)` | `onTimer(Timer $timer, Ctx $ctx)` |
-| Elixir | `timer_after(ctx, ms)` | `timer_at_event_time(ctx, ts)` | `cancel_processing_time_timer(ctx, ts)`, `cancel_event_time_timer(ctx, ts)` | `on_timer/4` |
+| Python | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer(timer, ctx)`, `timer` a dict |
+| Ruby | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer(timer, ctx)`, `timer` a Hash |
+| PHP | `$ctx->timerAfter($ms)` | `$ctx->timerAtEventTime($ts)` | `$ctx->cancelTimer($kind, $ts)` | `onTimer(TimerFiring $timer, Ctx $ctx)` |
+| Elixir | `timer_after(ctx, ms)` | `timer_at_event_time(ctx, ts)` | `cancel_timer(ctx, kind, ts)` | `on_timer(firing, state, ctx)` |
 
-In the host SDKs, `kind` is `"processing_time"` or `"event_time"`. The Elixir functions are
-`Flezha.SDK.Ctx`'s, imported by `use Flezha.SDK.Tasklet`.
+In the host SDKs, `kind` is `"processing_time"` or `"event_time"`, in Elixir the atom, in Rust and
+Java a `TimerKind` (`TimerKind::ProcessingTime`, `TimerKind.PROCESSING_TIME`). The Elixir
+functions are `Flezha.SDK.Ctx`'s, imported by `use Flezha.SDK.Tasklet`.
 
 - Setting a timer returns its **absolute** scheduled time, which is what a cancel takes.
 - Pending timers are a **set**: setting the same timer twice is one timer, and cancelling one
@@ -147,7 +148,7 @@ sets a timer, and `onTimer` reads the answer and ends the instance:
         $ctx->timerAfter(10_000);                            // the paper exchange answers ten seconds later
     }
 
-    public function onTimer(Timer $timer, Ctx $ctx): void
+    public function onTimer(TimerFiring $timer, Ctx $ctx): void
     {
         $placed = $ctx->state['placed'];
         $quantity = $placed['order']['quantity'];
@@ -188,7 +189,7 @@ uses a timer.
 
 - `max_timers_per_cell` (default 10 000) bounds a cell's pending set: `max_timers_per_cell()`
   in Rust, `@Tasklet.Spec(maxTimersPerCell = n)` in Java, `maxTimersPerCell` in Node and in
-  PHP's `#[Task]`, `max_timers_per_cell` in Python and Ruby, `max_timers_per_cell/0` in
+  PHP's `#[Tasklet\Spec]`, `max_timers_per_cell` in Python and Ruby, `max_timers_per_cell/0` in
   Elixir. Setting a timer past it is refused as `runtime.timer_cap_exceeded`, naming the
   tasklet and the bound.
 - Rust refuses at the call. In the other SDKs the core judges an item's timer calls when the
@@ -204,7 +205,7 @@ uses a timer.
 ## Limits
 
 - **Eviction discards a cell's timers.** A tasklet that sets timers and declares
-  `cell_idle_ttl` is declaring them disposable.
+  `idle_ttl` is declaring them disposable.
 - **A live move to another runner does not carry pending timers.** The move ships the state
   alone; the timers are still on disk, so a later restore rebuilds them. A compaction where the
   relay moved keeps them too: it writes the pending timers again above its snapshot.
@@ -215,7 +216,7 @@ uses a timer.
   time under an event-time clock and its event-time timers never come due. A tasklet fed by the
   entry channel is not affected, nor is any tasklet in Rust or Elixir.
 - **A firing can run late**: during a restore backlog, or while every worker thread is inside
-  user code. `fired_at` still reports the scheduled time.
+  user code. Its `scheduled_at` still reports the scheduled time.
 
 ## See also
 

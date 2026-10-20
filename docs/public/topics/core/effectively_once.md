@@ -555,8 +555,8 @@ others are not retried. [`errors.md`](../../errors.md) has each message.
   re-run alike. Pass a codec when the type matters.
 - **Order matters within a name.** A re-run that calls one name in a
   different order gets the results in the old order.
-- **Each SDK's test harness checks it, but Elixir's, which has no replay
-  pass.** The harness keeps each result its live pass produced and serves it
+- **Each SDK's test harness checks it, but Elixir's, which refuses an
+  outside call with `effect.outside_invocation`.** The harness keeps each result its live pass produced and serves it
   on the replay pass. A function that runs on
   the replay pass, or a kept result the replay never asks for, fails the check
   and names the effect.

@@ -145,7 +145,8 @@ Every SDK ships the smallest `compact_after_bytes` across the class's Tasklets i
 - **Java.** Built-in Kryo registrations (`RestoreInitPayload`, a reserved slot, primitive arrays,
   boxed numbers, `String`, `Optional`, the common `java.util` collections, `Instant`,
   `ArrayDeque`) take fixed low ids, and discovered user types take name-derived ids in a band
-  above them. Java timer coverage lives in `ActivationDispatcherTest`; `HarnessBehaviourTest` is
+  above them. Java timer coverage lives in `ActivationDispatcherTest` and, for the harness,
+  `HarnessTimersTest`; `HarnessBehaviourTest` is
   the reference case for the direct-write detection.
 - **Elixir.** The `state` block generates `state_from_json/1`, which turns a JSON object read
   back from the controller into the state term, and each `defchange` generates an

@@ -160,8 +160,8 @@ declare(strict_types=1);
 namespace Flezha\Examples\Echo;
 
 use Flezha\Attribute\Relay;
+use Flezha\ChannelBuilder;
 use Flezha\ChannelCodec;
-use Flezha\Graph\Builder;
 
 /**
  * The deployable unit. A relay declares the graph a message travels: the
@@ -179,7 +179,7 @@ use Flezha\Graph\Builder;
 #[Relay(factoryId: 'echo')] // the name `flz relay start` takes
 final class EchoRelay extends \Flezha\Relay
 {
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('in', codec: ChannelCodec::Text) // messages arrive on the entry channel "in"
             ->into(EchoTasklet::class)             // each one runs through the echo tasklet
@@ -197,7 +197,6 @@ declare(strict_types=1);
 
 namespace Flezha\Examples\Echo;
 
-use Flezha\Attribute\Task;
 use Flezha\Ctx;
 use Flezha\Tasklet;
 
@@ -213,7 +212,7 @@ use Flezha\Tasklet;
  * Where the result goes is not decided here. The relay decides that, so the
  * graph can be rewired without touching this class.
  */
-#[Task(name: 'echo')] // state is saved under this name, so choose it once
+#[Tasklet\Spec(name: 'echo')] // state is saved under this name, so choose it once
 final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void

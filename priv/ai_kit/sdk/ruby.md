@@ -137,7 +137,7 @@ end
 # Starts a runner: a process that connects to the controller and serves your
 # relays.
 #
-# Declare every relay you want served before `boot`. One runner can serve
+# Declare every relay you want served before `start`. One runner can serve
 # several, and the same call takes a steps relay.
 
 require "flezha"
@@ -148,9 +148,9 @@ namespace = ARGV[0] || "default"
 # the relays this runner serves
 runner = Flezha.create_runner(namespace).register_factory(EchoRelay)
 
-# `run` is `boot` followed by `await_termination`. Splitting them leaves room
+# `run` is `start` followed by `await_termination`. Splitting them leaves room
 # for the calls below, and still blocks until shutdown.
-runner.boot # connects to the controller
+runner.start # connects to the controller
 
 # Everything `flz relay` and `flz plugin` do is also a method of `control`,
 # and `send_to` hands a message to a relay. Uncomment to drive this

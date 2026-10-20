@@ -253,7 +253,7 @@ Full file: [`reserve_funds.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/m
 
 ```php
 // src/ReserveFunds.php: step one. Puts the money aside, and releases it on an undo.
-#[Task(name: 'reserve_funds')]
+#[Tasklet\Spec(name: 'reserve_funds')]
 final class ReserveFunds extends Tasklet
 {
     ...
@@ -457,7 +457,7 @@ public function run(mixed $input, Ctx $ctx): void
     $ctx->timerAfter(10_000);                            // the paper exchange answers ten seconds later
 }
 
-public function onTimer(Timer $timer, Ctx $ctx): void
+public function onTimer(TimerFiring $timer, Ctx $ctx): void
 {
     $placed = $ctx->state['placed'];
     $quantity = $placed['order']['quantity'];
@@ -665,14 +665,14 @@ Full file: [`order_executor_relay.rb`](https://github.com/flezha/flezha_ruby_sdk
 
 ```php
 // src/OrderExecutorRelay.php: the workflow's steps, in the order they run.
-public static function channels(Builder $c): void
+public static function channels(ChannelBuilder $c): void
 {
     $c->input('order')
         ->into(ReserveFunds::class)                               // step one
         ->into(PlaceOrder::class)                                 // step two, once step one is done
         ->branch(
-            fn (Edge $fill) => $fill->into(ConfirmFill::class),   // two arms, side by side
-            fn (Edge $book) => $book->into(RecordOrder::class),
+            fn (Stream $fill) => $fill->into(ConfirmFill::class),   // two arms, side by side
+            fn (Stream $book) => $book->into(RecordOrder::class),
         );
 }
 ```

@@ -51,9 +51,61 @@
   `inputOffset()` leave `Ctx`; `Change.coalesceKey()` and `CoalesceKey` are gone, their Kryo slot
   reserved so saved state still decodes; `flezha-sdk-api` is the module `com.flezha.sdk.api`,
   which exports `com.flezha.sdk.internal` to the runtime only.
+- **BREAKING (Elixir):** `Flezha.SDK.Local.stop/1` is `close/1`; `Ctx.replay/1` is new;
+  `Call`, `Contract`, `Declaration`, `Dispatch`, `Knob`, `Native`, `Pool`, `SafeCall` and
+  `Ctx.new/4` are no longer documented as public.
 - **BREAKING (Python, Ruby, PHP, Node, Java, Rust):** a control handle's `list_relays` and
   `list_plugins` read `Relay.list` and `PluginManager.enabled` and answer one row per relay or
   plugin, not ids.
+
+### Changed: one timer cancel and one firing record
+
+- **BREAKING (Elixir):** `Ctx.cancel_processing_time_timer/2` and `cancel_event_time_timer/2`
+  are one `cancel_timer(ctx, kind, at)`, `kind` `:processing_time` or `:event_time`.
+  `on_timer/4` is `on_timer(firing, state, ctx)`, `firing` a
+  `%Flezha.SDK.TimerFiring{kind, scheduled_at}`; a tasklet still defining `on_timer/4` is
+  refused, naming `on_timer/3`.
+- **BREAKING (Rust):** `Ctx::cancel_processing_time_timer` and `cancel_event_time_timer` are one
+  `Ctx::cancel_timer(kind, at)`; `Tasklet::on_timer(fired_at, kind, ctx)` is
+  `on_timer(firing, ctx)`, `firing` a `TimerFiring { kind, scheduled_at }`.
+- **BREAKING (Java):** `Ctx.cancelProcessingTimeTimer` and `cancelEventTimeTimer` are one
+  `Ctx.cancelTimer(TimerKind, long)`; `Tasklet.onTimer(long, TimerKind, Ctx)` is
+  `onTimer(TimerFiring, Ctx)`, `com.flezha.sdk.state.TimerFiring` a record of `kind` and
+  `scheduledAt`.
+
+### Added: an Elixir tasklet test harness
+
+- `Flezha.SDK.TaskletTestHarness` runs one tasklet on one Cell with no controller: `feed/3`,
+  `state/1`, `fire_timer/3`, `advance_event_time/2` and `replay_equals/1`.
+- **BREAKING (Python):** the module function `flezha.testing.replay_equals` is gone; drive a
+  `TaskletTestHarness` and call its `replay_equals()`. The harness no longer exposes the core
+  bridge methods (`spawn_request`, `effect_begin` and the rest).
+- **BREAKING (Ruby):** `Flezha::Testing::Harness` is `Flezha::Testing::TaskletTestHarness`,
+  `replay_equals!` is `replay_equals` (it still raises on a mismatch),
+  `Flezha::Testing.replay_equals?` is gone, and the harness no longer exposes the core bridge
+  methods.
+- **BREAKING (PHP):** `Flezha\Testing\Harness` is `Flezha\Testing\TaskletTestHarness`;
+  `assertReplayEquals()` is `replayEquals()` (it throws on a mismatch and returns nothing), the
+  static `Harness::replayEquals($class, $inputs)` is gone, and the harness no longer implements
+  `SpawnBridge`.
+- **BREAKING (Node):** on `TaskletTestHarness`, `input()` is `feed()`, `currentState` is
+  `state`, and the `Invoked` and `InputOptions` types are `Outcome` and `FeedOptions`.
+- Java's `TaskletTestHarness` keeps the timers a tasklet sets: `fireTimer(kind, at)` runs
+  `onTimer`, `advanceEventTime(t)` fires every event-time timer due by `t`, and
+  `pendingTimers()` lists what is pending.
+
+### Changed: ChannelBuilder and Stream; `#[Tasklet\Spec]`
+
+- **BREAKING (Elixir):** `Flezha.SDK.Channels` is `Flezha.SDK.ChannelBuilder`; code that
+  calls it by name or imports it changes the module name, and `use Flezha.SDK.Relay` imports
+  it as before.
+- **BREAKING (Python):** `flezha.Channels` is `flezha.ChannelBuilder` and `flezha.Edge` is
+  `flezha.Stream`; a relay's channels function annotates `c: flezha.ChannelBuilder`.
+- **BREAKING (Ruby):** `Flezha::Builder` is `Flezha::ChannelBuilder` and `Flezha::Edge` is
+  `Flezha::Stream`.
+- **BREAKING (PHP):** `Flezha\Graph\Builder` is `Flezha\ChannelBuilder`, `Flezha\Graph\Edge` is
+  `Flezha\Stream`, and the attribute `Flezha\Attribute\Task` is `Flezha\Tasklet\Spec`: a tasklet
+  imports only `use Flezha\Tasklet;` and writes `#[Tasklet\Spec(name: ...)]`.
 
 ### Changed: the console's reach at the door
 

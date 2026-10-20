@@ -150,7 +150,7 @@ c.input("audit", codec: :text).into(AuditOrder)
 ### PHP
 
 ```php
-// Orders.php: the typed constructor of the class #[Task] names is read into the schema
+// Orders.php: the typed constructor of the class #[Tasklet\Spec] names is read into the schema
 final class OrderToPlace
 {
     public function __construct(public string $pair, public float $amount)
@@ -158,7 +158,7 @@ final class OrderToPlace
     }
 }
 
-#[Task(name: 'orders_place', inputType: OrderToPlace::class, outputType: OrderPlaced::class)]
+#[Tasklet\Spec(name: 'orders_place', inputType: OrderToPlace::class, outputType: OrderPlaced::class)]
 final class OrdersPlace extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void

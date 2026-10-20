@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Flezha\Examples\Starter;
 
 use Flezha\Attribute\Relay;
-use Flezha\Graph\Builder;
+use Flezha\ChannelBuilder;
 
 /**
  * A visit arrives on `hit`, goes to the cell of its page, and the count leaves
@@ -21,7 +21,7 @@ final class StarterRelay extends \Flezha\Relay
         'required' => ['page'],
     ];
 
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('hit', description: 'Counts visits per page', schema: self::HIT)
             ->keyBy(fn (array $hit) => $hit['page']) // one cell, and one count, per page

@@ -104,7 +104,7 @@ export default defineRelay({
 ```python
 # trade_watcher.py: the ETL stream
 @flezha.relay("trade_watcher")
-def trade_watcher(c: flezha.Channels) -> None:
+def trade_watcher(c: flezha.ChannelBuilder) -> None:
     (
         c.input("trades")  # JSON from the exchange
         .filter(lambda message: message.get("channel") == "trade")  # trade messages only
@@ -148,7 +148,7 @@ end
 #[Relay(factoryId: 'trade_watcher')]
 final class TradeWatcherRelay extends \Flezha\Relay
 {
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('trades')                                                            // JSON from the exchange
             ->filter(fn (array $message) => ($message['channel'] ?? null) === 'trade') // trade messages only

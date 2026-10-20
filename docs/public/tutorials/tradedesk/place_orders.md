@@ -122,7 +122,7 @@ export default defineRelay({
 # one instance per order; each step runs once
 # a failed step undoes the finished ones
 @flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
-def order_executor(c: flezha.Channels) -> None:
+def order_executor(c: flezha.ChannelBuilder) -> None:
     (
         c.input("order")  # the order to carry out
         .into(ReserveFunds)  # step one
@@ -169,14 +169,14 @@ end
 #[Relay(factoryId: 'order_executor', run: ['steps' => ['each' => 'per_input', 'on_failure' => 'undo_all']])]
 final class OrderExecutorRelay extends \Flezha\Relay
 {
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('order')                                            // the order to carry out
             ->into(ReserveFunds::class)                               // step one
             ->into(PlaceOrder::class)                                 // step two, once step one is done
             ->branch(
-                fn (Edge $fill) => $fill->into(ConfirmFill::class),   // two arms, side by side
-                fn (Edge $book) => $book->into(RecordOrder::class),
+                fn (Stream $fill) => $fill->into(ConfirmFill::class),   // two arms, side by side
+                fn (Stream $book) => $book->into(RecordOrder::class),
             );
     }
 }

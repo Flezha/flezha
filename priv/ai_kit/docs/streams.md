@@ -266,7 +266,7 @@ drops it.
 
 ```php
 // src/TradeWatcherRelay.php: the stream. Trades in, signals out.
-public static function channels(Builder $c): void
+public static function channels(ChannelBuilder $c): void
 {
     $c->input('trades')
         ->filter(fn (array $message) => ($message['channel'] ?? null) === 'trade') // trade messages only

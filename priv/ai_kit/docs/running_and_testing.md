@@ -332,8 +332,9 @@ await runner.send('my_echo', 'hello world', 'in', { msgId: 'hello-1' });
 ```
 
 Full file: [`runner.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/echo/runner.mjs).
-`run()` resolves once the runner is connected and serving, so the calls go
-after it. Each call is a promise of the controller's result.
+Use `start()` rather than `run()`: `run()` is `start()` followed by
+`awaitTermination()` and resolves only at shutdown, so the calls go between
+the two. Each call is a promise of the controller's result.
 
 ### Python
 
@@ -357,7 +358,7 @@ runner.send_to("my_echo", "hello world", "in", msg_id: "hello-1")
 ```
 
 Full file: [`runner.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/echo/runner.rb).
-`boot` rather than `run`, because `run` is `boot` followed by
+`start` rather than `run`, because `run` is `start` followed by
 `await_termination`. It is `send_to` rather than `send`, which every Ruby
 object already has.
 
@@ -528,7 +529,7 @@ And in Elixir:
 :ok = Flezha.SDK.Local.on_output(run, "counts", &IO.puts(&1.payload))
 :ok = Flezha.SDK.Local.feed(run, "lines", "the quick brown fox")
 :ok = Flezha.SDK.Local.run_until_idle(run, 5_000)
-:ok = Flezha.SDK.Local.stop(run)
+:ok = Flezha.SDK.Local.close(run)
 ```
 
 Every SDK runs local mode on the same core and is held to one recorded
@@ -546,7 +547,7 @@ Flezha::create_runner("default")?.register_factory(WordCount)?.run()?;
 
 ## Check a tasklet on its own
 
-Every SDK but Elixir ships a test harness. It drives one tasklet the way a
+Every SDK ships a test harness. It drives one tasklet the way a
 runner does, with no relay, no runner and no controller, and holds what a
 runtime would otherwise own: the cell's state, the changes the tasklet
 recorded, what it emitted and the clock it reads. A unit suite feeds it inputs
@@ -564,14 +565,23 @@ change whose apply step is not a pure fold.
 | Java | `com.flezha.sdk.testing.TaskletTestHarness`, in the `flezha-sdk-testing` artifact | `replayEquals()`, `replayEmitsEqual(inputs)` | [`CountHitsTest.java`](https://github.com/flezha/flezha_java_sdk/blob/main/examples/starter/src/test/java/com/flezha/examples/starter/CountHitsTest.java) |
 | Node | `TaskletTestHarness`, from `@flezha/sdk/testing` | `replayEquals()` | [`examples/starter/count.test.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/starter/count.test.mjs) |
 | Python | `flezha.testing.TaskletTestHarness` | `replay_equals()` | [`examples/starter/test_starter.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/starter/test_starter.py) |
-| Ruby | `Flezha::Testing::Harness`, after `require "flezha/testing"` | `replay_equals!` | [`examples/starter/count_test.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/starter/count_test.rb) |
-| PHP | `Flezha\Testing\Harness` | `assertReplayEquals()` | [`examples/starter/tests/CountHitsTest.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/starter/tests/CountHitsTest.php) |
-| Elixir | none yet | | |
+| Ruby | `Flezha::Testing::TaskletTestHarness`, after `require "flezha/testing"` | `replay_equals` | [`examples/starter/count_test.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/starter/count_test.rb) |
+| PHP | `Flezha\Testing\TaskletTestHarness` | `replayEquals()` | [`examples/starter/tests/CountHitsTest.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/starter/tests/CountHitsTest.php) |
+| Elixir | `Flezha.SDK.TaskletTestHarness` | `replay_equals/1` | - |
+
+A timer the tasklet sets stays pending in the harness until the test fires it, which runs the
+tasklet's timer hook at the timer's scheduled time: `fire_timer(kind, at)` (Rust, Python,
+Ruby, Elixir) or `fireTimer(kind, at)` (Java, PHP, Node). Rust, Java, Python and Elixir also
+fire every event-time timer due by a given event time, with `advance_event_time` or
+`advanceEventTime`, and Rust and Java list what is pending, with `pending_timers(kind)` or
+`pendingTimers()`.
 
 A call to anything outside the instance goes through `ctx.effect`, which
 keeps its result so a re-run reads it instead of calling again
 ([`effectively_once.md`](effectively_once.md#recorded-effects)). A harness
-keeps each result of a live input and serves it to the replayed one.
+keeps each result of a live input and serves it to the replayed one; the Elixir
+harness refuses the call with `effect.outside_invocation`, since it keeps a result only in a
+live run.
 
 ## After a controller restart
 

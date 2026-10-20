@@ -162,9 +162,10 @@ const namespace = process.argv[2] ?? 'default';
 const runner = createRunner(namespace);
 await runner.registerFactory('./echo_relay.mjs'); // the relays this runner serves
 
-// Resolves once the runner is connected and serving. The process then keeps
-// running until a SIGTERM, or until standard input closes.
-await runner.run(); // connects to the controller
+// `run()` is `start()` followed by `awaitTermination()`. Splitting them leaves
+// room for the calls below, and still serves until a SIGTERM or until
+// standard input closes.
+await runner.start(); // connects to the controller
 
 // Everything `flz relay` and `flz plugin` do is also a method of
 // `control()`, and `send` hands a message to a relay. Uncomment to drive
@@ -178,4 +179,7 @@ await runner.run(); // connects to the controller
 //
 // docs/public/topics/core/sending_and_calling.md covers sending. An enforced
 // controller refuses all of it until `flz role bind runner@default app default`.
+
+// Resolves at shutdown: a SIGTERM, or standard input closing.
+await runner.awaitTermination();
 ````

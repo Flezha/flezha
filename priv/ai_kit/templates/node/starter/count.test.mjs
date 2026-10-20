@@ -12,7 +12,7 @@ test('counts each page on its own, and the count survives a restart', async () =
   const totals = [];
   for (const page of ['home', 'home', 'about', 'home']) {
     if (!cells.has(page)) cells.set(page, TaskletTestHarness.of(CountHits, { cellKey: page }));
-    const { emits } = await cells.get(page).input({ page });
+    const { emits } = await cells.get(page).feed({ page });
     totals.push(emits[0].total);
   }
 

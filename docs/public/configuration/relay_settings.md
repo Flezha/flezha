@@ -232,7 +232,7 @@ The settings are keywords of `@flezha.relay`:
     max_duration_ms=600_000,
     description="one order per message",
 )
-def orders(c: flezha.Channels) -> None:
+def orders(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -433,7 +433,7 @@ The `steps` field is the run's branch, and its members sit inside it.
 ```python
 # order_executor.py: the workflow. It runs in steps, once, undoing everything on a failure.
 @flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
-def order_executor(c: flezha.Channels) -> None:
+def order_executor(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -611,7 +611,7 @@ Full file: [`gateway_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/
     run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
     durable={"local": {"sleep_after": 10_000}},  # an idle session sleeps after 10 s
 )
-def agent(c: flezha.Channels) -> None:
+def agent(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -621,7 +621,7 @@ Full file: [`agent.py`](https://github.com/flezha/flezha_python_sdk/blob/main/ex
 # gateway.py: the HTTP side, in flow, effectively once.
 # each request and answer on disk before it runs
 @flezha.relay("gateway", run={"flow": {"exactly": "effectively_once"}})
-def gateway(c: flezha.Channels) -> None:
+def gateway(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 

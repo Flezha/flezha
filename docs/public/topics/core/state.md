@@ -384,11 +384,10 @@ GC pause included) delays its records.
 
 ## Testing the replay
 
-Every SDK but Elixir ships a test harness that runs a tasklet as the runtime
+Every SDK ships a test harness that runs a tasklet as the runtime
 does and checks that replaying its recorded changes rebuilds the same state.
 [Check a tasklet on its own](running_and_testing.md#check-a-tasklet-on-its-own)
-names each one. The Elixir SDK has no replay harness yet: that `run/3`'s state
-equals the fold of its recorded changes is stated, not checked by a tool.
+names each one.
 
 ## Limits and gotchas
 

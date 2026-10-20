@@ -358,7 +358,7 @@ Full file: [`echo_tasklet.py`](https://github.com/flezha/flezha_python_sdk/blob/
 ```python
 # echo_relay.py: the relay. The graph, and the unit the controller schedules.
 @flezha.relay("echo")  # the stable identity `flz relay start` takes
-def echo_relay(c: flezha.Channels) -> None:
+def echo_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(Echo).output("out")
 ```
 
@@ -435,7 +435,7 @@ autoloaded, and what runs is what you named.
 
 ```php
 // src/EchoTasklet.php: the tasklet. The processing stage the graph routes each message into.
-#[Task(name: 'echo')]
+#[Tasklet\Spec(name: 'echo')]
 final class EchoTasklet extends Tasklet
 {
     public function run(mixed $input, Ctx $ctx): void
@@ -452,7 +452,7 @@ Full file: [`src/EchoTasklet.php`](https://github.com/flezha/flezha_php_sdk/blob
 #[Relay(factoryId: 'echo')]
 final class EchoRelay extends \Flezha\Relay
 {
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('in', codec: ChannelCodec::Text)
             ->into(EchoTasklet::class)

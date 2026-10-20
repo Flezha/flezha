@@ -104,7 +104,7 @@ defmodule MyTask do
 end
 ```
 
-The relay macro imports `Flezha.SDK.Channels`, so a whole pipe — a merge
+The relay macro imports `Flezha.SDK.ChannelBuilder`, so a whole pipe — a merge
 included — is written with no module prefix. `use Flezha.SDK.Tasklet` imports
 `Flezha.SDK.Ctx`'s authoring functions (every one but `apply/3`, which would
 shadow `Kernel.apply/3`) and leaves `init_state/1` answering `nil` unless the
@@ -167,7 +167,7 @@ the tier is durable state.
 
 > A tasklet nested inside a relay module inherits that module's imports
 > lexically, so `use Flezha.SDK.Tasklet` takes the builder's back — a nested
-> tasklet's own `input/0` would otherwise clash with `Channels.input/2`. A
+> tasklet's own `input/0` would otherwise clash with `ChannelBuilder.input/2`. A
 > nested tasklet must be written **before** the `channels/1` that names it,
 > which is how Elixir aliases resolve.
 
@@ -296,12 +296,15 @@ defmodule HandWrittenRelay do
 
   @impl true
   def channels(c) do
-    c |> Channels.input("in", codec: :text) |> Channels.into(HandWritten) |> Channels.output("out")
+    c
+    |> ChannelBuilder.input("in", codec: :text)
+    |> ChannelBuilder.into(HandWritten)
+    |> ChannelBuilder.output("out")
   end
 end
 ```
 
-`Ctx` and `Channels` are aliases of `Flezha.SDK.Ctx` and `Flezha.SDK.Channels`.
+`Ctx` and `ChannelBuilder` are aliases of `Flezha.SDK.Ctx` and `Flezha.SDK.ChannelBuilder`.
 No macro sees this form, so what the `use` form refuses at compile time is
 refused at registration instead: both clocks as `topology.two_clocks`, and a
 retired `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` as
@@ -318,7 +321,7 @@ three — `apply_change/2` (declares a changeful, persisted tasklet; see
 [Persistence](#persistence)), `compact_after_bytes/0` (8 MiB) and `state_from_json/1` — and
 the schema four — `schema_version/0` (1), `min_readable_schema_version/0` (the version),
 `migrate_state/2`, `migrate_change/2` (see [Schema evolution](#schema-evolution)) — and the
-timer four — `logical_clock/0` (`false`), `event_time/1`, `on_timer/4`, `max_timers_per_cell/0`
+timer four — `logical_clock/0` (`false`), `event_time/1`, `on_timer/3`, `max_timers_per_cell/0`
 (10 000; see [Timers and clocks](#timers-and-clocks)).
 `Relay` takes the optional `description/0`, `max_duration_ms/0`, `run/0` and `durable/0`
 ([The settings tree](#the-settings-tree)); a class that runs in steps writes the same
@@ -339,11 +342,11 @@ through a ctx whose invocation returned),
 `apply/3` (fold a change and record it; a `defchange` recorder calls it),
 `complete/2` (end the instance with a result, encoded as `spawn_steps` encodes its
 payload), `now/1` (the declared clock's value, once per invocation; the scheduled timestamp
-inside `on_timer/4`), `cell_key/1`, and the timer four
+inside `on_timer/3`), `cell_key/1`, `replay/1` (whether the input is a replay), and the timer three
 — `timer_after/2` (milliseconds after `now/1`), `timer_at_event_time/2`,
-`cancel_processing_time_timer/2`, `cancel_event_time_timer/2` — the registrations answering
-`{:ok, at}`, the absolute timestamp a cancel takes, and a cancel `:ok`; inside a
-`compensate/3` hook all four answer
+`cancel_timer/3` (the kind, `:processing_time` or `:event_time`, and the timestamp) — the
+registrations answering `{:ok, at}`, the absolute timestamp a cancel takes, and a cancel `:ok`;
+inside a `compensate/3` hook all three answer
 `runtime.timers_unavailable` (see [Timers and clocks](#timers-and-clocks)).
 `spawn_steps(ctx, factory_id, payload, opts)` requests spawn-or-deliver of a steps relay
 instance, `id:` and `if_running:` optional, with `payload` sent as an output with no codec sends a
@@ -449,18 +452,19 @@ writes: event time when it defines `event_time/1` (what that answers for the inp
 logical clock when it declares `logical_clock: true` (the Cell's durable change seq —
 refused as `topology.unservable_clock` on a tasklet with no `defchange`), and otherwise the
 wall clock. Both at once is a `CompileError` naming `event_time/1` and `logical_clock`.
-Inside `on_timer/4`, `now/1` is the scheduled timestamp under every clock, so a chained
+Inside `on_timer/3`, `now/1` is the scheduled timestamp under every clock, so a chained
 `timer_after/2` schedules off the timer that woke it and a replay registers the same instant.
 
 A Tasklet registers a deadline from `run/3` or from a firing and handles it in
-`on_timer(fired_at, kind, state, ctx)`, which answers what `run/3` answers. Pending timers
+`on_timer(firing, state, ctx)`, `firing` a `%Flezha.SDK.TimerFiring{kind, scheduled_at}`,
+which answers what `run/3` answers. Pending timers
 are one set per kind, kept by the core and bounded by `max_timers_per_cell/0`: a duplicate
 registration is a no-op, and so is a cancel of nothing. An invocation's registrations and
 cancellations reach the core only when it completes, which judges them as the item settles:
 past the cap, or an event-time timer under another clock, the item fails, not retried, with
-`runtime.timer_cap_exceeded` / `runtime.event_time_timer_without_event_time_clock`. A firing on a Tasklet that exports no `on_timer/4` parks
+`runtime.timer_cap_exceeded` / `runtime.event_time_timer_without_event_time_clock`. A firing on a Tasklet that exports no `on_timer/3` parks
 non-retryably naming the tasklet and the callback. Only a `compensate` hook runs with
-timers unavailable: there each of the four ctx timer calls answers
+timers unavailable: there each of the three ctx timer calls answers
 `runtime.timers_unavailable` and arms nothing. When each kind fires, and how pending timers
 survive a restart, is the core's and the same in every SDK
 ([`timers.md`](../../public/topics/core/timers.md)).
@@ -601,6 +605,17 @@ starts an empty supervision tree.
 The manifest at [`test/apps/elixir_runner/conformance.json`](../../../test/apps/elixir_runner/conformance.json)
 defers nothing: every capability is carried with the reference's fixtures. A call into a
 builder function this SDK does not carry fails registration naming the relay module.
+
+## The test harness
+
+`Flezha.SDK.TaskletTestHarness` runs one tasklet on one Cell through the dispatcher's own
+pieces (`Ctx.new/4`, the ctx's taken emits, changes and timer ops, `apply_change/2`), with no
+controller: `new/2`, `feed/3`, `state/1`, `fire_timer/3`, `advance_event_time/2` and
+`replay_equals/1`, each call answering the next harness beside an `Outcome`. It keeps the
+pending timers as a set of its own and does not judge them, because `flz_core`'s local run
+cannot be driven at explicit clocks. An `effect/4` name is judged by a core context the
+harness holds: an over-long one answers `effect.bad_name`, a well-formed one
+`effect.outside_invocation`.
 
 ## The package
 

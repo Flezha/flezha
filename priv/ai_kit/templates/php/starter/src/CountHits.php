@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Flezha\Examples\Starter;
 
-use Flezha\Attribute\Task;
 use Flezha\Ctx;
 use Flezha\Tasklet;
 
@@ -16,7 +15,7 @@ use Flezha\Tasklet;
  * change `run` records, which `applyChange` applies, so a runner that restarts
  * finds the count it had.
  */
-#[Task(name: 'count')] // state is saved under this name, so choose it once
+#[Tasklet\Spec(name: 'count')] // state is saved under this name, so choose it once
 final class CountHits extends Tasklet
 {
     public function initState(?string $cellKey): mixed

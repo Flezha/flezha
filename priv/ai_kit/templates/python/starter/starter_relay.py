@@ -7,7 +7,7 @@ import flezha
 # the output `counts`, which also answers a caller. The description is shown by
 # `flz relay info` and to AI agents.
 @flezha.relay("starter")  # the name `flz relay start` takes
-def starter_relay(c: flezha.Channels) -> None:
+def starter_relay(c: flezha.ChannelBuilder) -> None:
     (
         c.input("hit", description="Counts visits per page")
         .key_by(lambda hit: hit["page"])  # one cell, and one count, per page

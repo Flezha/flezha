@@ -232,7 +232,7 @@ The settings are keywords of `@flezha.relay`:
     max_duration_ms=600_000,
     description="one order per message",
 )
-def orders(c: flezha.Channels) -> None:
+def orders(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -433,7 +433,7 @@ The `steps` field is the run's branch, and its members sit inside it.
 ```python
 # order_executor.py: the workflow. It runs in steps, once, undoing everything on a failure.
 @flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
-def order_executor(c: flezha.Channels) -> None:
+def order_executor(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -611,7 +611,7 @@ Full file: [`gateway_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/
     run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
     durable={"local": {"sleep_after": 10_000}},  # an idle session sleeps after 10 s
 )
-def agent(c: flezha.Channels) -> None:
+def agent(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -621,7 +621,7 @@ Full file: [`agent.py`](https://github.com/flezha/flezha_python_sdk/blob/main/ex
 # gateway.py: the HTTP side, in flow, effectively once.
 # each request and answer on disk before it runs
 @flezha.relay("gateway", run={"flow": {"exactly": "effectively_once"}})
-def gateway(c: flezha.Channels) -> None:
+def gateway(c: flezha.ChannelBuilder) -> None:
     ...
 ```
 
@@ -736,8 +736,8 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 | Override | Default | What it does |
 |---|---|---|
 | `compact_after_bytes()` (`compactAfterBytes`) | 8 MiB, in lockstep with `:default_compact_after_bytes` | Per-Cell WAL size reported to the controller as the snapshot-compaction trigger. |
-| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell: the declared value, else `FLEZHA_MAILBOX_CAPACITY`, else the default. Rust sets it with the `capacity` key on `#[flezha::tasklet]`. |
-| `cell_idle_ttl()` (`cellIdleTtl`; Elixir `idle_ttl_seconds/0`) | `None` — no eviction | Evict a dynamic Cell after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
+| `mailbox_capacity()` (`mailboxCapacity`) | `1024`, range `1..=1_048_576` | Bounded mailbox depth per Cell: the declared value, else `FLEZHA_MAILBOX_CAPACITY`, else the default. Rust sets it with the `mailbox_capacity` key on `#[flezha::tasklet]`. |
+| `idle_ttl()` (`cellIdleTtl`; Elixir `idle_ttl_seconds/0`) | `None` — no eviction | Evict a dynamic Cell after this idle period; eviction is destructive (slot, WAL and snapshot dropped). |
 | `max_cells()` (Elixir `max_cells/0`) | `100_000` | Soft cap on live dynamic Cells per Tasklet; new keys past it are dropped. |
 | `CLOCK` (set by a written `event_time`, or the `logical_clock` key) | wall clock | Wall clock, event time or logical clock; decides `ctx.now()` and event-time ordering. |
 

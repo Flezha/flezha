@@ -3,8 +3,8 @@
 Read by the runner process, not the controller node, so they are set where the
 runner runs. A runner in any language reads them from its own environment; the
 shared `flz_transport` crate also reads its rows inside the controller's NIF. An
-Elixir runner reads the connection rows through `Flezha.SDK.Knob` (the OS
-environment, then `config :flezha_sdk, ...`) and hands them to the core, so a
+Elixir runner reads the connection rows from the OS environment, then
+`config :flezha_sdk, ...`, and hands them to the core, so a
 runner in the controller's own BEAM can be given its own values.
 
 What each variable does is below; the type and default of every one is in

@@ -33,14 +33,13 @@ defect of the ABI rather than of this package.
 
 ```php
 use Flezha\Attribute\Relay;
-use Flezha\Attribute\Task;
+use Flezha\ChannelBuilder;
 use Flezha\Ctx;
 use Flezha\Flezha;
-use Flezha\Graph\Builder;
 use Flezha\Tasklet;
 use Flezha\TimerFiring;
 
-#[Task(name: 'session', idleTtlSeconds: 3_600)]
+#[Tasklet\Spec(name: 'session', idleTtlSeconds: 3_600)]
 final class Session extends Tasklet
 {
     private const QUIET_MS = 30_000;
@@ -83,7 +82,7 @@ final class Session extends Tasklet
 #[Relay(factoryId: 'sessions')]
 final class SessionRelay extends \Flezha\Relay
 {
-    public static function channels(Builder $c): void
+    public static function channels(ChannelBuilder $c): void
     {
         $c->input('events')
             ->keyBy(static fn (array $e): string => (string) $e['session'])
@@ -96,7 +95,7 @@ Flezha::createRunner('default')->registerFactory(SessionRelay::class)->run();
 ```
 
 That is `examples/E04_SessionTimeout.php`. A tasklet is a class extending
-`Tasklet` with a `#[Task]` attribute. The attribute carries the scalar
+`Tasklet` with a `#[Tasklet\Spec]` attribute. The attribute carries the scalar
 declarations; the methods carry the behaviour. Only `run()` is required. Which
 optional hooks a tasklet declares is read from the methods it **overrides**:
 `initState` overridden means it keeps state, `applyChange` that it folds
@@ -106,7 +105,7 @@ implementation therefore cannot disagree.
 - **`name` is required.** It is part of every cell's durable path, so renaming
   the class keeps the state and renaming `name` declares a different tasklet.
   A class with no `name`, or an empty one, is refused at registration naming
-  the class, and a subclass writes its own: every other `#[Task]` argument is
+  the class, and a subclass writes its own: every other `#[Tasklet\Spec]` argument is
   merged down the class hierarchy, `name` never is.
 - **`run` returns `void`.** A value leaves a tasklet only through
   `$ctx->emit()`, with its `key`, `channel` and `metadata` arguments, and an input that should produce
@@ -137,7 +136,7 @@ implementation therefore cannot disagree.
   unset never evicts. `maxCells` caps how many are live.
 - **The clock follows from what the class writes.** Overriding
   `eventTime(mixed $input): int` makes it event time,
-  `#[Task(logicalClock: true)]` makes it the cell's change sequence, and
+  `#[Tasklet\Spec(logicalClock: true)]` makes it the cell's change sequence, and
   otherwise it is the wall clock; `$ctx->now()` serves whichever it is. Doing both is refused naming
   `eventTime` and `logicalClock`, and a logical clock on a tasklet with no
   `initState` is refused as `topology.unservable_clock`.
@@ -234,7 +233,7 @@ full form takes them.
 The tasklet is named `factoryId` verbatim, so the full form that wires a
 tasklet of that name keeps every cell where it was. It runs the class's
 `run` and takes whichever hooks the class defines (`initState`, `applyChange`, ...),
-and a `#[Task]` on the class carries its settings, all but `name`. A steps relay
+and a `#[Tasklet\Spec]` on the class carries its settings, all but `name`. A steps relay
 short form is a `once` steps relay, run once over its first message:
 `flz relay start --text '<payload>'`, or a start followed by
 `flz relay send`; a second message to a `once` instance is accepted and
@@ -290,8 +289,8 @@ any relay is. `registerFactory`, where this SDK places every refusal,
 refuses a class defining both `run` and `channels()` naming
 `topology.short_form_with_topology`, and one defining neither naming both. A second
 relay, flow or steps, under a factory id the runner holds is refused naming
-`topology.duplicate_factory_id`. `#[Task]` takes no `run`, `durable`, `output`, `input` or `codec`,
-and a tasklet carrying one is refused naming `#[Relay]`. `#[Task]` on a
+`topology.duplicate_factory_id`. `#[Tasklet\Spec]` takes no `run`, `durable`, `output`, `input` or `codec`,
+and a tasklet carrying one is refused naming `#[Relay]`. `#[Tasklet\Spec]` on a
 class defining `channels()` is refused too: a full form's tasklet settings go
 on its tasklet classes. A hook a short form defines is held to the signature
 `Tasklet` gives it, and one PHP would refuse on a tasklet is refused naming
@@ -355,7 +354,7 @@ final class Totals implements \Flezha\Codable
     public static function fromArray(array $data): static { return new self((int) $data['count']); }
 }
 
-#[Task(name: 'counting', stateType: Totals::class)]
+#[Tasklet\Spec(name: 'counting', stateType: Totals::class)]
 final class Counting extends Tasklet { /* ... */ }
 ```
 

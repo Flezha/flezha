@@ -9,13 +9,13 @@ import { Session } from './session.mjs';
 test('a quiet session closes on its timer and reports what it saw', async () => {
   const harness = TaskletTestHarness.of(Session, { cellKey: 'ada', now: 1_000n });
 
-  const first = await harness.input({ user: 'ada', action: 'login' });
+  const first = await harness.feed({ user: 'ada', action: 'login' });
   assert.deepEqual(first.timers, [
     { kind: 'processing_time', scheduledAt: 31_000n, register: true },
   ]);
 
   harness.advanceTo(10_000n);
-  const second = await harness.input({ user: 'ada', action: 'search' });
+  const second = await harness.feed({ user: 'ada', action: 'search' });
   assert.deepEqual(second.timers, [
     // The deadline the input replaced is cancelled, then the next is armed.
     { kind: 'processing_time', scheduledAt: 31_000n, register: false },
@@ -35,7 +35,7 @@ test('a quiet session closes on its timer and reports what it saw', async () => 
 
 test('a session that keeps talking is never closed twice', async () => {
   const harness = TaskletTestHarness.of(Session, { cellKey: 'grace' });
-  await harness.input({ user: 'grace', action: 'login' });
+  await harness.feed({ user: 'grace', action: 'login' });
   const closed = await harness.fireTimer('processing_time', 30_000n);
   assert.equal(closed.emits.length, 1);
   const again = await harness.fireTimer('processing_time', 30_000n);
