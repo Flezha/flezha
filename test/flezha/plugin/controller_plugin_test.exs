@@ -420,6 +420,22 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       refute_receive {:hook, %{hook: :on_relay_failed}, _}, 300
     end
 
+    test "a relay failed here, stopped here and parked again is announced again" do
+      op = start_relay("restopped_op")
+      {:ok, _} = notify(["on_relay_failed"])
+      subject = {:relay, {@namespace, op}}
+      reason = {:halted, {:plugin_prepare_failed, "p", :boom}}
+      park = Verdict.new(subject, :halted, reason: reason, facts: %{node: node()})
+
+      Verdict.emit_transitions(%{}, %{subject => park})
+      assert_receive {:hook, %{hook: :on_relay_failed, relay: ^op}, _}, 2_000
+
+      # The stop's forget is cast from this process before the next park is read.
+      :ok = RelayManager.stop_relay(@namespace, op)
+      Verdict.emit_transitions(%{}, %{subject => park})
+      assert_receive {:hook, %{hook: :on_relay_failed, relay: ^op}, _}, 2_000
+    end
+
     test "a relay failed here, then placed on another controller and parked here again, is announced again" do
       {:ok, _} = notify(["on_relay_failed"])
       subject = {:relay, {@namespace, "moved_op"}}

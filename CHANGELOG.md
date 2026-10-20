@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed: a relay stopped from another controller is announced again when it fails
+
+- A controller plugin's `on_relay_failed` fires again for a relay that failed on one
+  controller, was stopped from another and then failed again on the first. Before, the first
+  controller still remembered the old failure and stayed silent.
+
 ### Fixed: starts, plugin copies and disables racing a move
 
 - A partition group start issued while the group rescales waits for the rescale, within the

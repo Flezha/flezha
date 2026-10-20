@@ -21,7 +21,8 @@ defmodule Flezha.Observability.HookSink do
   (`[:flezha, :health, :verdict]`), which already fire once per health change:
   every controller judges every relay, so this sink takes only those of
   subjects on its own node, and it announces a relay's failure once, until
-  the relay reads recovered, stops here or is judged on another controller.
+  the relay reads recovered, is stopped on any controller (`stopped/4`) or
+  is judged on another controller.
 
   A copy listens by joining its hooks' directory groups
   (`Flezha.Cluster.Directory.hook_group/3`): a copy without `single` hears its
@@ -57,10 +58,28 @@ defmodule Flezha.Observability.HookSink do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(_opts \\ []), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  # A row an earlier incarnation left names a dead pid.
+  @doc """
+  The handler of a stop's `[:flezha, :relay, :stopped]` event, which only the
+  controller making the stop executes: every controller's sink forgets the
+  relay's failure, so one announced anywhere is announced again if the relay
+  parks there later. No hook fires.
+  """
+  @spec stopped([atom()], map(), map(), term()) :: :abcast
+  def stopped(_event, _measurements, %{namespace: namespace, relay: relay}, _config),
+    do: GenServer.abcast([node() | Node.list()], __MODULE__, {:forget, {namespace, relay}})
+
+  # A row an earlier incarnation left names a dead pid; its handler stays attached.
   @impl true
   def init(nil) do
     Registry.unregister_sink(@source)
+
+    _ =
+      :telemetry.attach(
+        __MODULE__,
+        [:flezha, :relay, :stopped],
+        &__MODULE__.stopped/4,
+        nil
+      )
 
     case Directory.monitor_scope() do
       {ref, _groups} -> {:ok, settle(%{ref: ref, registered: false, failed: MapSet.new()})}
@@ -88,6 +107,9 @@ defmodule Flezha.Observability.HookSink do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  @impl true
+  def handle_cast({:forget, id}, state), do: {:noreply, forget(state, id)}
+
   # In the bus's table exactly while a copy listens on this controller.
   defp settle(%{registered: registered} = state) do
     case {Directory.hooks_wanted?(), registered} do
@@ -111,7 +133,7 @@ defmodule Flezha.Observability.HookSink do
   end
 
   # A relay's failure is announced once, until it reads recovered, is stopped
-  # here or is judged on another controller: the reads between, unknown or
+  # or is judged on another controller: the reads between, unknown or
   # unbound (no node) while it is rebound, are none of these. `failed` holds
   # the relays announced and not recovered since.
   defp read(%Signal{name: :verdict, metadata: %{node: node} = transition}, state)
@@ -131,7 +153,7 @@ defmodule Flezha.Observability.HookSink do
     do: {event(:on_relay_started, f), state}
 
   defp read(%Signal{source: :flezha_relay, name: :relay_stopped, metadata: f}, state),
-    do: {event(:on_relay_stopped, f), forget(state, {f.namespace, f.relay})}
+    do: {event(:on_relay_stopped, f), state}
 
   # The DLQ store names the relay's class; its namespace is read here, where
   # a copy listens, and not on every park.

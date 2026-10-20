@@ -3,15 +3,19 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
   A controller plugin across three controllers: a copy on each without
   `single` and exactly one with it; an event is delivered by the copy on the
   controller where it happened, or by the one `single` copy wherever that runs.
+  A stop on one controller lets another announce a relay's failure again.
   """
 
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Convergence.Verdict
+  alias Flezha.Observability.HookSink
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.HookWebhook
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -40,7 +44,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
 
   defp hub_nodes, do: HubManager.get_hub_nodes(@namespace, false)
 
-  defp hook(name, server, single) do
+  defp hook(name, server, single, hooks \\ ["on_dead_letter"]) do
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(name, %Plugin{
         id: name,
@@ -48,7 +52,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
         namespace: @namespace,
         single: single,
         opts: %{url: "http://127.0.0.1:#{server.port}/hooks"},
-        hooks: [{"on_dead_letter", []}]
+        hooks: Enum.map(hooks, &{&1, []})
       })
   end
 
@@ -72,10 +76,12 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
 
   defp copies(name), do: Enum.sort(Directory.plugin_nodes(@namespace, name))
 
-  defp received_from do
+  defp received_from, do: elem(received(), 1)
+
+  defp received do
     assert_receive {:request, _line, _headers, body}, 10_000
-    %{"controller" => controller} = Jason.decode!(body)
-    controller
+    %{"hook" => hook, "controller" => controller} = Jason.decode!(body)
+    {hook, controller}
   end
 
   test "without single a copy runs on every controller and a dead letter reaches only its own",
@@ -138,5 +144,37 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
 
     assert {:ok, _} = PluginManager.disable_plugin(@namespace, "hook_single")
     assert NodeTestHelper.wait_until(fn -> copies("hook_single") == [] end, 5_000)
+  end
+
+  test "a relay failed here and stopped from another controller is announced again when it parks",
+       %{p1: p1, server: server} = ctx do
+    # Started first: the fixture's stops of misplaced tries are no events here.
+    op = relay_on(node(), "failed_elsewhere")
+    hook("hook_failed", server, false, ["on_relay_failed", "on_relay_stopped"])
+    everywhere = Enum.sort([node(), p1, ctx.p2])
+    assert NodeTestHelper.wait_until(fn -> copies("hook_failed") == everywhere end, 5_000)
+
+    id = {@namespace, op}
+    reason = {:halted, {:plugin_prepare_failed, "p", :boom}}
+    # A park as this controller's loop judges it; no loop runs under test.
+    park = fn ->
+      Verdict.emit_transitions(%{}, %{
+        {:relay, id} => Verdict.new({:relay, id}, :halted, reason: reason, facts: %{node: node()})
+      })
+    end
+
+    park.()
+    assert received() == {"on_relay_failed", to_string(node())}
+
+    # The stop is told only where it was made; here the failure is forgotten.
+    assert :ok = :erpc.call(p1, RelayManager, :stop_relay, [@namespace, op])
+    assert received() == {"on_relay_stopped", to_string(p1)}
+    assert NodeTestHelper.wait_until(fn -> id not in :sys.get_state(HookSink).failed end, 5_000)
+
+    park.()
+    assert received() == {"on_relay_failed", to_string(node())}
+    refute_receive {:request, _, _, _}, 500
+
+    assert {:ok, _} = PluginManager.disable_plugin(@namespace, "hook_failed")
   end
 end
