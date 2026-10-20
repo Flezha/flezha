@@ -84,12 +84,6 @@ defmodule Flezha.Service.Relay do
      |> Enum.map(&%{namespace: &1, running: MapSet.member?(running, &1)})}
   end
 
-  @doc "The relay ids running in `namespace`."
-  @spec list_relays(String.t(), caller_context()) :: {:ok, [String.t()]} | {:error, term()}
-  verb list_relays(namespace, caller_context), args: [namespace: @namespace] do
-    RelayManager.get_relay_ids(namespace)
-  end
-
   @doc """
   The relays in a namespace, one row each. Each row holds its health, runner,
   node and, for a partition group, its width and members. A group is one row,
@@ -152,13 +146,8 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc "Partition coverage over `{id, range}` pairs: gaps, overlaps and total."
-  @spec partition_coverage([{String.t(), term()}], caller_context()) ::
-          {:ok, term()} | {:error, term()}
-  verb partition_coverage(members, caller_context) when is_list(members),
-    verb: :partition_report,
-    args: [members: [type: :list, doc: "The `{id, range}` pairs."]] do
-    {:ok, Partition.coverage(members)}
-  end
+  @spec partition_coverage([{String.t(), term()}]) :: {:ok, term()}
+  def partition_coverage(members) when is_list(members), do: {:ok, Partition.coverage(members)}
 
   @doc """
   The partition groups `rows` describe. Each answers its group, declared width,
@@ -175,12 +164,8 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc "Whether `run` is a way a relay runs that this controller knows."
-  @spec run_known?(term(), caller_context()) :: {:ok, boolean()} | {:error, term()}
-  verb run_known?(run, caller_context),
-    verb: :run_read,
-    args: [run: [type: :atom, doc: "The way a relay runs."]] do
-    {:ok, ClassRegistry.known_run?(run)}
-  end
+  @spec run_known?(term()) :: {:ok, boolean()}
+  def run_known?(run), do: {:ok, ClassRegistry.known_run?(run)}
 
   @doc """
   A relay's live state, as JSON, and the change sequence it was read at.

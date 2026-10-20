@@ -111,24 +111,8 @@
       ]
     },
     {
-      "name": "Controller.durability_backend",
-      "doc": "The durability backend this controller is configured for.",
-      "action": "controller.status",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
       "name": "Controller.durability_breaches",
       "doc": "The durability breaches recorded since the controller started.",
-      "action": "controller.status",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
-      "name": "Controller.durability_posture",
-      "doc": "Whether durable state is shipped to a remote tier or stays local.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -378,21 +362,6 @@
       ]
     },
     {
-      "name": "Fleet.hub_nodes",
-      "doc": "The nodes holding a hub for `namespace`.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
       "name": "Fleet.installed_plugins",
       "doc": "Every plugin package this controller loaded or refused at boot.",
       "action": "plugin.list",
@@ -492,21 +461,6 @@
           "type": "string",
           "required": true,
           "doc": "The factory."
-        }
-      ]
-    },
-    {
-      "name": "Fleet.runners_on_this_node",
-      "doc": "The runners serving `namespace` **on this node only**.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
         }
       ]
     },
@@ -739,7 +693,7 @@
           "type": "map",
           "required": false,
           "default": {},
-          "doc": "The ceilings that differ from the defaults, by quota kind."
+          "doc": "The ceilings that differ from the defaults, by quota field."
         }
       ]
     },
@@ -843,21 +797,6 @@
       ]
     },
     {
-      "name": "Observability.subscribe",
-      "doc": "Subscribe the calling process to the live signals of `source`.",
-      "action": "observability.subscribe",
-      "remote": true,
-      "stream": true,
-      "args": [
-        {
-          "name": "source",
-          "type": "string",
-          "required": true,
-          "doc": "A registered observability source."
-        }
-      ]
-    },
-    {
       "name": "Observability.tail",
       "doc": "Stream the live signals of one source that the caller may see.",
       "action": "observability.subscribe",
@@ -874,7 +813,7 @@
     },
     {
       "name": "Observability.unsubscribe",
-      "doc": "Undo a `subscribe/2` or `tail/2`.",
+      "doc": "Undo a `tail/2`.",
       "action": "observability.subscribe",
       "remote": true,
       "stream": false,
@@ -967,14 +906,6 @@
           "doc": "The namespace."
         }
       ]
-    },
-    {
-      "name": "PluginManager.list",
-      "doc": "Every plugin enabled in the caller's namespace.",
-      "action": "plugin.list",
-      "remote": true,
-      "stream": false,
-      "args": []
     },
     {
       "name": "PluginManager.unbind",
@@ -1260,21 +1191,6 @@
       "args": []
     },
     {
-      "name": "Relay.list_relays",
-      "doc": "The relay ids running in `namespace`.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
       "name": "Relay.listen",
       "doc": "Stream every frame a relay emits, or those of one direction.",
       "action": "relay.listen",
@@ -1333,21 +1249,6 @@
           "type": "string",
           "required": true,
           "doc": "The relay's id."
-        }
-      ]
-    },
-    {
-      "name": "Relay.partition_coverage",
-      "doc": "Partition coverage over `{id, range}` pairs: gaps, overlaps and total.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "members",
-          "type": "list",
-          "required": true,
-          "doc": "The `{id, range}` pairs."
         }
       ]
     },
@@ -1435,21 +1336,6 @@
           "type": "string",
           "required": true,
           "doc": "A WAL seq, or an ISO 8601 time."
-        }
-      ]
-    },
-    {
-      "name": "Relay.run_known?",
-      "doc": "Whether `run` is a way a relay runs that this controller knows.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "run",
-          "type": "atom",
-          "required": true,
-          "doc": "The way a relay runs."
         }
       ]
     },
@@ -1552,21 +1438,6 @@
       ]
     },
     {
-      "name": "Schedule.assert_entry",
-      "doc": "Assert `entry` on the hub, so it starts firing.",
-      "action": "schedule.assert",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "entry",
-          "type": "any",
-          "required": true,
-          "doc": "The stored schedule."
-        }
-      ]
-    },
-    {
       "name": "Schedule.list",
       "doc": "Every stored schedule, by name, with what the hub holds for it.",
       "action": "schedule.list",
@@ -1575,66 +1446,9 @@
       "args": []
     },
     {
-      "name": "Schedule.next_fire",
-      "doc": "The next UTC instant a parsed cron fires after `after_utc`, in `tz`.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "cron",
-          "type": "any",
-          "required": true,
-          "doc": "A parsed cron."
-        },
-        {
-          "name": "tz",
-          "type": "string",
-          "required": true,
-          "doc": "The time zone."
-        },
-        {
-          "name": "after_utc",
-          "type": "any",
-          "required": true,
-          "doc": "The instant to count from."
-        }
-      ]
-    },
-    {
-      "name": "Schedule.parse_cron",
-      "doc": "Parse a cron expression, or say why it cannot be parsed.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "expression",
-          "type": "string",
-          "required": true,
-          "doc": "The cron expression."
-        }
-      ]
-    },
-    {
       "name": "Schedule.remove",
       "doc": "Forget a schedule and retract it from the hub.",
       "action": "schedule.remove",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "name",
-          "type": "string",
-          "required": true,
-          "doc": "The schedule's name."
-        }
-      ]
-    },
-    {
-      "name": "Schedule.retract",
-      "doc": "Retract the schedule `name` from the hub, so it stops firing.",
-      "action": "schedule.retract",
       "remote": true,
       "stream": false,
       "args": [
@@ -1660,14 +1474,6 @@
           "doc": "The schedule's name."
         }
       ]
-    },
-    {
-      "name": "Schedule.statuses",
-      "doc": "What the hub currently holds for each schedule.",
-      "action": "schedule.list",
-      "remote": true,
-      "stream": false,
-      "args": []
     },
     {
       "name": "Steps.cells",
@@ -1827,14 +1633,6 @@
       ]
     },
     {
-      "name": "Steps.relay_classes",
-      "doc": "Every relay class this controller holds persisted state for.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
       "name": "Steps.rescale",
       "doc": "Rescale a partition group in a namespace to a new size.",
       "action": "relay.scale",
@@ -1948,14 +1746,6 @@
           "doc": "`<relay>/<tasklet>[/<cell_key>]`."
         }
       ]
-    },
-    {
-      "name": "Steps.state_metrics",
-      "doc": "Durable-state counters across every relay class.",
-      "action": "state.list",
-      "remote": true,
-      "stream": false,
-      "args": []
     },
     {
       "name": "Steps.time_travel",

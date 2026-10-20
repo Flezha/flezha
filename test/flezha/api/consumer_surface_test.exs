@@ -14,7 +14,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   regenerated from it and any difference in the call set fails. And an entry
   that does not resolve is listed below rather than tolerated: a new break fails
   the run, and a repaired one fails it too, until the line is removed from the
-  list. The console calls only the published surface, so the list is empty.
+  list.
   """
   use ExUnit.Case, async: true
 
@@ -32,10 +32,14 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     {Flezha.Service.Admin, :context, 2}
   ]
 
-  # What the console calls today and this tree does not answer. The console
-  # calls only the published surface, so nothing is. A break recorded here is
-  # one the console has not caught up with yet, named in its own spelling.
-  @unresolved_today %{}
+  # What the console calls today and this tree does not answer. A break
+  # recorded here is one the console has not caught up with yet, named in its
+  # own spelling; the console's maintainer clears it.
+  @unresolved_today %{
+    # Withdrawn for its survivor `Flezha.Service.Relay.list/2`, which answers
+    # rows rather than ids (delta `controller-consumer-api`).
+    {Flezha.Service.Relay, :list_relays, 2} => :withdrawn
+  }
 
   setup_all do
     # Just under the console's distinct calls today: the floor guards against a
@@ -164,7 +168,9 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     end
 
     test "every call the console makes is on the published surface", ctx do
-      allowed = MapSet.union(call_set(ctx.published), MapSet.new(@context_free))
+      known = MapSet.new(@context_free ++ Map.keys(@unresolved_today))
+      allowed = ctx.published |> call_set() |> MapSet.union(known)
+
       off_surface = ctx.entries |> call_set() |> MapSet.difference(allowed)
 
       assert MapSet.size(off_surface) == 0,

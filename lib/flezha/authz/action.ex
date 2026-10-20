@@ -68,9 +68,7 @@ defmodule Flezha.AuthZ.Action do
     # Scheduled relay spawns.
     :"schedule.list",
     :"schedule.add",
-    :"schedule.remove",
-    :"schedule.assert",
-    :"schedule.retract"
+    :"schedule.remove"
   ]
 
   @doc """

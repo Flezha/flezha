@@ -336,8 +336,8 @@ that start workflows) reaches only the start and the send below; adding
 | bind a relay to a plugin | `PluginManager.bind` | `name`, then `relay_id` and optionally `hooks` and `channel` |
 | unbind a relay | `PluginManager.unbind` | `name`, then `relay_id` |
 | disable a plugin | `PluginManager.disable` | `name` |
-| list relays | `Relay.list_relays` | none |
-| list plugins | `PluginManager.list` | none; the plugins enabled in the namespace |
+| list relays | `Relay.list` | none; one row per relay: its `id`, health, runner and node, and a partition group as one row |
+| list plugins | `PluginManager.enabled` | none; one row per plugin enabled in the namespace |
 | read cell state | `Relay.cell_state` | `relay_id`, and optionally `cell`: `<tasklet>` for its Cells or `<tasklet>/<cell_key>` for one; absent, every Cell of the relay |
 
 Each SDK spells these as methods on its `control()` handle, except the send,

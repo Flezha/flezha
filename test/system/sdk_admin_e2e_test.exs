@@ -71,7 +71,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         call("Relay.start", [%{factory_id: "do_nothing"}]),
         call("Relay.start", [%{id: "app_started", factory_id: "do_nothing"}]),
         call("Relay.start", [%{id: "app_started", factory_id: "do_nothing"}]),
-        call("Relay.list_relays", []),
+        call("Relay.list", []),
         call("Relay.send", ["app_started", "from-the-application", ""]),
         call("Relay.stop", ["app_started"])
       ]
@@ -90,9 +90,10 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       assert {"Relay.start", "ok", again} = again
       assert Jason.decode!(again) == %{"id" => "app_started", "outcome" => "already_running"}
 
-      assert {"Relay.list_relays", "ok", running} = list
-      assert "app_started" in Jason.decode!(running)
-      assert generated in Jason.decode!(running)
+      assert {"Relay.list", "ok", rows} = list
+      running = for %{"id" => id} <- Jason.decode!(rows), do: id
+      assert "app_started" in running
+      assert generated in running
       assert {"Relay.send", "ok", _delivered} = send
       assert {"Relay.stop", "ok", _stopped} = stop
 
@@ -113,7 +114,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
             call("Relay.start", [%{id: "app_read_target", factory_id: "static_cell"}]),
             call("Relay.cell_state", ["app_read_target", "static_entry_tasklet/b"]),
             call("Relay.cell_state", ["app_read_target", "b"]),
-            call("PluginManager.list", [])
+            call("PluginManager.enabled", [])
           ],
           secrets
         )
@@ -127,7 +128,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       assert Jason.decode!(cells) == %{"static_entry_tasklet" => %{"b" => %{"seen" => []}}}
       assert {"Relay.cell_state", "err", reason} = bare_key
       assert reason =~ "state.tasklet_not_found: "
-      assert {"PluginManager.list", "ok", _} = plugins
+      assert {"PluginManager.enabled", "ok", _} = plugins
 
       # The start's record names the connection, not a token, and is the shape
       # a user-issued start writes.
@@ -175,7 +176,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
           [
             call("Relay.start", [%{id: "app_plugin_target", factory_id: "do_nothing"}]),
             call("PluginManager.enable", ["app_sink", plugin]),
-            call("PluginManager.list", []),
+            call("PluginManager.enabled", []),
             call("PluginManager.disable", ["app_sink", %{}])
           ],
           secrets
@@ -183,7 +184,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
 
       assert [_start, enable, list, disable] = answers(port, 4)
       assert {"PluginManager.enable", "ok", _enabled} = enable
-      assert {"PluginManager.list", "ok", plugins} = list
+      assert {"PluginManager.enabled", "ok", plugins} = list
       assert plugins =~ "app_sink"
       assert {"PluginManager.disable", "ok", _disabled} = disable
     end
@@ -201,7 +202,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
             bind.("app_bound_a"),
             bind.("app_bound_b"),
             call("PluginManager.unbind", ["app_feed", %{relay_id: "app_bound_a"}]),
-            call("PluginManager.list", []),
+            call("PluginManager.enabled", []),
             call("PluginManager.disable", ["app_feed", %{}])
           ],
           secrets
@@ -212,7 +213,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       for answer <- [enable, bind_a, bind_b, unbind, disable],
           do: assert({_verb, "ok", _value} = answer)
 
-      assert {"PluginManager.list", "ok", plugins} = list
+      assert {"PluginManager.enabled", "ok", plugins} = list
       [feed] = for %{"name" => "app_feed"} = plugin <- Jason.decode!(plugins), do: plugin
       assert feed["relays"] == ["app_bound_b"]
     end
@@ -260,19 +261,19 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
         drill(
           @ns,
           [
-            call("Relay.list_relays", []),
-            Map.put(call("Relay.list_relays", []), :after_ms, 3_000)
+            call("Relay.list", []),
+            Map.put(call("Relay.list", []), :after_ms, 3_000)
           ],
           secrets
         )
 
       # The first call proves the binding is live; then it is taken away while
       # the connection stays open.
-      assert [{"Relay.list_relays", "ok", _}] = answers(port, 1)
+      assert [{"Relay.list", "ok", _}] = answers(port, 1)
       :ok = RoleStore.unbind("runner@" <> @ns)
       on_exit(fn -> :ok = RoleStore.bind("runner@" <> @ns, @ns, :app) end)
 
-      assert [_first, {"Relay.list_relays", "err", reason}] = answers(port, 2)
+      assert [_first, {"Relay.list", "err", reason}] = answers(port, 2)
       assert reason =~ "authz.role_insufficient: "
     end
   end

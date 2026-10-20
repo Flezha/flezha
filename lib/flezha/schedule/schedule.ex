@@ -1,10 +1,9 @@
 defmodule Flezha.Service.Schedule do
   @moduledoc """
   Published service-API surface for scheduled relay starts: the stored
-  entries, the hub's view of them, and the cron arithmetic a caller needs to
-  show a user when a schedule fires next.
+  entries and when each fires next.
 
-  Every public function takes a `Flezha.Service.CallerContext` as its last
+  Every published function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
 
   Schedule management is a `_system` privilege. The store is one durable table
@@ -14,10 +13,6 @@ defmodule Flezha.Service.Schedule do
   action is judged in the system namespace — an `admin@_system` token, or a
   principal bound to `_system` with the role the action needs. Reading the
   registry is a viewer's; changing it is a user's.
-
-  The cron arithmetic carries no action. `parse_cron/2` and `next_fire/4` read
-  nothing and reach no store; they are the same arithmetic a caller could do
-  itself, published so it does not have to.
   """
 
   use Flezha.AuthZ.Verb
@@ -128,49 +123,27 @@ defmodule Flezha.Service.Schedule do
   end
 
   @doc "What the hub currently holds for each schedule."
-  @spec statuses(caller_context()) :: {:ok, term()} | {:error, term()}
-  verb statuses(caller_context), verb: :schedule_list do
-    {:ok, Hub.statuses()}
-  end
+  @spec statuses() :: {:ok, term()}
+  def statuses, do: {:ok, Hub.statuses()}
 
   @doc "Assert `entry` on the hub, so it starts firing."
-  @spec assert_entry(term(), caller_context()) :: term() | {:error, term()}
-  verb assert_entry(entry, caller_context),
-    verb: :schedule_assert,
-    target: &schedule_target/1,
-    args: [entry: [type: :any, doc: "The stored schedule."]] do
-    Hub.assert(entry)
-  end
+  @spec assert_entry(term()) :: term()
+  def assert_entry(entry), do: Hub.assert(entry)
 
   @doc "Retract the schedule `name` from the hub, so it stops firing."
-  @spec retract(String.t(), caller_context()) :: term() | {:error, term()}
-  verb retract(name, caller_context), verb: :schedule_retract, args: [name: @schedule_name] do
-    Hub.retract(name)
-  end
+  @spec retract(String.t()) :: term()
+  def retract(name), do: Hub.retract(name)
 
   @doc "Parse a cron expression, or say why it cannot be parsed."
-  @spec parse_cron(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
-  verb parse_cron(expression, caller_context),
-    verb: :cron_arithmetic,
-    args: [expression: [type: :string, doc: "The cron expression."]] do
-    Cron.parse(expression)
-  end
+  @spec parse_cron(String.t()) :: {:ok, term()} | {:error, term()}
+  def parse_cron(expression), do: Cron.parse(expression)
 
   @doc "The next UTC instant a parsed cron fires after `after_utc`, in `tz`."
-  @spec next_fire(term(), String.t(), DateTime.t(), caller_context()) ::
-          {:ok, term()} | {:error, term()}
-  verb next_fire(cron, tz, after_utc, caller_context),
-    verb: :cron_arithmetic,
-    args: [
-      cron: [type: :any, doc: "A parsed cron."],
-      tz: [type: :string, doc: "The time zone."],
-      after_utc: [type: :any, doc: "The instant to count from."]
-    ] do
-    Cron.next_fire(cron, tz, after_utc)
-  end
+  @spec next_fire(term(), String.t(), DateTime.t()) :: {:ok, term()} | {:error, term()}
+  def next_fire(cron, tz, after_utc), do: Cron.next_fire(cron, tz, after_utc)
 
-  # `add/2` and `assert_entry/2` take named fields or a term, so the audit
-  # reads the name only when there is one to read.
+  # `add/2` takes its fields as a map or a keyword list, so the audit reads the
+  # name only when there is one to read.
   defp schedule_target([%{name: name} | _]), do: %{schedule: name}
   defp schedule_target([[_ | _] = fields | _]), do: %{schedule: fields[:name]}
   defp schedule_target(_args), do: %{}

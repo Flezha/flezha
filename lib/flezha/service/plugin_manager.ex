@@ -698,13 +698,7 @@ defmodule Flezha.Service.PluginManager do
   @plugin_name [type: :string, doc: "The plugin's name."]
   @fields [type: :keyword, default: [], doc: "The plugin's fields."]
 
-  @doc "Every plugin enabled in the caller's namespace."
-  @spec list(CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
-  verb list(caller_context), verb: :plugin_list do
-    {:ok, PluginRecords.plugins(Map.get(caller_context, :namespace) || "default")}
-  end
-
-  @doc "Every plugin enabled in a namespace. Answered as `list/1` answers the caller's own."
+  @doc "Every plugin enabled in a namespace."
   @spec enabled(String.t(), CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
   verb enabled(namespace, caller_context),
     verb: :plugin_enabled,

@@ -79,8 +79,6 @@ defmodule Flezha.AuthZ.Policy do
     :"state.records",
     :"schedule.add",
     :"schedule.remove",
-    :"schedule.assert",
-    :"schedule.retract",
     :"runner.drop"
   ]
 

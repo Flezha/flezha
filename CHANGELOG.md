@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed: one operation per concept; only called operations in the catalogue
+
+- **BREAKING:** `Flezha.Service.Relay.list_relays/2` and `Flezha.Service.PluginManager.list/1`
+  are removed, with their MCP tools `relay_list_relays` and `plugin_manager_list`;
+  `Relay.list/2` and `PluginManager.enabled/2` answer the same reads as rows.
+- **BREAKING:** 14 operations leave the catalogue, the MCP tools and the HTTP API, and take no
+  caller context: `Controller.durability_backend`, `Controller.durability_posture`,
+  `Fleet.hub_nodes`, `Fleet.runners_on_this_node`, `Observability.subscribe`,
+  `Relay.partition_coverage`, `Relay.run_known?`, `Schedule.assert_entry`, `Schedule.next_fire`,
+  `Schedule.parse_cron`, `Schedule.retract`, `Schedule.statuses`, `Steps.relay_classes` and
+  `Steps.state_metrics`. The actions `schedule.assert` and `schedule.retract` are gone with them.
+- **BREAKING (Rust):** `Control::list_relays` answers one row per relay (`id`, health, runner,
+  node), not ids; `list_plugins` reads `PluginManager.enabled`.
+- **BREAKING (Java):** `Control.listRelays` answers one row per relay, not ids.
+- **BREAKING (Node):** `Control.listRelays` answers one row per relay, not ids.
+- **BREAKING (Python):** `Control.list_relays` answers one row per relay, not ids.
+- **BREAKING (Ruby):** `Control#list_relays` answers one row per relay, not ids.
+- **BREAKING (PHP):** `Control::listRelays` answers one row per relay, not ids.
+- **BREAKING (Elixir):** `Flezha.SDK.Control.list_relays/1` answers one row per relay, not ids.
+
 ### Changed: one spelling per concept, internals hidden
 
 - **BREAKING (Python):** `relay(id=)` is `relay(factory_id=)`; a tasklet's `state=`/`change=`

@@ -35,9 +35,7 @@ defmodule Flezha.AuthZ.Verbs do
     # Liveness surfaces and the helpers a consumer names: no policy question.
     boot_status: @public,
     boot_await: @public,
-    run_read: @public,
     partition_report: @public,
-    cron_arithmetic: @public,
     retention_default: @public,
     # The one-time token is its own credential.
     authz_bootstrap: [action: :public, remote: false],
@@ -136,7 +134,6 @@ defmodule Flezha.AuthZ.Verbs do
     list_relays: [action: :"relay.list", scope: {:argument, 1}],
     list_runners: [action: :"relay.list", scope: {:argument, 1}],
     relay_info: [action: :"relay.list", scope: {:argument, 1}],
-    relay_classes: [action: :"relay.list", scope: :caller],
     # Relay lifecycle and live work.
     relay_start: [
       action: :"relay.start",
@@ -249,17 +246,11 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :plugin_service},
       target: [:plugin_id]
     ],
-    # Observability: the mutations and the subscriptions are audited before the
-    # effect, as the subsystem has always done.
+    # Observability: the mutations, the tail and its undo are audited before
+    # the effect, as the subsystem has always done.
     observability_sources: [action: :"observability.query", scope: :caller],
     observability_sinks: [action: :"observability.query", scope: :caller],
     observability_query: [action: :"observability.query", scope: :caller],
-    observability_subscribe: [
-      action: :"observability.subscribe",
-      scope: :caller,
-      audit: {:before, :observability_service},
-      target: [:source]
-    ],
     observability_unsubscribe: [
       action: :"observability.subscribe",
       scope: :caller,
@@ -317,18 +308,6 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :schedule_service},
       target: [:schedule]
     ],
-    schedule_assert: [
-      action: :"schedule.assert",
-      scope: :system,
-      audit: {:after, :schedule_service},
-      target: [:schedule]
-    ],
-    schedule_retract: [
-      action: :"schedule.retract",
-      scope: :system,
-      audit: {:after, :schedule_service},
-      target: [:schedule]
-    ],
     # Durable state: a Cell's namespace is its class's.
     state_get: [action: :"state.get", scope: {:row, :namespace}],
     state_list: [action: :"state.list", scope: {:row, :namespace}],
@@ -353,8 +332,7 @@ defmodule Flezha.AuthZ.Verbs do
     ],
     state_outbox: [action: :"state.records", scope: {:row, :namespace}],
     state_inbox: [action: :"state.records", scope: {:row, :namespace}],
-    state_journal: [action: :"state.records", scope: {:row, :namespace}],
-    state_metrics: [action: :"state.list", scope: :system]
+    state_journal: [action: :"state.records", scope: {:row, :namespace}]
   ]
 
   @type scope :: {:argument, pos_integer()} | :system | :caller | {:row, atom()}

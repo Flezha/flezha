@@ -174,7 +174,7 @@ defmodule Flezha.Transport.ServerTest do
       request =
         ControlFrameTestHelper.encode_request(
           "admin-during-connect",
-          {:admin_request, %RunnerCommands.AdminRequest{verb: "Relay.list_relays", args: "[]"}}
+          {:admin_request, %RunnerCommands.AdminRequest{verb: "Relay.list", args: "[]"}}
         )
 
       :ok = ControlFrameTestHelper.send_frame(runner, "connect_control_channel", connect)

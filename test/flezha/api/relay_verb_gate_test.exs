@@ -78,13 +78,10 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
 
     test "still manages schedules, and a viewer still lists them" do
       assert {:ok, _entries} = Schedule.list(@viewer)
-      assert {:ok, _statuses} = Schedule.statuses(@viewer)
 
-      assert {:ok, added} =
+      assert {:ok, _added} =
                Schedule.add(ScheduleTestHelper.entry_fields(%{name: "op-job"}), @ops)
 
-      refute refused?(Schedule.assert_entry(added, @ops))
-      refute refused?(Schedule.retract("op-job", @ops))
       assert Schedule.remove("op-job", @ops) == :ok
     end
 

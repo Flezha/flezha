@@ -8,6 +8,9 @@
 //! that echoes what it was handed, sends an operation its verb's row names and
 //! a positional count the entry accepts. The rows are read from the tables'
 //! source, since a binary's internals are out of an integration test's reach.
+//!
+//! The other way round, every entry has a caller: a `flz` row, an SDK control
+//! module or the console, so the catalogue publishes only what is called.
 
 mod common;
 
@@ -185,6 +188,31 @@ fn row_calls() -> BTreeMap<(String, String), Vec<String>> {
     rows
 }
 
+/// Every operation a caller outside `flz` names: the console's manifest, as
+/// `<Module>.<function>`, and the source of each SDK's control module, whose
+/// paths `test/sdk_conformance/gate_test.exs` declares once.
+fn other_callers() -> (BTreeSet<String>, Vec<String>) {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+
+    let console = read("docs/internal/api/consumers/flezha_ui.txt")
+        .lines()
+        .filter_map(|line| line.strip_prefix("Flezha.Service.")?.split('/').next())
+        .map(String::from)
+        .collect();
+
+    let gate = read("test/sdk_conformance/gate_test.exs");
+    let surfaces = gate.split_once("@admin_surfaces %{").unwrap().1;
+    let surfaces = surfaces.split_once("\n  }").unwrap().0;
+    let sdks = surfaces
+        .lines()
+        .filter_map(|line| line.split('"').nth(1))
+        .map(read)
+        .collect();
+
+    (console, sdks)
+}
+
 fn door_name(literal: &str) -> bool {
     match literal.split_once('.') {
         Some((module, function)) => {
@@ -300,5 +328,35 @@ fn every_request_sends_a_count_of_arguments_its_operation_takes() {
         unreached.is_empty(),
         "no invocation here sends {:?}",
         unreached
+    );
+}
+
+#[test]
+fn every_catalogue_operation_has_a_caller() {
+    let rows: BTreeSet<String> = row_calls().into_values().flatten().collect();
+    let (console, sdks) = other_callers();
+    assert_eq!(sdks.len(), 7, "the gate declares seven SDK control modules");
+
+    let called = |name: &str| {
+        rows.contains(name)
+            || console.contains(name)
+            || sdks.iter().any(|source| {
+                source.contains(&format!("\"{name}\"")) || source.contains(&format!("'{name}'"))
+            })
+    };
+
+    // An undo is published while the stream it undoes is.
+    let uncalled: Vec<String> = catalogue()
+        .into_keys()
+        .filter(|name| match name.strip_suffix(".unsubscribe") {
+            Some(module) => !called(&format!("{module}.tail")),
+            None => !called(name),
+        })
+        .collect();
+
+    assert!(
+        uncalled.is_empty(),
+        "no flz row, SDK control module or console call names {:?}",
+        uncalled
     );
 }

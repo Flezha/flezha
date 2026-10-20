@@ -74,13 +74,13 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @admin_verbs ~w(
     Relay.start
     Relay.stop
-    Relay.list_relays
+    Relay.list
     Relay.cell_state
     PluginManager.enable
     PluginManager.bind
     PluginManager.unbind
     PluginManager.disable
-    PluginManager.list
+    PluginManager.enabled
   )
 
   @admin_surfaces %{
@@ -137,7 +137,9 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
         source = File.read!(path)
 
-        for verb <- @admin_verbs, not String.contains?(source, verb) do
+        # As a string literal, so `Relay.list` is not found inside a longer name.
+        for verb <- @admin_verbs,
+            not Enum.any?(~w(" '), &String.contains?(source, &1 <> verb <> &1)) do
           fail("#{path} does not name the administration verb `#{verb}`")
         end
       end

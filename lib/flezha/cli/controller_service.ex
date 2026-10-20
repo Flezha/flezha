@@ -198,16 +198,12 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc "The durability backend this controller is configured for."
-  @spec durability_backend(caller_context()) :: {:ok, term()} | {:error, term()}
-  verb durability_backend(caller_context), verb: :controller_status do
-    {:ok, DurabilityTier.configured_backend()}
-  end
+  @spec durability_backend() :: {:ok, term()}
+  def durability_backend, do: {:ok, DurabilityTier.configured_backend()}
 
   @doc "Whether durable state is shipped to a remote tier or stays local."
-  @spec durability_posture(caller_context()) :: {:ok, term()} | {:error, term()}
-  verb durability_posture(caller_context), verb: :controller_status do
-    {:ok, DurabilityTier.posture()}
-  end
+  @spec durability_posture() :: {:ok, term()}
+  def durability_posture, do: {:ok, DurabilityTier.posture()}
 
   @doc "The durability breaches recorded since the controller started."
   @spec durability_breaches(caller_context()) :: {:ok, term()} | {:error, term()}

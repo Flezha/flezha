@@ -51,10 +51,8 @@ defmodule Flezha.Service.Steps do
   # ---------- Reads ----------
 
   @doc "Every relay class this controller holds persisted state for."
-  @spec relay_classes(caller_context()) :: {:ok, [String.t()]} | {:error, term()}
-  verb relay_classes(caller_context) do
-    {:ok, Paths.relay_classes()}
-  end
+  @spec relay_classes() :: {:ok, [String.t()]}
+  def relay_classes, do: {:ok, Paths.relay_classes()}
 
   @doc "One steps instance's completion record."
   @spec completion(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
@@ -137,10 +135,8 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc "Durable-state counters across every relay class."
-  @spec state_metrics(caller_context()) :: {:ok, term()} | {:error, term()}
-  verb state_metrics(caller_context) do
-    {:ok, Metrics.snapshot_all()}
-  end
+  @spec state_metrics() :: {:ok, term()}
+  def state_metrics, do: {:ok, Metrics.snapshot_all()}
 
   @doc """
   One Cell's state at a past point, from its write-ahead log. `target` is a WAL

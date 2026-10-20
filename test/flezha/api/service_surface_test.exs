@@ -35,8 +35,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:recovery_state, [:flezha_hub_default]},
       {:recovery_per_node, ["default", []]},
       {:shutdown_status, []},
-      {:durability_backend, []},
-      {:durability_posture, []},
       {:durability_breaches, []},
       {:durability_status, []},
       {:liveness_counters, []},
@@ -57,14 +55,12 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     ],
     Fleet => [
       {:runners, ["default"]},
-      {:runners_on_this_node, ["default"]},
       {:runners_for_factory, ["default", "factory"]},
       {:factories, ["default"]},
       {:runner_caller_context, ["default"]},
       {:drop_runner, ["default", "runner"]},
       {:readmit_runner, ["default", "stable"]},
       {:dropped_runners, ["default"]},
-      {:hub_nodes, ["default"]},
       {:installed_plugins, []},
       {:providers, []},
       {:provider, ["relay_stdout"]}
@@ -89,13 +85,10 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     ],
     Relay => [
       {:list_namespaces, []},
-      {:list_relays, ["default"]},
       {:relay_rows, ["default"]},
       {:relay_plugins, ["default"]},
       {:registry, ["default"]},
-      {:partition_coverage, [[]]},
       {:partition_groups, [[]]},
-      {:run_known?, [:flow]},
       {:cell_state, ["default", "rc", "key"]},
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
@@ -113,7 +106,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:replay, ["default", "path", "0"]}
     ],
     PluginManager => [
-      {:list, []},
       {:enable, ["plug_1", [provider: Flezha.Plugin]]},
       {:bind, ["plug_1", [relay_id: "rc"]]},
       {:unbind, ["plug_1", [relay_id: "rc"]]},
@@ -125,15 +117,9 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:list, []},
       {:add, [%{name: "s"}]},
       {:remove, ["s"]},
-      {:statuses, []},
-      {:assert_entry, [%{name: "s"}]},
-      {:retract, ["s"]},
-      {:parse_cron, ["* * * * *"]},
-      {:next_fire, [%{}, "Etc/UTC", ~U[2026-01-01 00:00:00Z]]},
       {:run, ["s"]}
     ],
     Steps => [
-      {:relay_classes, []},
       {:completion, ["instance"]},
       {:completed_retention_hours, ["rc", %{}]},
       {:journal, ["instance"]},
@@ -141,7 +127,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:consumed_offset, ["instance"]},
       {:undelivered, ["instance"]},
       {:last_offset, ["instance"]},
-      {:state_metrics, []},
       {:rescale, ["default", "group", 2, []]},
       {:rewind, ["default", "rc", 1]},
       {:time_travel, ["cell", :latest]},
@@ -243,30 +228,16 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, kinds} = Namespace.quota_kinds(context)
       assert is_list(kinds) and kinds != []
 
-      assert {:ok, true} = Relay.run_known?(:flow, context)
-
       assert {:ok, []} = Relay.partition_groups([], context)
-      assert {:ok, _coverage} = Relay.partition_coverage([], context)
 
       assert {:ok, hub} = Controller.hub_id("default", context)
       assert is_atom(hub)
 
-      assert {:ok, posture} = Controller.durability_posture(context)
-      assert posture in [:remote_tier, :local_only]
-
       assert {:ok, counters} = Controller.liveness_counters(context)
       assert is_map(counters) or is_list(counters)
 
-      assert {:ok, classes} = Steps.relay_classes(context)
-      assert is_list(classes)
-
       assert {:ok, hours} = Steps.completed_retention_hours("rc", %{}, context)
       assert is_integer(hours) and hours > 0
-
-      assert {:ok, cron} = Schedule.parse_cron("* * * * *", context)
-      assert {:ok, _next} = Schedule.next_fire(cron, "Etc/UTC", DateTime.utc_now(), context)
-
-      assert {:error, _reason} = Schedule.parse_cron("not a cron", context)
     end
 
     # A consumer on another node ages a signal against the controller's clock,

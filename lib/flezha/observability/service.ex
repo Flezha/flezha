@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Observability do
   @moduledoc """
-  Service-API surface for the observability foundation. Every public function
+  Service-API surface for the observability foundation. Every published function
   takes a `Flezha.Service.CallerContext` as its last argument and binds a row
   of `Flezha.AuthZ.Verbs`.
 
@@ -8,9 +8,9 @@ defmodule Flezha.Service.Observability do
   function returns `{:error, :observability_disabled}`.
 
   `tail/2` hands each signal to the context's `:emit` (see its doc); without
-  one it subscribes the calling process, like `subscribe/2`.
+  one it subscribes the calling process, like `subscribe/1`.
 
-  The subscriptions and the two mutations are audited on the
+  The tail, its undo and the two mutations are audited on the
   `:observability_service` source before the effect, under the function's
   name — the seam the audit log consumes. The effects are public so
   `Flezha.Service.Cli.Observe` renders the same answers under the same rows.
@@ -48,22 +48,19 @@ defmodule Flezha.Service.Observability do
   # ---------- Subscriptions ----------
 
   @doc "Subscribe the calling process to the live signals of `source`."
-  @spec subscribe(atom() | String.t(), caller_context()) :: :ok | {:error, term()}
-  verb subscribe(source, caller_context) when is_atom(source) or is_binary(source),
-    verb: :observability_subscribe,
-    stream: true,
-    args: [source: @source] do
+  @spec subscribe(atom() | String.t()) :: :ok | {:error, term()}
+  def subscribe(source) when is_atom(source) or is_binary(source) do
     with :ok <- check_enabled(),
          {:ok, source} <- registered(source),
          do: Observability.subscribe(source)
   end
 
   @doc """
-  Undo a `subscribe/2` or `tail/2`.
+  Undo a `tail/2`.
 
   A subscription established on this surface is undone on it, so a consumer
   never has to reach past the service API to release what it took through it.
-  Authorized as `subscribe/2` is: the two are one capability.
+  Authorized as `tail/2` is: the two are one capability.
   """
   @spec unsubscribe(atom() | String.t(), caller_context()) :: :ok | {:error, term()}
   verb unsubscribe(source, caller_context) when is_atom(source) or is_binary(source),

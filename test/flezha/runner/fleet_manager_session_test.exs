@@ -216,7 +216,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       request =
         ControlFrameTestHelper.encode_request(
           "admin-during-handshake",
-          {:admin_request, %RunnerCommands.AdminRequest{verb: "Relay.list_relays", args: "[]"}}
+          {:admin_request, %RunnerCommands.AdminRequest{verb: "Relay.list", args: "[]"}}
         )
 
       :ok = ControlFrameTestHelper.send_frame(sdk, "control_command", request)

@@ -206,7 +206,7 @@ defmodule Flezha.Service.ObservabilityTest do
                  Observability.query(%{source: :s}, %{source: :cli})
 
         assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.subscribe(:s, %{source: :cli})
+                 Observability.subscribe(:s)
 
         assert {:error, %Flezha.Error{code: "observability.disabled"}} =
                  Observability.unsubscribe(:s, %{source: :cli})
@@ -223,19 +223,19 @@ defmodule Flezha.Service.ObservabilityTest do
   end
 
   describe "unsubscribe/2" do
-    test "undoes a subscription taken on the same surface", %{src: src} do
+    test "undoes a tail taken on the same surface", %{src: src} do
       claim_pubsub_sink()
 
-      assert :ok = Observability.subscribe(src, %{source: :cli})
+      assert :ok = Observability.tail(src, %{source: :cli})
       assert :ok = Observability.unsubscribe(src, %{source: :cli})
     end
 
-    test "refuses a caller with no context, as subscribe/2 does", %{src: src} do
+    test "refuses a caller with no context, as tail/2 does", %{src: src} do
       assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
                Observability.unsubscribe(src, %{})
 
       assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
-               Observability.subscribe(src, %{})
+               Observability.tail(src, %{})
     end
   end
 
@@ -273,7 +273,7 @@ defmodule Flezha.Service.ObservabilityTest do
     # while the same mistake on a word that is an atom names them.
     test "a mistyped source answers the source list whether or not the word is an atom",
          %{src: src} do
-      verbs = ~w(subscribe unsubscribe tail enable_source disable_source)
+      verbs = ~w(unsubscribe tail enable_source disable_source)
 
       for verb <- verbs, word <- ["obs_door_never_an_atom_7f3a", "ok"] do
         answer =

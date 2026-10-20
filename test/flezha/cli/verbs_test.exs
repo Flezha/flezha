@@ -215,7 +215,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.ConvergenceFixtures
 
-  describe "list_relays/2 (health column)" do
+  describe "list/2 (health column)" do
     setup do
       prev = Snapshot.current()
       on_exit(fn -> Snapshot.publish(prev) end)

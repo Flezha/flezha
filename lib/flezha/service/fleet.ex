@@ -1,20 +1,20 @@
 defmodule Flezha.Service.Fleet do
   @moduledoc """
   Published service-API surface for the runner fleet and the cluster's
-  directory: which runners a namespace has, which factories, which nodes hold
-  its hub, and what is installed. It also drops a runner process and lifts the
-  drop (`drop_runner/3`, `readmit_runner/3`).
+  directory: which runners a namespace has, which factories, and what is
+  installed. It also drops a runner process and lifts the drop
+  (`drop_runner/3`, `readmit_runner/3`).
 
-  Every public function takes a `Flezha.Service.CallerContext` as its last
+  Every published function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data. A fleet read
   is a relay-topology read — the row `flz runner list` binds — scoped to
   the namespace asked about rather than to one the caller declares.
 
-  The two runner reads are named so they cannot be confused, because the console
-  takes both today and the answers differ: `runners/2` is **cluster-wide** — it
-  fans out across this node and every node the directory lists for the namespace
-  — while `runners_on_this_node/2` is **node-local**. Two screens took the
-  node-local answer while believing it was the fleet's.
+  The two runner reads are named so they cannot be confused, because the answers
+  differ: `runners/2` is **cluster-wide** — it fans out across this node and
+  every node the directory lists for the namespace — while the unpublished
+  `runners_on_this_node/1` is **node-local**. Two screens took the node-local
+  answer while believing it was the fleet's.
   """
 
   use Flezha.AuthZ.Verb
@@ -49,12 +49,8 @@ defmodule Flezha.Service.Fleet do
   For a node-scoped view. A caller asking "what runners does this namespace
   have" wants `runners/2`.
   """
-  @spec runners_on_this_node(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
-  verb runners_on_this_node(namespace, caller_context),
-    verb: :list_runners,
-    args: [namespace: @namespace] do
-    {:ok, FleetManager.active_runners(namespace)}
-  end
+  @spec runners_on_this_node(String.t()) :: {:ok, [term()]}
+  def runners_on_this_node(namespace), do: {:ok, FleetManager.active_runners(namespace)}
 
   @doc """
   Drop one runner serving a namespace. It is dropped wherever in the cluster it
@@ -147,10 +143,8 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc "The nodes holding a hub for `namespace`."
-  @spec hub_nodes(String.t(), caller_context()) :: {:ok, [node()]} | {:error, term()}
-  verb hub_nodes(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
-    {:ok, Directory.hub_nodes(namespace)}
-  end
+  @spec hub_nodes(String.t()) :: {:ok, [node()]}
+  def hub_nodes(namespace), do: {:ok, Directory.hub_nodes(namespace)}
 
   @doc """
   Every plugin package this controller loaded or refused at boot. It also lists
