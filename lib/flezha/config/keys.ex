@@ -239,6 +239,9 @@ defmodule Flezha.Config.Keys do
      key: {:observability, :cardinality_budget_per_source}},
     {:observability_pubsub_sink_enabled, :bool, true,
      key: {:observability, :pubsub_sink_enabled}},
+    # The sources whose signals `Flezha.Observability.LogSink` writes to the log.
+    {:observability_log_sources, {:list, :atom}, [],
+     key: {:observability, :log_sources}, env: "FLEZHA_OBSERVABILITY_LOG_SOURCES"},
     # Data-plane liveness instrumentation: always-on atomic counters plus the
     # ~1 s driver poll and per-tick stall classifier.
     {:observability_data_plane_liveness, :bool, true,
@@ -273,7 +276,6 @@ defmodule Flezha.Config.Keys do
     {:otlp_headers, :term, %{}, key: {:observability_export, :otlp_headers}},
     {:otlp_flush_interval_ms, :ms, 10_000, key: {:observability_export, :otlp_flush_interval_ms}},
     {:otlp_batch_max, :positive_int, 512, key: {:observability_export, :otlp_batch_max}},
-    {:memory_report_interval_ms, :ms, nil, key: true, env: "FLEZHA_MEMORY_REPORT_INTERVAL_MS"},
 
     # ---- state: compaction, watermarks, credit ------------------------------
     # A Cell whose un-snapshotted WAL exceeds this is compacted. A class that

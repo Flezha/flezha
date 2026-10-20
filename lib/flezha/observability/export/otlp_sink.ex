@@ -17,17 +17,12 @@ defmodule Flezha.Observability.Export.OtlpSink do
 
   use GenServer
   use Flezha.Process.Timer, keys: [:flush]
-
-  @behaviour Flezha.Observability.Sink
+  use Flezha.Observability.Sink, name: :otlp, overflow: :block, block_timeout_ms: 30_000
 
   alias Flezha.Config
   alias Flezha.Config.Backoff
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.Export.{OtlpClient, OtlpCodec}
-  alias Flezha.Observability.Registry, as: ObsRegistry
-
-  @sink_name :otlp
-  @default_high_watermark 10_000
 
   # ---------- Sink behaviour ----------
 
@@ -48,7 +43,7 @@ defmodule Flezha.Observability.Export.OtlpSink do
     flush_ms = Config.get(:otlp_flush_interval_ms)
     batch_max = Config.get(:otlp_batch_max)
 
-    {:ok, _} = register_self()
+    :ok = register_self()
 
     {:ok,
      arm_flush(%{
@@ -158,23 +153,5 @@ defmodule Flezha.Observability.Export.OtlpSink do
         })
       )
     end
-  end
-
-  defp register_self() do
-    pid = self()
-
-    :ok =
-      ObsRegistry.register_external_sink(%{
-        name: @sink_name,
-        module: __MODULE__,
-        config: %{},
-        filter: filter(),
-        overflow: :block,
-        mailbox_high_watermark: @default_high_watermark,
-        block_timeout_ms: 30_000,
-        pid: pid
-      })
-
-    {:ok, pid}
   end
 end

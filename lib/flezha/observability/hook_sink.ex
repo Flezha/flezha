@@ -34,26 +34,19 @@ defmodule Flezha.Observability.HookSink do
   """
 
   use GenServer
-
-  @behaviour Flezha.Observability.Sink
+  use Flezha.Observability.Sink, name: :flezha_hooks
 
   alias Flezha.Cluster.Directory
   alias Flezha.Convergence.Verdict
-  alias Flezha.Observability.{Registry, Signal}
+  alias Flezha.Observability.Signal
   alias Flezha.Plugin
   alias Flezha.State.Paths
-
-  @source :flezha_hooks
-
-  @doc "The name the sink is registered under while a copy listens."
-  @spec sink_name() :: atom()
-  def sink_name(), do: @source
 
   @impl Flezha.Observability.Sink
   def config_schema(), do: %{}
 
   @impl Flezha.Observability.Sink
-  def filter(), do: %{kinds: [:event], sources: [@source, :flezha_health, :flezha_relay]}
+  def filter(), do: %{kinds: [:event], sources: [@sink_name, :flezha_health, :flezha_relay]}
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(_opts \\ []), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -71,7 +64,7 @@ defmodule Flezha.Observability.HookSink do
   # A row an earlier incarnation left names a dead pid; its handler stays attached.
   @impl true
   def init(nil) do
-    Registry.unregister_sink(@source)
+    unregister()
 
     _ =
       :telemetry.attach(
@@ -114,17 +107,12 @@ defmodule Flezha.Observability.HookSink do
   defp settle(%{registered: registered} = state) do
     case {Directory.hooks_wanted?(), registered} do
       {true, false} ->
-        Registry.register_external_sink(%{
-          name: @source,
-          module: __MODULE__,
-          pid: self(),
-          filter: filter()
-        })
+        register_self()
 
         %{state | registered: true}
 
       {false, true} ->
-        Registry.unregister_sink(@source)
+        unregister()
         %{state | registered: false, failed: MapSet.new()}
 
       _unchanged ->
@@ -157,7 +145,7 @@ defmodule Flezha.Observability.HookSink do
 
   # The DLQ store names the relay's class; its namespace is read here, where
   # a copy listens, and not on every park.
-  defp read(%Signal{source: @source, name: :on_dead_letter, metadata: fields}, state),
+  defp read(%Signal{source: @sink_name, name: :on_dead_letter, metadata: fields}, state),
     do:
       {event(
          :on_dead_letter,

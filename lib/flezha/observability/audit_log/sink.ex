@@ -18,17 +18,16 @@ defmodule Flezha.Observability.AuditLog.Sink do
 
   use GenServer
 
-  @behaviour Flezha.Observability.Sink
+  use Flezha.Observability.Sink,
+    name: :audit_log,
+    overflow: :block,
+    block_timeout_ms: Flezha.Config.Durations.get(:audit_log_block_timeout_ms)
 
   alias Flezha.AuthZ.Verbs
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Observability.AuditLog.{Codec, Writer}
-  alias Flezha.Observability.Registry, as: ObsRegistry
   alias Flezha.SDK.SafeCall
-
-  @sink_name :audit_log
-  @default_high_watermark 10_000
 
   # The system pairs. Every source an administration verb's row declares joins them
   # at boot, so a declared audit is durable by construction.
@@ -70,14 +69,10 @@ defmodule Flezha.Observability.AuditLog.Sink do
     end
   end
 
-  @doc false
-  @spec sink_name() :: atom()
-  def sink_name(), do: @sink_name
-
   @impl GenServer
   def init(_opts) do
     allow_list = compute_allow_list()
-    register_self()
+    :ok = register_self()
 
     {:ok,
      %{
@@ -127,24 +122,6 @@ defmodule Flezha.Observability.AuditLog.Sink do
   def handle_info(_other, state), do: {:noreply, state}
 
   # ---------- Internals ----------
-
-  defp register_self() do
-    pid = self()
-
-    :ok =
-      ObsRegistry.register_external_sink(%{
-        name: @sink_name,
-        module: __MODULE__,
-        config: %{},
-        filter: filter(),
-        overflow: :block,
-        mailbox_high_watermark: @default_high_watermark,
-        block_timeout_ms: Durations.get(:audit_log_block_timeout_ms),
-        pid: pid
-      })
-
-    :ok
-  end
 
   defp compute_allow_list() do
     extra =

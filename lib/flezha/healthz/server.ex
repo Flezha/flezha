@@ -60,21 +60,14 @@ defmodule Flezha.Healthz.Server do
   application supervisor omits this child entirely.
   """
 
-  use GenServer
+  use Flezha.Http.Listener, port: :healthz_port, bind: :healthz_bind
 
   alias Flezha.Boot.Readiness
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Convergence.{RecoveryGate, Snapshot, StallClassifier, Verdict}
   alias Flezha.Http.Listener
-  alias Flezha.SDK.SafeCall
   alias Flezha.State.DurabilityTier
-
-  # ---------- Public API ----------
-
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
 
   @doc """
   The bind address the endpoint listens on when nothing configures one.
@@ -86,68 +79,10 @@ defmodule Flezha.Healthz.Server do
   @spec default_bind() :: binary()
   def default_bind(), do: "0.0.0.0"
 
-  @doc "Return the listening port — useful for tests that bind to port 0."
-  @spec listen_port() :: {:ok, :inet.port_number()} | :error
-  def listen_port() do
-    case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) ->
-        SafeCall.bounded(pid, :listen_port, Durations.get(:listen_port_call_ms), on_error: :error)
-
-      _ ->
-        :error
-    end
-  end
-
-  # ---------- GenServer ----------
-
-  @impl true
-  def init(_opts) do
-    port = Config.get(:healthz_port)
-    bind = Config.get(:healthz_bind)
-
-    case Listener.listen(port, bind) do
-      {:ok, listen_socket, actual_port} ->
-        send(self(), :accept_loop)
-        {:ok, %{listen_socket: listen_socket, port: actual_port}}
-
-      {:error, reason} ->
-        {:stop, {:listen_failed, reason}}
-    end
-  end
-
-  @impl true
-  def handle_call(:listen_port, _from, %{port: port} = state) do
-    {:reply, {:ok, port}, state}
-  end
-
-  @impl true
-  def handle_info(:accept_loop, %{listen_socket: listen_socket} = state) do
-    parent = self()
-    spawn(fn -> Listener.accept_loop(parent, listen_socket, &route/2) end)
-    {:noreply, state}
-  end
-
-  def handle_info(_msg, state), do: {:noreply, state}
-
-  @impl true
-  def terminate(_reason, %{listen_socket: ls}) do
-    _ = :gen_tcp.close(ls)
-    :ok
-  end
-
-  # ---------- routing ----------
-
-  defp route(socket, {:get, "/healthz"}), do: respond_healthz(socket)
-  defp route(socket, {:get, "/readyz"}), do: respond_readyz(socket)
-  defp route(socket, {:get, "/"}), do: Listener.send_response(socket, 200, "text/plain", "pong\n")
-
-  defp route(socket, {:get, _}),
-    do: Listener.send_response(socket, 404, "text/plain", "not found\n")
-
-  defp route(socket, {:method_not_allowed, _}),
-    do: Listener.send_response(socket, 405, "text/plain", "method not allowed\n")
-
-  defp route(socket, :bad), do: Listener.send_response(socket, 400, "text/plain", "bad request\n")
+  defp route(socket, "/healthz"), do: respond_healthz(socket)
+  defp route(socket, "/readyz"), do: respond_readyz(socket)
+  defp route(socket, "/"), do: Listener.send_response(socket, 200, "text/plain", "pong\n")
+  defp route(_socket, _path), do: :not_found
 
   # `compute_health/0` decides the verdict and the fields that explain it; the
   # facts every response carries whatever the verdict are merged in here, so a

@@ -12,14 +12,9 @@ defmodule Flezha.Observability.Export.PrometheusSink do
   """
 
   use GenServer
-
-  @behaviour Flezha.Observability.Sink
+  use Flezha.Observability.Sink, name: :prometheus, overflow: :drop, watermark: 50_000
 
   alias Flezha.Observability.Export.PrometheusRegistry
-  alias Flezha.Observability.Registry, as: ObsRegistry
-
-  @sink_name :prometheus
-  @default_high_watermark 50_000
 
   # ---------- Sink behaviour ----------
 
@@ -42,7 +37,7 @@ defmodule Flezha.Observability.Export.PrometheusSink do
     # Insert ourselves into the sink ETS table directly so the Bus
     # routes to us, mirroring what `do_register_sink/1` would have
     # done.
-    {:ok, _} = register_self()
+    :ok = register_self()
 
     {:ok, %{}}
   end
@@ -57,27 +52,7 @@ defmodule Flezha.Observability.Export.PrometheusSink do
 
   @impl GenServer
   def terminate(_reason, _state) do
-    _ = ObsRegistry.unregister_sink(@sink_name)
+    _ = unregister()
     :ok
-  end
-
-  # ---------- Internals ----------
-
-  defp register_self() do
-    pid = self()
-
-    :ok =
-      ObsRegistry.register_external_sink(%{
-        name: @sink_name,
-        module: __MODULE__,
-        config: %{},
-        filter: filter(),
-        overflow: :drop,
-        mailbox_high_watermark: @default_high_watermark,
-        block_timeout_ms: 5_000,
-        pid: pid
-      })
-
-    {:ok, pid}
   end
 end

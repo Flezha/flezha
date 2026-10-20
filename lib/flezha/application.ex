@@ -6,7 +6,6 @@ defmodule Flezha.Application do
   alias Flezha.Boot.StatePathMigrator
   alias Flezha.Boot.StateRootLock
   alias Flezha.Config
-  alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Process.DurableTasks
   alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
@@ -153,8 +152,7 @@ defmodule Flezha.Application do
       {Flezha.Convergence.Loop, :convergence_health_enabled},
       {Flezha.Schedule.Store, :schedule_application_managed},
       {Flezha.Schedule.Hub, :schedule_application_managed},
-      {Flezha.Healthz.Server, :healthz_enabled},
-      {MemoryReporter, &memory_reporter?/0}
+      {Flezha.Healthz.Server, :healthz_enabled}
     ]
     |> Enum.flat_map(&row_children/1)
   end
@@ -172,8 +170,6 @@ defmodule Flezha.Application do
   defp open?(key), do: Config.get(key)
 
   defp testnet?(), do: Config.get(:testnet_enabled) and Code.ensure_loaded?(Flezha.Testnet)
-
-  defp memory_reporter?(), do: match?({:ok, _ms}, MemoryReporter.configured_interval_ms())
 
   defp worker_families() do
     Enum.map(

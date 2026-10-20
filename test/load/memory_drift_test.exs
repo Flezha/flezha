@@ -25,7 +25,6 @@ defmodule Flezha.Load.MemoryDriftTest do
 
       MIX_RUN_MEMORY_DRIFT=1 \\
       MEMORY_DRIFT_DURATION_MIN=240 \\
-      FLEZHA_MEMORY_REPORT_INTERVAL_MS=10000 \\
         mix test test/load/memory_drift_test.exs
 
   Environment variables:
@@ -33,8 +32,6 @@ defmodule Flezha.Load.MemoryDriftTest do
     * `MEMORY_DRIFT_DURATION_MIN` — total wall-clock budget (default 240).
     * `MEMORY_DRIFT_SNAPSHOT_MIN` — `mem-top` snapshot cadence
       (default 30).
-    * `FLEZHA_MEMORY_REPORT_INTERVAL_MS` — in-process sampling cadence
-      (default 10_000).
     * `MEMORY_DRIFT_WS_SOURCE` — `testnet` | `live`
       (default `testnet`).
     * `MEMORY_DRIFT_WS_INTERVAL_MS` — testnet echo interval in ms
@@ -55,7 +52,7 @@ defmodule Flezha.Load.MemoryDriftTest do
     @moduletag :skip
   end
 
-  alias Flezha.Diagnostics.MemoryReporter
+  alias Flezha.Observability.OtpBackend.BeamVmSource
   alias Flezha.Plugin
   alias Flezha.Service.Controller.MemTop
   alias Flezha.Service.RelayManager
@@ -71,6 +68,9 @@ defmodule Flezha.Load.MemoryDriftTest do
   # daemon to be reachable before starting the load relay.
   @testnet_wait_timeout_ms 30_000
 
+  # How often the harness takes `BeamVmSource.reading/0` for the fit.
+  @sample_interval_ms 10_000
+
   @namespace "default"
   @relay_id "memory_drift_load"
   @ws_plugin_id "memory_drift_ws"
@@ -84,13 +84,12 @@ defmodule Flezha.Load.MemoryDriftTest do
   @tag timeout: :infinity
   test "controller memory drift over the configured window" do
     duration_min = int_env("MEMORY_DRIFT_DURATION_MIN", 240)
-    sample_interval_ms = int_env("FLEZHA_MEMORY_REPORT_INTERVAL_MS", 10_000)
     snapshot_interval_min = int_env("MEMORY_DRIFT_SNAPSHOT_MIN", 30)
     ws_interval_ms = int_env("MEMORY_DRIFT_WS_INTERVAL_MS", 3)
     ws_source = String.downcase(System.get_env("MEMORY_DRIFT_WS_SOURCE", "testnet"))
 
     IO.puts(
-      "[memory_drift] duration=#{duration_min}m sample=#{sample_interval_ms}ms " <>
+      "[memory_drift] duration=#{duration_min}m sample=#{@sample_interval_ms}ms " <>
         "snapshot=#{snapshot_interval_min}m ws_interval=#{ws_interval_ms}ms " <>
         "ws_source=#{ws_source}"
     )
@@ -99,14 +98,10 @@ defmodule Flezha.Load.MemoryDriftTest do
     start_load_relay!(ws_source)
     on_exit(&stop_load_relay/0)
 
-    ensure_reporter_started(sample_interval_ms)
-
-    # In-process sampling: call `MemoryReporter.capture/0` directly on
-    # the same cadence and stash each row in an ETS table for the linear
-    # fit. Avoids the Elixir Logger ↔ OTP `:logger` translation layer
-    # that a log-line parser would have to traverse.
+    # In-process sampling: the BEAM source's own reading, stashed in an ETS
+    # table for the linear fit.
     samples_ref = :ets.new(:memory_drift_samples, [:ordered_set, :public])
-    sampler_pid = spawn_link(fn -> sampler_loop(samples_ref, sample_interval_ms) end)
+    sampler_pid = spawn_link(fn -> sampler_loop(samples_ref, @sample_interval_ms) end)
     on_exit(fn -> Process.exit(sampler_pid, :kill) end)
 
     deadline_ms = System.monotonic_time(:millisecond) + duration_min * 60 * 1000
@@ -154,24 +149,6 @@ defmodule Flezha.Load.MemoryDriftTest do
     end
 
     :ok
-  end
-
-  defp ensure_reporter_started(sample_interval_ms) do
-    # When `FLEZHA_MEMORY_REPORT_INTERVAL_MS` is set, `Flezha.Application`
-    # already supervises the reporter at boot — reuse it. Otherwise start
-    # a transient instance for the duration of this test.
-    case Process.whereis(Flezha.Diagnostics.MemoryReporter) do
-      nil ->
-        {:ok, _pid} =
-          GenServer.start_link(
-            Flezha.Diagnostics.MemoryReporter,
-            %{interval_ms: sample_interval_ms},
-            name: Flezha.Diagnostics.MemoryReporter
-          )
-
-      pid when is_pid(pid) ->
-        IO.puts("[memory_drift] reporter already supervised (pid=#{inspect(pid)})")
-    end
   end
 
   ## ----- relay + plugin wiring ---------------------------------------------
@@ -279,7 +256,7 @@ defmodule Flezha.Load.MemoryDriftTest do
   end
 
   defp sample_on_tick(samples_ref) do
-    reading = MemoryReporter.capture()
+    reading = BeamVmSource.reading()
     :ets.insert(samples_ref, {System.system_time(:millisecond), reading})
     receive(do: (:sample -> sample_on_tick(samples_ref)))
   end
@@ -329,13 +306,13 @@ defmodule Flezha.Load.MemoryDriftTest do
     |> Enum.map(fn {ts, sample} ->
       %{
         timestamp_ms: ts,
-        erlang_memory_total: sample.erlang_memory_total,
-        erlang_memory_binary: sample.erlang_memory_binary,
-        erlang_memory_processes: sample.erlang_memory_processes,
-        erlang_memory_ets: sample.erlang_memory_ets,
+        erlang_memory_total: sample.memory_total,
+        erlang_memory_binary: sample.memory_binary,
+        erlang_memory_processes: sample.memory_processes,
+        erlang_memory_ets: sample.memory_ets,
         process_count: sample.process_count,
         port_count: sample.port_count,
-        binary_alloc_carriers_size: sample.binary_alloc_carriers_size
+        binary_alloc_carriers_size: sample.memory_binary_alloc_carriers
       }
     end)
   end

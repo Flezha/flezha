@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed: one sink registration, one listener shell, one memory reading
+
+- **BREAKING:** `FLEZHA_MEMORY_REPORT_INTERVAL_MS` (`:memory_report_interval_ms`) and the
+  memory reporter's `module=... key=value` info line are gone. The `beam_vm` source carries the
+  same reading, and gains `memory_binary_alloc_carriers`, the binary allocator's carriers;
+  `FLEZHA_OBSERVABILITY_LOG_SOURCES=beam_vm` writes it to the log, one
+  `[beam_vm] <name> value=...` info line per signal.
+- `Flezha.Observability.LogSink` writes the signals of the sources its registration names; a
+  registration's `filter` now replaces the sink module's own.
+- The Prometheus, OTLP, audit log and hook sinks register through
+  `use Flezha.Observability.Sink`, and `/healthz` and `/metrics` through
+  `use Flezha.Http.Listener`; both endpoints answer as before.
+
 ### Changed: a log line that repeated an event is rendered from the event
 
 - **BREAKING:** twenty-one warning and error lines that said again what a telemetry event

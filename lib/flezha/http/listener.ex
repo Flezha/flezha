@@ -3,20 +3,94 @@ defmodule Flezha.Http.Listener do
   Shared hand-rolled `:gen_tcp` HTTP/1.1 plumbing for the small internal
   endpoints (`/metrics`, `/healthz`). Owns the listen socket, the accept
   loop, request-line parsing with idle-timeout hygiene, and response
-  writing. Each endpoint GenServer supplies a `route/2` that maps a parsed
-  request to a response. No Cowboy/Plug dependency.
+  writing. No Cowboy/Plug dependency.
+
+  An endpoint is `use Flezha.Http.Listener, port: :prometheus_port, bind:
+  :prometheus_bind`, the two `Flezha.Config` keys it listens on. That makes it
+  a named GenServer with `start_link/1` and `listen_port/0`; it writes only
+  `route(socket, path)` for the `GET` paths it serves, answering `:not_found`
+  for any other. A `GET` it does not route answers 404, another method 405 and
+  an unreadable request 400.
   """
 
+  alias Flezha.Config
   alias Flezha.Config.Durations
+  alias Flezha.SDK.SafeCall
 
   @max_request_line_bytes 8_192
 
-  @type request :: {:get, binary()} | {:method_not_allowed, binary()} | :bad
+  @type route :: (:gen_tcp.socket(), binary() -> :not_found | term())
 
-  @doc "Open the listen socket, returning the bound port (config may pass 0)."
-  @spec listen(:inet.port_number(), binary()) ::
-          {:ok, :gen_tcp.socket(), :inet.port_number()} | {:error, term()}
-  def listen(port, bind) do
+  defmacro __using__(opts) do
+    port = Keyword.fetch!(opts, :port)
+    bind = Keyword.fetch!(opts, :bind)
+
+    quote do
+      use GenServer
+
+      def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+      @doc "Return the listening port — useful for tests that bind to port 0."
+      @spec listen_port() :: {:ok, :inet.port_number()} | :error
+      def listen_port(), do: Flezha.Http.Listener.listen_port(__MODULE__)
+
+      @impl true
+      def init(_opts), do: Flezha.Http.Listener.open(unquote(port), unquote(bind))
+
+      @impl true
+      def handle_call(:listen_port, _from, %{port: port} = state),
+        do: {:reply, {:ok, port}, state}
+
+      @impl true
+      def handle_info(:accept_loop, %{listen_socket: socket} = state) do
+        Flezha.Http.Listener.accept(socket, &route/2)
+        {:noreply, state}
+      end
+
+      def handle_info(_msg, state), do: {:noreply, state}
+
+      @impl true
+      def terminate(_reason, %{listen_socket: socket}) do
+        _ = :gen_tcp.close(socket)
+        :ok
+      end
+    end
+  end
+
+  @doc false
+  @spec listen_port(atom()) :: {:ok, :inet.port_number()} | :error
+  def listen_port(server) do
+    case Process.whereis(server) do
+      pid when is_pid(pid) ->
+        SafeCall.bounded(pid, :listen_port, Durations.get(:listen_port_call_ms), on_error: :error)
+
+      _ ->
+        :error
+    end
+  end
+
+  @doc false
+  @spec open(atom(), atom()) :: {:ok, map()} | {:stop, {:listen_failed, term()}}
+  def open(port_key, bind_key) do
+    case listen(Config.get(port_key), Config.get(bind_key)) do
+      {:ok, socket, port} ->
+        send(self(), :accept_loop)
+        {:ok, %{listen_socket: socket, port: port}}
+
+      {:error, reason} ->
+        {:stop, {:listen_failed, reason}}
+    end
+  end
+
+  @doc false
+  @spec accept(:gen_tcp.socket(), route()) :: pid()
+  def accept(socket, route) do
+    parent = self()
+    spawn(fn -> accept_loop(parent, socket, route) end)
+  end
+
+  # Opens the listen socket, returning the bound port (config may pass 0).
+  defp listen(port, bind) do
     {:ok, ip} = :inet.parse_address(String.to_charlist(bind))
 
     listen_opts = [:binary, packet: :raw, active: false, reuseaddr: true, ip: ip, backlog: 128]
@@ -27,13 +101,9 @@ defmodule Flezha.Http.Listener do
     end
   end
 
-  @doc """
-  Accept connections until the listen socket closes or `parent` dies. Each
-  connection is served in its own process; `route` maps the parsed request
-  to a response.
-  """
-  @spec accept_loop(pid(), :gen_tcp.socket(), (:gen_tcp.socket(), request() -> any())) :: :ok
-  def accept_loop(parent, listen_socket, route) when is_function(route, 2) do
+  # Accepts connections until the listen socket closes or `parent` dies; each
+  # connection is served in its own process.
+  defp accept_loop(parent, listen_socket, route) do
     case :gen_tcp.accept(listen_socket, 1_000) do
       {:ok, socket} ->
         spawn(fn ->
@@ -81,7 +151,7 @@ defmodule Flezha.Http.Listener do
     case read_request_line(socket) do
       {:ok, line} ->
         _ = drain_headers(socket, 5)
-        route.(socket, parse_request_line(line))
+        respond(socket, parse_request_line(line), route)
 
       {:error, :timeout} ->
         :ok
@@ -92,6 +162,17 @@ defmodule Flezha.Http.Listener do
 
     :gen_tcp.close(socket)
   end
+
+  defp respond(socket, {:get, path}, route) do
+    if route.(socket, path) == :not_found,
+      do: send_response(socket, 404, "text/plain", "not found\n")
+  end
+
+  defp respond(socket, {:method_not_allowed, _path}, _route),
+    do: send_response(socket, 405, "text/plain", "method not allowed\n")
+
+  defp respond(socket, :bad, _route),
+    do: send_response(socket, 400, "text/plain", "bad request\n")
 
   defp read_request_line(socket) do
     :inet.setopts(socket, packet: :line)

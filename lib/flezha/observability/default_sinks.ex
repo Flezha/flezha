@@ -1,7 +1,8 @@
 defmodule Flezha.Observability.DefaultSinks do
   @moduledoc false
-  # One-shot worker that registers the two foundation-default sinks
-  # (`RingBufferSink`, `PubSubSink`) with the Registry once the rest
+  # One-shot worker that registers the foundation-default sinks
+  # (`RingBufferSink`, `PubSubSink`, and `LogSink` for the sources
+  # `:observability_log_sources` names) with the Registry once the rest
   # of the observability supervision tree is up. Exits `:normal` once
   # the work is done — restart policy is `:temporary` so the
   # supervisor does not bring it back.
@@ -9,7 +10,7 @@ defmodule Flezha.Observability.DefaultSinks do
   use GenServer, restart: :temporary
 
   alias Flezha.Config
-  alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink}
+  alias Flezha.Observability.{LogSink, PubSubSink, Registry, RingBufferSink}
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts)
@@ -31,6 +32,19 @@ defmodule Flezha.Observability.DefaultSinks do
           module: PubSubSink,
           config: %{}
         })
+    end
+
+    case Config.get(:observability_log_sources) do
+      [] ->
+        :ok
+
+      sources ->
+        _ =
+          Registry.register_sink(%{
+            name: :log,
+            module: LogSink,
+            filter: %{kinds: :any, sources: sources}
+          })
     end
 
     {:ok, :registered, {:continue, :stop}}

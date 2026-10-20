@@ -171,7 +171,8 @@ Start it with `mix run --no-halt`, `iex -S mix` or your release. In the node,
 `Flezha.Boot.Readiness.verdict()` answers `{:ready, [...]}` with the same
 conditions `flz boot status` lists; it answers `recovering` for a moment after
 start, so poll it. From outside, with `healthz_enabled: true`,
-`curl localhost:9569/healthz` answers the health JSON. `flz` cannot reach this
+`curl localhost:9569/healthz` answers the health JSON
+([Health and liveness](../../architecture/kernel.md#health-and-liveness)). `flz` cannot reach this
 controller: the CLI runs the `flzvm` script, which only exists in a release.
 
 An Elixir runner can run in the same BEAM; it connects over the
@@ -262,7 +263,7 @@ which defaults it took. A real deployment sets these:
 | `FLEZHA_SOCKET_FILES_PATH` | The directory runners attach through; share it with every runner container on the node. The container entrypoint waits for `<path>/runner_control_channel.sock` before it asks for readiness. At most 60 bytes, or the controller refuses to boot. |
 | `FLEZHA_NODE_NAME`, `FLEZHA_NODE_HOST` | Form the node name `<name>@<host>` the CLI reaches. They default to the release name and `127.0.0.1`; in Kubernetes the host is the pod IP. |
 | `FLEZHA_STATE_DIR`, `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_DLQ_DIR`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_SCHEDULE_DIR`, `FLEZHA_AUDIT_DIR`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_LOG_PATH` | Every durable path defaults to a **relative** `app_data/*`, resolved against the directory the controller was started from, so it is lost with a container and unwritable under a read-only root. Point each at a mounted volume owned by uid 1000. The boot prints the absolute state root, and says when it is empty. |
-| `FLEZHA_HEALTHZ_ENABLED` | `/healthz` is off by default; an orchestrator probe needs it on (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `0.0.0.0`). |
+| `FLEZHA_HEALTHZ_ENABLED` | `/healthz` is off by default; an orchestrator probe needs it on (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `0.0.0.0`). What it and `/readyz` answer is in [Health and liveness](../../architecture/kernel.md#health-and-liveness). |
 | `FLEZHA_CLUSTER_DISCOVERY` | `manual_discovery` by default; `k8s_pod_discovery` in Kubernetes. |
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60 000 by default, paired with the orchestrator's grace period ([below](#graceful-shutdown)). |
 | `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_TRANSPORT_AUTH`, `FLEZHA_DIST_TLS_OPTFILE`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH`, `FLEZHA_QUIC_CLIENT_CA` | Authorization is enforced by default in a release and peer authentication is required by default; turning either off warns on every boot. The TLS material must persist across restarts ([`authorization.md`](../core/authorization.md)). |

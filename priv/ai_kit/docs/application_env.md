@@ -211,7 +211,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:listener_pending_frames` | positive_int | `4096` |
 | `:listener_release_check_ms` | ms | `5000` |
 | `:max_reconnects` | positive_int | `5` |
-| `:memory_report_interval_ms` | ms | unset |
 | `:migration_consent[:consent_timeout_ms]` | ms | `5000` |
 | `:migration_consent[:max_defer_ms]` | ms | unset |
 | `:migration_consent[:retry_interval_ms]` | ms | `2000` |
@@ -220,6 +219,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:observability[:cardinality_budget_per_source]` | positive_int | `1000` |
 | `:observability[:data_plane_liveness]` | bool | `true` |
 | `:observability[:enabled]` | bool | `true` |
+| `:observability[:log_sources]` | list of atom | `""` |
 | `:observability[:otp_backend][:poll_intervals]` | term | `%{beam_vm: 1000, flezha_transport: 1000, host: 5000, processhub: 1000}` |
 | `:observability[:otp_backend_enabled]` | bool | `true` |
 | `:observability[:pubsub_sink_enabled]` | bool | `true` |

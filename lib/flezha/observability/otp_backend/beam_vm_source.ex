@@ -1,7 +1,9 @@
 defmodule Flezha.Observability.OtpBackend.BeamVmSource do
   @moduledoc """
-  Polled source emitting BEAM VM metrics: per-bucket memory, scheduler
-  utilisation, run-queue lengths, and cumulative GC counts.
+  Polled source emitting BEAM VM metrics: per-bucket memory, the binary
+  allocator's carriers, scheduler utilisation, run-queue lengths, and
+  cumulative GC counts. `reading/0` is the one memory reading, which each
+  poll emits.
 
   Registers as `:beam_vm`, kind `[:metric]`. Cardinality budget is a
   small constant: every emit carries either no metadata or a single
@@ -40,6 +42,12 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
          meaning: "Memory held by binaries such as message payloads, in bytes."},
       memory_ets:
         {:metric, label: "Table memory", meaning: "Memory held by in-memory tables, in bytes."},
+      memory_binary_alloc_carriers:
+        {:metric,
+         label: "Binary allocator",
+         meaning:
+           "Memory the binary allocator holds from the OS, in bytes; far above binary " <>
+             "memory, it is binaries pinned in carriers rather than in use."},
       run_queue_total:
         {:metric,
          label: "Waiting to run",
@@ -70,7 +78,26 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
 
   alias Flezha.Observability.{Bus, Signal}
 
-  @memory_buckets [:total, :processes, :atom, :binary, :ets]
+  @memory_names for bucket <- [:total, :processes, :atom, :binary, :ets],
+                    do: {bucket, :"memory_#{bucket}"}
+
+  @doc """
+  The VM's memory and size now, by the name each value is emitted under: the
+  memory buckets, the binary allocator's carriers, processes and ports.
+  """
+  @spec reading() :: %{atom() => non_neg_integer()}
+  def reading() do
+    mem = :erlang.memory()
+
+    @memory_names
+    |> Map.new(fn {bucket, name} -> {name, Keyword.get(mem, bucket, 0)} end)
+    |> Map.merge(%{
+      memory_binary_alloc_carriers:
+        Keyword.get(:recon_alloc.memory(:allocated_types), :binary_alloc, 0),
+      process_count: :erlang.system_info(:process_count),
+      port_count: :erlang.system_info(:port_count)
+    })
+  end
 
   @impl Flezha.Observability.OtpBackend.Poller
   def init_state(_opts) do
@@ -87,20 +114,14 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
 
   @impl Flezha.Observability.OtpBackend.Poller
   def poll(state) do
-    emit_memory()
+    emit_reading()
     emit_run_queues()
     emit_gc_counts()
-    emit_process_counts()
     emit_scheduler_utilisation(state)
   end
 
-  defp emit_memory() do
-    mem = :erlang.memory()
-
-    Enum.each(@memory_buckets, fn bucket ->
-      value = Keyword.get(mem, bucket, 0)
-      name = String.to_atom("memory_" <> Atom.to_string(bucket))
-
+  defp emit_reading() do
+    for {name, value} <- reading() do
       Bus.emit(
         Signal.new(%{
           kind: :metric,
@@ -109,7 +130,7 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
           measurements: %{value: value}
         })
       )
-    end)
+    end
   end
 
   defp emit_run_queues() do
@@ -143,26 +164,6 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
         source: @source,
         name: :gc_words_reclaimed,
         measurements: %{count: words_reclaimed}
-      })
-    )
-  end
-
-  defp emit_process_counts() do
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: :process_count,
-        measurements: %{value: :erlang.system_info(:process_count)}
-      })
-    )
-
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: :port_count,
-        measurements: %{value: :erlang.system_info(:port_count)}
       })
     )
   end

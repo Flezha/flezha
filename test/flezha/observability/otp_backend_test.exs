@@ -50,6 +50,11 @@ defmodule Flezha.Observability.OtpBackendTest do
 
       assert Enum.any?(mem_signals, fn s -> s.name == :memory_total end)
       assert Enum.any?(mem_signals, fn s -> s.name == :memory_processes end)
+
+      assert Enum.any?(mem_signals, fn s ->
+               s.name == :memory_binary_alloc_carriers and s.measurements.value > 0
+             end)
+
       assert Enum.any?(mem_signals, fn s -> s.name == :run_queue_total end)
       assert Enum.any?(mem_signals, fn s -> s.name == :gc_count end)
       assert Enum.any?(mem_signals, fn s -> s.name == :scheduler_utilisation end)

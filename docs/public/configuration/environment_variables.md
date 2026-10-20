@@ -123,12 +123,12 @@ Notes on the area's variables:
 - `FLEZHA_FABRIC_503_POLLS`: Consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503.
 - `FLEZHA_HEALTHZ_ENABLED`: True only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`halted`, `dead_runner`, `relays_unbound`, `plugin_unhealthy`, `plugin_lagging`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_relays`.
 - `FLEZHA_DATA_PLANE_LIVENESS`: `false` drops the driver poll and the stall classifier, the counters stay.
-- `FLEZHA_MEMORY_REPORT_INTERVAL_MS`: Unset or non-positive starts no reporter.
 - `FLEZHA_TESTNET_WS_PORT`: The port `Flezha.Testnet` binds; the prod image entrypoint starts the daemon only when it is set explicitly. Default: `4500` (`:test` derives the port from the run).
 
 ## Observability and audit
 
-- `FLEZHA_OBSERVABILITY_ENABLED`: `false` starts no sinks, no logger handler, no telemetry bridge.
+- `FLEZHA_OBSERVABILITY_ENABLED`: `false` starts no sinks and no logger handler; the telemetry bridge only writes the events that are also log lines.
+- `FLEZHA_OBSERVABILITY_LOG_SOURCES`: The sources whose signals are also written to the log, one `[<source>] <name> key=value` info line each; `beam_vm` gives the controller's memory and load every second. Unset writes none.
 - `FLEZHA_AUDIT_RETENTION_DAYS`: In days; the key it fills holds seconds.
 - `FLEZHA_LOG_PATH`: The file the `:logger` file handler writes.
 - `FLEZHA_LOG_LEVEL`: Level for the controller; the runner default is the level every SDK starts its own diagnostics at. Default: `info` (controller), `warn` (runner).
@@ -254,12 +254,12 @@ skipped as a block.
 | `FLEZHA_LOG_MAX_BYTES` | int | `10485760` |
 | `FLEZHA_LOG_PATH` | path | `logs/flezha.log` |
 | `FLEZHA_MAX_RECONNECTS` | positive_int | `5` |
-| `FLEZHA_MEMORY_REPORT_INTERVAL_MS` | ms | unset |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | ms | `5000` |
 | `FLEZHA_MIGRATION_MAX_DEFER_MS` | ms | unset |
 | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | ms | `2000` |
 | `FLEZHA_NODE_NAME` | string | `flezha` |
 | `FLEZHA_OBSERVABILITY_ENABLED` | bool | `true` |
+| `FLEZHA_OBSERVABILITY_LOG_SOURCES` | list of atom | `""` |
 | `FLEZHA_OTLP_ENABLED` | bool | `false` |
 | `FLEZHA_OTLP_ENDPOINT` | string | unset |
 | `FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS` | ms | `10000` |

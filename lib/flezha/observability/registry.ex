@@ -205,8 +205,8 @@ defmodule Flezha.Observability.Registry do
 
   @doc """
   Register a sink. The sink module's `config_schema/0` is consulted to
-  validate `config` BEFORE the sink process is started. Returns
-  `{:ok, pid}` on success.
+  validate `config` BEFORE the sink process is started; a `filter` in the
+  entry replaces the module's `filter/0`. Returns `{:ok, pid}` on success.
   """
   @spec register_sink(map()) :: {:ok, pid()} | {:error, term()}
   def register_sink(%{name: _, module: _} = entry) do
@@ -392,21 +392,7 @@ defmodule Flezha.Observability.Registry do
   end
 
   def handle_call({:register_external_sink, entry}, _from, state) do
-    counters_ref = sink_counter_new()
-
-    row = %{
-      name: entry.name,
-      module: entry.module,
-      config: Map.get(entry, :config, %{}),
-      filter: Map.get(entry, :filter, %{kinds: :any, sources: :any}),
-      overflow: Map.get(entry, :overflow, :drop),
-      mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
-      block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
-      pid: entry.pid,
-      counters: counters_ref
-    }
-
-    :ets.insert(@sinks, {entry.name, row})
+    :ets.insert(@sinks, {entry.name, sink_row(entry, %{kinds: :any, sources: :any}, entry.pid)})
     {:reply, :ok, state}
   end
 
@@ -496,24 +482,28 @@ defmodule Flezha.Observability.Registry do
 
     case DynamicSupervisor.start_child(Flezha.Observability.SinkSupervisor, spec) do
       {:ok, pid} ->
-        row = %{
-          name: entry.name,
-          module: module,
-          config: config,
-          filter: module.filter(),
-          overflow: Map.get(entry, :overflow, :drop),
-          mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
-          block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
-          pid: pid,
-          counters: sink_counter_new()
-        }
-
-        :ets.insert(@sinks, {entry.name, row})
+        :ets.insert(@sinks, {entry.name, sink_row(entry, module.filter(), pid)})
         {:ok, pid}
 
       {:error, reason} ->
         {:error, {:sink_start_failed, reason}}
     end
+  end
+
+  # One row for either path: a sink the registry started and one that runs
+  # under its own supervisor. A registration's `filter` wins over the default.
+  defp sink_row(entry, default_filter, pid) do
+    %{
+      name: entry.name,
+      module: entry.module,
+      config: Map.get(entry, :config, %{}),
+      filter: Map.get(entry, :filter, default_filter),
+      overflow: Map.get(entry, :overflow, :drop),
+      mailbox_high_watermark: Map.get(entry, :mailbox_high_watermark, 10_000),
+      block_timeout_ms: Map.get(entry, :block_timeout_ms, 5_000),
+      pid: pid,
+      counters: sink_counter_new()
+    }
   end
 
   defp validate_source(%{name: name, kinds: kinds, flavour: flavour} = entry)
