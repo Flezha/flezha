@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed: one operation per concept; only called operations in the catalogue
+
+- **BREAKING:** `Flezha.Service.Relay.list_relays/2` and `Flezha.Service.PluginManager.list/1`
+  are removed, with their MCP tools `relay_list_relays` and `plugin_manager_list`;
+  `Relay.list/2` and `PluginManager.enabled/2` answer the same reads as rows.
+- **BREAKING:** 14 operations leave the catalogue, the MCP tools and the HTTP API, and take no
+  caller context: `Controller.durability_backend`, `Controller.durability_posture`,
+  `Fleet.hub_nodes`, `Fleet.runners_on_this_node`, `Observability.subscribe`,
+  `Relay.partition_coverage`, `Relay.run_known?`, `Schedule.assert_entry`, `Schedule.next_fire`,
+  `Schedule.parse_cron`, `Schedule.retract`, `Schedule.statuses`, `Steps.relay_classes` and
+  `Steps.state_metrics`. The actions `schedule.assert` and `schedule.retract` are gone with them.
+- **BREAKING (Rust):** `Control::list_relays` answers one row per relay (`id`, health, runner,
+  node), not ids; `list_plugins` reads `PluginManager.enabled`.
+- **BREAKING (Java):** `Control.listRelays` answers one row per relay, not ids.
+- **BREAKING (Node):** `Control.listRelays` answers one row per relay, not ids.
+- **BREAKING (Python):** `Control.list_relays` answers one row per relay, not ids.
+- **BREAKING (Ruby):** `Control#list_relays` answers one row per relay, not ids.
+- **BREAKING (PHP):** `Control::listRelays` answers one row per relay, not ids.
+- **BREAKING (Elixir):** `Flezha.SDK.Control.list_relays/1` answers one row per relay, not ids.
+
+### Changed: one Elixir emit with options
+
+- **BREAKING (Elixir):** `emit_with_meta/3`, `emit_keyed/3` and `emit_keyed_with_meta/4` are
+  removed; `emit(ctx, value, key: key, metadata: meta)` takes either option or both, and
+  `emit/2` is unchanged. Any other option raises `ArgumentError`. The refusals are as before:
+  a `key:` on an output not declared `keyed/1`, a keyless emit from a Single Cell on a keyed
+  output, a reserved `flz.` metadata key.
+
 ### Changed: one bad-token rule, one answer decoder, a quota field by its kind
 
 - **BREAKING:** `flz` refuses a token that does not verify with its own code

@@ -324,9 +324,9 @@ timer four — `logical_clock/0` (`false`), `event_time/1`, `on_timer/4`, `max_t
 ([The settings tree](#the-settings-tree)); a class that runs in steps writes the same
 `channels/1` and has no retry setting of its own, because a stage's ladder is the edge's
 `retry_max` / `retry_backoff_ms`, as a flow relay's is.
-`Flezha.SDK.Ctx`: `emit/2`, `emit_with_meta/3` (a reserved `flz.` key answers
-`runtime.reserved_metadata_key`), `emit_keyed/3` and `emit_keyed_with_meta/4` (the
-output's natural key on an output declared `keyed/1`; on a node with no keyed output they answer
+`Flezha.SDK.Ctx`: `emit/2` and `emit/3` with the options `metadata:` (a reserved `flz.` key
+answers `runtime.reserved_metadata_key`) and `key:` (the output's natural key on an output
+declared `keyed/1`; on a node with no keyed output it answers
 `runtime.key_not_allowed_on_non_keyed_channel`, and a keyless emit from a
 Single Cell on a keyed output answers `runtime.key_required_on_keyed_channel`),
 `part/2` (a preview of the invocation's output, sent at once rather than when `run/3`
@@ -397,7 +397,7 @@ Tasklet and the clock it declares) and `topology.correction_window_zero`.
 ## Keyed channels
 
 `keyed/1` on the handle before `output/2` declares output identity on that output — the
-reference's `.keyed()`. The SDK hands each output its key: the emit's own (`emit_keyed/3`), else
+reference's `.keyed()`. The SDK hands each output its key: the emit's own (`emit/3`'s `key:`), else
 the output route's `key_by`, else the emitting Cell's; a Single Cell with none is refused at the
 emit. The core stamps the frame at settle with `flz.cell`
 (`<relay id>/<tasklet name>/<cell key or empty>`), `flz.seq` (`<change_seq at handout>.<emit ordinal>`, the
