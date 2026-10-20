@@ -207,6 +207,11 @@ A fetcher that exits for any reason other than shutdown SHALL be replaced, so
 the configured fetcher count is maintained for the life of the runner; each
 replacement SHALL be logged with the throwable that ended the previous thread.
 A runner SHALL NOT be left with zero fetchers while it is still connected.
+Fetchers the starvation supervisor started above the configured count SHALL
+retire after the core governor's idle time (30 s without an activation); the
+count, the ceiling and every pool timing SHALL come from the core's pool entries,
+and the SDK SHALL carry no pool constant of its own but `DEFAULT_FETCHERS` (2), the
+default base it hands the core's pool open, which the core's pool knobs override.
 
 Every activation dispatched onto a virtual thread SHALL be answered exactly
 once. The dispatch SHALL be wrapped so that a throwable escaping the dispatcher
@@ -231,6 +236,10 @@ for the life of the process.
 #### Scenario: A throwing dispatch abandons instead of dropping the activation
 - **WHEN** a throwable escapes the dispatcher, the result encoder, or `complete` for an activation on cell E
 - **THEN** the SDK SHALL abandon the activation, E SHALL be pollable again with its items intact, and the throwable SHALL be logged
+
+#### Scenario: A grown fetcher retires
+- **WHEN** the supervisor grew the fetchers above the configured count and no activation reaches the grown fetchers for 30 s
+- **THEN** the grown fetchers SHALL end, the configured count SHALL remain, and no replacement SHALL be started for a retired fetcher
 
 ### Requirement: JNI Bridge to flz_core_ffi
 
@@ -1035,7 +1044,7 @@ The Java SDK SHALL place the one authoring base, `Relay`, and its settings tree 
 
 ### Requirement: A Java setting under the wrong parent does not compile, and a steps class has no wake
 
-The settings tree SHALL make a setting under the wrong parent a type error: the tier, its checkpoint and its correction window are members of `Run.Flow`'s `Exactly`, and a loop shape and failure mode are members of `Run.Steps`, so neither can be written under the other. The one combination the types allow and the guarantee cannot keep, `Exactly.EffectivelyOnce` with `Durable.Memory`, SHALL be refused by the core at `registerFactory` with `topology.effectively_once_without_persistence`, thrown as `FlezhaException` with that code. `Relay` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a steps instance, `RelayInstance.runItem` SHALL attach a `TimerSession` to the `EmitContext` exactly as it does for a flow instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both runs; `compensate` SHALL attach none.
+The settings tree SHALL make a setting under the wrong parent a type error: the tier, its checkpoint and its correction window are members of `Run.Flow`'s `Exactly`, and a loop shape and failure mode are members of `Run.Steps`, so neither can be written under the other. The one combination the types allow and the guarantee cannot keep, `Exactly.EffectivelyOnce` with `Durable.Memory`, SHALL be refused by the core at `registerFactory` with `topology.effectively_once_without_persistence`, thrown as `FlezhaException` with that code. `Relay` SHALL declare no `wakeAfter()`, and the declaration SHALL carry no `wake_after_ms`. Inside a steps instance, `RelayInstance.runItem` SHALL let the `EmitContext` record timer ops exactly as it does for a flow instance, for `run` and for `onTimer`, so `timerAfter`, `timerAtEventTime`, `cancelProcessingTimeTimer` and `cancelEventTimeTimer` work in both runs and the core judges the ops at settle; `compensate` SHALL refuse them with `runtime.timers_unavailable`.
 
 #### Scenario: A setting under the wrong parent does not compile
 

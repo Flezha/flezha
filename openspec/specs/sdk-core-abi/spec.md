@@ -244,7 +244,7 @@ exported symbols the way a veneer's exports are.
 
 #### Scenario: A host that cannot drain inline is still safe
 - **WHEN** a shim-based host completes an activation whose emit blocks on a full `DropNothing` consumer mailbox, and the inline-drain hook the in-process Rust host installs is unavailable to it
-- **THEN** the core SHALL report the condition through `flz_core_wait_starvation`, so a host that services that wait can recover without a per-host kernel path
+- **THEN** the core SHALL report the condition to the pool governor, whose supervisor entry `flz_core_pool_supervise` answers with one more worker, so a host that answers it can recover without a per-host kernel path
 
 #### Scenario: A step answer ends its steps relay
 - **WHEN** a host answers a steps relay step activation whose tasklet called `ctx.complete(result)`
@@ -583,7 +583,9 @@ through its host log callback, Java through its runner's logger, Rust through
 `tracing` once the application installed the SDK's default subscriber, and
 Python, Ruby, PHP and Java through a bounded queue their own threads drain off the
 per-activation path (Java's on a daemon thread, never the user's logger on a
-core thread). No hook SHALL call `OwnedEnv` send on a BEAM scheduler thread:
+core thread); Python, Ruby and PHP's threaded executor SHALL drain it on every answer of the
+core pool governor's supervisor entry, which answers at least once per supervisor wait (1 s),
+`idle` when there is nothing to spawn. No hook SHALL call `OwnedEnv` send on a BEAM scheduler thread:
 there it SHALL queue, and a core-owned thread SHALL send. Node's host callback
 queue SHALL be bounded. A notice dropped by a full queue SHALL be counted in
 `NOTICES_DROPPED_TOTAL`. The lines the core writes right before ending the
@@ -618,6 +620,10 @@ to the controller's own standard error.
 - **WHEN** a runner the controller started prints a reconnect line
 - **THEN** the line SHALL appear in the controller's `Logger` naming the runner, and not on the controller's standard error
 
+#### Scenario: An idle runner still drains its notices
+- **WHEN** a Python runner with no work receives a core retry notice
+- **THEN** the notice SHALL reach the host's log within the governor's supervisor wait, carried by an `idle` answer
+
 ### Requirement: Every runner SHALL wait for its start under one bounded policy
 
 A start SHALL wait for the controller's confirmation or refusal for the time
@@ -650,7 +656,7 @@ shares, SHALL carry a parse rule of its own.
 #### Scenario: One rule answers every host
 
 - **WHEN** `FLEZHA_WORKER_POOL_SIZE` is `"0"` in a Python, Ruby, Node, PHP and Java runner
-- **THEN** each SDK SHALL keep its default pool size, because the core answered "unset"
+- **THEN** each runner SHALL keep its SDK's default pool size, because the core's pool governor read the knob by the one rule and found it "unset"
 
 ### Requirement: The core SHALL decode the call `Response` envelope for every host
 
@@ -692,4 +698,23 @@ when it is set and valid, else 1024, in every SDK.
 
 - **WHEN** `FLEZHA_MAILBOX_CAPACITY=64` is set for a Node runner whose tasklet declares no capacity
 - **THEN** the tasklet's mailbox SHALL hold 64 items
+
+### Requirement: The pool governor SHALL be three ABI entries, and the pending timer set SHALL NOT cross
+
+`flz_core_ffi` SHALL export `flz_core_pool_open` (the policy: base, ceiling, poll timeout, retire
+time, drain bound, from the host's default base and the pool knobs; a context holds one pool, and
+a second open SHALL be refused with `runtime.runner_already_running`), `flz_core_pool_supervise`
+(blocks up to the supervisor wait and answers spawn grown, spawn base, idle or stop, reserving the
+slot it answers) and `flz_core_pool_left` (releases a slot; a release with no slot taken changes
+nothing), each one row of the surface table and one wrapper per C ABI host, JNI included. `flz_core_wait_starvation` SHALL NOT exist: the
+supervisor entry waits on starvation itself. `flz_core_pending_timers` SHALL NOT exist: the core
+judges timer ops at settle, so no host reads the pending set.
+
+#### Scenario: The surface fixtures list the pool entries and not the timer read
+- **WHEN** the crate's surface test reads `test/fixtures/abi_surface.txt` and `jni_surface.txt`
+- **THEN** they SHALL list the three pool entries and SHALL NOT list `flz_core_wait_starvation`, `waitStarvation`, `flz_core_pending_timers` or `pendingTimers`
+
+#### Scenario: A context opens one pool
+- **WHEN** a host calls `flz_core_pool_open` a second time on the same context
+- **THEN** the call SHALL be refused with `runtime.runner_already_running`, and the open pool SHALL keep its slots
 

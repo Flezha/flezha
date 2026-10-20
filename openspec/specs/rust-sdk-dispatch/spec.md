@@ -548,11 +548,12 @@ no persisted Cell.
 ### Requirement: The worker pool grows under starvation and shrinks when idle
 
 The Rust SDK SHALL spawn its base poll-worker pool as today
-(`FLEZHA_WORKER_POOL_SIZE`, default = CPU count) and SHALL additionally park
-one supervisor thread in the core's starvation wait. On each starvation wake
+(`FLEZHA_WORKER_POOL_SIZE`, default = CPU count) through the core pool
+governor (`flz_core::poll_pool`), implementing only its spawner, and the
+governor SHALL park one supervisor thread in the core's starvation wait. On each starvation wake
 the supervisor SHALL spawn one additional poll worker, up to a ceiling
 (`FLEZHA_WORKER_POOL_MAX`, default 10× CPU count). Workers above the base
-count SHALL exit after a sustained idle streak; base workers SHALL NOT exit.
+count SHALL exit after the governor's idle time, 30 s without work; base workers SHALL NOT exit.
 A workload that never starves SHALL observe exactly the base pool.
 
 The pool's live-worker accounting SHALL be unwind-safe: a worker that leaves for

@@ -1000,9 +1000,11 @@ it. Every manifest SHALL list it under `fixtures` with exactly the reference's i
 a flow callee emitting on an output; `call_orders`, a flow caller calling `call_pricing` by name and
 naming `call_pricing`'s output channel as its answer channel; `call_agent`, a durable `:per_input`
 steps callee; `call_gateway`, a flow caller calling `call_agent` by key through its factory, with
-its Response channel wired back into its calling tasklet; and `call_tool_session`, a durable
-`:per_input` steps caller calling `call_pricing` from a turn. Every test app SHALL declare each
-through its SDK's builder and list the `call` steps under `topology_surfaces`.
+its Response channel wired back into its calling tasklet; `call_tool_session`, a durable
+`:per_input` steps caller calling `call_pricing` from a turn; and `call_orders_steps`,
+`call_orders`'s graph as a durable `:per_input` steps class, whose asking tasklet's channel ends
+only in the call. Every test app SHALL declare each through its SDK's builder and list the `call`
+steps under `topology_surfaces`.
 `test/system/relay_call_e2e_test.exs` SHALL be tagged `capability: :relay_call` and SHALL
 drive every fixture on the selected runtime, including the two crash drills (the callee's runner
 killed mid-turn, the caller killed with a call pending) with the assertion of exactly one
@@ -1023,6 +1025,11 @@ runtime's real boot.
 
 - **WHEN** the scenario kills `call_agent`'s runner while a turn `call_gateway` sent is running
 - **THEN** `call_gateway` SHALL receive exactly one `Response` for that call, and `call_agent`'s journal SHALL hold that turn committed once
+
+#### Scenario: A steps caller's call-only channel journals no handoff on every runtime
+
+- **WHEN** the scenario sends two orders to `call_orders_steps` on any runtime
+- **THEN** each SHALL receive one `Response`, and no journaled commit of the session SHALL carry a handoff item
 
 ### Requirement: Misplaced settings are refusal rows every builder reaches
 

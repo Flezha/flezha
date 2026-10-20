@@ -136,11 +136,9 @@ SHALL show no regression on non-keyed emit paths.
 - **THEN** throughput is within the established regression tolerance of the
   pre-change baseline
 
-### Requirement: Every host mints the identity stamps, and the ordinal rule is one rule
+### Requirement: The core mints the identity stamps for every host, and the ordinal rule is one rule
 
-An SDK whose tasklets run above the erased host boundary SHALL mint the identity stamps itself, on the output list it hands the core, rather than relying on the core to derive them. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class records no effects: a flow class that does not declare effectively-once and a steps class that opted out of persistence. Under the tier, and for a durable steps class, the controller derives the identity from the durable effect record at flush, and a host that also stamped would produce a second answer to the same question. The per-invocation emit ordinal SHALL advance on every plugin-targeted output, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.cell` SHALL be spelled `<relay>/<tasklet>/<cell_key or empty>`, matching the label the core derives for the same Cell, and `flz.seq` SHALL read the change sequence the activation carried at handout.
-
-An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in its own conformance manifest, naming the follow-up that owes it.
+The shared core SHALL mint the identity stamps for every SDK, on the output list a host hands it at settle and on the typed Rust host's plugin outputs alike, through one function; no SDK SHALL write `flz.cell`, `flz.seq` or `flz.key` itself. A host SHALL hand each plugin output with the natural key `emit_keyed` gave it, or the Cell key for a keyless emit, in the output's key field. The stamps SHALL be written when, and only when, an output is plugin-targeted, its channel is declared keyed, and its class records no effects: a flow class that does not declare effectively-once and a steps class that opted out of persistence. Under the tier, and for a durable steps class, the controller derives the identity from the durable effect record at flush, and a core that also stamped would produce a second answer to the same question. The per-item emit ordinal SHALL advance on every plugin-targeted output, in the order the host handed them, whether or not that output was stamped, so a class carrying both a keyed and a non-keyed plugin channel yields the same ordinal sequence on every host. The ordinal SHALL be distinct from the ordinal `stable_id` consumes, SHALL start at zero for each work item, and SHALL NOT be reset within one item. `flz.cell` SHALL be spelled `<relay>/<tasklet>/<cell_key or empty>`, the label the core derives for the Cell, and `flz.seq` SHALL read, on a hosted SDK, the change sequence the activation carried at handout, and on the typed Rust SDK the Cell's change sequence read after that emit's own changes are flushed.
 
 #### Scenario: The ordinal advances across emits within one invocation
 
@@ -160,20 +158,25 @@ An SDK that cannot yet carry the stamps SHALL defer `keyed_channels` by name in 
 #### Scenario: A host writes no stamps under the effectively-once tier
 
 - **WHEN** a class declaring effectively-once emits on its keyed plugin channel
-- **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`
+- **THEN** the output the core ships carries no `flz.cell`, `flz.seq` or `flz.key`
 
 #### Scenario: A host writes no stamps for a durable steps class
 
 - **WHEN** a durable steps class's tasklet on a Java runner emits on its keyed plugin channel
-- **THEN** the output the host hands the core carries no `flz.cell`, `flz.seq` or `flz.key`, and the output plugin receives them from the controller's flush of the Cell's record
+- **THEN** the output the core ships carries no `flz.cell`, `flz.seq` or `flz.key`, and the output plugin receives them from the controller's flush of the Cell's record
 
 #### Scenario: A host stamps an opted-out steps relay's output
 
 - **WHEN** a steps class that opted out of persistence emits on its keyed plugin channel from a host runner
-- **THEN** the output carries `flz.cell`, `flz.seq` and `flz.key` from the host, as an at-least-once flow relay's does
+- **THEN** the output carries `flz.cell`, `flz.seq` and `flz.key` from the core, as an at-least-once flow relay's does
 
-#### Scenario: An SDK that defers the capability says so in its manifest
+#### Scenario: Every hosted SDK's stamps are byte-identical
 
-- **WHEN** an SDK does not mint the stamps
-- **THEN** its `conformance.json` lists `keyed_channels` under `deferred`, and the conformance gate refuses a manifest that carries the capability without the reference's fixture set
+- **WHEN** the same keyed class emits the same outputs from the same input on each of the six hosted SDKs
+- **THEN** every output's `flz.cell`, `flz.seq` and `flz.key` are equal across the six runners, and no SDK's source writes those keys
+
+#### Scenario: The typed Rust SDK reads the sequence after the emit's changes
+
+- **WHEN** a stateful keyed Cell handed an activation at change sequence 5 changes its state once and then emits on its keyed plugin channel, on the typed Rust SDK and on a hosted SDK
+- **THEN** the typed Rust output's `flz.seq` carries the sequence after that change is applied, and the hosted output's carries `"5.0"`
 

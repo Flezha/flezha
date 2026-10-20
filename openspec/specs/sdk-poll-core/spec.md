@@ -169,8 +169,12 @@ retry→park ladder.
 
 A host receiving an input SHALL apply the consuming edge's transform chain only
 when the payload reached it untransformed — an **entry** payload, whose producer
-is the wire, or a **steps stage's** released value. A `KeyRequest` carries
-entry payloads only, so the prepare crossing SHALL always apply the chain.
+is the wire, or a **steps stage's** released value — and SHALL learn which from the
+input item itself: the core SHALL mark every input item it hands a host with its form,
+`untransformed`, `transformed` (a producer evaluated the edge) or `prepared` (the prepare
+crossing evaluated it and the item carries the resulting values), and no host SHALL
+re-derive the form from the channel kind or the run. The prepare crossing SHALL always
+apply the chain to the payloads it carries.
 
 For a **steps stage** activation the shape is different, because the core does
 not route a steps stage's output on `(edge, key)` at emit time: it holds the released
@@ -181,7 +185,8 @@ therefore emit **exactly one edge output per released value**, naming the **prod
 carrying the value **untransformed and unkeyed** — one emit SHALL NOT become one
 output per consumer, whatever the channel's consumer count. Each consumer edge's
 transform chain and key SHALL be evaluated **at the consumer**, when the host
-receives the stage input carrying that value, so that a live run and a journal
+receives the stage input carrying that value or, for a consumer that needs keys, at the
+prepare crossing on the consumer's channel, so that a live run and a journal
 re-seed apply the edge at the same seam exactly once. The core SHALL NOT consult
 an edge output's consumer field on this path. For a typed class the core runs the edge chain
 and `cells_for` on the producing worker before the output is held, and journals the value
@@ -206,6 +211,10 @@ before the chain.
 #### Scenario: A typed steps edge applies on the worker, before the hold
 - **WHEN** a Rust steps tasklet emits a value on a channel whose consumer edge declares a `map` and whose consumer declares static `cell_keys`
 - **THEN** the map and `cells_for` SHALL run on the worker completing that item, the held output SHALL name the consumer cells, and the thread that later releases it on the commit ack SHALL run neither
+
+#### Scenario: The input form comes from the core
+- **WHEN** a Python, Ruby, PHP, Node, Java or Elixir host receives an entry payload, a steps stage's released value and a stream edge's value in one activation
+- **THEN** the items carry the forms `untransformed`, `untransformed` and `transformed`, and the host applies the consuming edge's chain to the first two only
 
 ### Requirement: Host classes reach full capability
 
@@ -238,8 +247,16 @@ from them exactly as the typed path does.
 The core SHALL batch, for host classes whose edges are keyed or whose
 clock is an event time, the questions it cannot answer from bytes into one
 prepare crossing (the widened `KeyRequest`): per payload the host SHALL
-return the key and/or the extracted event time, and the core SHALL resolve
-the crossing before any mailbox enqueue. The question SHALL be asked
+return the extracted event time and, when keys are wanted, the payload's values
+per consumer edge that needs keys, each value as the bytes of the edge's transformed
+value with the keys it routes to, and the core SHALL resolve the crossing before any
+mailbox enqueue. The host SHALL decode the payload once and run each such edge's chain
+once per crossing; the core SHALL enqueue one item per receiving Cell carrying that Cell's values in order,
+marked `prepared`; the item SHALL ship no payload bytes to the host, and the receiving Cells
+SHALL share one copy of the original payload, what a park records; and the host SHALL run the handler once per value without decoding
+the entry again, applying the edge again or re-checking the value's key. Which consumers
+need keys SHALL be computed once per channel when the topology is built, not per
+payload. The question SHALL be asked
 wherever a keyless payload meets a consumer that needs keys, on an entry
 channel as today and on an inter-tasklet channel of a steps instance,
 whose host releases a value untransformed and unkeyed for the consumer to
@@ -276,6 +293,18 @@ other park sites do for a steps relay.
 #### Scenario: A crossing that fails terminally fails the stage
 - **WHEN** a host answers every re-attempt for one released value with a non-retryable error
 - **THEN** the receiving stage of the steps instance fails without committing, compensation starts from there, and nothing is parked to the dead-letter queue
+
+#### Scenario: A keyed entry payload is decoded and transformed once
+- **WHEN** a hosted SDK's entry payload fans through a keyed edge's `flat_map` into three values for keys `a`, `a` and `b`
+- **THEN** the host decodes the payload and runs the chain once, at the prepare crossing; Cell `a` receives one item carrying two prepared values and Cell `b` one item carrying one; the handler runs three times; and no work activation decodes the entry payload
+
+#### Scenario: The Cells of one payload share one copy of it
+- **WHEN** a keyed entry payload's answer names three Cells of one consumer
+- **THEN** each Cell's item ships no payload bytes to its host, the three share one copy of the payload, and a park of any of them records the whole payload
+
+#### Scenario: Two keyed consumers each route by their own edge
+- **WHEN** one entry channel feeds two dynamic consumers whose edges key the same payload differently
+- **THEN** each consumer's Cells are named by its own edge's keys and receive its own edge's values
 
 ### Requirement: Steps relay lifecycles run under poll
 
@@ -519,14 +548,18 @@ A timer firing that is deferred this way SHALL NOT be dropped, and the ordering 
 
 ### Requirement: A poll host SHALL bring a starvation supervisor
 
-Every host that drives `poll` SHALL also park a thread in `wait_starvation` and SHALL start one additional worker on `Starvation::Observed`, up to a declared ceiling. A host that ships a fixed worker count with no supervisor SHALL be treated as a defect of that SDK, not as a configuration choice: the supervisor is what buys a thread against a consumer that nobody is draining, and without it a host whose workers are all held wedges with no recovery and no report.
+Every host that drives `poll` SHALL also bring the core governor's supervisor (`flz_core::poll_pool`) and SHALL start one additional worker on each spawn decision it returns, up to a declared ceiling. The pool policy SHALL be the core's, the same in every SDK: the base and the ceiling read from `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX` by the core over the runtime's own base default (Java's `DEFAULT_FETCHERS`, 2, is that default, not a pool size of its own); a supervisor wait of 1 s, inside which the core waits on starvation itself; a poll timeout of 250 ms; a worker above the base retired after 30 s without work; a pool below its base topped up on the next supervisor wake; a drain bound of 5 s. A host SHALL implement only how a worker is spawned and what it runs: the Rust SDK, the Node host's fetchers and the Elixir host through the governor's spawner, the Python, Ruby, Java and PHP hosts by driving `flz_core_pool_supervise` from a thread of their own and answering the decisions it returns (spawn a grown worker, spawn a base worker, idle, stop), at least one per supervisor wait. Node's completion pool SHALL take its base, ceiling and retire time from the governor and SHALL keep its own growth on a queued completion. No SDK SHALL carry its own pool policy constant (base, ceiling, retire time or supervisor wait); a synchronous executor's poll turn, which runs no pool (PHP's `Runner::POLL_TIMEOUT_MS`), and a host's shutdown budget (the Elixir runner's drain inside OTP's shutdown) stay the host's. A host that ships a fixed worker count with no supervisor SHALL be treated as a defect of that SDK, not as a configuration choice: the supervisor is what buys a thread against a consumer that nobody is draining, and without it a host whose workers are all held wedges with no recovery and no report.
 
 The supervisor SHALL NOT be claimed to cover the conformance `pool_wedge` condition, which is user code that never returns and which no ceiling can outrun.
 
 #### Scenario: Java grows its fetcher pool under starvation
 
 - **WHEN** work is queued, no Java fetcher is inside `poll`, and the dwell elapses
-- **THEN** the Java host SHALL start one more fetcher, up to its configured ceiling, and SHALL log the growth
+- **THEN** the Java host SHALL start one more fetcher on the governor's spawn answer, up to its configured ceiling
+
+#### Scenario: A grown worker retires after the same idle time in every SDK
+- **WHEN** a Python, Ruby, Java, PHP (threaded executor), Node, Elixir or Rust runner has grown its pool under starvation and the work then stops
+- **THEN** each grown worker SHALL leave after 30 s without work, the base workers SHALL stay, and no SDK source SHALL hold a retire time or a supervisor wait of its own
 
 ### Requirement: No core call blocks a host thread
 
@@ -720,4 +753,37 @@ population waiting in any state SHALL consume no measurable CPU, because no wait
 - **THEN** the reader that brings it SHALL end the wait at once: a waiting instance ends
   `cancelled`, an owed ack is dropped and compensation starts, a pending backoff is disarmed and
   the cell's gates released, with no tick to wait for
+
+### Requirement: A host steps emit SHALL be released by the core's derivation of its channel
+
+A host SDK SHALL release a steps tasklet's emit to the pass, as one untransformed edge output
+naming the producing channel, exactly when the core derived that channel as inter-tasklet in
+the declaration answer it gave the SDK; a channel the core derived plugin-bound, a call-end
+terminal included, SHALL release nothing. No SDK SHALL re-derive the rule from its own channel
+spec, and the core's hold SHALL keep nothing for a plugin-bound channel.
+
+#### Scenario: A call-end terminal releases nothing in every SDK
+- **WHEN** the last tasklet of a `per_input` steps class emits on a channel whose only chain ends in a call, on each of the seven SDKs
+- **THEN** no runner hands the core an edge output for that emit, and the iteration's journaled handoff is the same on all seven
+
+### Requirement: An activation SHALL carry its Cell's identity bytes
+
+The core SHALL hand a host the Cell's wire identity bytes, the same bytes the core routes and
+stamps with, on the first activation for that Cell since the host last dropped or rebuilt it (the
+core's `Leave` or `RestoreFold` for the Cell), on the first after an activation for it was
+abandoned or failed whole, which may never have reached the host, and on no other; the host SHALL
+keep them with the Cell, a re-sent copy as the first, and read `stable_id`'s identity input from them instead of building the layout itself. The FNV-1a-128 derivation stays in each
+SDK, and the cross-language vector SHALL be asserted by every SDK's tests.
+
+#### Scenario: The identity crosses once per host Cell
+- **WHEN** a hosted runner handles three activations for one Cell, then the Cell leaves and returns
+- **THEN** the identity bytes SHALL ride the first activation and the first after the return, and no other
+
+#### Scenario: An abandoned activation hands the identity again
+- **WHEN** a Cell's first activation is abandoned because the worker it was handed to is gone
+- **THEN** the identity bytes SHALL ride the re-handed activation
+
+#### Scenario: stable_id is equal across the seven SDKs
+- **WHEN** a Cell of relay `r`, tasklet `t` and key `k` calls `stable_id` twice at change seq 7 on each of the seven SDKs
+- **THEN** the two answers are equal across the seven, and each SDK's test pins the shared vector
 

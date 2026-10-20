@@ -344,11 +344,16 @@ Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter 
 controller restart dropping many runners does not produce a synchronized reconnect
 storm. Attempts SHALL remain unbounded (the runner must keep trying until a live
 controller is found). `flz_core` SHALL carry the schedule for every SDK: base 100 ms,
-exponent capped at 8, delay capped at 30 s.
+exponent capped at 8, delay capped by `FLEZHA_RECONNECT_MAX_BACKOFF_MS`, the controller's
+`reconnect_max_backoff_ms` row, default 30 s, read through `flz_transport`'s knob reader.
 
-The jitter is `flz_core`'s for every SDK: it spreads `[d/2, d]` and takes
-`100 ms · 2^n` for its attempt `n`, which satisfies the anti-thunder property this
-requirement exists for.
+The jitter is `flz_transport`'s one jitter rule for every SDK and every Rust retry site, the same
+integer draw as the controller's `Flezha.Config.Backoff.jitter/2`: for the rung's delay `d` in
+milliseconds it waits `⌊d/2⌋ + u` with `u` uniform in `1..=d`, and a ladder re-caps the result at
+its cap, as the controller's ladders do, which satisfies the anti-thunder property this requirement
+exists for. The schedule is one `flz_transport::backoff::Ladder` value; the tasklet retry, the
+stream connect and the liveness timers name their own `Ladder` or the same jitter, and no Rust
+site SHALL carry its own curve or jitter.
 
 The rung SHALL be a property of the control channel rather than of one call into the
 connect loop, so a reconnect starts where the last one left off instead of at rung zero.
@@ -392,6 +397,15 @@ read the completed handshake, so that neither rule can be changed by editing the
 - **GIVEN** a session whose handshake has not completed
 - **WHEN** the controller's first frame arrives within the ack timeout
 - **THEN** the connection SHALL switch to the idle deadline as it does today, and the reconnect ladder SHALL NOT be reset by that frame
+
+#### Scenario: The runner's cap follows the controller's setting
+- **GIVEN** a runner started with `FLEZHA_RECONNECT_MAX_BACKOFF_MS=2000`
+- **WHEN** it reconnects past the rung whose delay exceeds 2 s
+- **THEN** no wait SHALL exceed 2 s, and with the variable unset no wait SHALL exceed 30 s
+
+#### Scenario: Every jittered wait lies in the one band
+- **WHEN** a rung's delay `d` below the cap is jittered, on the runner or in the controller
+- **THEN** the wait SHALL lie in `[⌊d/2⌋+1, ⌊d/2⌋+d]` milliseconds, and a ladder's wait SHALL then be re-capped at its cap
 
 ### Requirement: Java SDK transport-edge and decode events SHALL NOT crash the runtime thread
 

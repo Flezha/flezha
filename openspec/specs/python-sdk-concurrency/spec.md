@@ -5,7 +5,7 @@ TBD - created by archiving change python-sdk. Update Purpose after archive.
 ## Requirements
 ### Requirement: The default host is a fetch-and-run thread pool with a starvation supervisor
 
-The SDK's default executor SHALL run a base pool of Python threads, each looping `poll → dispatch → complete` on itself, and one supervisor thread parked in `flz_core_wait_starvation`. Each starvation observation SHALL start one additional worker, up to a ceiling; workers above the base SHALL retire after an idle streak. The base SHALL default to the machine's processor count and SHALL be configured by `FLEZHA_WORKER_POOL_SIZE`; the ceiling SHALL default to ten times the base, never below it, and SHALL be configured by `FLEZHA_WORKER_POOL_MAX`. The SDK SHALL introduce no additional pool knob.
+The SDK's default executor SHALL run a base pool of Python threads, each looping `poll → dispatch → complete` on itself, and one supervisor thread parked in the core pool governor's supervisor entry (`flz_core_pool_supervise`), which waits on the core's starvation signal and answers what to spawn. Each starvation observation SHALL start one additional worker, up to a ceiling; workers above the base SHALL retire after the governor's idle time, 30 s without work. The base SHALL default to the machine's processor count, passed to the governor as this SDK's default, and SHALL be configured by `FLEZHA_WORKER_POOL_SIZE`; the ceiling SHALL default to ten times the base, never below it, and SHALL be configured by `FLEZHA_WORKER_POOL_MAX`; the core reads both. The supervisor SHALL drain the core's notice queue on every answer. The SDK SHALL introduce no additional pool knob.
 
 The process's main thread SHALL NOT be a poll worker, because CPython runs signal handlers only on the main thread between bytecodes and a main thread inside a handler would delay them by the length of that handler.
 
@@ -43,7 +43,7 @@ The SDK SHALL NOT offer a pool configuration that omits the starvation superviso
 
 ### Requirement: Every blocking core call releases the GIL
 
-The binding SHALL release the global interpreter lock for the duration of every blocking core call — `poll`, `wait_starvation`, `complete` and the steps relay inbox receive — so that no blocking core call prevents another Python thread from running. The binding SHALL NOT hold a Rust lock across arbitrary Python execution.
+The binding SHALL release the global interpreter lock for the duration of every blocking core call — `poll`, the pool supervisor entry `pool_supervise`, `complete` and the steps relay inbox receive — so that no blocking core call prevents another Python thread from running. The binding SHALL NOT hold a Rust lock across arbitrary Python execution.
 
 #### Scenario: A blocked steps relay receive does not freeze the interpreter
 - **WHEN** a steps stage waits on the inbox for several seconds

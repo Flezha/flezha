@@ -129,3 +129,32 @@ every SDK renders it identically and none carries a rule of its own beside it.
 - **WHEN** a channel name is at the limit exactly
 - **THEN** registration SHALL accept it and every frame the channel produces SHALL encode
 
+### Requirement: A frame body that cannot be read SHALL end the stream on both sides, counted and logged
+
+The frame body and its metadata table SHALL be decoded by one decoder, `flz_transport`'s
+payloader, on the runner reader and in the controller NIF frame buffer alike; the NIF SHALL keep
+only its incremental buffering. A body or metadata table that decoder cannot read, including a
+truncated metadata pair, SHALL be stream-fatal on the controller as it is on the runner: the
+driver SHALL close the stream through its existing close path with the distinct close reason
+`malformed_frame`, SHALL count it in the driver's stats, and the close SHALL be logged by the
+stream's owner. No frame SHALL be skipped silently, and no pair of a truncated metadata table
+SHALL be delivered.
+
+#### Scenario: The controller closes a stream whose frame body it cannot read
+
+- **WHEN** a runner writes a frame whose header is within the limit and whose body's inner
+  lengths do not fit the payload
+- **THEN** the controller's driver closes that stream with reason `malformed_frame`, its
+  malformed-frame count rises by one, and other streams are unaffected, on UDS and on QUIC
+
+#### Scenario: A truncated metadata table is refused, not shortened
+
+- **WHEN** a frame's metadata table ends inside a key or value
+- **THEN** both decoders refuse the frame, and the controller delivers none of the table's pairs
+
+#### Scenario: Well-formed frames decode as before
+
+- **WHEN** frames within the limit, with and without metadata, arrive split across reads
+- **THEN** the controller delivers each frame whole and unchanged, exactly as before the decoder
+  was shared
+

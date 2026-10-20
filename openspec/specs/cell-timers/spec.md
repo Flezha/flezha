@@ -11,7 +11,9 @@ the absolute millisecond timestamp the timer is scheduled at, and each SHALL off
 cancellation taking that timestamp. Registering the same kind and timestamp twice on
 one Cell SHALL be idempotent — pending timers are a set, not a queue. Timers SHALL
 be scoped to the Cell that registered them and SHALL NOT be visible to any other
-Cell.
+Cell. A hosted SDK's cancellation SHALL answer nothing about whether the timer was pending
+(Java `void`, Elixir `:ok`, as Python, Ruby, PHP and Node already do): the pending set is the
+core's, and the core applies the cancellation when the item settles.
 
 #### Scenario: A timer is registered and returns its absolute time
 
@@ -35,7 +37,7 @@ Cell.
 
 #### Scenario: The Elixir ctx registers the same absolute timestamp and cancels by it
 - **WHEN** an Elixir Tasklet calls `Ctx.timer_after(ctx, 30_000)` while `Ctx.now(ctx)` is 1000, calls it again, and then calls `Ctx.cancel_processing_time_timer(ctx, 31000)`
-- **THEN** both registrations answer `{:ok, 31000}` and leave exactly one processing-time timer pending at 31000, and the cancellation answers `true` and leaves none
+- **THEN** both registrations answer `{:ok, 31000}`, the cancellation answers `:ok`, and once the item settles no processing-time timer is pending at 31000
 
 ### Requirement: A fired timer SHALL invoke `on_timer` with the scheduled timestamp
 
@@ -201,19 +203,50 @@ In the Elixir SDK the firing's ops — its removal as op 0 — ride the record's
 
 ### Requirement: Pending timers per Cell SHALL be bounded
 
-Each Tasklet SHALL carry a `max_timers_per_cell` bound. Registering past it
-SHALL return an error naming the Tasklet and the bound rather than allocating.
-Wheel occupancy and pending-timer counts SHALL be exposed as per-Tasklet counters.
+Each Tasklet SHALL carry a `max_timers_per_cell` bound, declared in every SDK (default 10 000) and
+carried in the class declaration the core receives. For the six hosted SDKs the core SHALL judge
+an item's timer ops once, when the item settles and before its verdict is acted on, through its
+one timer session, against the Cell's pending set without copying it: registrations that would
+leave more than the bound pending SHALL make the item a non-retryable item failure with
+`runtime.timer_cap_exceeded` naming the Tasklet and the bound, settled as any non-retryable item
+failure is (no output shipped, no registration committed, parked or failing its stage), with the
+pending set unchanged, and the host's state for the Cell SHALL equal its durable state afterwards.
+No hosted SDK SHALL check the bound at the registering call, and an item that registers no timer
+SHALL pay nothing for the check. The typed Rust SDK, which runs the core's session in process,
+SHALL refuse at the registering call instead. The items of one activation SHALL be judged in
+order, each against the set the items before it committed. Pending, set, fired, cancelled and refused
+counts SHALL be exposed as per-Tasklet counters, and the heartbeat's `timers_fired` SHALL count
+every committed firing, in every SDK.
 
 #### Scenario: Registration past the cap is refused
 
-- **WHEN** a Cell holding `max_timers_per_cell` pending timers registers one more
-- **THEN** the call SHALL return an error naming the Tasklet and the bound, and the pending set SHALL be unchanged
+- **WHEN** a Cell holding `max_timers_per_cell` pending timers registers one more, in any of the six hosted SDKs
+- **THEN** the item SHALL fail with `runtime.timer_cap_exceeded` naming the Tasklet and the bound, none of its outputs SHALL ship, and the pending set SHALL be unchanged
+
+#### Scenario: A refused item leaves the host and the record in agreement
+
+- **WHEN** an item that records a state change and then registers a timer past the cap is refused, in any of the six hosted SDKs
+- **THEN** the Cell's live state read SHALL equal the state a restore from the Cell's records folds
+
+#### Scenario: Rust refuses at the call
+
+- **WHEN** a Rust tasklet registers a timer past the cap
+- **THEN** `timer_after` SHALL return the refusal and the tasklet MAY handle it
+
+#### Scenario: One batch's items see each other's timers in order
+
+- **WHEN** two items of one activation for a Cell one below the cap each register a new timer
+- **THEN** the first SHALL commit and the second SHALL be refused
 
 #### Scenario: Occupancy is observable
 
 - **WHEN** timers are pending across a Relay's Cells
 - **THEN** a per-Tasklet pending-timer count SHALL be reported alongside the existing per-Tasklet counters
+
+#### Scenario: Firings move the counter on every SDK
+
+- **WHEN** a processing-time timer fires and its item settles on a Python, Ruby, PHP, Node, Java, Elixir or Rust runner
+- **THEN** the runner's heartbeat `timers_fired` SHALL rise by one and the Tasklet's fired counter SHALL rise by one
 
 ### Requirement: A Cell timer belongs to a tasklet of either kind
 
@@ -291,4 +324,17 @@ For a steps class that journals, the removal of a fired timer from its Cell's pe
 
 - **WHEN** a steps class with persistence off fires a timer
 - **THEN** the removal SHALL be applied when `on_timer`'s attempt settles, and no stage acknowledgement SHALL be waited for
+
+### Requirement: An event-time timer SHALL be refused in a class without an event-time clock, in every SDK
+
+A registration of an event-time timer by a Tasklet whose clock is not event time SHALL be refused
+with `runtime.event_time_timer_without_event_time_clock` in all seven SDKs: judged by the core at
+settle like the bound in the six hosted SDKs, the item failing non-retryably, and at the call in
+the Rust SDK. Such a timer would never fire: the event-time
+trigger runs only for event-time classes, and a pending timer keeps a sleeping flow relay awake.
+
+#### Scenario: A processing-time class registers an event-time timer
+
+- **WHEN** a Python tasklet whose class declares no event-time clock calls `timer_at_event_time`
+- **THEN** the item SHALL fail with `runtime.event_time_timer_without_event_time_clock` and no timer SHALL be pending for the Cell
 

@@ -1016,9 +1016,10 @@ op of the tick, so such bindings take only the plan slots no repair needs.
 
 Every transport server driver started through the NIF SHALL produce the driver self-report
 `driver_stats/1` returns, in one shape, so that no reader above the NIF carries a per-transport
-branch. The shape is `%{now_ms, loop_iterations, last_loop_ms, cmd_queue_depth, streams: [...]}`
-with each stream reporting `{stream_id, write_buffer_len, write_buffer_dropped, frames_written,
-frames_read, last_write_ms, last_read_ms}`.
+branch. The shape is `%{now_ms, loop_iterations, last_loop_ms, cmd_queue_depth, malformed_frames,
+streams: [...]}`, where `malformed_frames` counts the streams the driver closed as
+`malformed_frame`, with each stream reporting `{stream_id, write_buffer_len, write_buffer_dropped,
+frames_written, frames_read, last_write_ms, last_read_ms}`.
 
 A field SHALL carry a measurement of the driver's own behaviour or SHALL be absent. A value that
 means "not measured" SHALL NOT be reported as zero, because the classifier reads zero as healthy
@@ -1035,6 +1036,10 @@ at all carries no `:driver` key rather than a differently-shaped one.
 #### Scenario: A driver's per-stream line reports what it actually did
 - **WHEN** a stream on either server driver is offered frames and its peer takes some of them
 - **THEN** every offered frame is counted either as written or as refused at the ceiling, a write the peer accepted stamps `last_write_ms`, and the reported `write_buffer_len` is the depth of that stream's own send buffer
+
+#### Scenario: A stream closed on a malformed frame is counted
+- **WHEN** a peer sends either server driver a frame whose body does not decode
+- **THEN** the driver closes that stream as `malformed_frame` and its `malformed_frames` grows by one
 
 ### Requirement: A tick's liveness read SHALL NOT walk the state tree
 

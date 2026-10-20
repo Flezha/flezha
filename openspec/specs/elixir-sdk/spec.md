@@ -486,7 +486,7 @@ A Cell's live state and its pending timer set SHALL be held by the host, keyed b
 
 ### Requirement: The Elixir SDK dispatches on a pool of workers fed by native poll threads
 
-Each worker of the Elixir SDK SHALL be an Elixir process paired with one thread the native library owns. The thread SHALL block in the core's poll and hand each activation to its worker as a message. The worker SHALL run the user code and answer through the core's complete. A thread SHALL poll again only after its worker completed. No call that parks for an activation SHALL run on a BEAM scheduler, dirty or normal. The pool SHALL start at a base size and grow on the core's starvation signal up to a ceiling, both read through `Flezha.SDK.Knob`.
+Each worker of the Elixir SDK SHALL be an Elixir process paired with one thread the native library owns. The thread SHALL block in the core's poll and hand each activation to its worker as a message. The worker SHALL run the user code and answer through the core's complete. A thread SHALL poll again only after its worker completed. No call that parks for an activation SHALL run on a BEAM scheduler, dirty or normal. The pool SHALL start at a base size and grow on the core's starvation signal up to a ceiling, both read by the core's pool governor (the base defaulting to the schedulers online), and a worker started above the base SHALL stop after the governor's idle time, 30 s without an activation. The SDK SHALL carry no pool timing of its own.
 
 #### Scenario: A parked poll holds no VM thread
 
@@ -497,6 +497,10 @@ Each worker of the Elixir SDK SHALL be an Elixir process paired with one thread 
 
 - **WHEN** every worker is held by a tasklet waiting on a spawn answer and the core reports starvation
 - **THEN** the pool SHALL add a worker, up to its ceiling, and new work SHALL be dispatched
+
+#### Scenario: A grown worker stops when idle
+- **WHEN** the pool grew above its base under starvation and the grown worker's thread then polls nothing for 30 s
+- **THEN** that worker and its thread SHALL stop, and the base workers SHALL remain
 
 ### Requirement: One runner or one local run is live in a BEAM at a time
 

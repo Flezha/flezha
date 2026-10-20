@@ -53,7 +53,7 @@ The SDK SHALL ship a `SwooleExecutor` that runs the poll loop on a pool of `Swoo
 
 Each thread SHALL bootstrap the runner's entry script, rebuild the PHP-side tasklet registry, and attach to the existing context by its address, without re-declaring classes to the core: `flz_core_declare_class` is per context, not per thread. The entry script is therefore re-entered, and the SDK SHALL document that it must be safe to `require` — in particular that it carries no `#!` line, which is stripped only from the script PHP was invoked with.
 
-The pool SHALL grow on the core's own signal rather than a guess: a supervisor SHALL block in `flz_core_wait_starvation` and add a thread when starvation is observed and the configured maximum is not reached, which is the case the ABI documents as "hosts whose fetch threads can be occupied by user code".
+The pool SHALL grow on the core's own signal rather than a guess: a supervisor SHALL block in the core pool governor's supervisor entry (`flz_core_pool_supervise`), which waits on the core's starvation signal, and add a thread when it answers so, the governor holding the configured maximum, which is the case the ABI documents as "hosts whose fetch threads can be occupied by user code". A thread the governor started above the base SHALL leave after the governor's idle time, 30 s without work.
 
 `SwooleExecutor` SHALL be selected explicitly and SHALL NOT be the default, because it requires a ZTS PHP build and an extension that most distributions do not ship.
 
