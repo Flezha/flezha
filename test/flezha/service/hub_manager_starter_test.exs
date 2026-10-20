@@ -214,7 +214,7 @@ defmodule Flezha.Service.HubManagerStarterTest do
       refute namespace in HubManager.get_running_namespaces()
     end
 
-    test "reclaims a hub whose only local child is a plugin home", %{tmp: tmp} do
+    test "keeps a lone hub whose only local child is a plugin home", %{tmp: tmp} do
       # The suite's setting, so the declared set is empty and only the local
       # children decide.
       Application.put_env(:flezha, :auto_restore_enabled, false)
@@ -236,7 +236,8 @@ defmodule Flezha.Service.HubManagerStarterTest do
 
       HubManager.stop_hub_if_vacant(namespace)
 
-      refute namespace in HubManager.get_running_namespaces()
+      assert namespace in HubManager.get_running_namespaces()
+      assert [{{:plugin, "home_only"}, _}] = HubManager.local_children(namespace, :all)
     end
   end
 

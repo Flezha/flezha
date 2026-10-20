@@ -270,6 +270,27 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
     end
 
+    test "a plugin home is neither locally hosted nor still local" do
+      on_exit(NodeTestHelper.override_log_level(:info))
+      stub(HubManager, :get_running_namespaces, fn -> ["default"] end)
+      stub(ProcessHub, :is_alive?, fn _hub -> true end)
+
+      stub(ProcessHub, :process_list, fn _hub, :local ->
+        [{"op-1", self()}, {{:plugin, "p"}, self()}]
+      end)
+
+      stub_finalise_rows()
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> NodeTestHelper.park() end)
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
+        end)
+
+      assert log =~ "locally_hosted=1"
+      assert log =~ "still_local=1"
+    end
+
     test "a timed-out drain leaves finalise its own budget, and a hub stop that never returns ends it" do
       test_pid = self()
       stub_local_relays()

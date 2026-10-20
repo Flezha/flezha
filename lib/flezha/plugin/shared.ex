@@ -46,7 +46,6 @@ defmodule Flezha.Plugin.Shared do
 
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
-  alias Flezha.Identificator
   alias Flezha.Parallel
   alias Flezha.Relay.Overwatch
   alias Flezha.Plugin
@@ -54,6 +53,7 @@ defmodule Flezha.Plugin.Shared do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Extension.Table.Health
   alias Flezha.Plugin.Extension.Table.Subscription
+  alias Flezha.Plugin.Home
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour.Decl
@@ -199,7 +199,7 @@ defmodule Flezha.Plugin.Shared do
   end
 
   defp home_copy(namespace, name) do
-    case ProcessHub.child_lookup(Identificator.hub(namespace), {:plugin, name}) do
+    case Home.row(namespace, name) do
       {_spec, [{_node, home} | _]} -> call(home, :copy)
       _none -> {:error, {:plugin_not_running, name}}
     end

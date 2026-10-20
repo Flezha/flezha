@@ -38,8 +38,6 @@ defmodule Flezha.Shutdown.Coordinator do
 
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
-  alias Flezha.Identificator
-  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias Flezha.Shutdown.SignalHandler
@@ -354,20 +352,8 @@ defmodule Flezha.Shutdown.Coordinator do
 
   defp capture_local_relays() do
     HubManager.get_running_namespaces()
-    |> Enum.into(%{}, fn ns ->
-      hub_id = Identificator.hub(ns)
-
-      ids =
-        case Hub.alive?(hub_id) do
-          true ->
-            ProcessHub.process_list(hub_id, :local)
-            |> Enum.map(fn {relay_id, _pid} -> relay_id end)
-
-          false ->
-            []
-        end
-
-      {ns, ids}
+    |> Map.new(fn ns ->
+      {ns, for({id, _pid} <- HubManager.local_children(ns, :relays), do: id)}
     end)
   end
 

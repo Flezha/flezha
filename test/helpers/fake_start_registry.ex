@@ -21,6 +21,7 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Validator
 
   defmodule Instance do
     @moduledoc """
@@ -116,11 +117,8 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
       |> Enum.sort_by(& &1.partition.index)
     end)
 
-    stub(ProcessHub, :child_lookup, fn _hub, id ->
-      case pid_of(registry, id) do
-        {:ok, pid} -> {id, [{node(), pid}]}
-        _ -> nil
-      end
+    stub(Validator, :relay_unique, fn _ns, id ->
+      if pid_of(registry, id) == :error, do: :ok, else: {:error, {:id_in_use, id}}
     end)
 
     stub(ProcessHub, :start_child, fn _hub, child_spec, _opts ->

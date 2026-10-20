@@ -123,8 +123,7 @@ defmodule Flezha.Convergence.Probe do
   defp relays(namespaces) do
     pairs =
       for ns <- namespaces,
-          {relay_id, pid} <- safe_relays(ns),
-          node(pid) == node(),
+          {relay_id, pid} <- HubManager.local_children(ns, :relays),
           do: {{ns, relay_id}, pid}
 
     pairs
@@ -290,12 +289,6 @@ defmodule Flezha.Convergence.Probe do
 
   defp running_namespaces() do
     HubManager.get_running_namespaces()
-  catch
-    :exit, _ -> []
-  end
-
-  defp safe_relays(namespace) do
-    HubManager.get_all_relays(namespace)
   catch
     :exit, _ -> []
   end

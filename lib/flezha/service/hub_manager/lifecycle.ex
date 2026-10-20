@@ -288,7 +288,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
     Rows.with_live_hub(namespace, {:error, :no_target_nodes}, fn hub_id ->
       result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
-      with {:ok, _} <- result, do: await_local_children_gone(hub_id, namespace, deadline)
+      with {:ok, _} <- result, do: await_local_children_gone(namespace, deadline)
       result
     end)
   catch
@@ -300,11 +300,9 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   # ends when its old copy closes, after the new one opened. The node is
   # quiesced, so none is started meanwhile. Answers `:deadline` with the
   # monitors flushed when the budget runs out first.
-  defp await_local_children_gone(hub_id, namespace, deadline) do
+  defp await_local_children_gone(namespace, deadline) do
     monitors =
-      for {_child_id, pid} <- ProcessHub.process_list(hub_id, :local), is_pid(pid) do
-        Process.monitor(pid)
-      end
+      for {_child_id, pid} <- Rows.local_children(namespace, :all), do: Process.monitor(pid)
 
     with :ok <- await_downs(monitors, deadline),
          do:

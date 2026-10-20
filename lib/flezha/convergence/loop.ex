@@ -404,12 +404,13 @@ defmodule Flezha.Convergence.Loop do
     )
   end
 
-  # A hub on a node whose fleet does not serve its namespace, holding none of
-  # its relays here, is reclaimed: the node leaves that namespace's cluster
-  # rather than being handed children it cannot host. Idempotent, and it stops
-  # nothing while a local relay is still there — which is what makes it
-  # safe to run beside the plan that is still moving them off. The fleet
-  # manager decides, since a runner may have connected since the snapshot.
+  # A hub on a node whose fleet does not serve its namespace is left when it
+  # holds nothing another member does not hold (`HubManager.holds_anything?/1`):
+  # the node leaves that namespace's cluster rather than being handed children
+  # it cannot host. Idempotent, and it stops nothing while a local relay is
+  # still there, which is what makes it safe to run beside the plan that is
+  # still moving them off. The fleet manager decides, since a runner may have
+  # connected since the snapshot.
   defp reclaim_vacant_hubs(%{active_runners: active}) do
     for {namespace, runners} <- active,
         runners != :unknown,

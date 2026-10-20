@@ -20,6 +20,7 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Placement
+  alias Flezha.Service.Validator
   alias Flezha.State.Paths
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
@@ -326,7 +327,7 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
     test "a refusal with no live winner behind it stays an error" do
       # A registry row whose process is gone: conceding would silently accept a
       # start that produced nothing.
-      stub(ProcessHub, :child_lookup, fn _hub, id -> {id, [{node(), self()}]} end)
+      stub(Validator, :relay_unique, fn _ns, id -> {:error, {:id_in_use, id}} end)
       stub(HubManager, :get_pid, fn ns, id -> {:error, {:relay_not_found, ns, id}} end)
 
       assert {:error, reason} =
@@ -388,8 +389,8 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
     end
 
     test "a generated id with a stale registry row is drawn again" do
-      stub(ProcessHub, :child_lookup, fn _hub, id ->
-        if id == "worker-ghost", do: {id, [{node(), self()}]}, else: nil
+      stub(Validator, :relay_unique, fn _ns, id ->
+        if id == "worker-ghost", do: {:error, {:id_in_use, id}}, else: :ok
       end)
 
       assert {:ok, %{relay_id: "worker-free"}} =

@@ -28,7 +28,7 @@ defmodule Flezha.Convergence.ProbePlacementTest do
     {:ok, pid} = start_supervised({OverwatchHost, state})
 
     stub(HubManager, :get_running_namespaces, fn -> [ns] end)
-    stub(HubManager, :get_all_relays, fn ^ns -> [{id, pid}] end)
+    stub(HubManager, :local_children, fn ^ns, :relays -> [{id, pid}] end)
     stub(HubManager, :relay_runner_tag, fn ^ns, ^id -> nil end)
     stub(FleetManager, :active_runners, fn ^ns -> [] end)
     stub(FleetManager, :runners_for_factory, fn ^ns, @factory -> [] end)

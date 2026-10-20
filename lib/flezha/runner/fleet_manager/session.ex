@@ -245,7 +245,7 @@ defmodule Flezha.Runner.FleetManager.Session do
       |> Roster.get_runner_ids(namespace, :active)
       |> Enum.any?(fn id -> id != runner_id end)
 
-    other_nodes? = HubManager.get_hub_nodes(namespace) != []
+    other_nodes? = HubManager.other_members?(namespace)
 
     # The removal grace: the last runner of a namespace nobody else serves is held
     # `:inactive` for its window, so a reconnect swaps its bindings back rather

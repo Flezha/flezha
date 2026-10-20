@@ -74,11 +74,7 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   Stop the namespace's hub the way a controller restart does: its registry
   directory stays on disk, where `HubManager.stop_hub/1` would wipe it.
   """
-  def stop_hub_keeping_registry(ns) do
-    hub_id = Identificator.hub(ns)
-    Supervisor.terminate_child(HubManager, hub_id)
-    Supervisor.delete_child(HubManager, hub_id)
-  end
+  def stop_hub_keeping_registry(ns), do: HubManager.leave_hub(ns)
 
   @doc "Where the namespace's hub keeps its durable registry under the configured root."
   def registry_file(ns),

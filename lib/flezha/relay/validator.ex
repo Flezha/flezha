@@ -1,5 +1,6 @@
 defmodule Flezha.Service.Validator do
   alias Flezha.Identificator
+  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
 
   def valid_namespace(namespace) do
@@ -10,13 +11,7 @@ defmodule Flezha.Service.Validator do
   end
 
   def relay_unique(namespace, relay_id) do
-    result =
-      ProcessHub.child_lookup(
-        Identificator.hub(namespace),
-        relay_id
-      )
-
-    case result do
+    case Hub.with_live(Identificator.hub(namespace), nil, &ProcessHub.child_lookup(&1, relay_id)) do
       nil -> :ok
       _ -> {:error, {:id_in_use, relay_id}}
     end

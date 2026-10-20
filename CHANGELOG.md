@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed: the last member of a namespace hub keeps it
+
+- The last live member of a namespace hub keeps the hub while it holds anything: a declared
+  relay no runner binds, or only a controller plugin's home. Of two members holding nothing
+  here, the declared list's leader keeps it, and a member running a child is never left alone
+  by a leader running nothing.
+- A vacancy reclaim stops the hub on that controller without deleting its registry directory;
+  only a namespace stop deletes it.
+- The shutdown drain no longer counts plugin homes among the relays it reports as locally
+  hosted or still local.
+
 ### Changed: timers are judged once, in the core
 
 - **BREAKING:** in the Java, Elixir, Python, Ruby, PHP and Node SDKs the timer cap and the

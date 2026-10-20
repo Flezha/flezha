@@ -17,6 +17,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Service.HubManager.Placement
   alias Flezha.Service.HubManager.Rows
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.HookManager
 
   use Supervisor
@@ -41,6 +42,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate hub_alive?(arg1), to: Rows
   defdelegate live_node(arg1), to: Rows
   defdelegate live_pid(arg1), to: Hub
+  defdelegate local_children(arg1, arg2), to: Rows
   @doc false
   defdelegate migration_strategy(), to: Lifecycle
   defdelegate relay_bindings(arg1), to: Rows
@@ -118,19 +120,24 @@ defmodule Flezha.Service.HubManager do
     RecoveryGate.await_recovery_complete(hub_ids, timeout_ms)
   end
 
+  # The explicit "tear this namespace down" path (a user's namespace stop, the
+  # shutdown walk's hub row): the persistent registry goes too, so a later
+  # `start_hub/1` starts empty rather than resurrecting what was torn down.
   def stop_hub(namespace) do
+    leave_hub(namespace)
+    _ = Lifecycle.wipe_registry_dir(Identificator.hub(namespace))
+    :ok
+  end
+
+  @doc """
+  Stop this node's member of `namespace`'s hub and keep its registry directory:
+  a later `start_hub/1` reads it, as after a restart.
+  """
+  @spec leave_hub(binary()) :: :ok
+  def leave_hub(namespace) do
     hub_id = Identificator.hub(namespace)
     Supervisor.terminate_child(__MODULE__, hub_id)
     Supervisor.delete_child(__MODULE__, hub_id)
-
-    # `stop_hub/1` is the explicit "tear this namespace down" path
-    # (user-initiated, or last-runner cleanup deciding the
-    # namespace has gone away). Clean the persistent registry so a
-    # later `start_hub/1` for the same namespace starts empty rather
-    # than resurrecting children that were intentionally torn down.
-    # Cold-boot recovery is unaffected — that path never calls
-    # `stop_hub/1`.
-    _ = Lifecycle.wipe_registry_dir(hub_id)
     :ok
   end
 
@@ -169,49 +176,60 @@ defmodule Flezha.Service.HubManager do
   end
 
   @doc """
-  Reclaim a namespace hub on THIS node, but only when the namespace is neither
-  declared here nor holding any of this node's relays.
+  Leave a namespace hub on THIS node when this member holds nothing the
+  cluster would lose (`holds_anything?/1`). The leave keeps the registry
+  directory, so a wrong one costs a hub restart, never the declared list.
 
-  Tearing down a hub that still holds durably-suspended relays would kill
-  their Overwatches and wipe the durable registry, stranding a parked fleet
-  across a runner restart — so runner cleanup and the loop's vacancy reclaim go
-  through this guard. A peer's relays are that peer's business: the reclaim
-  is node-local, which is what lets a controller whose fleet does not serve a
-  namespace leave that namespace's cluster while the relays the hub moved
-  off it keep running elsewhere.
-
-  **What it was declared to hold counts too, and so does a recovery that has
-  not settled.** The reclaim runs on every convergence tick over each hub with
-  no active runners, and `stop_hub/1` wipes the registry directory. Boot-time
-  creation is what makes that reachable: it puts hubs exactly where runners are
-  not.
-
-  Two windows, and a live-placement read is blind in both. A hub does not load
-  its durable registry into the live one at start — the rows sit on disk until
-  the first reconcile round runs, and every live read answers "empty" until
-  then, so an unsettled recovery is what says "wait".
-  After the reconcile the rows are back but nothing has placed them, because
-  placing a relay needs a runner and there is none; the declared set is
-  what says "this node was told to hold these", whether or not anything
-  currently runs them.
-
-  A settled hub declared to hold nothing IS vacant and is still reclaimed, so
-  the rule does not pin every hub the moment auto-restore writes it a registry
-  directory, and a node whose fleet does not serve a namespace still leaves
-  that namespace's cluster.
-
-  The explicit `stop_hub/1` teardown (user `stop_namespace`, the shutdown
-  plan's namespace step) is intentionally unguarded.
+  Runner cleanup and the convergence loop's reclaim of a hub with no active
+  runners come here. The explicit `stop_hub/1` teardown (a user's namespace
+  stop, the shutdown walk's hub row) is unguarded.
   """
   def stop_hub_if_vacant(namespace) do
-    unless holds_anything?(namespace), do: stop_hub(namespace)
+    unless holds_anything?(namespace), do: leave_hub(namespace)
     :ok
   end
 
-  defp holds_anything?(namespace) do
-    Rows.local_relays?(namespace) or
-      Rows.declares_anything?(namespace) or
-      unsettled?(namespace)
+  @doc """
+  Whether this member must keep `namespace`'s hub.
+
+  It keeps it while it runs a relay here, and while a recovery has not settled:
+  a hub does not load its durable rows into the live registry until its first
+  reconcile, so every live read answers "empty" until then.
+
+  What the hub was declared to hold, or a plugin home it runs here, keeps it
+  unless another member holds the hub instead: another live member runs a
+  child of it, or no member runs one and this node is not the declared list's
+  leader. So the last live member keeps a hub declared to hold relays no
+  runner binds, and one whose only child is a plugin home, while a node whose
+  fleet does not serve the namespace leaves once a peer runs what it held. A
+  settled hub that holds nothing is left.
+  """
+  @spec holds_anything?(binary()) :: boolean()
+  def holds_anything?(namespace) do
+    Rows.local_relays?(namespace) or unsettled?(namespace) or
+      ((Rows.declares_anything?(namespace) or Rows.local_children(namespace, :all) != []) and
+         not other_holder?(namespace))
+  end
+
+  @doc "Whether another controller is a live member of `namespace`'s hub."
+  @spec other_members?(binary()) :: boolean()
+  def other_members?(namespace), do: Rows.get_hub_nodes(namespace) != []
+
+  # The leader tie-break applies only while no member runs a child: a member
+  # running only a plugin home would otherwise leave because the leader, which
+  # runs nothing, leads, while the leader leaves because that member runs one.
+  defp other_holder?(namespace) do
+    members = Rows.get_hub_nodes(namespace, true)
+    hosts = for host <- Rows.child_nodes(namespace), host in members, do: host
+
+    Enum.any?(hosts, &(&1 != node())) or
+      (hosts == [] and other_members?(namespace) and declared_leader(namespace) != node())
+  end
+
+  defp declared_leader(namespace) do
+    Rows.with_live_hub(namespace, node(), fn hub_id ->
+      hub_id |> ProcessHub.Hub.get() |> DeclaredChildren.leader()
+    end)
   end
 
   # `:timeout` counts as unsettled: a hub that gave up may still hold rows

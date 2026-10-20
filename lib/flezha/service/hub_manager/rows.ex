@@ -387,7 +387,11 @@ defmodule Flezha.Service.HubManager.Rows do
     end)
   end
 
-  @doc "Whether `namespace`'s declared set names any child, relay or plugin."
+  @doc """
+  Whether `namespace`'s declared set names any child, relay or plugin. The set
+  is the cluster's, so it keeps a hub here only while no other member holds it
+  (`HubManager.holds_anything?/1`).
+  """
   @spec declares_anything?(binary() | atom()) :: boolean()
   def declares_anything?(namespace) do
     with_live_hub(namespace, false, fn hub_id ->
@@ -411,18 +415,39 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
-  True when THIS node still hosts relays of `namespace`'s hub — the
-  question a node-local reclaim asks, as opposed to the cluster-wide
-  `registered_relays?/1`. A plugin home placed here is not a relay. A hub
-  that cannot be read answers `true`: a read that failed proves nothing,
-  and nothing is torn down on it.
+  True when THIS node still hosts relays of `namespace`'s hub, as opposed to
+  the cluster-wide `registered_relays?/1`. A plugin home placed here is not a
+  relay: `HubManager.holds_anything?/1` weighs it with the declared set. A hub
+  that cannot be read answers `true`: a read that failed proves nothing, and
+  nothing is torn down on it.
   """
   @spec local_relays?(binary()) :: boolean()
-  def local_relays?(namespace) do
-    with_live_hub(namespace, true, fn hub_id ->
-      ProcessHub.process_list(hub_id, :local) |> Enum.any?(fn {id, _pids} -> is_binary(id) end)
+  def local_relays?(namespace),
+    do: with_live_hub(namespace, true, &(local_list(&1, :relays) != []))
+
+  @doc """
+  The `{child_id, pid}` pairs `namespace`'s hub runs on THIS node: its relays
+  (binary ids) with `:relays`, every child, plugin homes included, with `:all`.
+  A hub that is down or goes away mid-read runs nothing here.
+  """
+  @spec local_children(binary() | atom(), :relays | :all) :: [{term(), pid()}]
+  def local_children(namespace, kind) when kind in [:relays, :all],
+    do: with_live_hub(namespace, [], &local_list(&1, kind))
+
+  @doc "The nodes that run any child of `namespace`'s hub, plugin homes included."
+  @spec child_nodes(binary() | atom()) :: [node()]
+  def child_nodes(namespace) do
+    with_live_hub(namespace, [], fn hub_id ->
+      for {_id, node_pids} <- ProcessHub.process_list(hub_id, :global),
+          {host, _pid} <- node_pids,
+          uniq: true,
+          do: host
     end)
-  catch
-    _kind, _reason -> true
+  end
+
+  defp local_list(hub_id, kind) do
+    for {id, pid} <- ProcessHub.process_list(hub_id, :local),
+        is_pid(pid) and (kind == :all or is_binary(id)),
+        do: {id, pid}
   end
 end

@@ -66,7 +66,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   defp emit_for_namespace(namespace) do
     hub = Identificator.hub(namespace)
 
-    registered = safe_process_count(hub)
+    registered = length(HubManager.local_children(namespace, :all))
     emit_metric(:registered_processes, %{value: registered}, %{hub: hub})
 
     recovery_state = safe_recovery_state(hub)
@@ -100,16 +100,6 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
       FleetManager.active_runners(namespace, @default_poll_ms)
     catch
       _, _ -> []
-    end
-  end
-
-  defp safe_process_count(hub) do
-    try do
-      hub
-      |> ProcessHub.process_list(:local)
-      |> length()
-    catch
-      _, _ -> 0
     end
   end
 

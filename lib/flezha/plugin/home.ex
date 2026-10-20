@@ -28,6 +28,7 @@ defmodule Flezha.Plugin.Home do
   alias Flezha.Plugin
   alias Flezha.Plugin.Shared
   alias Flezha.Process.Cspec
+  alias Flezha.Process.Hub
 
   @doc """
   Run `fun` inside the home of the plugin `name`, one call at a time: a bind of
@@ -37,7 +38,7 @@ defmodule Flezha.Plugin.Home do
   @spec serialized(binary(), binary(), (-> result)) :: result | {:error, term()}
         when result: term()
   def serialized(namespace, name, fun) do
-    case ProcessHub.child_lookup(Identificator.hub(namespace), {:plugin, name}) do
+    case row(namespace, name) do
       {_spec, [{_node, home} | _]} ->
         GenServer.call(home, {:serialized, fun}, Durations.get(:route_call_timeout_ms))
 
@@ -47,6 +48,16 @@ defmodule Flezha.Plugin.Home do
   catch
     :exit, reason -> {:error, {:unreachable, reason}}
   end
+
+  @doc "The `{:plugin, name}` row of `namespace`'s hub, or `nil` while it has none or is down."
+  @spec row(binary(), binary()) :: {map(), [{node(), pid()}]} | nil
+  def row(namespace, name),
+    do:
+      Hub.with_live(
+        Identificator.hub(namespace),
+        nil,
+        &ProcessHub.child_lookup(&1, {:plugin, name})
+      )
 
   # The copy is linked: one that stopped because its last relay left is
   # started again by the next one that joins; one that died takes its home
@@ -138,7 +149,7 @@ defmodule Flezha.Plugin.Home do
   # The entry as the hub's row holds it now: an update and a committed value
   # rewrite the row, never this process's start argument.
   defp current_entry(%{namespace: namespace, name: name}) do
-    with {cspec, _nodes} <- ProcessHub.child_lookup(Identificator.hub(namespace), {:plugin, name}),
+    with {cspec, _nodes} <- row(namespace, name),
          {:ok, {_namespace, %Plugin{} = entry}} <- Cspec.start_arg(cspec) do
       {:ok, entry}
     else
