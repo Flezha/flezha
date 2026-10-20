@@ -7,7 +7,7 @@ use std::sync::{Arc, Weak};
 use flz_transport::transport::FlezhaStream;
 
 use super::compensation::{plan_compensation, RecordSpan};
-use super::instance::{CellPos, Deadline, Failure, Firing, Message, Phase, Value};
+use super::instance::{CellPos, Deadline, Failure, Firing, Pass, Phase, Value};
 use super::run::{Run, RESTORE_GATE};
 use super::StepsError;
 use crate::cell::CellSlot;
@@ -97,35 +97,28 @@ pub(crate) fn message<V: Entering>(
     if !r.run.take(offset) {
         return;
     }
-    match r.address(channel, value.each(channel), stream, None) {
-        Ok(roots) => r.decide(|d| {
-            d.arrived(Message {
-                channel: channel_id,
-                offset,
-                call: call.cloned(),
-                roots,
-            })
-        }),
-        Err(error) => entry_ladder(inst, channel_id, value, stream, offset, call, error),
+    if let Err(error) = r.arrive(channel, channel_id, value, stream, offset, call) {
+        entry_ladder(inst, channel_id, value, stream, offset, call, error);
     }
 }
 
 /// The outside call the pass `slot` is running in carries, if any: what a
 /// sink output of the pass answers.
 pub fn pass_call(slot: &CellSlot) -> Option<Arc<str>> {
-    let inst = slot.instance.upgrade()?;
-    let r = Run::of(&inst)?;
-    let sheet = r.run.sheet();
-    sheet.pass.as_ref()?.call.clone()
+    read_pass(slot, |pass| pass.call.clone())
 }
 
 /// The input-log offset the pass `slot` is running in took, if any: a stage's
 /// items carry none of their own, and its effects are named by it.
 pub fn pass_offset(slot: &CellSlot) -> Option<u64> {
+    read_pass(slot, Pass::effect_offset)
+}
+
+fn read_pass<T>(slot: &CellSlot, read: impl FnOnce(&Pass) -> Option<T>) -> Option<T> {
     let inst = slot.instance.upgrade()?;
     let r = Run::of(&inst)?;
     let sheet = r.run.sheet();
-    sheet.pass.as_ref()?.effect_offset()
+    read(sheet.pass.as_ref()?)
 }
 
 /// A message on its way into the dead-letter queue instead of a pass; the
@@ -170,13 +163,8 @@ pub fn hold_emit(
             Ok(held) => attempt.held.extend(held),
             Err(error) => {
                 attempt.failure.get_or_insert(Failure {
-                    node,
-                    cell_key,
-                    error: StepsError::non_retryable(error),
-                    payload: None,
-                    attempts: 1,
                     ran: true,
-                    refused: false,
+                    ..Failure::new(node, cell_key, StepsError::non_retryable(error))
                 });
             }
         }
@@ -239,13 +227,9 @@ pub fn note_failure(
             let cell_key = cell.1.clone();
             let attempt = d.s.attempts.entry((node, cell)).or_default();
             attempt.failure.get_or_insert(Failure {
-                node,
-                cell_key,
-                error,
                 payload,
                 attempts,
-                ran: false,
-                refused: false,
+                ..Failure::new(node, cell_key, error)
             });
         });
     });
@@ -522,26 +506,15 @@ pub(super) fn entry_ladder<V: Entering>(
     let target = crate::retry::ParkTarget::edge(channel);
     let held = Arc::clone(&owner);
     let (value, stream, call) = (value.clone(), Arc::clone(stream), call.cloned());
-    let retried_call = call.clone();
+    let origin = (offset, call.clone(), None);
     let step = move || {
         let (Some(r), Some(channel)) = (Run::of(&held), held.topology.channel(channel_id)) else {
             return crate::retry::Attempt::Delivered(Vec::new());
         };
-        let roots = match r.address(channel, value.each(channel), &stream, None) {
-            Ok(roots) => roots,
-            Err(e) => return crate::retry::Attempt::Failed(e),
-        };
-        let call = retried_call.clone();
-        r.decide(|d| {
-            d.arrived(Message {
-                channel: channel_id,
-                offset,
-                call,
-                roots,
-            })
-        });
-        crate::retry::Attempt::Delivered(Vec::new())
+        match r.arrive(channel, channel_id, &value, &stream, offset, call.as_ref()) {
+            Ok(()) => crate::retry::Attempt::Delivered(Vec::new()),
+            Err(e) => crate::retry::Attempt::Failed(e),
+        }
     };
-    let origin = (offset, call, None);
     crate::retry::hand_ladder(&owner, label, target, origin, error, step, None);
 }

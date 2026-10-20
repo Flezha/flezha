@@ -149,6 +149,30 @@ impl Run<'_> {
         Ok(releases)
     }
 
+    /// A message's items addressed to the chain's roots, then the message
+    /// arrives on the sheet. Inlined: it runs once per message.
+    #[inline(always)]
+    pub(super) fn arrive<V: Entering>(
+        &self,
+        channel: &ChannelDescriptor,
+        channel_id: ChannelId,
+        value: &V,
+        stream: &Arc<FlezhaStream>,
+        offset: Option<u64>,
+        call: Option<&Arc<str>>,
+    ) -> Result<(), String> {
+        let roots = self.address(channel, value.each(channel), stream, None)?;
+        self.decide(|d| {
+            d.arrived(Message {
+                channel: channel_id,
+                offset,
+                call: call.cloned(),
+                roots,
+            })
+        });
+        Ok(())
+    }
+
     /// Whether `value` needs its host to key it for `edge`: a host releases a
     /// steps relay value untransformed and unkeyed, and a keyed consumer has no
     /// Cell until the edge's transforms and key have run. An entry value
@@ -464,11 +488,13 @@ impl Decide<'_, '_, '_> {
         id
     }
 
-    pub(super) fn drop_barrier(&mut self, id: u64) {
-        if let Some(barrier) = self.s.barriers.remove(&id) {
-            self.fx.drop_acks.push(barrier.reference_id);
+    pub(super) fn drop_barriers(&mut self, ids: Vec<u64>) {
+        for id in ids {
+            if let Some(barrier) = self.s.barriers.remove(&id) {
+                self.fx.drop_acks.push(barrier.reference_id);
+            }
+            self.disarm(Deadline::Ack(id));
         }
-        self.disarm(Deadline::Ack(id));
     }
 
     // -- the stop, the deadlines -------------------------------------------------
@@ -495,9 +521,7 @@ impl Decide<'_, '_, '_> {
                     })
                     .map(|(&id, _)| id)
                     .collect();
-                for id in owed {
-                    self.drop_barrier(id);
-                }
+                self.drop_barriers(owed);
                 self.compensate(AfterUndo::Terminal("cancelled".to_string(), String::new()));
             }
             // A pass being seeded reads the token as it starts; rollback IS

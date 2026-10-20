@@ -332,6 +332,21 @@ pub(crate) struct Failure {
     pub(crate) refused: bool,
 }
 
+impl Failure {
+    /// One attempt's failure with nothing to park.
+    pub(crate) fn new(node: usize, cell_key: Option<Arc<str>>, error: StepsError) -> Self {
+        Self {
+            node,
+            cell_key,
+            error,
+            payload: None,
+            attempts: 1,
+            ran: false,
+            refused: false,
+        }
+    }
+}
+
 /// A processing-time registration waiting to be armed: the Cell, the due time
 /// and the connection its firing rides.
 pub(crate) type HeldArm = (Arc<CellSlot>, u64, Arc<FlezhaStream>);

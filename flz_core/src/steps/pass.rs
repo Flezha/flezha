@@ -271,15 +271,7 @@ impl Decide<'_, '_, '_> {
                 stage.owed += items.len();
                 self.fx.admit.extend(items);
             }
-            Err(error) => self.fail(Failure {
-                node,
-                cell_key: None,
-                error: StepsError::non_retryable(error),
-                payload: None,
-                attempts: 1,
-                ran: false,
-                refused: false,
-            }),
+            Err(error) => self.fail(Failure::new(node, None, StepsError::non_retryable(error))),
         }
         self.owe_less(node, 1);
     }
@@ -308,13 +300,8 @@ impl Decide<'_, '_, '_> {
     /// nothing more.
     pub(super) fn stage_failed(&mut self, node: usize, error: String) {
         self.fail(Failure {
-            node,
-            cell_key: None,
-            error: StepsError::from(error),
-            payload: None,
-            attempts: 1,
-            ran: false,
             refused: true,
+            ..Failure::new(node, None, StepsError::from(error))
         });
         if let Some(stage) = self.s.pass.as_mut().and_then(|p| p.stages.get_mut(&node)) {
             stage.state = StageState::Done;
@@ -522,9 +509,7 @@ impl Decide<'_, '_, '_> {
         let call = pass.call.clone();
         let failure = pass.failure.clone();
         let message_pass = matches!(pass.origin, PassOrigin::Message { .. });
-        for id in owed_acks {
-            self.drop_barrier(id);
-        }
+        self.drop_barriers(owed_acks);
         // A root whose message was unreadable, with nothing of the pass done:
         // the message parks under its entry channel and the pass never
         // happened.

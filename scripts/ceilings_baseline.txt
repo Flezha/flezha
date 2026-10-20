@@ -28,7 +28,6 @@ flz_core/src/steps/compensation.rs::undo_step 62
 flz_core/src/steps/effects.rs::act 73
 flz_core/src/steps/effects.rs::admit 55
 flz_core/src/steps/effects.rs::send_barrier 63
-flz_core/src/steps/pass.rs::resolve_failure 51
 flz_core/src/steps/pass.rs::stage_committed 59
 flz_core/src/steps/pass.rs::stage_done 61
 flz_core/src/steps/resume.rs::open_gate 56
