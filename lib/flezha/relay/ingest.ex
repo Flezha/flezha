@@ -19,6 +19,7 @@ defmodule Flezha.Relay.Ingest do
 
   alias Flezha.Config.Durations
   alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
@@ -29,6 +30,8 @@ defmodule Flezha.Relay.Ingest do
   alias Flezha.Process.Timer
   alias Flezha.State.InputLog
   alias Flezha.Transport.LivenessCounters
+
+  @reply_to Token.reply_to_key()
 
   @typedoc """
   What the journal answers with, and the only thing a caller may forward.
@@ -72,7 +75,7 @@ defmodule Flezha.Relay.Ingest do
 
     payload =
       case Plugins.transform_io(state, :on_input, message, metadata) do
-        {message, hooked} -> {message, Calls.restore(hooked, metadata)}
+        {message, hooked} -> {message, Token.restore(hooked, metadata)}
         filtered -> filtered
       end
 
@@ -83,7 +86,7 @@ defmodule Flezha.Relay.Ingest do
   # The token a call's entry point minted is the only one an input may carry.
   defp admitted_token(metadata, {:call, _token}), do: metadata
   defp admitted_token(metadata, {:relay_call, _from, _token}), do: metadata
-  defp admitted_token(metadata, _reply_to), do: Calls.strip(metadata)
+  defp admitted_token(metadata, _reply_to), do: Token.strip(metadata)
 
   @doc """
   The `:call` entry point. An outside caller's call carries an integer
@@ -219,12 +222,12 @@ defmodule Flezha.Relay.Ingest do
   # answered the ingest's verdict at once.
   defp ingest_call(state, message, metadata, token, deadline_ms, _from)
        when is_integer(deadline_ms),
-       do: {:noreply, call(state, message, Calls.entry_metadata(metadata, token), token)}
+       do: {:noreply, call(state, message, Token.entry_metadata(metadata, token), token)}
 
   defp ingest_call(state, message, metadata, token, call, from) do
     metadata =
       metadata
-      |> Calls.entry_metadata(token)
+      |> Token.entry_metadata(token)
       |> Map.put("flz.msg_id", call.call)
       |> Map.put("flz.deadline_at", Integer.to_string(call.deadline_at))
 
@@ -443,7 +446,9 @@ defmodule Flezha.Relay.Ingest do
   def undelivered_calls(%Overwatch{} = state) do
     case InputLog.undelivered(Overwatch.relay_class(state)) do
       records when is_list(records) ->
-        for {_offset, _message, %{"flz.reply_to" => "o:" <> _ = token}} <- records, do: token
+        for {_offset, _message, %{@reply_to => token}} <- records,
+            Token.relay_token?(token),
+            do: token
 
       {:error, _reason} ->
         []

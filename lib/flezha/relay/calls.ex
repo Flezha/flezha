@@ -4,8 +4,9 @@ defmodule Flezha.Relay.Calls do
   Overwatch holds, and the client call every outside caller makes.
 
   A call is an ordinary input carrying a token the controller mints
-  (`flz.reply_to`, see `entry_metadata/2`). The runner carries the token to
-  every output the input causes, and stamps it on every sink output.
+  (`flz.reply_to`, see `Flezha.Relay.Calls.Token.entry_metadata/2`). The
+  runner carries the token to every output the input causes, and stamps it on
+  every sink output.
   `divert/4` hands the first such output, on the call's answer channel when it
   names one, to the row its token names, and lets every one of them continue
   to the output routes without the token.
@@ -15,9 +16,9 @@ defmodule Flezha.Relay.Calls do
   call id, held in `out`) waits for its outcome, which `settle/3` admits once.
   A relay's call reaches its callee's table as a row keyed by a relay
   token (`o:<caller>:<call id>:<created>:<deadline>:<answer channel>`), built
-  only from the controller's own delivery (`relay_token/1`); its answer is
-  handed to the delivery for the caller rather than replied to a waiting
-  process.
+  only from the controller's own delivery
+  (`Flezha.Relay.Calls.Token.relay_token/1`); its answer is handed to the
+  delivery for the caller rather than replied to a waiting process.
 
   Data and decisions only: the Overwatch arms each row's deadline under the
   timer family `:call`, runs the ingest, and takes and answers outbox holds;
@@ -28,14 +29,16 @@ defmodule Flezha.Relay.Calls do
   alias Flezha.Config.Durations
   alias Flezha.Error
   alias Flezha.Process.CallDelivery
+  alias Flezha.Relay.Calls.Token
 
-  @reply_to "flz.reply_to"
-  @answer_channel "flz.call_answer_channel"
-  @source "flz.call_source"
+  @reply_to Token.reply_to_key()
+  @call Token.call_key()
+  @answer_channel Token.answer_channel_key()
+  @source Token.source_key()
 
   defstruct rows: %{}, out: %{}
 
-  @type token :: binary()
+  @type token :: Token.t()
   @type row :: %{
           required(:from) => GenServer.from(),
           required(:channel) => binary() | nil,
@@ -171,39 +174,6 @@ defmodule Flezha.Relay.Calls do
   defp down_reason(reason), do: "its process exited (#{inspect(reason)})"
 
   # ---------------------------------------------------------------
-  # Tokens
-  # ---------------------------------------------------------------
-
-  @doc "A fresh outside-call token: `w:` and 16 random bytes, unpadded base64url."
-  @spec mint() :: token()
-  def mint, do: "w:" <> Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
-
-  @doc """
-  `metadata` carrying `token` as its one `flz.reply_to`, whatever the caller
-  put there, and without the answer channel its row keeps or the source its
-  call event named.
-  """
-  @spec entry_metadata(map(), token()) :: map()
-  def entry_metadata(metadata, token),
-    do: metadata |> Map.drop([@answer_channel, @source]) |> Map.put(@reply_to, token)
-
-  @doc "`metadata` without a `flz.reply_to`: what every other entry point admits."
-  @spec strip(map()) :: map()
-  def strip(metadata), do: Map.delete(metadata, @reply_to)
-
-  @doc """
-  Put back on `after_hooks` the token `before_hooks` arrived with, so no
-  `:on_input` hook adds, removes or rewrites one.
-  """
-  @spec restore(map(), map()) :: map()
-  def restore(after_hooks, before_hooks) do
-    case Map.fetch(before_hooks, @reply_to) do
-      {:ok, token} -> Map.put(after_hooks, @reply_to, token)
-      :error -> Map.delete(after_hooks, @reply_to)
-    end
-  end
-
-  # ---------------------------------------------------------------
   # The table
   # ---------------------------------------------------------------
 
@@ -225,7 +195,7 @@ defmodule Flezha.Relay.Calls do
     if waiting(calls) >= max do
       {:error, refused(callee, "call.busy", %{pending_max: max})}
     else
-      token = mint()
+      token = Token.mint()
 
       row = %{
         from: from,
@@ -247,7 +217,7 @@ defmodule Flezha.Relay.Calls do
   """
   @spec admit_relay(t(), callee(), map()) :: {:ok, token(), t()} | {:error, Error.t()}
   def admit_relay(%__MODULE__{} = calls, callee, call) do
-    token = relay_token(call)
+    token = Token.relay_token(call)
     max = Config.get(:call_pending_max)
 
     cond do
@@ -283,51 +253,6 @@ defmodule Flezha.Relay.Calls do
   end
 
   @doc """
-  The token a relay's call rides: built from the delivery's own fields,
-  never read from metadata. It carries the answer channel, so a callee that
-  restarted since it took the call still answers only from that channel.
-  """
-  @spec relay_token(map()) :: token()
-  def relay_token(%{caller: caller, call: call_id, created: created, deadline_at: at} = call),
-    do:
-      "o:#{caller}:#{call_id}:#{if created, do: 1, else: 0}:#{at}:" <>
-        Base.url_encode64(Map.get(call, :answer_channel) || "", padding: false)
-
-  @doc """
-  The caller, the call, whether it started its callee, its deadline and its
-  answer channel, read off a relay token.
-  """
-  @spec caller_of(token()) ::
-          {:ok,
-           %{
-             caller: binary(),
-             call: call_id(),
-             created: boolean(),
-             deadline_at: integer(),
-             answer_channel: binary() | nil
-           }}
-          | :error
-  def caller_of("o:" <> rest) do
-    with [answer, at, created, call_id, caller] when created in ["0", "1"] and caller != "" <-
-           rest |> String.reverse() |> String.split(":", parts: 5),
-         {deadline_at, ""} <- Integer.parse(String.reverse(at)),
-         {:ok, answer_channel} <- Base.url_decode64(String.reverse(answer), padding: false) do
-      {:ok,
-       %{
-         caller: String.reverse(caller),
-         call: String.reverse(call_id),
-         created: created == "1",
-         deadline_at: deadline_at,
-         answer_channel: if(answer_channel != "", do: answer_channel)
-       }}
-    else
-      _ -> :error
-    end
-  end
-
-  def caller_of(_token), do: :error
-
-  @doc """
   Drop the row `token` names, answering nobody: its call was never taken, for
   the refusal `code` its listeners are told.
   """
@@ -351,7 +276,7 @@ defmodule Flezha.Relay.Calls do
   @spec divert(t(), callee(), binary(), map()) ::
           :output | :call | {:answered, t(), map()} | {:held, t(), map()}
   def divert(%__MODULE__{} = calls, callee, message, metadata) do
-    case {Map.has_key?(metadata, "flz.call"), Map.fetch(metadata, @reply_to)} do
+    case {Map.has_key?(metadata, @call), Map.fetch(metadata, @reply_to)} do
       {true, _} -> :call
       {false, :error} -> :output
       {false, {:ok, token}} -> answer(calls, callee, token, message, metadata)
@@ -415,7 +340,7 @@ defmodule Flezha.Relay.Calls do
   defp waiting(calls, token, sent_as \\ nil) do
     now = System.system_time(:millisecond)
 
-    case {Map.get(calls.rows, token), caller_of(token)} do
+    case {Map.get(calls.rows, token), Token.caller_of(token)} do
       {%{sent_as: ^sent_as}, {:ok, call}} when sent_as != nil -> {:relay, call}
       {%{answered?: true}, _call} -> :answered
       {nil, {:ok, %{deadline_at: at}}} when at <= now -> :unclaimed
@@ -507,7 +432,7 @@ defmodule Flezha.Relay.Calls do
   def outside(%__MODULE__{} = calls),
     do: %{
       calls
-      | rows: Map.filter(calls.rows, fn {token, _row} -> caller_of(token) == :error end)
+      | rows: Map.filter(calls.rows, fn {token, _row} -> Token.caller_of(token) == :error end)
     }
 
   @doc """
@@ -577,12 +502,15 @@ defmodule Flezha.Relay.Calls do
   """
   @spec request(binary(), map(), boolean()) :: {call_id(), out_row()}
   def request(message, metadata, durable?) do
-    id = if durable?, do: durable_id(metadata), else: digest([:crypto.strong_rand_bytes(16)])
+    id =
+      if durable?,
+        do: Token.durable_id(metadata),
+        else: Token.call_id(:crypto.strong_rand_bytes(16))
 
     deadline_at = String.to_integer(Map.fetch!(metadata, "flz.deadline_at"))
 
     row = %{
-      target: Map.fetch!(metadata, "flz.call"),
+      target: Map.fetch!(metadata, @call),
       key: metadata["flz.key"],
       create: metadata["flz.call_create"] != "false",
       channel: metadata["flz.call_channel"],
@@ -599,19 +527,6 @@ defmodule Flezha.Relay.Calls do
     }
 
     {id, row}
-  end
-
-  @doc "A durable call's id, from its output's identity: a re-dispatch keeps it."
-  @spec durable_id(map()) :: binary()
-  @compile {:inline, durable_id: 1}
-  def durable_id(metadata),
-    do: digest([metadata["flz.cell"], metadata["flz.seq"], metadata["flz.epoch"]])
-
-  defp digest(parts) do
-    :sha256
-    |> :crypto.hash(Enum.intersperse(Enum.map(parts, &to_string/1), <<0>>))
-    |> binary_part(0, 16)
-    |> Base.url_encode64(padding: false)
   end
 
   @doc "This relay's pending call `id`, or `nil`."
@@ -739,13 +654,6 @@ defmodule Flezha.Relay.Calls do
   # ---------------------------------------------------------------
 
   @doc """
-  The id a call's events carry: a digest of its token, from which the token
-  cannot be recovered.
-  """
-  @spec call_id(token()) :: binary()
-  def call_id(token), do: digest([token])
-
-  @doc """
   Announce a call the relay takes, `message` as its entry point took it:
   `deadline` is an outside call's deadline in ms, or a relay's call. With a
   `refusal` the call has no row: it is announced under an id of its own,
@@ -757,11 +665,11 @@ defmodule Flezha.Relay.Calls do
 
   def announce(%{activity: activity} = callee, token, message, metadata, deadline, refusal)
       when activity != nil do
-    token = token || mint()
+    token = token || Token.mint()
 
     called =
       %{
-        "flz.call_id" => call_id(token),
+        "flz.call_id" => Token.call_id(token),
         "flz.call_at" => System.system_time(:millisecond),
         "channel" => metadata["channel"]
       }
@@ -800,7 +708,7 @@ defmodule Flezha.Relay.Calls do
     ended =
       named(%{
         "flz.call_event" => Atom.to_string(kind),
-        "flz.call_id" => call_id(token),
+        "flz.call_id" => Token.call_id(token),
         "flz.call_duration_ms" => if(row, do: now_ms() - row.started_ms, else: 0),
         "channel" => channel
       })

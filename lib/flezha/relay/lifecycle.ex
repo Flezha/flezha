@@ -447,7 +447,7 @@ defmodule Flezha.Relay.Lifecycle do
       |> Keyword.put(:resume_cell_count, Replay.resume_cell_count(relay_class))
       |> Keyword.put(:task_journal, Commands.task_journal_state(relay_class))
       |> Keyword.put(:inbox_tail_count, Replay.owed_count(relay_class))
-      |> Keyword.put(:effect_results, Replay.effect_results(relay_class))
+      |> Keyword.put(:effect_results, Commands.effect_results(relay_class))
 
     %{relay | opts: opts}
   end

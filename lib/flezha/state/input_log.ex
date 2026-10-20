@@ -33,12 +33,14 @@ defmodule Flezha.State.InputLog do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
   alias Flezha.SDK.SafeCall
   alias Flezha.State.{Paths, Supervisor}
   alias Flezha.State.InputLog.MsgIndex
 
   @watermarks :flezha_input_log_watermarks
+  @reply_to Token.reply_to_key()
 
   # The confirmed processed prefix's row beside the reporters' Cell rows; an
   # atom, so `cell_offsets/1` never takes it for a reporter.
@@ -200,7 +202,7 @@ defmodule Flezha.State.InputLog do
   def calls(relay_class, from, to) do
     case read_range(relay_class, from, to) do
       records when is_list(records) ->
-        for {offset, _message, %{"flz.reply_to" => token}} <- records,
+        for {offset, _message, %{@reply_to => token}} <- records,
             into: %{},
             do: {offset, token}
 

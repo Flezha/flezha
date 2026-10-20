@@ -12,7 +12,7 @@ defmodule FlezhaTest.Relay.ReplayEffectsTest do
 
   alias Flezha.Relay.{Builder, Overwatch, Replay}
   alias Flezha.Runner.ControlUnit
-  alias Flezha.State.{InputLog, TestHelpers}
+  alias Flezha.State.{Commands, InputLog, TestHelpers}
 
   setup :set_mimic_global_until_exit
 
@@ -38,7 +38,7 @@ defmodule FlezhaTest.Relay.ReplayEffectsTest do
 
     InputLog.record_consumed(class, {class, "task", "a"}, 2)
 
-    results = Replay.effect_results(class)
+    results = Commands.effect_results(class)
     assert length(results) == 2
 
     state = %Overwatch{
@@ -63,7 +63,7 @@ defmodule FlezhaTest.Relay.ReplayEffectsTest do
   test "an instance that keeps none ships nothing", %{class: class} do
     ControlUnit |> reject(:send_control_await, 3)
 
-    assert Replay.effect_results(class) == []
+    assert Commands.effect_results(class) == []
 
     assert Replay.ship_effect_results(
              %Overwatch{

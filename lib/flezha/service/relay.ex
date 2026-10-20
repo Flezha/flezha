@@ -25,6 +25,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Builder
+  alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lookup
   alias Flezha.Relay.PartitionGroup
@@ -417,7 +418,7 @@ defmodule Flezha.Service.Relay do
          {:ok, metadata} <-
            put_text(
              RelayManager.channel_metadata(channel),
-             "flz.call_answer_channel",
+             Token.answer_channel_key(),
              opts[:answer_channel],
              "answer_channel"
            ) do

@@ -15,8 +15,8 @@ defmodule Flezha.Relay.Replay do
   """
 
   alias Flezha.Config
-
   alias Flezha.Config.Durations
+  alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lookup
   alias Flezha.Relay.Overwatch
@@ -410,33 +410,10 @@ defmodule Flezha.Relay.Replay do
   @effect_batch_bytes 16 * 1024 * 1024
 
   @doc """
-  The effect results the bind ships: the ones the instance's input log keeps
-  for its inputs above its floor. Their count rides
-  `AddRelay.effect_result_count`, so a steps driver holds its first Tasklet
-  until they have landed; `[]` for an instance that keeps none.
-  """
-  @spec effect_results(binary()) :: [%RunnerCommands.EffectResult{}]
-  def effect_results(relay_class) do
-    case InputLog.effect_results(relay_class, InputLog.watermark(relay_class) || -1) do
-      results when is_list(results) ->
-        for {offset, identity, cell, payload} <- results,
-            do: %RunnerCommands.EffectResult{
-              identity: identity,
-              offset: offset,
-              cell_identity: cell,
-              payload: payload
-            }
-
-      {:error, _refused} ->
-        []
-    end
-  end
-
-  @doc """
-  Ship `results` (`effect_results/1`, counted on the bind's `AddRelay`) to the
-  bound runner in batches, awaiting each, before the bind re-forwards the input
-  tail: a flow relay's re-run then finds them, and a steps relay's gate counts
-  them.
+  Ship `results` (`Flezha.State.Commands.effect_results/1`, counted on the
+  bind's `AddRelay`) to the bound runner in batches, awaiting each, before the
+  bind re-forwards the input tail: a flow relay's re-run then finds them, and a
+  steps relay's gate counts them.
   """
   @spec ship_effect_results(Overwatch.t(), [%RunnerCommands.EffectResult{}]) :: :ok
   def ship_effect_results(%Overwatch{} = state, results) do
@@ -570,7 +547,7 @@ defmodule Flezha.Relay.Replay do
     }
 
     case Map.fetch(calls, edge.origin) do
-      {:ok, token} -> {edge.payload, Map.put(metadata, "flz.reply_to", token)}
+      {:ok, token} -> {edge.payload, Token.entry_metadata(metadata, token)}
       :error -> {edge.payload, metadata}
     end
   end

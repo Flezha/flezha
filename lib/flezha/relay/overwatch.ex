@@ -40,6 +40,7 @@ defmodule Flezha.Relay.Overwatch do
   # `flz.` keys: `relay` ranks below `state`, so naming it would be a new
   # upward reference `scripts/check-layer-direction.sh` refuses.
   @change_seq_meta_key "flz.change_seq"
+  @reply_to Calls.Token.reply_to_key()
 
   require Logger
 
@@ -721,7 +722,7 @@ defmodule Flezha.Relay.Overwatch do
       {:held, calls, output} ->
         Outbox.hold_delivery(metadata)
         Plugins.transform_io(state, :on_output, message, output)
-        Ingest.retire_at_deadline(%{state | calls: calls}, metadata["flz.reply_to"])
+        Ingest.retire_at_deadline(%{state | calls: calls}, metadata[@reply_to])
 
       :call ->
         Outbox.hold_delivery(metadata)

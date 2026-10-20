@@ -12,15 +12,17 @@ defmodule Flezha.State.Commands do
 
   Each cell-scoped function takes the controller-side `runner_id` and a
   structured `cell_id` triple `{relay_class, tasklet_id, cell_key}`.
-  `task_journal_state/1` is the instance-scoped sibling: a steps instance's
-  journal is not per-Cell, which is why it rides the bind rather than a
-  per-Cell restore.
+  `task_journal_state/1` and `effect_results/1` are the instance-scoped
+  siblings: a steps instance's journal and an instance's kept effect results
+  are not per-Cell, which is why they ride the bind rather than a per-Cell
+  restore.
   """
 
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
@@ -75,6 +77,29 @@ defmodule Flezha.State.Commands do
           compact_after_migration(runner_id, cell_id, raw)
           ok
       end
+    end
+  end
+
+  @doc """
+  The effect results the bind ships: the ones the instance's input log keeps
+  for its inputs above its floor. Their count rides
+  `AddRelay.effect_result_count`, so a steps driver holds its first Tasklet
+  until they have landed; `[]` for an instance that keeps none.
+  """
+  @spec effect_results(binary()) :: [%RunnerCommands.EffectResult{}]
+  def effect_results(relay_class) do
+    case InputLog.effect_results(relay_class, InputLog.watermark(relay_class) || -1) do
+      results when is_list(results) ->
+        for {offset, identity, cell, payload} <- results,
+            do: %RunnerCommands.EffectResult{
+              identity: identity,
+              offset: offset,
+              cell_identity: cell,
+              payload: payload
+            }
+
+      {:error, _refused} ->
+        []
     end
   end
 

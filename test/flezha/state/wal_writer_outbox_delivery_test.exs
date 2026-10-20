@@ -7,7 +7,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
   """
   use FlezhaTest.OutboxCase, async: false
 
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Token
 
   test "stall_status reports the outbox cursors producing-liveness compares", %{
     rc: rc,
@@ -417,7 +417,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     Enum.each([call_md, sink_md], &settle/1)
 
     started = System.monotonic_time(:millisecond)
-    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(call_md)) == 1
+    assert WalWriter.redrive_calls(pid, started, Token.durable_id(call_md)) == 1
     assert {"call", again, _} = next_output()
     assert again["flz.seq"] == call_md["flz.seq"]
     refute_dispatched(0)
@@ -640,13 +640,13 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     # The live Overwatch has not run this entry's chain yet: the call stays
     # owed to it, so an answer for it waits, and it does not go again.
-    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(call_md)) == 1
+    assert WalWriter.redrive_calls(pid, started, Token.durable_id(call_md)) == 1
     refute_dispatched(0)
 
     # The one run reports: the live Overwatch holds the call, so nothing waits.
     :ok = Outbox.hold_delivery(call_md)
     settle(call_md)
-    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(call_md)) == 0
+    assert WalWriter.redrive_calls(pid, started, Token.durable_id(call_md)) == 0
     refute_dispatched(0)
 
     # The caller answers it: the cursor passes the entry.
@@ -665,7 +665,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert {"call", _call_md, _} = next_output()
 
     # A stray answer (its call is over) must be absorbed, not retried.
-    assert WalWriter.redrive_calls(pid, started, Calls.durable_id(%{})) == 0
+    assert WalWriter.redrive_calls(pid, started, Token.durable_id(%{})) == 0
     refute_dispatched(0)
   end
 

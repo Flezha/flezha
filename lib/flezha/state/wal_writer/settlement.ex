@@ -21,7 +21,8 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Config.Durations
-  alias Flezha.Relay.{Calls, Lookup}
+  alias Flezha.Relay.Calls.Token
+  alias Flezha.Relay.Lookup
   alias Flezha.State.Wire
   alias Flezha.State.{DurabilityTier, InputLog, Lineage, Outbox, Paths}
   alias Flezha.Process.Timer
@@ -29,6 +30,8 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   @reserved_cell_keys Paths.reserved_cell_keys()
   @delivery_hold Outbox.delivery_hold()
+  @reply_to Token.reply_to_key()
+  @call Token.call_key()
 
   # ---------- The outbox (fsync- and commit-gated flush) ----------
 
@@ -460,7 +463,7 @@ defmodule Flezha.State.WalWriter.Settlement do
 
     {Enum.count(state.outbox_awaiting, fn {key, tally} ->
        tally.pending > 0 and call?.(tally) and
-         Enum.any?(entry_outputs(state, key, tally.entry), &(Calls.durable_id(elem(&1, 1)) == id))
+         Enum.any?(entry_outputs(state, key, tally.entry), &(Token.durable_id(elem(&1, 1)) == id))
      end), state}
   end
 
@@ -488,10 +491,10 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   defp delivery_output?(metadata), do: call_output?(metadata) or answer_output?(metadata)
 
-  defp call_output?(metadata), do: List.keymember?(metadata, "flz.call", 0)
+  defp call_output?(metadata), do: List.keymember?(metadata, @call, 0)
 
   defp answer_output?(metadata),
-    do: match?({_, "o:" <> _}, List.keyfind(metadata, "flz.reply_to", 0))
+    do: Token.relay_token?(elem(List.keyfind(metadata, @reply_to, 0, {@reply_to, nil}), 1))
 
   # The inflight head is the oldest dispatch, so one comparison rules the whole
   # sweep out on a healthy stream writer.
