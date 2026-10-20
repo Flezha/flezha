@@ -44,7 +44,7 @@ $ flz plugin enable signal-config relay_http_poll --relay_id=detector \
 
 | | |
 | --- | --- |
-| Hooks | none needed: the poller drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the poller drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Shared | yes: one poller per controller for every relay bound to the plugin, or one in the whole cluster with `--single`, which hands each relay the content without waiting for it, so a parked one loses that content until it changes. A relay whose input is durable (effectively-once, sleeping or durable steps), and each member of a partitioned relay, runs a poller of its own, which confirms as below |
 | Upstream | one `http://` or `https://` URL, `GET` only, redirects not followed |
 | Injection | the response body, on the entry channel `:channel` (or `:channel_in`) names, only to a relay whose last delivered body had another SHA-256 |
@@ -65,8 +65,7 @@ Flezha.Service.PluginManager.enable_plugin(
     provider: Flezha.Plugin.Provider.HttpPoll,
     opts: %{url: "https://api.internal/internal/signal-config", channel: "config_in", interval_ms: 30_000},
     namespace: "default",
-    relay_id: "detector",
-    hooks: [{:on_terminate, []}]
+    relay_id: "detector"
   )
 )
 ```
@@ -83,8 +82,7 @@ As a plugin spec at relay start (`flz relay start --plugins`):
       "channel": "config_in",
       "interval_ms": "30000",
       "headers": "{\"authorization\":\"Bearer ${TOKEN}\"}"
-    },
-    "hooks": ["on_terminate"]
+    }
   }
 ]
 ```

@@ -93,7 +93,7 @@ publication until the check passes. It checks again along its backoff curve.
 
 | | |
 | --- | --- |
-| Hooks | none needed: the plugin drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the plugin drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Shared | no: one slot per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
 | Upstream | one publication, read through one logical replication slot |
 | Injection | one row change as one input, a JSON object, on the entry channel `:channel` (or `:channel_in`) names |
@@ -104,7 +104,7 @@ Enabled and bound in two commands, with the settings written without their dashe
 ```sh
 $ flz plugin enable rates-cdc postgres_cdc Xhostname=db Xdatabase=market Xusername=cdc \
   Xpassword_env=CDC_PASSWORD Xslot=rates_cdc Xpublication=rates_pub Xchannel=rates
-$ flz plugin bind rates-cdc --relay_id pricer --hook=on_terminate
+$ flz plugin bind rates-cdc --relay_id pricer
 ```
 
 A literal `password` is redacted once the plugin is prepared and held in memory only;

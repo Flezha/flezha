@@ -15,6 +15,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   """
 
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.Postgres.Connection
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.State.Outbox
@@ -110,7 +111,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   @doc "Synchronous counters read (plugin health/stats contract)."
   @spec stats(GenServer.server()) :: map()
-  def stats(server), do: GenServer.call(server, :stats, 5_000)
+  def stats(server), do: GenServer.call(server, :stats, Durations.get(:plugin_worker_call_ms))
 
   @impl true
   def init(opts) do

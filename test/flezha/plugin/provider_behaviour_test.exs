@@ -839,21 +839,116 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
     end
   end
 
-  describe "refuse_partitioned/2" do
-    test "a group member's options are refused, naming the provider and the member" do
-      opts = %{partition_index: 0, partition_count: 2, source_relay_id: "pg#p0"}
+  defmodule KitWorker do
+    @moduledoc false
+    use Flezha.Plugin.Provider.Worker,
+      facts: [:stuck, :consecutive_failures, :last_error, :last_settled_at]
 
-      assert {:error, reason} = ProviderBehaviour.refuse_partitioned(opts, StdOut)
-      assert reason == {:partitioned_host, %{provider: "std_out", relay: "pg#p0"}}
+    alias Flezha.Plugin.Provider.Worker
+
+    @impl true
+    def init(opts), do: {:ok, Map.merge(%{stuck: false}, Worker.fields(opts))}
+
+    @impl true
+    def handle_call({:put, fields}, _from, state), do: {:reply, :ok, Map.merge(state, fields)}
+
+    @impl true
+    def handle_info(_other, state), do: {:noreply, state}
+  end
+
+  defmodule KitSource do
+    @moduledoc false
+    alias Flezha.Plugin.ProviderBehaviour.Options
+
+    use Flezha.Plugin.ProviderBehaviour,
+      name: "kit_source",
+      source: [partitioned: :refuse, idle_interval: :interval_ms],
+      options:
+        Options.channel(:in, "record") ++
+          Options.plugin_id("the id it was enabled under") ++
+          Options.failure_threshold() ++
+          Options.idle_after() ++
+          [interval_ms: [type: :int, default: 1_000, min: 1, doc: "Pause between reads"]],
+      worker: [module: KitWorker, restart: :temporary]
+
+    defp verdict(%{stuck: true}, _opts), do: {:unhealthy, :stuck}
+  end
+
+  describe "the source kit" do
+    defp kit_opts(extra) do
+      {:ok, opts} = ProviderOptions.normalise_opts(KitSource, Map.merge(%{channel: "in"}, extra))
+      opts
+    end
+
+    # Fails when: the kit drops its entry-channel check.
+    test "a source naming no entry channel is refused before the partitioned refusal" do
+      opts = %{kit_opts(%{}) | entry_channel: nil}
+
+      assert KitSource.init_provider(Map.put(opts, :partition_count, 2)) ==
+               {:error, {:entry_channel_required, "kit_source"}}
+    end
+
+    # Fails when: the kit ignores `partitioned: :refuse`.
+    test "a group member is refused, naming the provider and the member" do
+      opts = kit_opts(%{partition_index: 0, partition_count: 2, source_relay_id: "pg#p0"})
+
+      assert {:error, reason} = KitSource.init_provider(opts)
+      assert reason == {:partitioned_host, %{provider: "kit_source", relay: "pg#p0"}}
 
       assert %Flezha.Error{
                code: "plugin.partitioned_host",
-               details: %{"provider" => "std_out", "relay" => "pg#p0"}
+               details: %{"provider" => "kit_source", "relay" => "pg#p0"}
              } = Flezha.Error.from_reason(reason, nil)
     end
 
-    test "a relay outside any group passes" do
-      assert ProviderBehaviour.refuse_partitioned(%{source_relay_id: "op"}, StdOut) == :ok
+    test "a relay outside any group is prepared, its plugin id the one it was enabled under" do
+      assert {:ok, %{plugin_id: "p1"}} =
+               KitSource.init_provider(kit_opts(%{source_plugin_id: "p1"}))
+
+      assert KitSource.__provider__().feeds
+      assert :on_terminate in KitSource.__provider__().extensions
+      assert KitSource.on_terminate(%Ctx.Terminate{}, %{}) == :ok
+    end
+
+    # Fails when: the kit's verdict order, threshold or idle wiring breaks.
+    test "health reads the provider's own verdict, then the failure run, then the idle window" do
+      {:ok, worker} = KitWorker.start_link(%{name: nil, overwatcher_pid: self()})
+
+      opts =
+        Map.merge(kit_opts(%{failure_threshold: 2, idle_after_ms: 60_000}), %{owned_pid: worker})
+
+      assert KitSource.health(opts) == :healthy
+
+      :ok = GenServer.call(worker, {:put, %{consecutive_failures: 2, last_error: "boom"}})
+      assert KitSource.health(opts) == {:unhealthy, {:read_failed, "boom"}}
+
+      :ok = GenServer.call(worker, {:put, %{stuck: true}})
+      assert KitSource.health(opts) == {:unhealthy, :stuck}
+
+      stale = :erlang.monotonic_time(:millisecond) - 120_000
+
+      :ok =
+        GenServer.call(
+          worker,
+          {:put, %{stuck: false, consecutive_failures: 0, last_settled_at: stale}}
+        )
+
+      assert {:unhealthy, {:poll_idle, age}} = KitSource.health(opts)
+      assert age >= 120_000
+
+      :sys.suspend(worker)
+      assert KitSource.health(opts) == {:fail_open, :probe_timeout}
+      :sys.resume(worker)
+    end
+
+    test "a worker stops when the relay it feeds goes down" do
+      host = spawn(fn -> receive(do: (:stop -> :ok)) end)
+      {:ok, worker} = KitWorker.start_link(%{name: nil, overwatcher_pid: host})
+      Process.unlink(worker)
+      ref = Process.monitor(worker)
+
+      send(host, :stop)
+      assert_receive {:DOWN, ^ref, :process, ^worker, :normal}
     end
   end
 end

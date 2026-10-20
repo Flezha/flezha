@@ -20,10 +20,14 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.Postgres.Connection
   alias Flezha.Plugin.Provider.PostgresPoll.Query
+  alias Flezha.Plugin.Provider.Worker
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Process.Watch
 
-  use GenServer
+  # The facts the provider's `health/1` judges: a missing table or column, the
+  # failure run, its last error and the time of the last settled read. A probe
+  # that times out is also what a reader waiting out a parked relay's ingest
+  # looks like.
+  use Worker, facts: [:missing, :consecutive_failures, :last_error, :last_settled_at]
   use Flezha.Process.Timer, keys: [:poll]
 
   require Logger
@@ -33,11 +37,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
 
   defp emit(verb, measurements, metadata),
     do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
-
-  @doc "Started by the extension table at activation, from the declared spec."
-  @spec start_link(map()) :: GenServer.on_start()
-  def start_link(opts) when is_map(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
 
   @doc """
   The reader's start arguments, from the plugin's prepared options: what it
@@ -64,15 +63,6 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
     })
   end
 
-  @doc """
-  The facts the provider's `health/1` judges: a missing table or column, the
-  failure run, its last error and the time of the last settled read.
-  `:timeout` when the worker does not answer, which is also what a reader
-  waiting out a parked relay's ingest looks like.
-  """
-  @spec probe(pid()) :: {:ok, map()} | :timeout
-  def probe(pid), do: ProviderBehaviour.ask(pid, :health_probe)
-
   @impl true
   def init(opts) do
     # A stop commits the cursor, which only a trapped shutdown reaches.
@@ -85,19 +75,15 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
         state =
           opts
           |> Map.drop([:name, :conn_opts])
+          |> Map.merge(Worker.fields(opts))
           |> Map.merge(%{
             conn: conn,
-            watch: Watch.watch(Watch.new(), opts.overwatcher_pid, :host),
             plan: nil,
             committed: opts.cursor,
             committed_at: now,
             read: nil,
             missing: nil,
-            caught_up: false,
-            consecutive_failures: 0,
-            last_error: nil,
-            last_settled_at: now,
-            timers: %{}
+            caught_up: false
           })
 
         # Scheduled, never run here: activation is synchronous in the host.
@@ -119,25 +105,8 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   def handle_info({:DOWN, ref, :process, _child, reason}, %{read: {_pid, ref}} = state),
     do: {:noreply, settle(%{state | read: nil}, {:error, {:exit, reason}})}
 
-  # The relay this reader feeds is gone.
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case Watch.down(state.watch, ref) do
-      {[:host], _watch} -> {:stop, :normal, state}
-      _stale -> {:noreply, state}
-    end
-  end
-
   def handle_info({:EXIT, conn, reason}, %{conn: conn} = state),
     do: {:stop, {:connection_exit, reason}, state}
-
-  def handle_info({:health_probe, from, ref}, state) do
-    send(
-      from,
-      {ref, Map.take(state, [:missing, :consecutive_failures, :last_error, :last_settled_at])}
-    )
-
-    {:noreply, state}
-  end
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -175,7 +144,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
           {:waiting, failed(state, reason)}
       end
 
-    %{state | last_settled_at: now()}
+    Worker.settled(state)
     |> Host.commit_position(:cursor, next)
     |> schedule(next)
   end
@@ -187,7 +156,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
 
   # ---------- delivery ----------
 
-  defp deliver(state, []), do: {:caught_up, state |> recovered() |> caught_up()}
+  defp deliver(state, []), do: {:caught_up, state |> Worker.recovered() |> caught_up()}
 
   defp deliver(state, records) do
     verdicts =
@@ -217,10 +186,8 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   defp advance(state, taken) do
     {{_payload, _metadata, at}, :ok} = List.last(taken)
     emit(:shipped, %{count: length(taken)}, labels(state))
-    recovered(%{state | cursor: %{state.cursor | at: at}})
+    Worker.recovered(%{state | cursor: %{state.cursor | at: at}})
   end
-
-  defp recovered(state), do: %{state | consecutive_failures: 0, last_error: nil}
 
   defp caught_up(%{caught_up: true} = state), do: state
 
@@ -251,8 +218,9 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   end
 
   defp failed(state, reason) do
-    failures = state.consecutive_failures + 1
     error = error_text(reason)
+    state = Worker.failed(state, error)
+    failures = state.consecutive_failures
 
     Logger.warning(
       "[Plugin.Provider.PostgresPoll] read failed #{state.where} " <>
@@ -260,7 +228,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
     )
 
     emit(:failed, %{consecutive_failures: failures}, reason_labels(state, error))
-    %{state | consecutive_failures: failures, last_error: error, plan: replan(state.plan, reason)}
+    %{state | plan: replan(state.plan, reason)}
   end
 
   defp replan(_plan, %Postgrex.Error{postgres: %{code: code}})

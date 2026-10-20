@@ -57,7 +57,7 @@ $ flz plugin enable orders-in relay_postgres_poll --relay_id=orders \
 
 | | |
 | --- | --- |
-| Hooks | none needed: the reader drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the reader drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Shared | no: one cursor per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because a row's key decides which member must take it |
 | Upstream | one table or view, read by a role that may `SELECT` it, on one connection the plugin owns |
 | Injection | one row as one JSON object, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
@@ -81,8 +81,7 @@ As a plugin spec at relay start (`flz relay start --plugins`):
       "timestamp_column": "updated_at",
       "timestamp_delay_ms": "5000",
       "channel": "orders"
-    },
-    "hooks": ["on_terminate"]
+    }
   }
 ]
 ```

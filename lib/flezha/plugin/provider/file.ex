@@ -41,7 +41,6 @@ defmodule Flezha.Plugin.Provider.File do
     the rest: `docs/public/plugins/file.md`.
     """
 
-    alias Flezha.Plugin.Extension.Ctx
     alias Flezha.Plugin.Provider.File, as: FilePlugin
     alias Flezha.Plugin.Provider.File.ReadWorker
     alias Flezha.Plugin.ProviderBehaviour
@@ -49,7 +48,7 @@ defmodule Flezha.Plugin.Provider.File do
 
     use ProviderBehaviour,
       name: "file_source",
-      feeds: true,
+      source: [partitioned: :own_copy, idle_interval: :poll_interval_ms],
       options:
         [
           path: [
@@ -107,61 +106,17 @@ defmodule Flezha.Plugin.Provider.File do
     user who typed the path.
     """
     @impl true
-    def init_provider(opts) do
-      with :ok <- ProviderBehaviour.require_entry_channel(opts, __MODULE__),
-           do: FilePlugin.prepare(opts)
-    end
-
-    @doc """
-    Teardown is the host's. This callback exists so the provider can be
-    hooked at all: every hook requires the matching export.
-    """
-    @impl true
-    def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
-
-    @doc """
-    Health verdict from the reader: a stop names the offset a user must
-    look at, a missing file names the path, a failure run reaching
-    `failure_threshold` names its error, and a reader whose last settled poll is
-    older than the idle window says how old. A file that does not grow is
-    healthy.
-    """
-    @impl true
-    @spec health(map()) :: ProviderBehaviour.health_verdict()
-    def health(opts) do
-      ProviderBehaviour.worker_health(
-        opts,
-        # The outer budget exceeds the probe's own, so this provider's precise
-        # `:probe_timeout` is not replaced by the generic budget verdict.
-        [
-          absent: :no_reader,
-          dead: :reader_dead,
-          budget_ms: 2 * ProviderBehaviour.probe_budget_ms()
-        ],
-        &reader_health(&1, opts)
-      )
-    end
+    def init_provider(opts), do: FilePlugin.prepare(opts)
 
     @doc "What `flz relay info` shows beneath the plugin: the path and its verdict."
     @impl true
     def inspect_state(opts), do: %{path: opts.path, health: health(opts)}
 
-    defp reader_health(pid, opts) do
-      case ReadWorker.probe(pid) do
-        {:ok, facts} -> verdict(facts, opts)
-        :timeout -> {:fail_open, :probe_timeout}
-      end
-    end
-
+    # Before the source's shared verdicts: a stop names the offset a user must
+    # look at and a missing file names the path. A file that does not grow is
+    # healthy.
     defp verdict(%{stopped: {_reason, _offset} = stop}, _opts), do: {:unhealthy, stop}
     defp verdict(%{missing: true, path: path}, _opts), do: {:unhealthy, {:file_missing, path}}
-
-    defp verdict(%{consecutive_failures: failures, last_error: error}, opts)
-         when failures >= opts.failure_threshold,
-         do: {:unhealthy, {:read_failing, error}}
-
-    defp verdict(%{last_settled_at: settled_at}, opts),
-      do: ProviderBehaviour.idle_verdict(settled_at, opts.idle_after_ms, opts.poll_interval_ms)
   end
 
   defmodule Sink do

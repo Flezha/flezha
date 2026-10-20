@@ -424,9 +424,4 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # :on_interval tick triggers nothing; connection is driven by the Fresh pid.
   @impl true
   def on_interval(%Ctx.Tick{}, _opts), do: :ok
-
-  # The socket is the declared worker, so the table stops it once. This callback
-  # exists so a `:on_terminate` subscription is accepted at all.
-  @impl true
-  def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
 end

@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   """
 
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Plugin.Provider.File.Storage
@@ -84,7 +85,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   @doc "Synchronous counters read (plugin health contract)."
   @spec stats(GenServer.server()) :: map()
-  def stats(server), do: GenServer.call(server, :stats, 5_000)
+  def stats(server), do: GenServer.call(server, :stats, Durations.get(:plugin_worker_call_ms))
 
   @impl true
   def init(opts) do

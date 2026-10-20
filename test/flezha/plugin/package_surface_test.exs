@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.PackageSurfaceTest do
              Flezha.Plugin.Extension.Ctx.Terminate,
              Flezha.Plugin.Host,
              Flezha.Plugin.Provider.Postgres.Connection,
+             Flezha.Plugin.Provider.Worker,
              Flezha.Plugin.Provider.WorkerSup,
              Flezha.Plugin.ProviderBehaviour,
              Flezha.Plugin.ProviderBehaviour.Options,

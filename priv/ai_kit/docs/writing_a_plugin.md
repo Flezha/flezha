@@ -75,7 +75,7 @@ in; a project outside the Flezha repository depends on `flezha` by git or Hex in
 | `shareable:` | one running copy can serve every relay bound to the plugin on a controller | `false` |
 | `feeds:` | the provider's own worker injects records into the relay | `false` |
 | `name:` | the name in errors, help and telemetry | the module's last segment, underscored |
-| `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, `{kind, "what it says"}`, or `{kind, meaning: "what it says", label:, outcome:, sentence:}` | none |
+| `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, `{kind, "what it says"}`, or `{kind, meaning: "what it says", label:, outcome:, sentence:, level:}` | none |
 
 An option row takes `type` (`:int`, `:bool`, `:string`, `:names`, `:enum`, `:json`,
 `:headers`, `:map`, `:list`, `:pid`, `:any`), `default`, `required`, `min` and `max`, `values`
@@ -127,6 +127,32 @@ controller then runs one copy for all of them.
 A provider whose worker hands records to the relay declares `feeds: true` and calls
 `Flezha.Plugin.Host.inject/5` with the relay its options name (`opts.overwatcher_pid`).
 
+A source whose worker reads from outside declares `source:` instead, which implies
+`feeds: true` and writes what every source shares:
+
+```elixir
+use Flezha.Plugin.ProviderBehaviour,
+  source: [partitioned: :refuse, idle_interval: :interval_ms],
+  options: Options.channel(:in, "row") ++ Options.failure_threshold() ++ Options.idle_after(),
+  worker: [module: Reader, restart: :temporary]
+```
+
+The declaration refuses a plugin that names no entry channel, then, with
+`partitioned: :refuse`, one on a member of a partition group (`plugin.partitioned_host`; a
+source that cannot tell which member a record's key belongs to, as a consumer or a table
+reader cannot, declares it, and `:own_copy` runs one copy per member). It starts one worker
+per binding with the worker's `args/1`, and its `health/1` probes the worker: a worker that
+does not answer reads `{:fail_open, :probe_timeout}`, `failure_threshold` failures in a row
+read `{:unhealthy, {:read_failed, last_error}}` (another word with `failure_reason:`), and
+with `idle_interval:` a worker whose last settled read is older than `idle_after_ms`, or three
+of that interval, reads `{:unhealthy, {:poll_idle, age_ms}}`. The provider's own `verdict/2`
+clauses are read first, for facts only it reports.
+
+The worker is written with `use Flezha.Plugin.Provider.Worker, facts: [...]`: it is a
+`GenServer` started under the spec's name, its probe answers the listed fields of its
+state, and it stops when the relay it feeds goes down. `Worker.fields/1` is the state the
+kit reads, and `Worker.failed/2`, `Worker.recovered/1` and `Worker.settled/1` move it.
+
 A source that is also `shareable` hands each record to every relay sharing its plugin
 on the controller instead: `Host.targets(opts)` lists them, each with its entry channel,
 and the worker is sent `{:targets, targets}` each time one binds or leaves. A worker that
@@ -154,10 +180,7 @@ relay, which the plugin's options tell it:
 | a flow relay with `effectively_once` | `durable_input: true`, `effectively_once: true` | the record is in the relay's input log | after every confirmed batch; an output plugin that honours `effectively_once` writes each output once |
 
 Both are set by the controller when the plugin starts, over anything its stored options
-say. A source that cannot tell which member of a partition group a record's key belongs to,
-as a consumer or a table reader cannot, refuses a group member from `init_provider/1` with
-`ProviderBehaviour.refuse_partitioned(opts, __MODULE__)`, whose code is
-`plugin.partitioned_host`.
+say.
 
 ### An output plugin
 
@@ -190,8 +213,10 @@ telemetry: [
 ```
 
 `{key}` is filled from the signal's labels or measurements and `{key:noun}` with a count and
-its noun. A reader shows the label instead when a key is missing. Of the shared verbs,
-`failed` and `overflowed` are failures. The controller exports every declared verb under the
+its noun. A reader shows the label instead when a key is missing. A `level:` of `Logger`'s
+(`level: :warning`) also writes each emit as one log line at that level, `[flezha_<name>] <verb>`
+and its labels and measurements as `key=value`, so the verb needs no log call of its own. Of
+the shared verbs, `failed` and `overflowed` are failures. The controller exports every declared verb under the
 provider's name, sourced `flezha_<name>`; a verb it does not declare reaches only handlers
 attached to it.
 

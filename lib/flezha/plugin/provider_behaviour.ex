@@ -415,33 +415,6 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     for {job, true} <- [in: feeds, out: io_bound?(opts)], do: job
   end
 
-  @doc """
-  Refuse a plugin of `provider`, a source that cannot work without an entry
-  channel, whose options named none. Either spelling names it, so the requirement
-  is on the resolved `:entry_channel`, which a row's `required:` cannot say.
-  """
-  @spec require_entry_channel(map(), module()) ::
-          :ok | {:error, {:entry_channel_required, term()}}
-  def require_entry_channel(opts, provider) do
-    if opts[:entry_channel],
-      do: :ok,
-      else: {:error, {:entry_channel_required, provider.__provider__().name}}
-  end
-
-  @doc """
-  Refuse a plugin of `provider`, a source that cannot tell which member of a
-  partition group a record's key belongs to, on a group member: its options
-  carry the partition identity every member's plugins are given.
-  """
-  @spec refuse_partitioned(map(), module()) :: :ok | {:error, {:partitioned_host, map()}}
-  def refuse_partitioned(%{partition_count: count} = opts, provider) when not is_nil(count),
-    do:
-      {:error,
-       {:partitioned_host,
-        %{provider: provider.__provider__().name, relay: opts[:source_relay_id]}}}
-
-  def refuse_partitioned(_opts, _provider), do: :ok
-
   # A polling source's derived idle window, in polling intervals. Three, because
   # a poll that outlives its own interval stretches the cadence rather than
   # stacking, so a single slow cycle plus the poll after it must both land inside

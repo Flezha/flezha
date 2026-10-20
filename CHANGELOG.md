@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed: a source is one declaration, and every provider worker is one kit
+
+- **BREAKING:** a provider declares a source with `source: [partitioned: :refuse | :own_copy,
+  ...]` in `use Flezha.Plugin.ProviderBehaviour`, which implies `feeds: true` and generates the
+  entry-channel and partitioned refusals, `worker_specs/1` and `health/1`;
+  `ProviderBehaviour.require_entry_channel/2` and `refuse_partitioned/2` are gone. A worker is
+  written with `use Flezha.Plugin.Provider.Worker, facts: [...]`, which gives `start_link/1`,
+  `args/1`, `probe/1`, the probe's answer and the stop when the host relay goes down.
+- **BREAKING:** the file source reports `{:unhealthy, {:read_failed, error}}` for repeated
+  failed reads, the reason every source uses, in place of `:read_failing`. The HTTP poll source
+  keeps `:poll_failing`; its worker's probe answers a map of facts in place of a tuple.
+- The HTTP server plugin checks the entry channel before the partitioned refusal, so a
+  partitioned enable naming no channel now reads `plugin.entry_channel_required`.
+- Every relay provider answers `on_terminate/2` unless it writes one, so a binding stored with
+  that hook binds whichever provider it names. A source binding names no hook, and the docs'
+  examples no longer pass `--hook=on_terminate`.
+
 ### Changed: every call bound is a named duration row
 
 - Every bounded call in the controller and the plugin packages now waits on a named duration

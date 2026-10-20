@@ -52,7 +52,7 @@ $ flz plugin enable web http_server \
 | | |
 | --- | --- |
 | Package | `flezha_http`, built on Bandit and Plug, installed with `flz plugin install` and loaded at the next boot (see [installing_plugins.md](../topics/plugins/installing_plugins.md)) |
-| Hooks | none needed: the server drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the server drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Server | HTTP/1.1 only, on `bind` and `port`, started when the plugin activates and stopped when it is disabled or its relay stops |
 | Request | one outside call of the relay the plugin is enabled on, on its entry channel, with a JSON request envelope as the input |
 | Answer | the first output the request causes, a JSON answer envelope: a plain response, or a stream |
@@ -80,8 +80,7 @@ The package loads at boot. Once it is loaded, the plugin can also be declared at
   {
     "name": "web",
     "provider": "http_server",
-    "opts": {"port": "8080", "channel": "http", "pass_headers": "x-api-key"},
-    "hooks": ["on_terminate"]
+    "opts": {"port": "8080", "channel": "http", "pass_headers": "x-api-key"}
   }
 ]
 ```

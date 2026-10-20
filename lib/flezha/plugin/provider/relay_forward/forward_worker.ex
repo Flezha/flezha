@@ -23,6 +23,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   """
 
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.RelayManager
   alias Flezha.State.Outbox
@@ -86,7 +87,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   """
   @spec absorb(GenServer.server(), {binary(), map()}) :: :ok
   def absorb(server, {message, metadata}) when is_map(metadata) do
-    GenServer.call(server, {:absorb, message, metadata}, 5_000)
+    GenServer.call(server, {:absorb, message, metadata}, Durations.get(:plugin_worker_call_ms))
   end
 
   @doc """
@@ -99,18 +100,19 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   a duplicate is the safe direction and the at-least-once contract absorbs it.
   """
   @spec drain(GenServer.server()) :: [{binary(), map()}]
-  def drain(server), do: GenServer.call(server, :drain, 5_000)
+  def drain(server), do: GenServer.call(server, :drain, Durations.get(:plugin_worker_call_ms))
 
   @doc """
   Stop if nothing is queued or in flight, else `:busy`: the owner's answer to
   an idle report, which a payload handed after it may have made stale.
   """
   @spec stop_if_idle(GenServer.server()) :: :ok | :busy
-  def stop_if_idle(server), do: GenServer.call(server, :stop_if_idle, 5_000)
+  def stop_if_idle(server),
+    do: GenServer.call(server, :stop_if_idle, Durations.get(:plugin_worker_call_ms))
 
   @doc "Synchronous counters read (plugin health/stats contract)."
   @spec stats(GenServer.server()) :: map()
-  def stats(server), do: GenServer.call(server, :stats, 5_000)
+  def stats(server), do: GenServer.call(server, :stats, Durations.get(:plugin_worker_call_ms))
 
   # Every tunable is read as a declared field: the provider's option rows are
   # the one default table, and a fallback here would be a second copy of it.

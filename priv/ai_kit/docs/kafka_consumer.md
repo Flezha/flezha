@@ -53,7 +53,7 @@ $ flz plugin enable trades-in kafka_consumer --relay_id=pricer \
 
 | | |
 | --- | --- |
-| Hooks | none needed: the consumer drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the consumer drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Shared | no: one group member per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`), because Kafka partitions are not Flezha key groups |
 | Upstream | the topics' partitions Kafka assigns to this member of `group_id` |
 | Injection | one record as one input, its value as the payload, on the entry channel `:channel` (or `:channel_in`) names, with `flz.msg_id` set |
@@ -73,8 +73,7 @@ As a plugin spec at relay start (`flz relay start --plugins`):
       "group_id": "pricing",
       "start_at": "beginning",
       "channel": "trades"
-    },
-    "hooks": ["on_terminate"]
+    }
   }
 ]
 ```
@@ -84,7 +83,7 @@ Enabled and bound in two commands, with the settings written without their dashe
 ```sh
 $ flz plugin enable trades-in kafka_consumer Xhosts=kafka1:9092 Xtopics=trades \
   Xgroup_id=pricing Xchannel=trades Xstart_at=beginning
-$ flz plugin bind trades-in --relay_id pricer --hook=on_terminate
+$ flz plugin bind trades-in --relay_id pricer
 ```
 
 ## Options in detail

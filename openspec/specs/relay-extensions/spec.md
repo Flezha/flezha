@@ -1383,23 +1383,23 @@ provider's emitted verbs SHALL stay judged by the telemetry bridge's tree walk.
 
 ### Requirement: A source that cannot route by key SHALL refuse a partitioned relay one way
 
-`Flezha.Plugin.ProviderBehaviour.refuse_partitioned/2` SHALL answer, given a plugin's
-options and its provider, an error carrying the provider's name and the member when the options
-carry the partition options a group member's plugin is given, and `:ok` otherwise, and that
-error SHALL render as `plugin.partitioned_host`. A source that cannot tell which member a
-record's key belongs to SHALL call it from `init_provider/1`, so the refusal comes when the
-plugin is brought up on the member, at bind.
+A source that cannot tell which member a record's key belongs to SHALL declare
+`partitioned: :refuse` in its source declaration. The source kit SHALL then refuse, when the
+plugin is brought up on a member at bind, options that carry the partition options a group
+member's plugin is given, with an error carrying the provider's name and the member that SHALL
+render as `plugin.partitioned_host`, and SHALL accept every other plugin. No provider SHALL write
+this check itself, and the package API SHALL carry no function for it.
 
 #### Scenario: A table reader on a partitioned relay
 
-- **WHEN** a source calling `refuse_partitioned/2` is enabled on a member of a partition group
+- **WHEN** a source declaring `partitioned: :refuse` is enabled on a member of a partition group
 - **THEN** the enable SHALL be refused with `plugin.partitioned_host` naming the provider and
   the member
 
 #### Scenario: A relay that is not partitioned
 
 - **WHEN** the same source is enabled on a relay outside any partition group
-- **THEN** `refuse_partitioned/2` SHALL answer `:ok`
+- **THEN** the enable SHALL succeed
 
 ### Requirement: The Kafka producer package conforms to the kafka-producer-plugin contract
 

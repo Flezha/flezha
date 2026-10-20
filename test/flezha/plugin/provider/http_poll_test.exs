@@ -295,7 +295,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       Enum.each(1..50, fn n -> send(self(), {:host_work, n}) end)
       Enum.each(1..50, fn n -> assert_received {:host_work, ^n} end)
 
-      assert {:ok, {0, nil, _last_settled_at}} = PollWorker.probe(poller)
+      assert {:ok, %{consecutive_failures: 0, last_error: nil}} = PollWorker.probe(poller)
       WebhookServer.release()
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
@@ -306,7 +306,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       # Mid-flight: the request is blocking its own child, not the worker, so
       # the verdict is available for exactly the slow endpoint it must report.
-      assert {:ok, {0, nil, _last_settled_at}} = PollWorker.probe(poller)
+      assert {:ok, %{consecutive_failures: 0, last_error: nil}} = PollWorker.probe(poller)
       assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
 
       WebhookServer.release()

@@ -32,6 +32,29 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
   `Flezha.Plugin.Host.inject/4` write it. `shareable: true` declares that one
   running copy can serve several bound relays; it defaults to false.
   `namespace: name` declares the one namespace the provider may be enabled in.
+
+  `source: [...]` declares a source, a provider whose worker reads something
+  outside and feeds the relay (it implies `feeds: true`), and generates what
+  every source shares:
+
+    * `init_provider/1` refuses a plugin naming no entry channel, then, with
+      `partitioned: :refuse`, one on a partition group member (`:own_copy`
+      serves a partitioned relay, one copy per member), fills `plugin_id` from
+      the id the plugin was enabled under, and only then runs the provider's own;
+    * `worker_specs/1`, one worker per binding started with the worker's
+      `args/1`, and `health/1`, which probes a worker written with
+      `Flezha.Plugin.Provider.Worker` at twice the probe budget
+      (`{:fail_open, :probe_timeout}` when it does not answer) and judges its
+      facts by the provider's own `verdict/2` clauses first, then
+      `failure_threshold` failures in a row as `{failure_reason, last_error}`
+      (`failure_reason:` defaults to `:read_failed`), then, with
+      `idle_interval: <option>`, `ProviderBehaviour.idle_verdict/3` over that
+      option. `absent:` and `dead:` name a missing and a dead worker
+      (`:no_reader`, `:reader_dead`); `probe: false` leaves both callbacks to the
+      provider.
+
+  Every relay provider answers `on_terminate/2` with `:ok` unless it writes
+  one, so a binding naming that hook binds whichever provider it names.
   """
   defmacro __using__(opts) do
     [
@@ -50,7 +73,8 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     worker = Keyword.get(opts, :worker)
     type = Keyword.get(opts, :type, :relay)
     name = Keyword.get(opts, :name)
-    feeds = Keyword.get(opts, :feeds, false)
+    source = Keyword.get(opts, :source)
+    feeds = if source, do: true, else: Keyword.get(opts, :feeds, false)
     shareable = Keyword.get(opts, :shareable, false)
     telemetry = Keyword.get(opts, :telemetry, [])
     namespace = Keyword.get(opts, :namespace)
@@ -67,6 +91,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       @__provider_shareable__ unquote(shareable)
       @__provider_telemetry__ unquote(telemetry)
       @__provider_namespace__ unquote(namespace)
+      @__provider_source__ unquote(source)
     end
   end
 
@@ -206,7 +231,13 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     validate_type!(env, Module.get_attribute(env.module, :__provider_type__))
     validate_telemetry!(env, Module.get_attribute(env.module, :__provider_telemetry__))
 
-    [decl(env.module), strict_build(), fall_through()]
+    [
+      decl(env.module),
+      source_kit(env),
+      default_terminate(env.module),
+      strict_build(),
+      fall_through()
+    ]
   end
 
   # `extensions` and `own` are read from the module while it compiles, which is
@@ -216,7 +247,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     extensions =
       Enum.filter(
         @extension_callbacks ++ @controller_callbacks,
-        &Module.defines?(module, {&1, 2})
+        &(Module.defines?(module, {&1, 2}) or (&1 == :on_terminate and default_terminate?(module)))
       )
 
     own = module |> Module.get_attribute(:__provider_own__, []) |> Enum.uniq() |> Enum.sort()
@@ -239,6 +270,152 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           namespace: @__provider_namespace__
         }
       end
+    end
+  end
+
+  defp default_terminate?(module),
+    do:
+      Module.get_attribute(module, :__provider_type__) == :relay and
+        not Module.defines?(module, {:on_terminate, 2})
+
+  defp default_terminate(module) do
+    if default_terminate?(module) do
+      quote do
+        @impl unquote(ProviderBehaviour)
+        def on_terminate(_ctx, _opts), do: :ok
+      end
+    end
+  end
+
+  @source_keys [:partitioned, :failure_reason, :idle_interval, :absent, :dead, :probe]
+
+  # What every source shares, generated from its `source:` declaration.
+  defp source_kit(env) do
+    case Module.get_attribute(env.module, :__provider_source__) do
+      nil ->
+        nil
+
+      source ->
+        validate_source!(env, source)
+        own = Module.get_attribute(env.module, :__provider_own__, [])
+        worker = Module.get_attribute(env.module, :__provider_worker__)[:module]
+        probe? = Keyword.get(source, :probe, true)
+
+        [
+          source_init(source),
+          if(probe? and :worker_specs not in own, do: source_specs(worker)),
+          if(probe? and :health not in own, do: source_health(source, worker))
+        ]
+    end
+  end
+
+  defp validate_source!(env, source) do
+    refuse_row_key!(env, :source, Keyword.keys(source) -- @source_keys)
+
+    if source[:partitioned] not in [:refuse, :own_copy],
+      do: raise_row!(env, "source: needs `partitioned: :refuse | :own_copy`")
+
+    if Keyword.get(source, :probe, true) and
+         is_nil(Module.get_attribute(env.module, :__provider_worker__)),
+       do: raise_row!(env, "source: needs a `worker:` it can probe, or `probe: false`")
+  end
+
+  defp source_init(source) do
+    partitioned =
+      if source[:partitioned] == :refuse do
+        quote do
+          defp __source_partition__(%{partition_count: count} = opts) when not is_nil(count),
+            do:
+              {:error,
+               {:partitioned_host, %{provider: @__provider_name__, relay: opts[:source_relay_id]}}}
+        end
+      end
+
+    quote do
+      unquote(partitioned)
+      defp __source_partition__(_opts), do: :ok
+
+      # The resolved `:entry_channel`, which either spelling names and a row's
+      # `required:` cannot say.
+      defp __source_entry__(opts) do
+        if opts[:entry_channel],
+          do: :ok,
+          else: {:error, {:entry_channel_required, @__provider_name__}}
+      end
+
+      defp __source_plugin_id__(%{plugin_id: nil} = opts),
+        do: %{opts | plugin_id: opts[:source_plugin_id]}
+
+      defp __source_plugin_id__(opts), do: opts
+
+      defoverridable init_provider: 1
+
+      @impl unquote(ProviderBehaviour)
+      def init_provider(opts) do
+        with :ok <- __source_entry__(opts),
+             :ok <- __source_partition__(opts),
+             do: super(__source_plugin_id__(opts))
+      end
+    end
+  end
+
+  defp source_specs(worker) do
+    quote do
+      defoverridable worker_specs: 1
+
+      @impl unquote(ProviderBehaviour)
+      def worker_specs(opts),
+        do: [{Flezha.Plugin.Provider.WorkerSup.key(opts), unquote(worker).args(opts)}]
+    end
+  end
+
+  defp source_health(source, worker) do
+    contract = ProviderBehaviour
+    reason = Keyword.get(source, :failure_reason, :read_failed)
+    last = source_last_verdict(source[:idle_interval])
+
+    quote do
+      defoverridable health: 1
+
+      @impl unquote(contract)
+      def health(opts) do
+        unquote(contract).worker_health(
+          opts,
+          # The outer budget exceeds the probe's own, so the precise
+          # `:probe_timeout` is not replaced by the generic budget verdict.
+          [
+            absent: unquote(Keyword.get(source, :absent, :no_reader)),
+            dead: unquote(Keyword.get(source, :dead, :reader_dead)),
+            budget_ms: 2 * unquote(contract).probe_budget_ms()
+          ],
+          fn pid ->
+            case unquote(worker).probe(pid) do
+              {:ok, facts} -> verdict(facts, opts)
+              :timeout -> {:fail_open, :probe_timeout}
+            end
+          end
+        )
+      end
+
+      defp verdict(%{consecutive_failures: failures, last_error: error}, opts)
+           when failures >= opts.failure_threshold,
+           do: {:unhealthy, {unquote(reason), error}}
+
+      unquote(last)
+    end
+  end
+
+  defp source_last_verdict(nil), do: quote(do: defp(verdict(_facts, _opts), do: :healthy))
+
+  defp source_last_verdict(interval) do
+    quote do
+      defp verdict(%{last_settled_at: settled_at}, opts),
+        do:
+          unquote(ProviderBehaviour).idle_verdict(
+            settled_at,
+            opts.idle_after_ms,
+            Map.fetch!(opts, unquote(interval))
+          )
     end
   end
 

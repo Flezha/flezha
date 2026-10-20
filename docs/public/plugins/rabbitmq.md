@@ -126,7 +126,7 @@ then resumes consuming or publishing without the plugin being enabled again.
 
 | | |
 | --- | --- |
-| Hooks | none needed: the consumer drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the consumer drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Shared | no: one consumer per binding, so a second relay bound to it is refused (`plugin.not_shareable`), and a member of a partition group is refused (`plugin.partitioned_host`) |
 | Upstream | one queue, with a prefetch window |
 | Injection | one message as one input, its body as the payload, on the entry channel `:channel` (or `:channel_in`) names |
@@ -137,7 +137,7 @@ Enabled and bound in two commands, with the settings written without their dashe
 ```sh
 $ flz plugin enable rates-in rabbitmq_consumer Xhost=broker Xqueue=rates Xchannel=rates \
   Xpassword_env=RABBITMQ_PASSWORD
-$ flz plugin bind rates-in --relay_id pricer --hook=on_terminate
+$ flz plugin bind rates-in --relay_id pricer
 ```
 
 Several relays bound to consumers of one queue are competing consumers, as RabbitMQ

@@ -166,7 +166,7 @@ What each direction does differently is under
 
 | | |
 | --- | --- |
-| Hooks | none needed: the reader drives itself, so a binding names no hook (the provider also defines `:on_terminate`) |
+| Hooks | none needed: the reader drives itself, so a binding names no hook (a binding naming `on_terminate` is still accepted) |
 | Shared | no: a second relay bound to it is refused (`plugin.not_shareable`) |
 | Upstream | one file inside the root folder, or one object under an S3 root, polled every `poll_interval_ms` |
 | Injection | each line, without its newline, on the entry channel `channel` or `channel_in` names |
@@ -189,8 +189,7 @@ As a plugin spec at relay start (`flz relay start --plugins`):
   {
     "name": "reader",
     "provider": "relay_file_input",
-    "opts": {"path": "events.ndjson", "channel_in": "events"},
-    "hooks": ["on_terminate"]
+    "opts": {"path": "events.ndjson", "channel_in": "events"}
   }
 ]
 ```
@@ -276,7 +275,7 @@ health are the file's.
 - **A missing object**, a `404`, reports `{:unhealthy, {:file_missing, path}}` and keeps the
   offset; the same object coming back resumes where the reader stopped.
 - **Any other failed request** keeps the offset and counts as a failed read whose reason
-  names the status, such as `{:unhealthy, {:read_failing, {:stat, {:http, 403}}}}`. A `403`
+  names the status, such as `{:unhealthy, {:read_failed, {:stat, {:http, 403}}}}`. A `403`
   is a credentials fault and is never reported as a missing object.
 - **Requests.** Each look is a `HEAD`, and a reader that is behind looks again before each
   chunk, so a larger `read_chunk_bytes` reads a large object in fewer requests.
@@ -289,7 +288,7 @@ health are the file's.
 | --- | --- |
 | `{:unhealthy, {:line_too_long, offset}}` / `{:unhealthy, {:invalid_utf8, offset}}` | the reader stopped at that line |
 | `{:unhealthy, {:file_missing, path}}` | the file is not there |
-| `{:unhealthy, {:read_failing, error}}` | `failure_threshold` consecutive failed reads or refused ingests |
+| `{:unhealthy, {:read_failed, error}}` | `failure_threshold` consecutive failed reads or refused ingests |
 | `{:unhealthy, {:poll_idle, age_ms}}` | the last settled poll is older than `idle_after_ms`, or three `poll_interval_ms` when it is 0 |
 | `{:fail_open, :probe_timeout}` | the reader did not answer the probe, which is not a verdict |
 | `{:unhealthy, :no_reader}` / `{:unhealthy, :reader_dead}` | no worker, or a dead one |

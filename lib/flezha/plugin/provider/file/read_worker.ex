@@ -17,10 +17,16 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
 
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.File.Storage
+  alias Flezha.Plugin.Provider.Worker
   alias Flezha.Plugin.ProviderBehaviour
-  alias Flezha.Process.Watch
 
-  use GenServer
+  # The facts the provider's `health/1` judges: the path, where the reader
+  # stopped if it did, whether the target is missing, the failure run and the
+  # time of the last settled poll. A probe that times out is also what a reader
+  # waiting out a parked relay's ingest looks like.
+  use Worker,
+    facts: [:path, :stopped, :missing, :consecutive_failures, :last_error, :last_settled_at]
+
   use Flezha.Process.Timer, keys: [:poll]
 
   require Logger
@@ -44,21 +50,6 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   defp emit(verb, measurements, metadata),
     do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 
-  @doc "Started by the extension table at activation, from the declared spec. Performs no I/O."
-  @spec start_link(map()) :: GenServer.on_start()
-  def start_link(opts) when is_map(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
-
-  @doc """
-  The facts the provider's `health/1` judges: the path, where the reader
-  stopped if it did, whether the target is missing, the failure run and the
-  time of the last settled poll. `:timeout` when the worker does not answer,
-  which is also what a reader waiting out a parked relay's ingest looks
-  like.
-  """
-  @spec probe(pid()) :: {:ok, map()} | :timeout
-  def probe(pid), do: ProviderBehaviour.ask(pid, :health_probe)
-
   @impl true
   def init(opts) do
     now = now()
@@ -66,8 +57,8 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     state =
       opts
       |> Map.take(@fields)
+      |> Map.merge(Worker.fields(opts))
       |> Map.merge(%{
-        watch: Watch.watch(Watch.new(), Map.fetch!(opts, :overwatcher_pid), :host),
         storage: Storage.Config.of(opts.path),
         handle: nil,
         # The inode or the ETag: what tells a replaced target from the one read.
@@ -81,11 +72,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
         committed_at: now,
         buffer: "",
         missing: false,
-        stopped: nil,
-        consecutive_failures: 0,
-        last_error: nil,
-        last_settled_at: now,
-        timers: %{}
+        stopped: nil
       })
 
     # Scheduled, never run here: activation is synchronous in the host.
@@ -95,30 +82,13 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   @impl true
   def handle_info(:poll, state), do: {:noreply, state |> timer_fired(:poll) |> poll()}
 
-  # The relay this reader feeds is gone.
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case Watch.down(state.watch, ref) do
-      {[:host], _watch} -> {:stop, :normal, close(state)}
-      _stale -> {:noreply, state}
-    end
-  end
-
-  def handle_info({:health_probe, from, ref}, state) do
-    facts =
-      Map.take(state, [
-        :path,
-        :stopped,
-        :missing,
-        :consecutive_failures,
-        :last_error,
-        :last_settled_at
-      ])
-
-    send(from, {ref, facts})
-    {:noreply, state}
-  end
-
   def handle_info(_other, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, state) do
+    _ = close(state)
+    :ok
+  end
 
   # ---------- one poll ----------
 
@@ -129,7 +99,8 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   defp poll(state) do
     {next, state} = step(state)
 
-    %{state | last_settled_at: now()}
+    state
+    |> Worker.settled()
     |> Host.commit_position(:offset, next)
     |> schedule(next)
   end
@@ -250,14 +221,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     offset = state.offset + byte_size(line) + 1
     emit(:shipped, %{bytes: byte_size(line), offset: offset}, labels(state))
 
-    %{
-      state
-      | offset: offset,
-        buffer: rest,
-        consecutive_failures: 0,
-        last_error: nil,
-        last_settled_at: now()
-    }
+    %{state | offset: offset, buffer: rest} |> Worker.recovered() |> Worker.settled()
   end
 
   # A fragment already past the cap is a line past the cap whatever follows it.
@@ -312,7 +276,8 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   end
 
   defp failed(state, reason) do
-    failures = state.consecutive_failures + 1
+    state = Worker.failed(state, reason)
+    failures = state.consecutive_failures
 
     Logger.warning(
       "[Plugin.Provider.File.Source] read failed path=#{state.path} offset=#{state.offset} " <>
@@ -325,7 +290,7 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
       Map.put(labels(state), :reason, reason)
     )
 
-    %{state | consecutive_failures: failures, last_error: reason}
+    state
   end
 
   defp labels(state),

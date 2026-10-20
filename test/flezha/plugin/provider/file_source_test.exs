@@ -373,7 +373,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
       :ok = S3.put("events.ndjson", "a\n", [], s3)
       System.put_env("FLEZHA_TEST_S3_SECRET", "s3cr3t-value")
       {opts, reader} = start_reader(%{offset: 0, failure_threshold: 1})
-      forbidden = {:unhealthy, {:read_failing, {:stat, {:http, 403}}}}
+      forbidden = {:unhealthy, {:read_failed, {:stat, {:http, 403}}}}
       assert wait_until(fn -> health(opts, reader) == forbidden end, 5_000)
 
       on_exit(override_log_level(:warning))

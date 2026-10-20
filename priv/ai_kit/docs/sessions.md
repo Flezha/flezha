@@ -781,7 +781,7 @@ Started gateway
 ```
 
 ```sh
-$ flz plugin enable web http_server --relay_id=gateway --namespace agents --hook=on_terminate --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
+$ flz plugin enable web http_server --relay_id=gateway --namespace agents --Xport=8080 --Xbind=0.0.0.0 --Xchannel=http
 ```
 
 ```output

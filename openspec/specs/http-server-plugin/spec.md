@@ -101,9 +101,9 @@ refused by a cap since it started. This SHALL hold for a host relay of either ki
 
 ### Requirement: The plugin SHALL refuse a partitioned host relay
 
-The provider's `init_provider/1` SHALL refuse a plugin whose options carry a partition
-identity with the core's `Flezha.Plugin.ProviderBehaviour.refuse_partitioned/2`, whose code is
-`plugin.partitioned_host`, naming the provider and the member. `flz plugin enable` on a
+The provider SHALL declare `partitioned: :refuse` in its source declaration, so the core's
+source kit refuses a plugin whose options carry a partition identity when it is brought up, with
+`plugin.partitioned_host` naming the provider and the member. `flz plugin enable` on a
 partition group SHALL therefore fail on every member with that code and leave no plugin row,
 and a group started with the plugin in its declared set SHALL NOT start: its start SHALL be
 refused on the existing plugin-prepare failure, whose reason names `partitioned_host`,

@@ -21,9 +21,13 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
   alias Flezha.Plugin.Host
   alias Flezha.Plugin.Provider.HttpFetch
+  alias Flezha.Plugin.Provider.Worker
   alias Flezha.Plugin.ProviderBehaviour
 
-  use GenServer
+  # The facts the provider's `health/1` judges. A probe that times out, since
+  # requests run off this process, means the worker itself is wedged rather
+  # than merely busy.
+  use Worker, facts: [:consecutive_failures, :last_error, :last_settled_at]
   use Flezha.Process.Timer, keys: [:poll]
 
   require Logger
@@ -34,26 +38,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   defp emit(verb, measurements, metadata),
     do: ProviderBehaviour.emit(@provider, verb, measurements, metadata)
 
-  @doc """
-  Start a poller from the provider's declared worker spec. Performs no I/O.
-  Started by the extension table at activation.
-  """
-  @spec start_link(map()) :: GenServer.on_start()
-  def start_link(opts) when is_map(opts),
-    do: GenServer.start_link(__MODULE__, opts, name: Map.fetch!(opts, :name))
-
-  @doc """
-  Current `{failure run, last error}`, for the provider's `health/1`. Returns
-  `:timeout` if the worker does not answer — which, since requests run off this
-  process, means the worker itself is wedged rather than merely busy.
-  """
-  @spec probe(pid()) :: {:ok, {non_neg_integer(), term()}} | :timeout
-  def probe(pid), do: ProviderBehaviour.ask(pid, :health_probe)
-
   @impl true
   def init(opts) do
-    host = Map.fetch!(opts, :overwatcher_pid)
-
     state =
       opts
       |> Map.take([
@@ -65,18 +51,12 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         :timeout_ms,
         :max_body_bytes
       ])
+      |> Map.merge(Worker.fields(opts))
       |> Map.merge(%{
-        host_ref: Process.monitor(host),
         targets: offered(Host.targets(opts), %{}),
         mode: if(opts[:targets_from], do: :fire_and_forget, else: :verdict),
         fetch: nil,
-        etag: nil,
-        consecutive_failures: 0,
-        last_error: nil,
-        # Seeded at start, not left nil: a poller that has never settled is
-        # measured from its own birth, so the idle window is the same clock
-        # for a worker that stopped and one that never began.
-        last_settled_at: :erlang.monotonic_time(:millisecond)
+        etag: nil
       })
 
     # The first poll is scheduled, never executed here: `activate/1` is
@@ -98,12 +78,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     {:noreply, settle(%{state | fetch: nil}, result, elapsed(started))}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{host_ref: ref} = state) do
-    # The relay this poller feeds is gone; injecting into a dead mailbox is
-    # nothing but wasted requests against the upstream.
-    {:stop, :normal, state}
-  end
-
   def handle_info({:DOWN, ref, :process, _dead, reason}, %{fetch: {_pid, ref, started}} = state) do
     {:noreply,
      settle(%{state | fetch: nil}, {:error, {:fetch_crashed, reason}}, elapsed(started))}
@@ -115,11 +89,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     targets = offered(targets, Map.new(state.targets, fn {pid, _md, hash} -> {pid, hash} end))
     etag = if Enum.any?(targets, &is_nil(elem(&1, 2))), do: nil, else: state.etag
     {:noreply, %{state | targets: targets, etag: etag}}
-  end
-
-  def handle_info({:health_probe, from, ref}, state) do
-    send(from, {ref, {state.consecutive_failures, state.last_error, state.last_settled_at}})
-    {:noreply, state}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
@@ -148,7 +117,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         {:error, reason} -> failed(state, reason, latency_ms)
       end
 
-    state = %{state | last_settled_at: :erlang.monotonic_time(:millisecond)}
+    state = Worker.settled(state)
     arm_timer(state, :poll, state.interval_ms, :poll)
   end
 
@@ -186,7 +155,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
           Map.put(labels(state), :seed, seed?)
         )
 
-        recovered(%{state | etag: etag})
+        Worker.recovered(%{state | etag: etag})
 
       # Neither the refusing relay's hash nor the validator is advanced: it
       # did not take this content, so the next poll must re-offer it rather
@@ -218,15 +187,12 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
   defp unchanged(state, latency_ms) do
     emit(:unchanged, %{latency_ms: latency_ms}, labels(state))
-    recovered(state)
+    Worker.recovered(state)
   end
 
-  # A success ends the failure run, so the health contract flips back on the
-  # same poll that delivered the change the outage hid.
-  defp recovered(state), do: %{state | consecutive_failures: 0, last_error: nil}
-
   defp failed(state, reason, latency_ms) do
-    failures = state.consecutive_failures + 1
+    state = Worker.failed(state, reason)
+    failures = state.consecutive_failures
 
     Logger.warning(
       "[Plugin.Provider.HttpPoll] poll failed plugin_id=#{inspect(state.plugin_id)} " <>
@@ -241,7 +207,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
     # The last delivered hash is retained: being unable to re-read the resource
     # does not invalidate the content the relay already holds.
-    %{state | consecutive_failures: failures, last_error: reason}
+    state
   end
 
   defp labels(state), do: %{plugin_id: state.plugin_id, channel: state.entry_channel}

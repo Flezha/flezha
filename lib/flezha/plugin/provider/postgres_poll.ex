@@ -19,17 +19,15 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
   rest: `docs/public/plugins/postgres_poll.md`.
   """
 
-  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Postgres.Connection
   alias Flezha.Plugin.Provider.PostgresPoll.Query
   alias Flezha.Plugin.Provider.PostgresPoll.Reader
-  alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options
 
   use ProviderBehaviour,
-    feeds: true,
     shareable: false,
+    source: [partitioned: :refuse, idle_interval: :interval_ms],
     telemetry: [caught_up: :event],
     options:
       Connection.rows() ++
@@ -102,68 +100,18 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
   """
   @impl true
   def init_provider(opts) do
-    with :ok <- ProviderBehaviour.require_entry_channel(opts, __MODULE__),
-         :ok <- ProviderBehaviour.refuse_partitioned(opts, __MODULE__),
-         :ok <- Query.validate_names(opts) do
+    with :ok <- Query.validate_names(opts) do
       {:ok,
        opts
        |> Connection.prepare()
-       |> Map.merge(%{
-         plugin_id: opts.plugin_id || opts[:source_plugin_id],
-         cursor: Query.own_cursor(opts.cursor, opts)
-       })}
+       |> Map.put(:cursor, Query.own_cursor(opts.cursor, opts))}
     end
-  end
-
-  @doc "One reader per binding, started with `PostgresPoll.Reader.args/1`."
-  @impl true
-  def worker_specs(opts), do: [{WorkerSup.key(opts), Reader.args(opts)}]
-
-  @doc """
-  Teardown is the host's. This callback exists so the provider can be hooked at
-  all: every hook requires the matching export.
-  """
-  @impl true
-  def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
-
-  @doc """
-  Health verdict from the reader: a missing table or column names itself at
-  once, a failure run reaching `failure_threshold` names its error, and a reader
-  whose last settled read is older than the idle window says how old.
-  """
-  @impl true
-  @spec health(map()) :: ProviderBehaviour.health_verdict()
-  def health(opts) do
-    ProviderBehaviour.worker_health(
-      opts,
-      # The outer budget exceeds the probe's own, so this provider's precise
-      # `:probe_timeout` is not replaced by the generic budget verdict.
-      [
-        absent: :no_reader,
-        dead: :reader_dead,
-        budget_ms: 2 * ProviderBehaviour.probe_budget_ms()
-      ],
-      &reader_health(&1, opts)
-    )
   end
 
   @doc "What `flz relay info` shows beneath the plugin: the table and its verdict."
   @impl true
   def inspect_state(opts), do: %{table: opts.table, health: health(opts)}
 
-  defp reader_health(pid, opts) do
-    case Reader.probe(pid) do
-      {:ok, facts} -> verdict(facts, opts)
-      :timeout -> {:fail_open, :probe_timeout}
-    end
-  end
-
+  # Before the source's shared verdicts: a missing table or column names itself.
   defp verdict(%{missing: missing}, _opts) when missing != nil, do: {:unhealthy, missing}
-
-  defp verdict(%{consecutive_failures: failures, last_error: error}, opts)
-       when failures >= opts.failure_threshold,
-       do: {:unhealthy, {:read_failed, error}}
-
-  defp verdict(%{last_settled_at: settled_at}, opts),
-    do: ProviderBehaviour.idle_verdict(settled_at, opts.idle_after_ms, opts.interval_ms)
 end

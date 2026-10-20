@@ -18,7 +18,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
   alias Flezha.Plugin.ProviderBehaviour
@@ -27,8 +26,14 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @max_body_ceiling_bytes 64 * 1_048_576
 
   use ProviderBehaviour,
-    feeds: true,
     shareable: true,
+    source: [
+      partitioned: :own_copy,
+      failure_reason: :poll_failing,
+      idle_interval: :interval_ms,
+      absent: :no_poller,
+      dead: :poller_dead
+    ],
     options:
       [
         url: [type: :string, required: true, doc: "The resource to GET each interval"],
@@ -56,73 +61,15 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   """
   @impl true
   def init_provider(opts) do
-    with :ok <- ProviderBehaviour.require_entry_channel(opts, __MODULE__),
-         {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
+    with {:ok, raw_url} <- render_partition_placeholders(opts.url, opts),
          {:ok, url} <- HttpFetch.validate_url(raw_url, "http_poll"),
          :ok <- validate_interval(opts.interval_ms),
          :ok <- validate_budget(opts) do
       {:ok,
        Map.merge(opts, %{
          url: url,
-         plugin_id: opts.plugin_id || opts[:source_plugin_id] || redact(url)
+         plugin_id: opts.plugin_id || redact(url)
        })}
-    end
-  end
-
-  @doc """
-  Teardown is the host's: it kills the pid `activate/1` returned, on both
-  unsubscribe and full teardown. This callback exists so the provider can be
-  hooked at all — every hook requires the matching export, and a spec with no
-  hooks is refused — and so a `:on_terminate` spec reads
-  as the intent it is.
-  """
-  @impl true
-  def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
-
-  @doc """
-  Health verdict from the poller's failure run and the age of its last settled
-  poll. A single failed poll is not unhealthiness; `:failure_threshold`
-  consecutive ones are, and the next success clears the run on the poll that
-  reports it.
-
-  The failure run alone is not enough: a poller that has stopped scheduling
-  polls at all has a run of zero and a clean last error, so it read healthy
-  while delivering nothing — and a source delivering nothing is
-  indistinguishable downstream from a quiet stream, because every producing
-  verdict is gated on input actually arriving. The idle window closes that.
-  """
-  @impl true
-  @spec health(map()) :: ProviderBehaviour.health_verdict()
-  def health(opts) do
-    ProviderBehaviour.worker_health(
-      opts,
-      # The outer budget must exceed the inner `PollWorker.probe/1` timeout, or
-      # the two race and this provider's precise `:probe_timeout` is replaced by
-      # the generic budget one.
-      [
-        absent: :no_poller,
-        dead: :poller_dead,
-        budget_ms: 2 * ProviderBehaviour.probe_budget_ms()
-      ],
-      &poller_health(&1, opts)
-    )
-  end
-
-  # The failure run outranks the idle age when both apply: it names the actual
-  # error, and the age only says nothing has happened.
-  defp poller_health(pid, opts) do
-    case PollWorker.probe(pid) do
-      {:ok, {failures, last_error, _last_settled_at}} when failures >= opts.failure_threshold ->
-        {:unhealthy, {:poll_failing, last_error}}
-
-      {:ok, {_failures, _last_error, last_settled_at}} ->
-        ProviderBehaviour.idle_verdict(last_settled_at, opts.idle_after_ms, opts.interval_ms)
-
-      # The worker is alive but did not answer inside the probe budget: an
-      # UNCERTAIN probe, not a verdict. Reported upward rather than swallowed —
-      # `Extension.Table` is the layer that can name the plugin.
-      :timeout ->
-        {:fail_open, :probe_timeout}
     end
   end
 
