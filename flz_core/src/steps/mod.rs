@@ -8,7 +8,6 @@
 //! `complete`, a loop running out of work, `max_duration`, an external stop)
 //! that all converge on one `RelayCompleted`.
 
-mod address;
 mod commit;
 pub mod compensation;
 #[cfg(all(test, unix))]
@@ -23,7 +22,6 @@ pub mod spec;
 
 use std::fmt;
 
-pub use address::unwired_stream;
 pub use events::{
     attempt_failed, complete, entry_parked, hold_emit, item_settled, note_failure, open, pass_call,
     pass_offset, removed, restore_landed, results_landed, ship_stage_record, stop,
@@ -33,6 +31,7 @@ pub(crate) use events::{
     held_removals, hold_arm, hold_removal, items_dropped, message, pass_dead, reap_holds,
 };
 pub use instance::{Deadline, Resume, StepsRun};
+pub use run::unwired_stream;
 
 pub use crate::relay::settings::{Each, OnFailure};
 

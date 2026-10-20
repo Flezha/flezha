@@ -7,13 +7,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use super::address::{unwired_stream, Source};
 use super::compensation::{rewind_steps, stages_from_intents, CellRun, StageRecord};
 use super::instance::{
     AfterUndo, CommittedTask, Completion, Deadline, JournalResume, MidResume, PassOrigin, Phase,
     Release, Value,
 };
-use super::run::{Decide, Run};
+use super::run::{unwired_stream, Decide, Run, Source};
 use super::spec::Chain;
 use super::{Each, OnFailure, StepsError};
 use crate::channel::{ChannelId, ChannelKind};

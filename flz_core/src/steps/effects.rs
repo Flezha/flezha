@@ -4,12 +4,11 @@ use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::address::Source;
 use super::commit::{ack_timeout, iteration_frame, task_frame};
 use super::compensation::CellRun;
 use super::events::{barrier_acked, crossed, items_dropped, undo_answered};
 use super::instance::{Deadline, Failure, FiringKey, HeldArm, Release, Value};
-use super::run::{Run, ADMIT_RETRY, UNDO_GATE_RETRY};
+use super::run::{Run, Source, ADMIT_RETRY, UNDO_GATE_RETRY};
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::{ChannelId, OverflowPolicy};
 use crate::host::HostPayload;
