@@ -14,12 +14,11 @@ defmodule Flezha.Relay.Handover do
   """
 
   alias Flezha.Config
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Process.Timer
   alias Flezha.Runner.ControlUnit
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
@@ -28,7 +27,7 @@ defmodule Flezha.Relay.Handover do
 
   @doc """
   The handover payload this node ships: identity, plugins, the callers waiting
-  on the relay with the time each has left, and the SDK's serialized state.
+  on the relay with each one's deadline, and the SDK's serialized state.
   When the source runner is already gone, `serialize_data` is the final state
   it handed over if no runner has taken the relay over since, and nil
   otherwise, and then the disk is the only surviving state.
@@ -51,7 +50,7 @@ defmodule Flezha.Relay.Handover do
       namespace: state.namespace,
       factory_id: state.factory_id,
       init_values: state.init_values,
-      calls: Calls.export(state.calls)
+      calls: Inbound.export(state.calls)
     }
 
     Lifecycle.release_lineage(%Overwatch{state | cause: :move})
@@ -103,7 +102,7 @@ defmodule Flezha.Relay.Handover do
       state
       | extensions: brought_up.extensions,
         init_values: handover_state.init_values,
-        calls: Calls.absorb(Map.get(handover_state, :calls, [])),
+        calls: Inbound.absorb(Map.get(handover_state, :calls, [])),
         # Only a handover that actually reached a runner suppresses the WAL
         # restore. One that carried nothing, or that found nothing bound to
         # carry it to, falls through to the on-disk state the bind already
@@ -112,7 +111,7 @@ defmodule Flezha.Relay.Handover do
         arrived_via_hotswap?: arrived?,
         cause: if(arrived?, do: :arrive, else: state.cause)
     }
-    |> arm_call_deadlines()
+    |> arm_calls()
   end
 
   defp deserialize(%Overwatch{} = state, factory_id, serialized_state) do
@@ -133,26 +132,15 @@ defmodule Flezha.Relay.Handover do
     end
   end
 
-  # Each carried row keeps the deadline it had on the source node; an
-  # relay's own call keeps its wall-clock one.
-  defp arm_call_deadlines(%Overwatch{calls: calls} = state) do
-    timers =
-      Enum.reduce(Map.keys(calls.rows), state.timers, fn token, timers ->
-        Timer.arm(
-          timers,
-          {:call, token},
-          Calls.remaining_ms(calls, token),
-          {:call_deadline, token}
-        )
-      end)
+  # Each carried row keeps the wall-clock deadline it had on the source node.
+  defp arm_calls(%Overwatch{calls: calls} = state) do
+    deadlines =
+      for({token, row} <- calls.rows, do: {{:call_deadline, token}, row.deadline_at}) ++
+        for({id, row} <- calls.out, do: {{:call_timeout, id}, row.deadline_at})
 
-    timers =
-      Enum.reduce(calls.out, timers, fn {id, row}, timers ->
-        left = max(row.deadline_at - System.system_time(:millisecond), 0)
-        Timer.arm(timers, {:call, id}, left, {:call_timeout, id})
-      end)
-
-    %Overwatch{state | timers: timers}
+    Enum.reduce(deadlines, state, fn {message, at}, state ->
+      Inbound.arm_call(state, message, at)
+    end)
   end
 
   @doc """

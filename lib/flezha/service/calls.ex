@@ -23,14 +23,10 @@ defmodule Flezha.Service.Calls do
   @impl true
   def init(nil) do
     children = [
-      Flezha.Service.Calls.Router,
+      {Flezha.Service.Calls.Router, supervisor: @workers},
       {DynamicSupervisor, name: @workers, strategy: :one_for_one}
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)
   end
-
-  @doc "The supervisor the delivery workers run under."
-  @spec workers() :: atom()
-  def workers, do: @workers
 end

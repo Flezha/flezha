@@ -25,7 +25,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
     ]
 
   alias Flezha.Error
-  alias Flezha.Relay.{Calls, Lifecycle, Overwatch}
+  alias Flezha.Relay.{Lifecycle, Overwatch}
+  alias Flezha.Relay.Calls.{Inbound, Outbound}
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{InputLog, Outbox, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
@@ -83,13 +84,13 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
     test "a durable call's id is its output's identity; any other call's is new each time" do
       metadata = request_metadata(now() + 1_000)
-      {id, _row} = Calls.request("x", metadata, true)
-      assert {^id, _row} = Calls.request("x", metadata, true)
-      assert {other, _row} = Calls.request("x", Map.put(metadata, "flz.seq", "5.0"), true)
+      {id, _row} = Outbound.request("x", metadata, true)
+      assert {^id, _row} = Outbound.request("x", metadata, true)
+      assert {other, _row} = Outbound.request("x", Map.put(metadata, "flz.seq", "5.0"), true)
       assert other != id
 
-      {a, _} = Calls.request("x", metadata, false)
-      {b, _} = Calls.request("x", metadata, false)
+      {a, _} = Outbound.request("x", metadata, false)
+      {b, _} = Outbound.request("x", metadata, false)
       assert a != b
       assert byte_size(id) == 22
     end
@@ -130,7 +131,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
         assert_receive {:delivery_request, _, ^inst, _}
       end
 
-      caller = Task.async(fn -> Calls.call(host, "outside", %{}, 5_000, inst, "cli") end)
+      caller = Task.async(fn -> Inbound.call(host, "outside", %{}, 5_000, inst, "cli") end)
       assert_receive {:channel_got, ^inst, {"outside", %{"flz.reply_to" => "w:" <> _}}}
       refute Task.yield(caller, 50)
       Task.shutdown(caller)
@@ -292,14 +293,14 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       tail = "o:tools:c2:1:#{deadline_at}:"
 
       {:ok, ^waiting, calls} =
-        Calls.admit_relay(%Calls{}, callee, %{
+        Inbound.admit(%Inbound{}, callee, nil, %{}, %{
           caller: "gateway",
           call: "c1",
           created: false,
           deadline_at: deadline_at
         })
 
-      Calls.end_all(calls, callee, "completed", [tail, waiting])
+      Inbound.end_all(calls, callee, "completed", [tail, waiting])
 
       for caller <- ["gateway", "tools"] do
         assert_receive {:delivery_answer, _, "agent-1", %{caller: ^caller},
@@ -340,7 +341,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
       # The callee restarted since it took the call: the token alone decides.
       for rows <- [:kept, :lost] do
-        if rows == :lost, do: :sys.replace_state(host, &%{&1 | calls: %Calls{}})
+        if rows == :lost, do: :sys.replace_state(host, &%{&1 | calls: %Inbound{}})
         GenServer.cast(host, {:io_out, "seen", %{"flz.reply_to" => token, "channel" => "audit"}})
         refute_receive {:delivery_answer, _, _, _, _, _}, 100
 
@@ -420,11 +421,11 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
       for journals? <- [true, false] do
         state = Host.state(inst, durable_steps: journals?, runner_id: nil)
-        {:ok, ^token, calls} = Calls.admit_relay(%Calls{}, Overwatch.callee(state), call)
+        {:ok, ^token, calls} = Inbound.admit(%Inbound{}, Overwatch.callee(state), nil, %{}, call)
         from = {self(), make_ref()}
 
         {:ok, _outside, calls} =
-          Calls.admit(calls, Overwatch.callee(state), from, %{"channel" => "in"}, 5_000)
+          Inbound.admit(calls, Overwatch.callee(state), from, %{"channel" => "in"}, 5_000)
 
         :ok = Lifecycle.terminate(%{state | calls: calls}, :shutdown)
 

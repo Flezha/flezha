@@ -6,7 +6,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Observability.{Registry, Signal, TelemetryBridge}
   alias Flezha.Observability.TestSinks.Counting
-  alias Flezha.Relay.{Calls, Lifecycle, Overwatch}
+  alias Flezha.Relay.{Lifecycle, Overwatch}
+  alias Flezha.Relay.Calls.{Inbound, Outbound}
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -312,12 +313,12 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     callee = %{namespace: "default", relay_id: "obs_call_relay"}
     entry = %{"channel" => "in"}
-    {:ok, answered, calls} = Calls.admit(%Calls{}, callee, {self(), make_ref()}, entry, 5_000)
-    {:ok, waiting, calls} = Calls.admit(calls, callee, {self(), make_ref()}, entry, 5_000)
-    {:answered, calls, _} = Calls.divert(calls, callee, "a", %{"flz.reply_to" => answered})
-    :ok = Calls.unclaimed(callee)
-    _ = Calls.expire(calls, callee, waiting)
-    _ = Calls.refused(callee, "call.busy", %{pending_max: 1})
+    {:ok, answered, calls} = Inbound.admit(%Inbound{}, callee, {self(), make_ref()}, entry, 5_000)
+    {:ok, waiting, calls} = Inbound.admit(calls, callee, {self(), make_ref()}, entry, 5_000)
+    {:answered, calls, _} = Inbound.divert(calls, callee, "a", %{"flz.reply_to" => answered})
+    :ok = Inbound.answer_dropped(callee, "unclaimed")
+    _ = Inbound.expire(calls, callee, waiting)
+    _ = Inbound.refused(callee, "call.busy", %{pending_max: 1})
     deadline_at = Integer.to_string(System.system_time(:millisecond))
 
     stamps = %{
@@ -326,8 +327,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       "flz.deadline_at" => deadline_at
     }
 
-    {_id, row} = Calls.request("o1", stamps, false)
-    :ok = Calls.recovered_unanswered(callee, row)
+    {_id, row} = Outbound.request("o1", stamps, false)
+    :ok = Outbound.recovered_unanswered(callee, row)
 
     for {name, measurement} <- [
           flezha_call_answer_duration: :duration_us,

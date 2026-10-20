@@ -19,7 +19,7 @@ defmodule Flezha.Plugin.Host do
   """
 
   alias Flezha.Config
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
 
   @valid_kinds [:fold, :transform, :fanout, :request, :timer]
 
@@ -77,7 +77,7 @@ defmodule Flezha.Plugin.Host do
   # A plugin calls the relay it is enabled on: its own input, so nothing
   # resolves or authorizes it again, and its source is `plugin` whatever it says.
   def inject(overwatch, message, metadata, :call, deadline_ms),
-    do: Calls.call(overwatch, message, metadata, deadline_ms, inspect(overwatch), "plugin")
+    do: Inbound.call(overwatch, message, metadata, deadline_ms, inspect(overwatch), "plugin")
 
   # A raw `{:ingest, …}` reply as `inject/5` answers it.
   defp verdict({:ok, _}), do: :ok

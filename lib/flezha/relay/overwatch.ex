@@ -16,7 +16,7 @@ defmodule Flezha.Relay.Overwatch do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.{Inbound, Outbound, Token}
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Handover
   alias Flezha.Relay.Ingest
@@ -40,7 +40,7 @@ defmodule Flezha.Relay.Overwatch do
   # `flz.` keys: `relay` ranks below `state`, so naming it would be a new
   # upward reference `scripts/check-layer-direction.sh` refuses.
   @change_seq_meta_key "flz.change_seq"
-  @reply_to Calls.Token.reply_to_key()
+  @reply_to Token.reply_to_key()
 
   require Logger
 
@@ -125,7 +125,7 @@ defmodule Flezha.Relay.Overwatch do
     corrections: %{},
     # The outside callers waiting on this relay for an answer; each row's
     # deadline is armed under the timer family `:call`.
-    calls: %Calls{},
+    calls: %Inbound{},
     # Whether this process handed its state to a HotSwap target: it ends as a
     # move, whether or not the relay has a declared entry.
     handed_over?: false,
@@ -173,7 +173,7 @@ defmodule Flezha.Relay.Overwatch do
   calls are announced to: `activity` is `nil` while there are none, so nothing
   is built for them.
   """
-  @spec callee(t()) :: Calls.callee()
+  @spec callee(t()) :: Inbound.callee()
   def callee(%__MODULE__{} = state),
     do: %{
       namespace: state.namespace,
@@ -431,15 +431,15 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   # The `:call` entry point: an outside call (an integer deadline) or an
-  # relay's call the controller delivers (a map); see `Ingest.take_call/5`.
+  # relay's call the controller delivers (a map); see `Inbound.take_call/5`.
   @impl true
   def handle_call({:call, message, metadata, deadline}, from, %__MODULE__{} = state)
       when (is_integer(deadline) and deadline > 0) or is_map(deadline),
-      do: Ingest.take_call(state, message, metadata, deadline, from)
+      do: Inbound.take_call(state, message, metadata, deadline, from)
 
   # The outcome of one of this relay's own calls, from the delivery.
   def handle_call({:call_answer, id, outcome}, from, %__MODULE__{} = state),
-    do: {:noreply, Ingest.respond(state, id, outcome, from)}
+    do: {:noreply, Outbound.respond(state, id, outcome, from)}
 
   @impl true
   def handle_call(:create_snapshot, _from, %__MODULE__{} = state),
@@ -519,12 +519,12 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast({:dead_lettered, notice}, %__MODULE__{} = state) do
     if notice.new, do: Plugins.preview_dead_letter(state, notice)
     details = %{dlq_ref: notice.entry, error: notice.error}
-    calls = Calls.refuse(state.calls, callee(state), notice.token, "call.failed", details)
+    calls = Inbound.refuse(state.calls, callee(state), notice.token, "call.failed", details)
     {:noreply, %{state | calls: calls}}
   end
 
   def handle_cast({:call_accepted, id, callee, created}, %__MODULE__{} = state),
-    do: {:noreply, %{state | calls: Calls.accepted(state.calls, id, callee, created)}}
+    do: {:noreply, %{state | calls: Outbound.accepted(state.calls, id, callee, created)}}
 
   @impl true
   def handle_cast({:correction_request, cell_id, target}, state),
@@ -619,11 +619,11 @@ defmodule Flezha.Relay.Overwatch do
   @impl true
   def handle_info({:call_deadline, token}, %__MODULE__{} = state) do
     state = timer_fired(state, {:call, token})
-    {:noreply, %{state | calls: Calls.expire(state.calls, callee(state), token)}}
+    {:noreply, %{state | calls: Inbound.expire(state.calls, callee(state), token)}}
   end
 
   def handle_info({:call_timeout, id}, %__MODULE__{} = state),
-    do: {:noreply, Ingest.timeout(timer_fired(state, {:call, id}), id)}
+    do: {:noreply, Outbound.timeout(timer_fired(state, {:call, id}), id)}
 
   # The move started: the rows went with the handover; the arriving process answers them.
   @impl true
@@ -631,7 +631,7 @@ defmodule Flezha.Relay.Overwatch do
     keys = Map.keys(state.calls.rows) ++ Map.keys(state.calls.out)
     state = Enum.reduce(keys, state, &cancel_timer(&2, {:call, &1}))
 
-    {:noreply, %{state | calls: Calls.depart(state.calls), handed_over?: true, cause: :move}}
+    {:noreply, %{state | calls: Inbound.depart(state.calls), handed_over?: true, cause: :move}}
   end
 
   @impl true
@@ -710,7 +710,7 @@ defmodule Flezha.Relay.Overwatch do
   # caller first and then goes on, without the token, like any other. A
   # durable output a call takes stays held until the caller has its outcome.
   defp output(%__MODULE__{} = state, message, metadata) do
-    case Calls.divert(state.calls, callee(state), message, metadata) do
+    case Inbound.divert(state.calls, callee(state), message, metadata) do
       :output ->
         Plugins.transform_io(state, :on_output, message, metadata)
         state
@@ -722,11 +722,11 @@ defmodule Flezha.Relay.Overwatch do
       {:held, calls, output} ->
         Outbox.hold_delivery(metadata)
         Plugins.transform_io(state, :on_output, message, output)
-        Ingest.retire_at_deadline(%{state | calls: calls}, metadata[@reply_to])
+        Inbound.retire_at_deadline(%{state | calls: calls}, metadata[@reply_to])
 
       :call ->
         Outbox.hold_delivery(metadata)
-        Ingest.request(state, message, metadata, Outbox.guaranteed?(metadata))
+        Outbound.request(state, message, metadata, Outbox.guaranteed?(metadata))
     end
   end
 

@@ -169,7 +169,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
            namespace: ns,
            extensions: %{},
            default_input_type: "bytes",
-           calls: %Flezha.Relay.Calls{}
+           calls: %Flezha.Relay.Calls.Inbound{}
          }}
       end)
 

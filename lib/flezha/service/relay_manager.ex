@@ -8,7 +8,7 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Relay.Builder, as: RelayBuilder
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.PartitionGroup
@@ -436,7 +436,7 @@ defmodule Flezha.Service.RelayManager do
   def call_relay(namespace, relay_id, message, metadata, deadline_ms, key, source) do
     with {:ok, member} <- resolve_member(namespace, relay_id, key),
          {:ok, pid} <- get_relay_pid(namespace, member),
-         do: Calls.call(pid, message, metadata, deadline_ms, member, source)
+         do: Inbound.call(pid, message, metadata, deadline_ms, member, source)
   end
 
   @doc """

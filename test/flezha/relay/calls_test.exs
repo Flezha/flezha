@@ -12,7 +12,8 @@ defmodule FlezhaTest.Relay.CallsTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Error
-  alias Flezha.Relay.{Builder, Calls, ClassRegistry, Handover, Lifecycle, Overwatch, Plugins}
+  alias Flezha.Relay.{Builder, ClassRegistry, Handover, Lifecycle, Overwatch, Plugins}
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.Calls.Token
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
@@ -37,7 +38,7 @@ defmodule FlezhaTest.Relay.CallsTest do
   defp from, do: {self(), make_ref()}
 
   defp admit(calls, from, deadline_ms \\ 5_000) do
-    {:ok, token, calls} = Calls.admit(calls, @callee, from, %{"channel" => "in"}, deadline_ms)
+    {:ok, token, calls} = Inbound.admit(calls, @callee, from, %{"channel" => "in"}, deadline_ms)
     {token, calls}
   end
 
@@ -45,46 +46,48 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "a call is admitted under a fresh token until the relay owes call_pending_max" do
       on_exit(TestHelpers.override_env(:call_pending_max, 2))
 
-      {t1, calls} = admit(%Calls{}, from())
+      {t1, calls} = admit(%Inbound{}, from())
       {t2, calls} = admit(calls, from())
 
       assert "w:" <> _ = t1
       assert t1 != t2
       assert byte_size(t1) <= 255
-      assert Calls.waiting(calls) == 2
+      assert Inbound.waiting(calls) == 2
 
       assert {:error, %Error{code: "call.busy"}} =
-               Calls.admit(calls, @callee, from(), %{"channel" => "in"}, 5_000)
+               Inbound.admit(calls, @callee, from(), %{"channel" => "in"}, 5_000)
 
       assert_received {:call_event, :refused, _, %{code: "call.busy", relay_id: "callee"}}
 
       # An answered row no longer counts against the bound.
-      {:answered, calls, _} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => t1})
-      assert {:ok, _t3, _calls} = Calls.admit(calls, @callee, from(), %{"channel" => "in"}, 5_000)
+      {:answered, calls, _} = Inbound.divert(calls, @callee, "a", %{"flz.reply_to" => t1})
+
+      assert {:ok, _t3, _calls} =
+               Inbound.admit(calls, @callee, from(), %{"channel" => "in"}, 5_000)
     end
 
     test "the first output answers; every output goes on without its token, none counted as dropped" do
       {pid, ref} = caller = from()
       assert pid == self()
-      {token, calls} = admit(%Calls{}, caller)
+      {token, calls} = admit(%Inbound{}, caller)
 
-      assert :output = Calls.divert(calls, @callee, "record", %{"channel" => "audit"})
+      assert :output = Inbound.divert(calls, @callee, "record", %{"channel" => "audit"})
 
       {:answered, calls, %{"channel" => "ok"} = first} =
-        Calls.divert(calls, @callee, "first", %{"flz.reply_to" => token, "channel" => "ok"})
+        Inbound.divert(calls, @callee, "first", %{"flz.reply_to" => token, "channel" => "ok"})
 
       assert first == %{"channel" => "ok"}
       assert_received {^ref, {:ok, "first", %{"channel" => "ok"}}}
       assert_received {:call_event, :answered, %{duration_us: _}, %{relay_id: "callee"}}
 
       assert {:answered, _, %{}} =
-               Calls.divert(calls, @callee, "second", %{"flz.reply_to" => token})
+               Inbound.divert(calls, @callee, "second", %{"flz.reply_to" => token})
 
       refute_received {^ref, _}
 
       for stray <- ["", "w:nobody"] do
         assert {:answered, _, %{"k" => "v"} = output} =
-                 Calls.divert(calls, @callee, "x", %{"flz.reply_to" => stray, "k" => "v"})
+                 Inbound.divert(calls, @callee, "x", %{"flz.reply_to" => stray, "k" => "v"})
 
         refute Map.has_key?(output, "flz.reply_to")
       end
@@ -97,8 +100,8 @@ defmodule FlezhaTest.Relay.CallsTest do
       {_, first_ref} = first = from()
 
       {:ok, named_token, calls} =
-        Calls.admit(
-          %Calls{},
+        Inbound.admit(
+          %Inbound{},
           @callee,
           named,
           %{"channel" => "in", "flz.call_answer_channel" => "quotes"},
@@ -117,7 +120,7 @@ defmodule FlezhaTest.Relay.CallsTest do
         calls,
         fn {token, channel, message}, calls ->
           metadata = %{"flz.reply_to" => token, "channel" => channel}
-          {:answered, calls, _output} = Calls.divert(calls, @callee, message, metadata)
+          {:answered, calls, _output} = Inbound.divert(calls, @callee, message, metadata)
           calls
         end
       )
@@ -130,11 +133,11 @@ defmodule FlezhaTest.Relay.CallsTest do
 
     test "the answer channel stays in the row, not on the input; an empty one names none" do
       metadata = %{"channel" => "in", "flz.call_answer_channel" => "quotes"}
-      {:ok, token, calls} = Calls.admit(%Calls{}, @callee, from(), metadata, 5_000)
+      {:ok, token, calls} = Inbound.admit(%Inbound{}, @callee, from(), metadata, 5_000)
       assert calls.rows[token].answer_channel == "quotes"
 
       empty = %{metadata | "flz.call_answer_channel" => ""}
-      {:ok, unnamed, calls} = Calls.admit(calls, @callee, from(), empty, 5_000)
+      {:ok, unnamed, calls} = Inbound.admit(calls, @callee, from(), empty, 5_000)
       assert calls.rows[unnamed].answer_channel == nil
 
       assert Token.entry_metadata(metadata, token) == %{
@@ -146,27 +149,27 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "a deadline answers a waiting caller call.timeout and retires an answered row silently" do
       {_, waiting_ref} = waiting = from()
       {_, answered_ref} = answered = from()
-      {waiting_token, calls} = admit(%Calls{}, waiting, 100)
+      {waiting_token, calls} = admit(%Inbound{}, waiting, 100)
       {answered_token, calls} = admit(calls, answered, 100)
 
       {:answered, calls, _} =
-        Calls.divert(calls, @callee, "a", %{"flz.reply_to" => answered_token})
+        Inbound.divert(calls, @callee, "a", %{"flz.reply_to" => answered_token})
 
       assert_received {^answered_ref, {:ok, "a", _}}
 
-      calls = Calls.expire(calls, @callee, waiting_token)
+      calls = Inbound.expire(calls, @callee, waiting_token)
 
       assert_received {^waiting_ref, {:error, %Error{code: "call.timeout", details: details}}}
       assert details["deadline_ms"] == 100
       assert_received {:call_event, :timeout, %{count: 1}, %{relay_id: "callee"}}
 
-      calls = Calls.expire(calls, @callee, answered_token)
+      calls = Inbound.expire(calls, @callee, answered_token)
       refute_received {^answered_ref, _}
       assert calls.rows == %{}
 
       # Its late output names no row now, and is an ordinary output.
       assert {:answered, _, %{}} =
-               Calls.divert(calls, @callee, "late", %{"flz.reply_to" => waiting_token})
+               Inbound.divert(calls, @callee, "late", %{"flz.reply_to" => waiting_token})
 
       refute_received {:call_event, :answer_dropped, _, _}
     end
@@ -175,13 +178,13 @@ defmodule FlezhaTest.Relay.CallsTest do
       {_, r1} = c1 = from()
       {_, r2} = c2 = from()
       {_, r3} = c3 = from()
-      {_t1, calls} = admit(%Calls{}, c1)
+      {_t1, calls} = admit(%Inbound{}, c1)
       {_t2, calls} = admit(calls, c2)
       {t3, calls} = admit(calls, c3)
-      {:answered, calls, _} = Calls.divert(calls, @callee, "a", %{"flz.reply_to" => t3})
+      {:answered, calls, _} = Inbound.divert(calls, @callee, "a", %{"flz.reply_to" => t3})
       assert_received {^r3, {:ok, "a", _}}
 
-      assert %Calls{rows: rows} = Calls.end_all(calls, @callee, "error")
+      assert %Inbound{rows: rows} = Inbound.end_all(calls, @callee, "error")
       assert rows == %{}
 
       for ref <- [r1, r2] do
@@ -193,17 +196,17 @@ defmodule FlezhaTest.Relay.CallsTest do
     end
 
     test "a handover's rows keep their deadline, the time in flight counted against it" do
-      {token, calls} = admit(%Calls{}, from(), 10_000)
-      left = Calls.remaining_ms(calls, token)
-      assert [{^token, row}] = Calls.export(calls)
+      {token, calls} = admit(%Inbound{}, from(), 10_000)
+      left = Inbound.left_ms(calls.rows[token].deadline_at)
+      assert [{^token, row}] = Inbound.export(calls)
 
-      absorbed = Calls.absorb([{token, row}])
-      assert Calls.remaining_ms(absorbed, token) in (left - 1_000)..left
-      assert Calls.waiting(absorbed) == 1
+      absorbed = Inbound.absorb([{token, row}])
+      assert Inbound.left_ms(absorbed.rows[token].deadline_at) in (left - 1_000)..left
+      assert Inbound.waiting(absorbed) == 1
 
       # The same row arriving after 4 s in flight has 4 s less left.
-      late = Calls.absorb([{token, Map.update!(row, :deadline_at, &(&1 - 4_000))}])
-      assert Calls.remaining_ms(late, token) in (left - 5_000)..(left - 4_000)
+      late = Inbound.absorb([{token, Map.update!(row, :deadline_at, &(&1 - 4_000))}])
+      assert Inbound.left_ms(late.rows[token].deadline_at) in (left - 5_000)..(left - 4_000)
     end
 
     test "a hook can neither add, drop nor rewrite a token" do
@@ -259,7 +262,7 @@ defmodule FlezhaTest.Relay.CallsTest do
     end
 
     defp call(host, message, metadata \\ %{}, deadline_ms \\ 5_000) do
-      Task.async(fn -> Calls.call(host, message, metadata, deadline_ms, "callee", "cli") end)
+      Task.async(fn -> Inbound.call(host, message, metadata, deadline_ms, "callee", "cli") end)
     end
 
     # The token the call's input reached the stream with.
@@ -567,8 +570,8 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "a handover carries a waiting caller to the new node, whose answer reaches it",
          %{inst: inst} do
       {:ok, source} = start_supervised({Host, bare(inst)}, id: :source)
-      caller = Task.async(fn -> Calls.call(source, "hello", %{}, 5_000, inst, "cli") end)
-      short = Task.async(fn -> Calls.call(source, "slow", %{}, 300, inst, "cli") end)
+      caller = Task.async(fn -> Inbound.call(source, "hello", %{}, 5_000, inst, "cli") end)
+      short = Task.async(fn -> Inbound.call(source, "slow", %{}, 300, inst, "cli") end)
 
       assert NodeTestHelper.wait_until(
                fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,
@@ -601,7 +604,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       FlezhaTest.Case.install([:state_tree])
       {_, r1} = c1 = from()
       {_, r2} = c2 = from()
-      {_t1, calls} = admit(%Calls{}, c1)
+      {_t1, calls} = admit(%Inbound{}, c1)
       {_t2, calls} = admit(calls, c2)
       :ok = Completion.write(inst, %{namespace: "default", status: "error"})
 
@@ -803,10 +806,10 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "an ended instance: each waiting call refused call.callee_ended" do
       test_pid = self()
       callee = Map.put(@callee, :activity, &send(test_pid, {:message_forward, {&1, &2}}))
-      {t1, calls} = admit(%Calls{}, from())
+      {t1, calls} = admit(%Inbound{}, from())
       {t2, calls} = admit(calls, from())
 
-      Calls.end_all(calls, callee, "error")
+      Inbound.end_all(calls, callee, "error")
 
       ids =
         for _ <- 1..2 do
@@ -823,7 +826,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       callee = Map.put(@callee, :activity, &send(test_pid, {:message_forward, {&1, &2}}))
       tail = Token.relay_token(relay_call(%{}))
 
-      Calls.end_all(%Calls{}, callee, "error", [tail])
+      Inbound.end_all(%Inbound{}, callee, "error", [tail])
 
       {document, refused} = event("refused")
       assert error_code(document) == "call.callee_ended"
@@ -902,7 +905,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       builder = %Builder{id: inst, factory_id: "chat", run: :steps, opts: []}
       bare = state(inst, runner_id: nil, builder: builder)
       {:ok, source} = start_supervised({Host, watched(bare)}, id: :source)
-      caller = Task.async(fn -> Calls.call(source, "hello", %{}, 5_000, inst, "ui") end)
+      caller = Task.async(fn -> Inbound.call(source, "hello", %{}, 5_000, inst, "ui") end)
       token = called_token(inst)
       {"hello", %{"flz.call_id" => id, "flz.call_source" => "ui"}} = event("call")
 

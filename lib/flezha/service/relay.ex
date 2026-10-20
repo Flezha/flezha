@@ -411,7 +411,7 @@ defmodule Flezha.Service.Relay do
   end
 
   # The answer channel rides the call's metadata to the row
-  # `Flezha.Relay.Calls.admit/5` keeps, where `""` names none; the caller's
+  # `Flezha.Relay.Calls.Inbound.admit/5` keeps, where `""` names none; the caller's
   # source names it to the relay's calls listeners.
   defp call_input(namespace, relay_id, message, channel, opts, caller_context) do
     with {:ok, deadline_ms} <- deadline(Keyword.get(opts, :deadline_ms)),

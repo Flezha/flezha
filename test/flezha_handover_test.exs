@@ -94,10 +94,14 @@ defmodule FlezhaTest.Handover do
     waits = %{"flz.call_answer_channel" => "moved"}
 
     answered =
-      Task.async(fn -> Flezha.Relay.Calls.call(source, "x", waits, 40_000, relay_id, "cli") end)
+      Task.async(fn ->
+        Flezha.Relay.Calls.Inbound.call(source, "x", waits, 40_000, relay_id, "cli")
+      end)
 
     timed =
-      Task.async(fn -> Flezha.Relay.Calls.call(source, "y", waits, 15_000, relay_id, "cli") end)
+      Task.async(fn ->
+        Flezha.Relay.Calls.Inbound.call(source, "y", waits, 15_000, relay_id, "cli")
+      end)
 
     assert NodeTestHelper.wait_until(
              fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,

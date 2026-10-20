@@ -23,22 +23,25 @@ defmodule Flezha.Service.Calls.Router do
   use GenServer
 
   alias Flezha.Config.Durations
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.{Inbound, Outbound}
   alias Flezha.Plugin.Provider.RelayForward.ForwardWorker
   alias Flezha.Process.CallDelivery
   alias Flezha.Process.Watch
   alias Flezha.Runner.FleetManager.Session
-  alias Flezha.Service.Calls, as: Service
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Spawn
   alias Flezha.State.Outbox
 
-  def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: CallDelivery.name())
+  @doc "Start the router; `:supervisor` names the supervisor its workers run under."
+  def start_link(opts) do
+    supervisor = Keyword.fetch!(opts, :supervisor)
+    GenServer.start_link(__MODULE__, supervisor, name: CallDelivery.name())
+  end
 
   @impl true
   # `workers` finds a key's worker; `watch` names each worker's key.
-  def init(nil), do: {:ok, %{workers: %{}, watch: Watch.new()}}
+  def init(supervisor), do: {:ok, %{workers: %{}, watch: Watch.new(), supervisor: supervisor}}
 
   @impl true
   def handle_cast({:request, namespace, caller, request}, state) do
@@ -97,7 +100,7 @@ defmodule Flezha.Service.Calls.Router do
             restart: :temporary
           )
 
-        {:ok, pid} = DynamicSupervisor.start_child(Service.workers(), spec)
+        {:ok, pid} = DynamicSupervisor.start_child(state.supervisor, spec)
 
         {pid,
          %{
@@ -135,8 +138,6 @@ defmodule Flezha.Service.Calls.Router do
   end
 
   defp answer_worker(namespace, callee, caller) do
-    margin = Durations.get(:call_retention_margin_ms)
-
     namespace
     |> worker_opts(callee, caller)
     |> Map.merge(%{
@@ -144,7 +145,7 @@ defmodule Flezha.Service.Calls.Router do
       deliver: fn {call, outcome}, metadata ->
         namespace |> deliver_answer(caller, call.call, outcome) |> answered(metadata)
       end,
-      expires_at: fn {call, _outcome}, _metadata -> call.deadline_at + margin end,
+      expires_at: fn {call, _outcome}, _metadata -> Inbound.retained_until(call.deadline_at) end,
       on_expire: fn {_call, _outcome}, metadata ->
         answered(caller_gone(namespace, callee, caller), metadata)
       end
@@ -169,7 +170,7 @@ defmodule Flezha.Service.Calls.Router do
 
       {{:refused, error}, callee} ->
         called = if callee == "", do: request, else: %{request | callee: callee}
-        deliver_answer(namespace, caller, request.id, Calls.own_outcome(called, error))
+        deliver_answer(namespace, caller, request.id, Outbound.own_outcome(called, error))
 
       {{:retry, reason}, _callee} ->
         {:error, reason}
@@ -228,11 +229,10 @@ defmodule Flezha.Service.Calls.Router do
   defp deliver_answer(namespace, caller, id, outcome) do
     case RelayManager.get_relay_pid(namespace, caller) do
       {:ok, pid} ->
-        GenServer.call(
-          pid,
-          {:call_answer, id, outcome},
-          Durations.get(:overwatch_call_timeout_ms)
-        )
+        case RelayManager.call_overwatch(pid, {:call_answer, id, outcome}) do
+          {:ok, verdict} -> verdict
+          {:error, reason} -> {:error, {:unreachable, reason}}
+        end
 
       {:error, {:relay_not_found, _namespace, _id}} = absent ->
         if gone?(namespace, caller),
@@ -255,11 +255,9 @@ defmodule Flezha.Service.Calls.Router do
   end
 
   defp caller_gone(namespace, callee, caller) do
-    :telemetry.execute(
-      [:flezha, :call, :answer_dropped],
-      %{count: 1},
-      %{namespace: namespace, relay_id: callee, caller: caller, reason: "caller_gone"}
-    )
+    Inbound.answer_dropped(%{namespace: namespace, relay_id: callee}, "caller_gone", %{
+      caller: caller
+    })
 
     {:ok, :absorbed}
   end

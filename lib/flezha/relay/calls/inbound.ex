@@ -1,35 +1,38 @@
-defmodule Flezha.Relay.Calls do
+defmodule Flezha.Relay.Calls.Inbound do
   @moduledoc """
-  The outside callers waiting on one relay for an answer: the table the
-  Overwatch holds, and the client call every outside caller makes.
+  The calls one relay answers: the table of its waiting callers the Overwatch
+  holds, taking a call into it, and the client call every outside caller
+  makes.
 
   A call is an ordinary input carrying a token the controller mints
   (`flz.reply_to`, see `Flezha.Relay.Calls.Token.entry_metadata/2`). The
   runner carries the token to every output the input causes, and stamps it on
-  every sink output.
-  `divert/4` hands the first such output, on the call's answer channel when it
-  names one, to the row its token names, and lets every one of them continue
-  to the output routes without the token.
+  every sink output. `divert/4` hands the first such output, on the call's
+  answer channel when it names one, to the row its token names, and lets every
+  one of them continue to the output routes without the token.
 
-  A relay is a caller too. A call end's output is a request: `divert/4`
-  answers `:call` for it, and the caller's own row (`open/3`, keyed by the
-  call id, held in `out`) waits for its outcome, which `settle/3` admits once.
-  A relay's call reaches its callee's table as a row keyed by a relay
-  token (`o:<caller>:<call id>:<created>:<deadline>:<answer channel>`), built
-  only from the controller's own delivery
+  Two kinds of caller wait here, each a clause set of its own: an outside
+  caller, whose row holds the process waiting, and a relay, whose call reaches
+  the table as a row keyed by a relay token
+  (`o:<caller>:<call id>:<created>:<deadline>:<answer channel>`), built only
+  from the controller's own delivery
   (`Flezha.Relay.Calls.Token.relay_token/1`); its answer is handed to the
-  delivery for the caller rather than replied to a waiting process.
+  delivery for the caller rather than replied to a waiting process. A relay's
+  own calls are `Flezha.Relay.Calls.Outbound`'s, kept in the same table.
 
-  Data and decisions only: the Overwatch arms each row's deadline under the
-  timer family `:call`, runs the ingest, and takes and answers outbox holds;
-  this module never names a module above the relay layer.
+  Every row carries its deadline on the wall clock (`deadline_at`), which a
+  handover carries unchanged, and the Overwatch arms it under the timer family
+  `:call` (`arm_call/3`).
   """
 
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Error
   alias Flezha.Process.CallDelivery
-  alias Flezha.Relay.Calls.Token
+  alias Flezha.Process.Timer
+  alias Flezha.Relay.Calls.{Outbound, Token}
+  alias Flezha.Relay.Ingest
+  alias Flezha.Relay.Overwatch
 
   @reply_to Token.reply_to_key()
   @call Token.call_key()
@@ -44,38 +47,14 @@ defmodule Flezha.Relay.Calls do
           required(:channel) => binary() | nil,
           required(:answer_channel) => binary() | nil,
           required(:started_ms) => integer(),
-          required(:deadline_ms) => pos_integer(),
+          required(:deadline_at) => integer(),
+          required(:deadline_ms) => non_neg_integer(),
           required(:answered?) => boolean(),
           optional(:sent_as) => {binary() | nil, binary()} | nil
         }
-  @type t :: %__MODULE__{rows: %{token() => row()}, out: %{call_id() => out_row()}}
-
-  @typedoc "One of this relay's own pending calls, by its call id."
-  @type call_id :: binary()
-  @type out_row :: %{
-          target: binary(),
-          key: binary() | nil,
-          create: boolean(),
-          channel: binary() | nil,
-          answer_channel: binary() | nil,
-          request: binary(),
-          response: binary(),
-          deadline_at: integer(),
-          deadline_ms: non_neg_integer(),
-          callee: binary() | nil,
-          created: boolean(),
-          hold: map() | nil,
-          settling: boolean()
-        }
-
-  @typedoc """
-  What a callee hands back for a relay's call: its answer or the error
-  that ended it, the instance that answered, and whether the call started it.
-  """
-  @type outcome :: %{
-          result: {:ok, binary()} | {:error, Error.t()},
-          target: binary(),
-          created: boolean()
+  @type t :: %__MODULE__{
+          rows: %{token() => row()},
+          out: %{Outbound.call_id() => Outbound.out_row()}
         }
 
   @typedoc """
@@ -183,13 +162,16 @@ defmodule Flezha.Relay.Calls do
     do: Enum.count(rows, fn {_token, row} -> not row.answered? end)
 
   @doc """
-  A row for a new call, keeping the entry channel and the answer channel its
-  `metadata` names, or `{:error, busy}` when the relay already owes
-  `call_pending_max` answers.
+  A row for a new call, or `{:error, busy}` when the relay already owes
+  `call_pending_max` answers. An outside call (an integer `deadline`, in ms)
+  keeps the entry channel and the answer channel its `metadata` names, and
+  `from` waits on it. A relay's call (`deadline` the call itself) is keyed by
+  its relay token; one sent again while its first row waits keeps that row.
   """
-  @spec admit(t(), callee(), GenServer.from(), map(), pos_integer()) ::
+  @spec admit(t(), callee(), GenServer.from() | nil, map(), pos_integer() | map()) ::
           {:ok, token(), t()} | {:error, Error.t()}
-  def admit(%__MODULE__{} = calls, callee, from, metadata, deadline_ms) do
+  def admit(%__MODULE__{} = calls, callee, from, metadata, deadline_ms)
+      when is_integer(deadline_ms) do
     max = Config.get(:call_pending_max)
 
     if waiting(calls) >= max do
@@ -202,6 +184,7 @@ defmodule Flezha.Relay.Calls do
         channel: Map.get(metadata, "channel"),
         answer_channel: answer_channel(metadata),
         started_ms: now_ms(),
+        deadline_at: System.system_time(:millisecond) + deadline_ms,
         deadline_ms: deadline_ms,
         answered?: false
       }
@@ -210,13 +193,7 @@ defmodule Flezha.Relay.Calls do
     end
   end
 
-  @doc """
-  A row for a relay's call, keyed by its relay token, or
-  `{:error, busy}` when the relay already owes `call_pending_max` answers.
-  A call sent again while its first row waits keeps that row.
-  """
-  @spec admit_relay(t(), callee(), map()) :: {:ok, token(), t()} | {:error, Error.t()}
-  def admit_relay(%__MODULE__{} = calls, callee, call) do
+  def admit(%__MODULE__{} = calls, callee, _from, _metadata, call) do
     token = Token.relay_token(call)
     max = Config.get(:call_pending_max)
 
@@ -240,12 +217,15 @@ defmodule Flezha.Relay.Calls do
       channel: nil,
       answer_channel: Map.get(call, :answer_channel),
       started_ms: now_ms(),
-      deadline_ms: max(call.deadline_at - System.system_time(:millisecond), 0),
+      deadline_at: call.deadline_at,
+      deadline_ms: left_ms(call.deadline_at),
       answered?: false
     }
   end
 
-  defp answer_channel(metadata) do
+  @doc "The answer channel `metadata` names, `nil` for none."
+  @spec answer_channel(map()) :: binary() | nil
+  def answer_channel(metadata) do
     case Map.get(metadata, @answer_channel) do
       "" -> nil
       channel -> channel
@@ -440,15 +420,9 @@ defmodule Flezha.Relay.Calls do
   the time the handover spends in flight counts against it: a `from` is valid
   on any node, so the answer can still reach its caller from there.
   """
-  @spec export(t()) :: [{token() | {:out, call_id()}, map()}]
-  def export(%__MODULE__{rows: rows, out: out}) do
-    shift = System.system_time(:millisecond) - now_ms()
-
-    for(
-      {token, row} <- rows,
-      do: {token, Map.put(row, :deadline_at, row.started_ms + row.deadline_ms + shift)}
-    ) ++ for({id, row} <- out, do: {{:out, id}, %{row | settling: false}})
-  end
+  @spec export(t()) :: [{token() | {:out, Outbound.call_id()}, map()}]
+  def export(%__MODULE__{rows: rows, out: out}),
+    do: Map.to_list(rows) ++ for({id, row} <- out, do: {{:out, id}, %{row | settling: false}})
 
   @doc """
   The rows left with a handover: tell every caller still waiting that its call
@@ -461,9 +435,9 @@ defmodule Flezha.Relay.Calls do
   end
 
   @doc """
-  The table a handover arrived with; each row's deadline is armed by the
-  caller. Every caller still waiting is told its call now lives in this
-  process.
+  The table a handover arrived with, each row keeping its deadline; the
+  caller arms them (`arm_call/3`). Every caller still waiting is told its call
+  now lives in this process.
   """
   @spec absorb([{token(), map()}]) :: t()
   def absorb(exported) do
@@ -473,166 +447,192 @@ defmodule Flezha.Relay.Calls do
 
     rows =
       for {token, row} when is_binary(token) <- exported, into: %{} do
-        # Re-based on this node's clock, so the deadline is where it was.
-        started = row.deadline_at - shift - row.deadline_ms
-        {token, row |> Map.delete(:deadline_at) |> Map.put(:started_ms, started)}
+        # Re-based on this node's clock, so the call's duration stays measured.
+        {token, %{row | started_ms: row.deadline_at - shift - row.deadline_ms}}
       end
 
     reply_waiting(rows, fn -> {:call_moved, self()} end)
     %__MODULE__{rows: rows, out: out}
   end
 
-  @doc "The time left before the row `token` names reaches its deadline, in ms."
-  @spec remaining_ms(t(), token()) :: non_neg_integer()
-  def remaining_ms(%__MODULE__{rows: rows}, token) do
-    row = Map.fetch!(rows, token)
-    max(row.started_ms + row.deadline_ms - now_ms(), 0)
-  end
+  @doc "The time left before the wall-clock `deadline_at`, in ms; `0` once it passed."
+  @spec left_ms(integer()) :: non_neg_integer()
+  def left_ms(deadline_at), do: max(deadline_at - System.system_time(:millisecond), 0)
+
+  @doc """
+  Until when a call whose deadline is `deadline_at` is retained: its outcome
+  may still arrive within `call_retention_margin_ms` after it.
+  """
+  @spec retained_until(integer()) :: integer()
+  def retained_until(deadline_at), do: deadline_at + Durations.get(:call_retention_margin_ms)
 
   # ---------------------------------------------------------------
-  # This relay's own calls
+  # Taking a call
   # ---------------------------------------------------------------
 
   @doc """
-  The call a call end's output makes, read off the stamps the runner put on
-  it: its id and its row. A durable caller's id is a digest of the output's
-  outbox identity, so every re-drive of the output names the same call; `hold`
-  is then the output's metadata, whose outbox hold the call keeps until its
-  `Response` is durable. Any other caller's id is random.
+  The `:call` entry point. An outside caller's call carries an integer
+  deadline: it is refused at once when nothing can answer it, else it gets a
+  row with its deadline and the confirming ingest of an input carrying the
+  token the row is keyed by, and every answer arrives later, from the row.
+
+  A relay's call is delivered by the controller alone, carrying the call
+  (its caller, its id, its wall-clock deadline, whether this delivery started
+  the instance and, for a factory call, the factory): it gets a row keyed by
+  a relay token built from those fields, counted against
+  `call_pending_max`, and its ingest's verdict is answered at once. Its input
+  carries the call id as `flz.msg_id`, so a request sent again is absorbed
+  while the first is retained. Answers `handle_call/3`'s reply.
   """
-  @spec request(binary(), map(), boolean()) :: {call_id(), out_row()}
-  def request(message, metadata, durable?) do
-    id =
-      if durable?,
-        do: Token.durable_id(metadata),
-        else: Token.call_id(:crypto.strong_rand_bytes(16))
+  @spec take_call(Overwatch.t(), binary(), map(), pos_integer() | map(), GenServer.from() | nil) ::
+          {:reply, term(), Overwatch.t()} | {:noreply, Overwatch.t()}
+  def take_call(%Overwatch{} = state, message, metadata, deadline, from) do
+    callee = Overwatch.callee(state)
 
-    deadline_at = String.to_integer(Map.fetch!(metadata, "flz.deadline_at"))
+    with nil <- call_refusal(state) || factory_refusal(state, deadline),
+         {:ok, token, calls} <- admit(state.calls, callee, from, metadata, deadline) do
+      # A relay's call sent again while its row waits was announced the first time.
+      unless Map.has_key?(state.calls.rows, token),
+        do: announce(callee, token, message, metadata, deadline)
 
-    row = %{
-      target: Map.fetch!(metadata, @call),
-      key: metadata["flz.key"],
-      create: metadata["flz.call_create"] != "false",
-      channel: metadata["flz.call_channel"],
-      answer_channel: answer_channel(metadata),
-      request: message,
-      response: Map.fetch!(metadata, "flz.call_response"),
-      deadline_at: deadline_at,
-      # What the caller waits from here, which `call.timeout` names.
-      deadline_ms: max(deadline_at - System.system_time(:millisecond), 0),
-      callee: nil,
-      created: false,
-      hold: if(durable?, do: metadata),
-      settling: false
+      %{state | calls: calls}
+      |> arm_call({:call_deadline, token}, calls.rows[token].deadline_at)
+      |> ingest_call(message, metadata, token, deadline, from)
+    else
+      {:error, error} ->
+        unadmitted(state, callee, message, metadata, deadline, error)
+
+      {code, details} ->
+        unadmitted(state, callee, message, metadata, deadline, refused(callee, code, details))
+    end
+  end
+
+  defp unadmitted(state, callee, message, metadata, deadline, error) do
+    announce(callee, nil, message, metadata, deadline, error)
+    {:reply, {:error, error}, state}
+  end
+
+  # An outside caller keeps waiting on an input that was accepted, even by an
+  # instance that was asleep, and is answered from its row; a relay's delivery
+  # is answered the ingest's verdict at once.
+  defp ingest_call(state, message, metadata, token, deadline_ms, _from)
+       when is_integer(deadline_ms) do
+    metadata = Token.entry_metadata(metadata, token)
+
+    case Ingest.confirming_ingest(state, message, metadata, {:call, token}) do
+      {:pending, state} -> {:noreply, state}
+      {verdict, state} -> {:noreply, answer_call(state, token, verdict)}
+    end
+  end
+
+  defp ingest_call(state, message, metadata, token, call, from) do
+    metadata =
+      metadata
+      |> Token.entry_metadata(token)
+      |> Map.put("flz.msg_id", call.call)
+      |> Map.put("flz.deadline_at", Integer.to_string(call.deadline_at))
+
+    case Ingest.confirming_ingest(state, message, metadata, {:relay_call, from, token}) do
+      {:pending, state} -> {:noreply, state}
+      {verdict, state} -> {:reply, verdict, forget_unless_taken(state, token, verdict)}
+    end
+  end
+
+  # Why a call cannot be taken at all: a halted relay, or a single-pass
+  # steps instance that has already been given its input.
+  defp call_refusal(%Overwatch{halt_reason: reason}) when reason != nil,
+    do: {"call.unavailable", %{reason: "the relay is halted"}}
+
+  defp call_refusal(%Overwatch{} = state) do
+    if Ingest.single_input?(state) and (state.fed or not Ingest.first_input?(state)),
+      do: {"call.not_accepted", %{}}
+  end
+
+  # A factory call reaches only an instance of that factory, whatever the key
+  # that named it said.
+  defp factory_refusal(%Overwatch{factory_id: actual} = state, %{factory: factory})
+       when is_binary(factory) and factory != actual,
+       do:
+         {"relay.factory_mismatch",
+          %{namespace: state.namespace, factory: factory, actual: actual}}
+
+  defp factory_refusal(_state, _call), do: nil
+
+  @doc """
+  The journal's verdict on a relay's call input reached `from`, the delivery
+  that is owed it; a call its callee did not take leaves no row behind.
+  """
+  @spec taken(Overwatch.t(), GenServer.from() | nil, token(), term()) :: Overwatch.t()
+  def taken(%Overwatch{} = state, from, token, verdict) do
+    Ingest.reply(from, verdict)
+    forget_unless_taken(state, token, verdict)
+  end
+
+  defp forget_unless_taken(%Overwatch{} = state, token, verdict) do
+    if Ingest.taken?(verdict) do
+      state
+    else
+      {code, details} = refusal(verdict)
+
+      %Overwatch{
+        state
+        | calls: forget(state.calls, Overwatch.callee(state), token, code, details),
+          timers: Timer.cancel(state.timers, {:call, token})
+      }
+    end
+  end
+
+  @doc """
+  The journal's verdict on an outside call's input: an accepted input leaves
+  the caller waiting for its answer, an asleep instance's too, since the
+  append wakes it; every other verdict ends the call.
+  """
+  @spec answer_call(Overwatch.t(), token(), term()) :: Overwatch.t()
+  def answer_call(%Overwatch{} = state, _token, verdict) when verdict in [:ok, {:ok, :suspended}],
+    do: state
+
+  def answer_call(%Overwatch{} = state, token, verdict) do
+    {code, details} = refusal(verdict)
+    %Overwatch{state | calls: refuse(state.calls, Overwatch.callee(state), token, code, details)}
+  end
+
+  @doc "The refusal a call is answered with for an ingest verdict that ends it."
+  @spec refusal(term()) :: {binary(), map()}
+  def refusal({:ok, :absorbed}), do: {"call.absorbed", %{}}
+
+  def refusal({:error, :refused}),
+    do: {"call.unavailable", %{reason: "its input log refused the input"}}
+
+  def refusal({:error, :not_ready}),
+    do: {"call.unavailable", %{reason: "no runner can take the input"}}
+
+  @doc """
+  Arm the deadline that retires the row of the relay call `token` names,
+  unless one is armed: a held answer of a callee restarted since it took the
+  call has just made that row.
+  """
+  @spec retire_at_deadline(Overwatch.t(), token()) :: Overwatch.t()
+  def retire_at_deadline(%Overwatch{} = state, token) do
+    if Timer.armed?(state.timers, {:call, token}) or not Map.has_key?(state.calls.rows, token),
+      do: state,
+      else: arm_call(state, {:call_deadline, token}, state.calls.rows[token].deadline_at)
+  end
+
+  @doc """
+  Arm the `:call` timer that sends `message` (`{kind, key}`, keyed by `key`)
+  at the wall-clock `deadline_at`, at once when it has passed.
+  """
+  @spec arm_call(Overwatch.t(), {atom(), binary()}, integer()) :: Overwatch.t()
+  def arm_call(%Overwatch{} = state, {_kind, key} = message, deadline_at),
+    do: %{
+      state
+      | timers: Timer.arm(state.timers, {:call, key}, left_ms(deadline_at), message)
     }
 
-    {id, row}
-  end
-
-  @doc "This relay's pending call `id`, or `nil`."
-  @spec pending(t(), call_id()) :: out_row() | nil
-  def pending(%__MODULE__{out: out}, id), do: Map.get(out, id)
-
-  @doc "Wait for call `id`'s outcome."
-  @spec open(t(), call_id(), out_row()) :: t()
-  def open(%__MODULE__{} = calls, id, row), do: %{calls | out: Map.put(calls.out, id, row)}
-
-  @doc "The callee took call `id`: it is `callee`, started by the call when `created`."
-  @spec accepted(t(), call_id(), binary(), boolean()) :: t()
-  def accepted(%__MODULE__{} = calls, id, callee, created) do
-    case Map.fetch(calls.out, id) do
-      {:ok, row} -> open(calls, id, %{row | callee: callee, created: created})
-      :error -> calls
-    end
-  end
-
-  @doc """
-  Admit the first outcome of call `id`: its row, now settling, so a racing
-  outcome finds none; `:none` when the call is not pending or already settling.
-  """
-  @spec settle(t(), call_id()) :: {:ok, out_row(), t()} | :none
-  def settle(%__MODULE__{} = calls, id) do
-    case Map.fetch(calls.out, id) do
-      {:ok, %{settling: false} = row} ->
-        {:ok, row, open(calls, id, %{row | settling: true})}
-
-      _settling_or_gone ->
-        :none
-    end
-  end
-
-  @doc "Call `id`'s outcome could not be kept: it waits again."
-  @spec unsettle(t(), call_id()) :: t()
-  def unsettle(%__MODULE__{} = calls, id) do
-    case Map.fetch(calls.out, id) do
-      {:ok, row} -> open(calls, id, %{row | settling: false})
-      :error -> calls
-    end
-  end
-
-  @doc "Call `id` is over: its row, removed."
-  @spec close(t(), call_id()) :: {out_row() | nil, t()}
-  def close(%__MODULE__{} = calls, id) do
-    {row, out} = Map.pop(calls.out, id)
-    {row, %{calls | out: out}}
-  end
-
-  @doc """
-  The `Response` a call's outcome becomes: one JSON document naming the call,
-  the instance that answered (or the call's own target when none did), whether
-  the call started it, the request, and the answer or the error, both bytes in
-  base64.
-  """
-  @spec envelope(call_id(), out_row(), outcome()) :: binary()
-  def envelope(id, row, outcome) do
-    fields = %{
-      "call" => id,
-      "target" => outcome.target,
-      "created" => outcome.created,
-      "request" => Base.encode64(row.request)
-    }
-
-    fields =
-      case outcome.result do
-        {:ok, value} -> Map.put(fields, "value", Base.encode64(value))
-        {:error, %Error{} = error} -> Map.put(fields, "error", Jason.decode!(Error.object(error)))
-      end
-
-    Jason.encode!(fields)
-  end
-
-  @doc "The outcome this relay gives call `id` itself: `call.timeout`, or a refusal."
-  @spec own_outcome(out_row(), Error.t()) :: outcome()
-  def own_outcome(row, %Error{} = error),
-    do: %{result: {:error, error}, target: row.callee || target_name(row), created: row.created}
-
-  defp target_name(%{target: "id:" <> id}), do: id
-  defp target_name(%{target: "factory:" <> factory, key: key}), do: key || factory
-
-  @doc """
-  The error that ends call `id` at its deadline, named after the call's target.
-  """
-  @spec timeout(out_row(), callee()) :: Error.t()
-  def timeout(row, callee) do
-    emit(:timeout, %{count: 1}, callee, %{target: target_name(row)})
-
-    Error.new("call.timeout", %{
-      relay: row.callee || target_name(row),
-      deadline_ms: row.deadline_ms
-    })
-  end
-
-  @doc "An outcome for a call this relay no longer waits on was dropped."
-  @spec unclaimed(callee()) :: :ok
-  def unclaimed(caller), do: emit(:answer_dropped, %{count: 1}, caller, %{reason: "unclaimed"})
-
-  @doc """
-  A re-driven call found past its deadline and the retention margin: settled
-  with no `Response`, since one may have been appended and truncated since.
-  """
-  @spec recovered_unanswered(callee(), out_row()) :: :ok
-  def recovered_unanswered(caller, row),
-    do: emit(:recovered_unanswered, %{count: 1}, caller, %{target: target_name(row)})
+  @doc "An outcome or answer for a caller nobody waits on any more was dropped, for `reason`."
+  @spec answer_dropped(callee(), binary(), map()) :: :ok
+  def answer_dropped(callee, reason, metadata \\ %{}),
+    do: emit(:answer_dropped, %{count: 1}, callee, Map.put(metadata, :reason, reason))
 
   @doc """
   The error a call the relay cannot take is refused with, counted as
@@ -738,7 +738,9 @@ defmodule Flezha.Relay.Calls do
 
   defp duration_us(row), do: (now_ms() - row.started_ms) * 1_000
 
-  defp emit(event, measurements, callee, metadata) do
+  @doc "Count one call event, `[:flezha, :call, event]`, for `callee`."
+  @spec emit(atom(), map(), callee(), map()) :: :ok
+  def emit(event, measurements, callee, metadata) do
     :telemetry.execute(
       [:flezha, :call, event],
       measurements,

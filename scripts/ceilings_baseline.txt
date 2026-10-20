@@ -58,5 +58,5 @@ sdk/rust/src/relay/dispatcher.rs::dispatch_input 56
 sdk/rust/src/relay/dispatcher.rs::dispatch_item 66
 sdk/rust/src/relay/dispatcher.rs::run_activation 51
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
-xref cycles 4
-xref largest 149
+xref cycles 3
+xref largest 152

@@ -116,7 +116,7 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 
 | Order | Row | Does |
 |---|---|---|
-| 5 | `:calls` | answers every caller still waiting (`Flezha.Relay.Calls.end_all/4`) |
+| 5 | `:calls` | answers every caller still waiting (`Flezha.Relay.Calls.Inbound.end_all/4`) |
 | 10 | `:bind_task` | kills an in-flight bind task (`Rebind.terminate_bind_task/1`) |
 | 20 | `:class_registry` | drops the in-memory class entry |
 | 30 | `:control_unit` | tells the runner to drop the relay; a gone control unit is not an error |

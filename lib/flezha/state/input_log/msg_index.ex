@@ -13,7 +13,7 @@ defmodule Flezha.State.InputLog.MsgIndex do
   read of its own. A log whose senders never stamp an id walks nothing.
   """
 
-  alias Flezha.Config.Durations
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.State.RecordFrame
 
   @msg_id_key "flz.msg_id"
@@ -95,8 +95,8 @@ defmodule Flezha.State.InputLog.MsgIndex do
   """
   @spec floor(t()) :: {non_neg_integer() | nil, t()}
   def floor(index) do
-    passed = System.system_time(:millisecond) - Durations.get(:call_retention_margin_ms)
-    live = Map.filter(index.deadlines, fn {_offset, deadline_at} -> deadline_at > passed end)
+    now = System.system_time(:millisecond)
+    live = Map.filter(index.deadlines, fn {_offset, at} -> Inbound.retained_until(at) > now end)
     lowest = if live == %{}, do: nil, else: live |> Map.keys() |> Enum.min()
     {lowest, %{index | deadlines: live}}
   end

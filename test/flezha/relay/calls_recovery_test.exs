@@ -27,7 +27,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
       response: 1
     ]
 
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Outbound
   alias Flezha.State.{InputLog, Outbox, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
 
@@ -43,7 +43,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
   defp redrive(inst, deadline_at) do
     host = durable_caller(inst)
     metadata = request_metadata(deadline_at)
-    {id, _row} = Calls.request("o1", metadata, true)
+    {id, _row} = Outbound.request("o1", metadata, true)
     {host, id, metadata}
   end
 
@@ -62,7 +62,7 @@ defmodule FlezhaTest.Relay.CallsRecoveryTest do
     dispatch(host, "o1", metadata)
     assert_receive {:delivery_request, _, ^inst, %{id: ^id}}
     refute_received {:"$gen_cast", {:outbox_delivery_confirmed, _}}
-    assert %{} = Calls.pending(:sys.get_state(host).calls, id)
+    assert %{} = Outbound.pending(:sys.get_state(host).calls, id)
   end
 
   test "re-dispatched while it waits, its answer releases the newest copy's hold", %{inst: inst} do

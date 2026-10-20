@@ -10,7 +10,7 @@ defmodule Flezha.Service.Relay.Info do
 
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Overwatch
   alias Flezha.Partition
@@ -117,7 +117,7 @@ defmodule Flezha.Service.Relay.Info do
       health: Snapshot.relay_health(namespace, relay_id),
       uptime_ms: uptime_ms(state),
       default_input_type: state.default_input_type,
-      waiting_callers: Calls.waiting(state.calls),
+      waiting_callers: Inbound.waiting(state.calls),
       failed_turns: failed_turns(relay_id, state),
       plugins: plugins(state.extensions)
     }

@@ -10,7 +10,6 @@ defmodule Flezha.Service.RelayManager.Spawn do
   """
 
   alias Flezha.AuthZ.Verb
-  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Relay.Builder, as: RelayBuilder
   alias Flezha.Service.RelayManager
@@ -241,23 +240,18 @@ defmodule Flezha.Service.RelayManager.Spawn do
   end
 
   defp deliver_payload(namespace, instance_id, request) do
-    with {:ok, pid} <- RelayManager.get_relay_pid(namespace, instance_id),
-         verdict <-
-           GenServer.call(
-             pid,
-             {:call, request.payload, request.metadata, %{request.call | created: false}},
-             Durations.get(:overwatch_call_timeout_ms)
-           ) do
-      case verdict do
-        {:error, %Flezha.Error{}} -> verdict
-        {:error, reason} -> {:retry, reason}
-        taken -> taken
+    call = {:call, request.payload, request.metadata, %{request.call | created: false}}
+
+    with {:ok, pid} <- RelayManager.get_relay_pid(namespace, instance_id) do
+      case RelayManager.call_overwatch(pid, call) do
+        {:ok, {:error, %Flezha.Error{}} = refused} -> refused
+        {:ok, {:error, reason}} -> {:retry, reason}
+        {:ok, taken} -> taken
+        {:error, reason} -> {:retry, {:unreachable, reason}}
       end
     else
       {:error, reason} -> {:retry, reason}
     end
-  catch
-    :exit, reason -> {:retry, {:unreachable, reason}}
   end
 
   # A tasklet's payload carries its identity as its message id, which is what

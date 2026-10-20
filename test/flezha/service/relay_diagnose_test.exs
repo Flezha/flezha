@@ -20,7 +20,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Dlq.Store
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Cli
   alias Flezha.AuthZ
@@ -52,7 +52,7 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
       started_at: System.system_time(:millisecond),
       default_input_type: "2",
       extensions: %{plugins: plugins},
-      calls: %Calls{}
+      calls: %Inbound{}
     }
   end
 

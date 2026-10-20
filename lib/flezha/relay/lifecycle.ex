@@ -21,7 +21,7 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
@@ -719,11 +719,13 @@ defmodule Flezha.Relay.Lifecycle do
 
     case RelayManager.completion(Overwatch.relay_class(state)) do
       {:ok, %{status: status}} ->
-        Calls.end_all(state.calls, callee, status, Ingest.undelivered_calls(state))
+        Inbound.end_all(state.calls, callee, status, Ingest.undelivered_calls(state))
 
       _no_terminal_record ->
-        calls = if Replay.floor_reporter(state), do: Calls.outside(state.calls), else: state.calls
-        Calls.end_all(calls, callee, "stopped")
+        calls =
+          if Replay.floor_reporter(state), do: Inbound.outside(state.calls), else: state.calls
+
+        Inbound.end_all(calls, callee, "stopped")
     end
 
     :ok

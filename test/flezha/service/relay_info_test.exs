@@ -20,7 +20,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Intent
   alias Flezha.Convergence.Snapshot
-  alias Flezha.Relay.Calls
+  alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.Cli
   alias Flezha.Service.Relay.Info
@@ -55,7 +55,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
       started_at: System.system_time(:millisecond) - uptime_ms,
       default_input_type: "2",
       extensions: %{plugins: %{}},
-      calls: %Calls{}
+      calls: %Inbound{}
     }
   end
 
@@ -110,7 +110,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
     callee = %{namespace: @namespace, relay_id: "op-1"}
 
     {:ok, _token, calls} =
-      Calls.admit(%Calls{}, callee, {self(), make_ref()}, %{"channel" => "in"}, 5_000)
+      Inbound.admit(%Inbound{}, callee, {self(), make_ref()}, %{"channel" => "in"}, 5_000)
 
     stub_one(%{steps_state(0) | calls: calls})
 
