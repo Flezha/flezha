@@ -378,7 +378,7 @@ a later change cannot reintroduce it.
 
 The default host is a base pool of Python threads, each looping
 `poll → dispatch → complete` **on itself**, plus one supervisor thread parked in
-the core's starvation wait. It is `sdk/rust/src/relay/poll_pool.rs`
+the core's starvation wait. It is `flz_core/src/poll_pool.rs`
 transliterated, and it reads that host's environment rather than inventing a
 vocabulary:
 

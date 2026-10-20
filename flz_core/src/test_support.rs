@@ -45,6 +45,27 @@ pub fn stream_pair() -> (Arc<FlezhaStream>, UnixStream) {
     (Arc::new(FlezhaStream::unix(sdk_end)), ctrl_end)
 }
 
+/// An input carrying `ordinal`; the poll core only carries its stream.
+pub fn input_item(ordinal: usize, stream: &Arc<FlezhaStream>) -> crate::cell::CellItem {
+    let value: Arc<dyn std::any::Any + Send + Sync> = Arc::new(ordinal);
+    crate::cell::CellItem::Input(crate::cell::make_cell_payload(&value, stream, None, false))
+}
+
+/// Queue one input and claim its round — the producer protocol.
+pub fn push_input(
+    core: &crate::poll_core::PollCore,
+    slot: &Arc<crate::cell::CellSlot>,
+    value: usize,
+) {
+    assert!(slot
+        .mailbox
+        .try_push(input_item(value, &stream_pair().0))
+        .is_ok());
+    if slot.mailbox.claim_inflight() {
+        core.schedule(slot);
+    }
+}
+
 /// The response a control payload carries, if it carries one.
 pub fn response_in(message: &[u8]) -> Option<CommandResponse> {
     match ControlFrame::decode(message).ok()?.frame? {

@@ -769,7 +769,8 @@ postcard body the typed dispatcher encodes under the state lock.
 | `ChannelBuilder`, `Stream<T>`, `TopologyIssue` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/relay/builder.rs` |
 | Authoring macros | `sdk/rust/macros/src/{tasklet,short_form,relay}.rs` |
-| Typed dispatcher and plugin-output tail; poll-worker pool | `sdk/rust/src/relay/dispatcher.rs`, `poll_pool.rs` |
+| Typed dispatcher and plugin-output tail; poll-worker threads | `sdk/rust/src/relay/dispatcher.rs` |
+| Pool governor (sizes, supervisor, grow and retire) | `flz_core/src/poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
 | `RelayInstance`, `KeyGroupRange`; `RelayTopology`, `CellMode`; registries | `flz_core/src/relay/{instance,topology,registry}.rs` |
 | `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |

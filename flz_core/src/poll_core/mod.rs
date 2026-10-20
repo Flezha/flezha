@@ -15,6 +15,8 @@ mod push_claim;
 mod starvation;
 #[cfg(test)]
 mod test_hooks;
+#[cfg(test)]
+pub(crate) mod tests;
 mod wake;
 
 use std::collections::VecDeque;

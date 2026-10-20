@@ -50,6 +50,7 @@ pub mod part;
 #[doc(hidden)]
 pub mod persistent_id;
 pub mod poll_core;
+pub mod poll_pool;
 #[doc(hidden)]
 pub mod prefix;
 pub mod relay;
