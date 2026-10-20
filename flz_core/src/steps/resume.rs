@@ -7,6 +7,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use flz_transport::transport::FlezhaStream;
+
 use super::compensation::{rewind_steps, stages_from_intents, CellRun, StageRecord};
 use super::instance::{
     AfterUndo, CommittedTask, Completion, Deadline, JournalResume, MidResume, PassOrigin, Phase,
@@ -26,6 +28,28 @@ pub(super) fn carried_channel(r: &Run<'_>, resume: &JournalResume) -> ChannelId 
         .lookup_channel_id(&resume.entry_channel)
         .or_else(|| topology.first_of_kind(ChannelKind::Entry).map(|(id, _)| id))
         .expect("a structured steps declares an entry channel (validated at registration)")
+}
+
+/// The tasklets a resumed pass skips. A committed root of some chain IS
+/// "this is a mid-iteration resume", and a journal that records a child
+/// without its parent re-runs the whole iteration rather than trusting the
+/// fragment. A timer-fed pass's root is whichever tasklet's commit carries
+/// the firing.
+fn resumed_nodes(r: &Run<'_>, journal: &JournalResume) -> Vec<usize> {
+    let root_committed = journal.in_flight_trigger().is_some()
+        || journal
+            .committed_task_idxs
+            .iter()
+            .any(|&i| r.spec.dag.is_root(i as usize));
+    if root_committed {
+        journal
+            .committed_task_idxs
+            .iter()
+            .map(|&i| i as usize)
+            .collect()
+    } else {
+        Vec::new()
+    }
 }
 
 /// A journaled handoff back into values through each item's producing
@@ -115,31 +139,7 @@ pub(super) fn resumed_seed(
             // producers commit.
             continue;
         }
-        let mut by_parent: BTreeMap<usize, Vec<Release>> = BTreeMap::new();
-        for &parent in &committed_parents {
-            let handoff = journal
-                .task_handoffs
-                .iter()
-                .find(|edge| edge.task_idx as usize == parent)
-                .map(|edge| edge.handoff.as_slice())
-                .unwrap_or_default();
-            let producer_channel = r.task(parent).output_channel_id;
-            let values = seed_from_journal(&r.inst.topology, handoff, producer_channel)?;
-            let (Some(channel_id), target) = (producer_channel, dag.order[node]) else {
-                continue;
-            };
-            let Some(descriptor) = r.inst.topology.channel(channel_id) else {
-                continue;
-            };
-            let Some(edge) = descriptor.consumers.iter().find(|e| e.tasklet == target) else {
-                continue;
-            };
-            let mut items = Vec::new();
-            for value in &values {
-                items.extend(r.address(descriptor, [(edge, value)], &stream, None)?);
-            }
-            by_parent.insert(parent, items);
-        }
+        let by_parent = reseed(r, journal, node, &committed_parents, &stream)?;
         let outstanding = parents.len() - committed_parents.len();
         if outstanding == 0 {
             seed.ready
@@ -150,6 +150,44 @@ pub(super) fn resumed_seed(
         }
     }
     Ok(seed)
+}
+
+/// `node`'s items from each committed parent's journaled handoff, through
+/// the edge between them; a parent with no such edge gives none.
+fn reseed(
+    r: &Run<'_>,
+    journal: &JournalResume,
+    node: usize,
+    committed_parents: &[usize],
+    stream: &Arc<FlezhaStream>,
+) -> Result<BTreeMap<usize, Vec<Release>>, StepsError> {
+    let dag = &r.spec.dag;
+    let mut by_parent: BTreeMap<usize, Vec<Release>> = BTreeMap::new();
+    for &parent in committed_parents {
+        let handoff = journal
+            .task_handoffs
+            .iter()
+            .find(|edge| edge.task_idx as usize == parent)
+            .map(|edge| edge.handoff.as_slice())
+            .unwrap_or_default();
+        let producer_channel = r.task(parent).output_channel_id;
+        let values = seed_from_journal(&r.inst.topology, handoff, producer_channel)?;
+        let (Some(channel_id), target) = (producer_channel, dag.order[node]) else {
+            continue;
+        };
+        let Some(descriptor) = r.inst.topology.channel(channel_id) else {
+            continue;
+        };
+        let Some(edge) = descriptor.consumers.iter().find(|e| e.tasklet == target) else {
+            continue;
+        };
+        let mut items = Vec::new();
+        for value in &values {
+            items.extend(r.address(descriptor, [(edge, value)], stream, None)?);
+        }
+        by_parent.insert(parent, items);
+    }
+    Ok(by_parent)
 }
 
 /// The journal's committed work as stage records: the fully-committed
@@ -258,24 +296,7 @@ impl Decide<'_, '_, '_> {
         if !journal.entry_channel.is_empty() {
             self.s.entry = Some((carried_channel(self.r, &journal), journal.consumed_offset));
         }
-        // A committed root of some chain IS "this is a mid-iteration resume",
-        // and a journal that records a child without its parent re-runs the
-        // whole iteration rather than trusting the fragment. A timer-fed
-        // pass's root is whichever tasklet's commit carries the firing.
-        let root_committed = journal.in_flight_trigger().is_some()
-            || journal
-                .committed_task_idxs
-                .iter()
-                .any(|&i| self.r.spec.dag.is_root(i as usize));
-        let committed_nodes = if root_committed {
-            journal
-                .committed_task_idxs
-                .iter()
-                .map(|&i| i as usize)
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let committed_nodes = resumed_nodes(self.r, &journal);
         let rewind = rewind_steps(self.r, &journal.rewind_undo);
         self.s.resume_point = Some(MidResume {
             journal,

@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use flz_transport::transport::FlezhaStream;
 
 use super::compensation::{CellRun, RecordSpan, StageRecord};
+use super::spec::Chain;
 use super::StepsError;
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::ChannelId;
@@ -431,6 +432,41 @@ pub(crate) struct Pass {
 }
 
 impl Pass {
+    /// `node`'s committed items banked for its children; each child whose
+    /// producers in `chain` have now all committed comes back with what was
+    /// banked for it. Inlined: it runs per stage.
+    #[inline(always)]
+    pub(crate) fn bank(
+        &mut self,
+        node: usize,
+        held: Vec<Release>,
+        children: &[usize],
+        chain: Option<&Chain>,
+    ) -> Vec<(usize, Vec<Release>)> {
+        for release in held {
+            self.banked
+                .entry(release.node)
+                .or_default()
+                .entry(node)
+                .or_default()
+                .push(release);
+        }
+        let mut ready = Vec::new();
+        for &child in children {
+            let waiting = self
+                .waiting
+                .entry(child)
+                .or_insert_with(|| chain.map_or(1, |c| c.parents_in_chain(child)));
+            *waiting = waiting.saturating_sub(1);
+            if *waiting == 0 {
+                self.waiting.remove(&child);
+                let banked = self.banked.remove(&child).unwrap_or_default();
+                ready.push((child, banked.into_values().flatten().collect()));
+            }
+        }
+        ready
+    }
+
     /// The input-log offset that names this pass's effects: its message's,
     /// and none for a firing, which took no input of its own.
     pub(crate) fn effect_offset(&self) -> Option<u64> {

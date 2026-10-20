@@ -9,6 +9,7 @@ use super::compensation::CellRun;
 use super::events::{barrier_acked, crossed, items_dropped, undo_answered};
 use super::instance::{Deadline, Failure, FiringKey, HeldArm, Release, Value};
 use super::run::{Run, Source, ADMIT_RETRY, UNDO_GATE_RETRY};
+use super::StepsError;
 use crate::cell::{CellItem, CellSlot};
 use crate::channel::{ChannelId, OverflowPolicy};
 use crate::host::HostPayload;
@@ -91,6 +92,31 @@ pub(super) enum Frame {
     Built(Box<Command>),
 }
 
+impl Frame {
+    /// The command, through the journal codecs. Inlined: it runs per stage.
+    #[inline(always)]
+    fn build(self, r: &Run<'_>) -> Result<Command, StepsError> {
+        match self {
+            Frame::Task {
+                node,
+                iter,
+                cells,
+                completion,
+                trigger,
+            } => task_frame(r, node, iter, &cells, completion, trigger),
+            Frame::Iteration {
+                iter,
+                offset,
+                channel,
+                values,
+                completion,
+                dead_letter,
+            } => iteration_frame(r, iter, offset, channel, &values, completion, dead_letter),
+            Frame::Built(command) => Ok(*command),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Effects {
     pub(super) markers: Vec<(&'static str, Arc<Vec<u8>>)>,
@@ -136,6 +162,34 @@ impl Run<'_> {
             ready,
             park,
         } = fx;
+        self.send(markers, frames, control, removals, park, drop_acks);
+        self.schedule(disarm, arm, arms, admit, ready, cancel_retries);
+        if let Some(parked) = parked {
+            self.park_message(parked);
+        }
+        if let Some((status, error, result)) = completed {
+            self.emit_completed(status, error, result);
+        }
+        if let Some((slot, outputs, offset)) = run_undo {
+            self.run_undo(slot, outputs, offset);
+        }
+        if let Some(source) = start {
+            self.begin_pass(source);
+        }
+    }
+
+    /// What goes to the controller, in `act`'s order. Inlined: it runs per
+    /// event.
+    #[inline(always)]
+    fn send(
+        &self,
+        markers: Vec<(&'static str, Arc<Vec<u8>>)>,
+        frames: Vec<(u64, Frame)>,
+        control: Vec<(String, Command)>,
+        removals: Vec<(Arc<CellSlot>, Vec<TimerOp>)>,
+        park: Option<(u32, Option<u64>)>,
+        drop_acks: Vec<String>,
+    ) {
         // Intent markers precede the commit: a crash between marker and ack
         // resolves as "not committed, re-run".
         for (payload_id, identity) in markers {
@@ -158,6 +212,19 @@ impl Run<'_> {
         for reference_id in drop_acks {
             crate::shutdown::drop_pending_ack(&reference_id);
         }
+    }
+
+    /// What goes to the poller, in `act`'s order. Inlined: it runs per event.
+    #[inline(always)]
+    fn schedule(
+        &self,
+        disarm: Vec<(Deadline, u64)>,
+        arm: Vec<(Deadline, u64)>,
+        arms: Vec<HeldArm>,
+        admit: Vec<Release>,
+        ready: Vec<Arc<CellSlot>>,
+        cancel_retries: Vec<Arc<CellSlot>>,
+    ) {
         let core = crate::poll_core::global();
         for (deadline, due) in disarm {
             core.disarm_instance(self.inst.seq, deadline, due);
@@ -176,18 +243,6 @@ impl Run<'_> {
         }
         for slot in cancel_retries {
             items_dropped(&slot, core.cancel_retry(&slot));
-        }
-        if let Some(parked) = parked {
-            self.park_message(parked);
-        }
-        if let Some((status, error, result)) = completed {
-            self.emit_completed(status, error, result);
-        }
-        if let Some((slot, outputs, offset)) = run_undo {
-            self.run_undo(slot, outputs, offset);
-        }
-        if let Some(source) = start {
-            self.begin_pass(source);
         }
     }
 
@@ -215,32 +270,7 @@ impl Run<'_> {
     /// Build a barrier's frame (the journal codecs run here), register its
     /// ack as an event, send it, and keep it for a re-send.
     fn send_barrier(&self, id: u64, frame: Frame) {
-        let built = match frame {
-            Frame::Task {
-                node,
-                iter,
-                cells,
-                completion,
-                trigger,
-            } => task_frame(self, node, iter, &cells, completion, trigger),
-            Frame::Iteration {
-                iter,
-                offset,
-                channel,
-                values,
-                completion,
-                dead_letter,
-            } => iteration_frame(
-                self,
-                iter,
-                offset,
-                channel,
-                &values,
-                completion,
-                dead_letter,
-            ),
-            Frame::Built(command) => Ok(*command),
-        };
+        let built = frame.build(self);
         let reference_id = {
             let sheet = self.run.sheet();
             match sheet.barriers.get(&id) {
@@ -300,34 +330,27 @@ impl Run<'_> {
                 keyless.push((node, item));
                 continue;
             };
-            match producer {
+            let item = match producer {
                 Some(producer) => {
-                    crate::admission::admit_from_cell(
-                        &producer,
-                        &cell,
-                        item,
-                        OverflowPolicy::DropNothing,
-                        true,
-                    );
+                    let policy = OverflowPolicy::DropNothing;
+                    crate::admission::admit_from_cell(&producer, &cell, item, policy, true);
+                    continue;
                 }
-                None if backlog => refused.push(Release {
-                    node,
-                    cell: Some(cell),
-                    item,
-                    producer: None,
-                }),
-                None => {
-                    if let Err(item) = crate::admission::try_admit(&cell, item) {
+                None if backlog => item,
+                None => match crate::admission::try_admit(&cell, item) {
+                    Ok(()) => continue,
+                    Err(item) => {
                         backlog = true;
-                        refused.push(Release {
-                            node,
-                            cell: Some(cell),
-                            item,
-                            producer: None,
-                        });
+                        item
                     }
-                }
-            }
+                },
+            };
+            refused.push(Release {
+                node,
+                cell: Some(cell),
+                item,
+                producer: None,
+            });
         }
         if !refused.is_empty() {
             self.decide(|d| {

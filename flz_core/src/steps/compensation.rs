@@ -284,20 +284,7 @@ impl Decide<'_, '_, '_> {
                 continue;
             }
             let written = std::mem::take(&mut undo.cells);
-            let cells = cells_ran
-                .into_iter()
-                .map(|cell_id| {
-                    written
-                        .iter()
-                        .find(|cell| cell.cell_id == cell_id)
-                        .cloned()
-                        .unwrap_or(crate::pb::CommittedCell {
-                            cell_id,
-                            ..Default::default()
-                        })
-                })
-                .collect();
-            let command = undo_frame(r, node, iter, cells);
+            let command = undo_frame(r, node, iter, cells_ran, written);
             let id = self.barrier(BarrierFor::Undo);
             self.fx.frames.push((id, Frame::Built(Box::new(command))));
             return;

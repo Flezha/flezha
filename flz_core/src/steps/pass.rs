@@ -373,6 +373,21 @@ impl Decide<'_, '_, '_> {
         if dead {
             return self.settle_pass();
         }
+        self.commit_stage(node, iter, cells, asked, trigger);
+    }
+
+    /// A recorded stage's commit: its saga intent markers first, then its
+    /// barrier, or the commit at once when the run journals nothing. Inlined:
+    /// it runs per stage.
+    #[inline(always)]
+    fn commit_stage(
+        &mut self,
+        node: usize,
+        iter: u32,
+        cells: Vec<CellRun>,
+        asked: Option<Vec<u8>>,
+        trigger: Option<FiringKey>,
+    ) {
         if self.r.task(node).compensate_overridden && self.r.inst.keeps_state() {
             for run in &cells {
                 self.fx.markers.push((
@@ -435,28 +450,8 @@ impl Decide<'_, '_, '_> {
             pass.carry.extend(held);
             return self.settle_pass();
         }
-        for release in held {
-            pass.banked
-                .entry(release.node)
-                .or_default()
-                .entry(node)
-                .or_default()
-                .push(release);
-        }
         let chain = self.r.origin_chain(&pass.origin);
-        let mut ready = Vec::new();
-        for &child in &dag.children[node] {
-            let waiting = pass
-                .waiting
-                .entry(child)
-                .or_insert_with(|| chain.map_or(1, |c| c.parents_in_chain(child)));
-            *waiting = waiting.saturating_sub(1);
-            if *waiting == 0 {
-                pass.waiting.remove(&child);
-                let banked = pass.banked.remove(&child).unwrap_or_default();
-                ready.push((child, banked.into_values().flatten().collect()));
-            }
-        }
+        let ready = pass.bank(node, held, &dag.children[node], chain);
         for (child, items) in ready {
             self.start_stage(child, items);
         }

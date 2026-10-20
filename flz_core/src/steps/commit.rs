@@ -105,13 +105,28 @@ pub(super) fn iteration_frame(
     }))
 }
 
-/// One tasklet's undo entry, naming the records its hooks wrote.
+/// One tasklet's undo entry: each Cell that ran, named with the record its
+/// hook wrote among `written`, or bare.
 pub(super) fn undo_frame(
     r: &Run<'_>,
     node: usize,
     iter: u32,
-    cells_ran: Vec<crate::pb::CommittedCell>,
+    cells_ran: Vec<Vec<u8>>,
+    written: Vec<crate::pb::CommittedCell>,
 ) -> Command {
+    let cells_ran = cells_ran
+        .into_iter()
+        .map(|cell_id| {
+            written
+                .iter()
+                .find(|cell| cell.cell_id == cell_id)
+                .cloned()
+                .unwrap_or(crate::pb::CommittedCell {
+                    cell_id,
+                    ..Default::default()
+                })
+        })
+        .collect();
     Command::TaskCommit(crate::pb::TaskCommit {
         relay_id: r.inst.instance_id.to_string(),
         task_idx: node as u32,
