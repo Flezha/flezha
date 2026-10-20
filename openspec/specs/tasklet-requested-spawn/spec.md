@@ -28,8 +28,11 @@ SHALL fail the requester's read with the code `relay.already_running`. Without a
 generate one as the `generated-relay-ids` capability defines and SHALL always spawn a new
 instance: there is no running instance to deliver to, so `if_running` has no meaning. Rust and
 Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an `id` cannot be
-written there; Elixir, Python, Ruby, PHP and Node SHALL raise an argument error at the call when
-`if_running` is given without an `id`, and SHALL send nothing.
+written there; in Elixir, Python, Ruby, PHP and Node the core SHALL refuse the request at the call
+with `spawn.if_running_without_id` when `if_running` is given without an `id`, the SDK SHALL raise
+that refusal as its one error type, and nothing SHALL be sent. No SDK SHALL check the rule itself.
+Every SDK SHALL wait for a result for the core's bound, `spawn.timeout` after it, and SHALL carry no
+wait of its own.
 
 The payload SHALL be encoded as the SDK's output with no codec encodes a value, the rule `ctx.complete`
 already applies: bytes as they are, a string as UTF-8, any other value as JSON. It SHALL be an ordinary
@@ -73,7 +76,7 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 #### Scenario: if_running without an id is refused at the call
 
 - **WHEN** a Python tasklet calls `ctx.spawn_steps("worker", p, if_running="error")` with no id
-- **THEN** the call SHALL raise an argument error naming `if_running` and `id`, and no request SHALL leave the runner
+- **THEN** the call SHALL raise the SDK's error with code `spawn.if_running_without_id`, and no request SHALL leave the runner
 
 #### Scenario: Factory on a different runner than the requester
 

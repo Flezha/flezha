@@ -121,33 +121,10 @@ A declaration the core refuses SHALL surface the core's error naming the offendi
 - **WHEN** a PHP class declares a field combination the host layer cannot serve
 - **THEN** `registerFactory()` SHALL raise an error naming the offending field, before the runner starts
 
-### Requirement: The five command activation kinds
-The PHP SDK SHALL handle every command activation kind the core hands out: `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState` and `MigrationSerialize`, and the `Leave` that tells it a Cell or a relay left.
-
-#### Scenario: A restore fold rebuilds state before inputs flow
-- **WHEN** a cell with a persisted change log is bound and the core hands out a `RestoreFold`
-- **THEN** the SDK SHALL fold the change bodies into State and complete the activation, and the cell's next input activation SHALL observe the folded state
-
-#### Scenario: A snapshot request round-trips through restore
-- **WHEN** the controller triggers `CompactCell` and the core hands out a `SnapshotRequest`
-- **THEN** the SDK SHALL answer with a serialized State that a later `RestoreFold` decodes to an equal State
-
-#### Scenario: A live state read reports the current value
-- **WHEN** `flz state get` targets a live PHP-hosted cell
-- **THEN** the SDK SHALL answer a `LiveStateRead` with the cell's current State as JSON, stamped with the change seq it was read at
-
-#### Scenario: A migration serializes and applies
-- **WHEN** a relay hot-swap migrates a PHP-hosted cell
-- **THEN** `MigrationSerialize` on the source and `ApplyState` on the destination SHALL round-trip the State
-
-#### Scenario: A leave drops the held State
-- **WHEN** the core hands out a `Leave` for a cell, or with `whole_relay` for a relay
-- **THEN** the SDK SHALL drop the State it holds for that cell, or for every cell of that relay, and a cell started again under the same name SHALL begin at `initState`
-
 ### Requirement: Cell modes and the prepare crossing
 The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
 
-The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the relay keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
+The core SHALL derive the cell mode per tasklet node from what is declared, and the SDK SHALL send none: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the relay keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
 
 Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's existing eviction, without a PHP-side registry.
 
@@ -161,11 +138,11 @@ Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's 
 
 #### Scenario: keyBy alone makes a tasklet dynamic
 - **WHEN** a relay declares `$c->input('orders')->keyBy(fn (array $o): string => $o['customer'])->into(Counter::class)` and `Counter`'s `#[Task]` carries only its `name`
-- **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Counter`, and each customer SHALL get its own Cell
+- **THEN** the core SHALL derive dynamic mode for `Counter`, and each customer SHALL get its own Cell
 
 #### Scenario: One class takes its mode from each wiring
 - **WHEN** one tasklet class is wired through `keyBy` in one relay and without it in another
-- **THEN** the first relay's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
+- **THEN** the core SHALL derive dynamic mode for it in the first relay and single in the second
 
 #### Scenario: A static key set fed by keyBy is refused
 - **WHEN** a tasklet carrying `#[Task(name: 'routed', cellKeys: ['a', 'b'])]` is reached by an edge declaring `keyBy`
@@ -425,4 +402,27 @@ A change SHALL be any value the codec carries, recorded with `$ctx->change($valu
 
 - **WHEN** a class carries `#[Task(name: 'x', dynamicCells: true)]`, `#[Task(name: 'x', clock: ...)]` or `#[Task(name: 'x', idleTtlMs: 1000)]`
 - **THEN** PHP refuses the unknown named argument when the SDK reads the attribute, naming it, and the class is not registered
+
+### Requirement: The four command activation kinds
+The PHP SDK SHALL handle every command activation kind the core hands out: `RestoreFold`, `SnapshotRequest`, `LiveStateRead` and `ApplyState`, and the `Leave` that tells it a Cell or a relay left.
+
+#### Scenario: A restore fold rebuilds state before inputs flow
+- **WHEN** a cell with a persisted change log is bound and the core hands out a `RestoreFold`
+- **THEN** the SDK SHALL fold the change bodies into State and complete the activation, and the cell's next input activation SHALL observe the folded state
+
+#### Scenario: A snapshot request round-trips through restore
+- **WHEN** the controller triggers `CompactCell` and the core hands out a `SnapshotRequest`
+- **THEN** the SDK SHALL answer with a serialized State that a later `RestoreFold` decodes to an equal State
+
+#### Scenario: A live state read reports the current value
+- **WHEN** `flz state get` targets a live PHP-hosted cell
+- **THEN** the SDK SHALL answer a `LiveStateRead` with the cell's current State as JSON, stamped with the change seq it was read at
+
+#### Scenario: A migration serializes and applies
+- **WHEN** a relay hot-swap migrates a PHP-hosted cell
+- **THEN** `LiveStateRead` on the source and `ApplyState` on the destination SHALL round-trip the State
+
+#### Scenario: A leave drops the held State
+- **WHEN** the core hands out a `Leave` for a cell, or with `whole_relay` for a relay
+- **THEN** the SDK SHALL drop the State it holds for that cell, or for every cell of that relay, and a cell started again under the same name SHALL begin at `initState`
 

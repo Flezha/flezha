@@ -193,7 +193,7 @@ The smoke tier SHALL assert that the factory ids the controller lists for a fres
 
 ### Requirement: The declared surface matches a golden snapshot
 
-`test/system/topology_refusal_e2e_test.exs` SHALL bind every fixture that has a golden under `test/fixtures/declarations/`, in every runtime whose manifest lists it (the selected runtime in the ordinary `:system` pass, every other runtime under `:interop`), capture the `AddRelayResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/1`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. The smoke tier SHALL bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
+`test/system/topology_refusal_e2e_test.exs` SHALL bind every fixture that has a golden under `test/fixtures/declarations/`, in every runtime whose manifest lists it (the selected runtime in the ordinary `:system` pass, every other runtime under `:interop`), capture the `AddRelayResponse.metadata` map as decoded at `ClassRegistry.decode_declarations/2`, and assert it equals the committed golden file `test/fixtures/declarations/<fixture>.json` — key set and values. The smoke tier SHALL bind one keyed fixture, deliver one input, and assert the set of identity-stamp keys on the output (`flz.cell`, `flz.seq`, `flz.key`) equals the committed golden. Each snapshot test SHALL carry the capability of the declaration it pins. Goldens SHALL be regenerated only with `FLEZHA_E2E_SNAPSHOT=update` under the reference runtime; any other runtime SHALL refuse the update.
 
 #### Scenario: A differing default is a diff
 - **WHEN** an SDK's `tier_store` declares `effectively_once` with a value or key spelling that differs from `test/fixtures/declarations/tier_store.json`
@@ -492,7 +492,7 @@ name. A row a runtime refuses at run time SHALL boot for real, whichever the lan
 
 The declaration goldens under `test/fixtures/declarations/` SHALL be compared for every
 runtime with a manifest in one module, not for the one runtime a run selects: per golden
-and per runtime the declaration SHALL be decoded at `ClassRegistry.decode_declarations/1`
+and per runtime the declaration SHALL be decoded at `ClassRegistry.decode_declarations/2`
 and SHALL equal the golden byte-for-byte, `sdk_lang` and `sdk_version` excluded. The
 derived record of every well-formed row of `reference_topologies.txt` SHALL equal the
 row's lines in every SDK's conformance run.

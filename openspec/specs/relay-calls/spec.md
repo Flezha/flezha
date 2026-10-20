@@ -352,10 +352,13 @@ delivered to whatever the Response channel feeds, the calling tasklet included. 
 one JSON document built by the controller, carrying the call's id, `target` (the callee's instance
 id), `created` (whether this call started the callee), `request` (the request's bytes in base64)
 and either `value` (the answer's bytes in base64) or `error` (an error document of the error model;
-a timeout is the error `call.timeout`). Every SDK SHALL decode it into its `Response` type, decoding
-the request with the call end's request codec (in Elixir, whose request serializer is a function,
-the request's bytes) and the value with its answer codec, so that
-`test/fixtures/call_response_envelope.json` decodes to the same fields in every SDK.
+a timeout is the error `call.timeout`). The envelope SHALL be parsed once, by the core's decoder
+(`flz_core::call::Envelope`, reached by the hosted SDKs through the C ABI or their glue), and every
+SDK SHALL build its `Response` type from that decoder's answer, decoding the request with the call
+end's request codec (in Elixir, whose request serializer is a function, the request's bytes) and the
+value with its answer codec, so that `test/fixtures/call_response_envelope.json` decodes to the same
+fields in every SDK and a malformed envelope is refused with the same code in every SDK. No SDK SHALL
+parse the envelope's JSON itself.
 
 #### Scenario: A steps callee's answer returns to a flow caller
 
@@ -369,8 +372,13 @@ the request's bytes) and the value with its answer codec, so that
 
 #### Scenario: Every SDK reads the same envelope
 
-- **WHEN** each SDK's test suite decodes every case of `test/fixtures/call_response_envelope.json`
-- **THEN** each SHALL produce the same request, result, error code, target and `created` for each case
+- **WHEN** the core's decoder test decodes every case of `test/fixtures/call_response_envelope.json`, and each SDK's suite round-trips one case through its codec and the core's decoder
+- **THEN** each SHALL produce the same request, result, error code, target and `created` for that case, the Elixir SDK included
+
+#### Scenario: A malformed envelope reads the same in every SDK
+
+- **WHEN** an SDK is handed a `Response` payload that is not an envelope
+- **THEN** it SHALL raise its one error type with the core's code for a malformed envelope, in every SDK
 
 ### Requirement: Every call SHALL end with exactly one `Response` while its caller lives
 

@@ -5,7 +5,7 @@ TBD - created by archiving change sdk-runner-entrypoint-redesign. Update Purpose
 ## Requirements
 ### Requirement: UpdateFactories control message
 
-The wire protocol SHALL define an SDK→controller control message `UpdateFactories` (proto tag 33 in the `CommandRequest` oneof) carrying the runner's **full current factory set** as `repeated FactoryDecl { id, description, sdk_lang, kind }`. `sdk_lang` SHALL be the language byte of the class registered under that factory id — the same value the SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0 of every durable record it writes. `kind` SHALL be exactly `"flow"` or `"steps"`, the kind of the class registered under that id: the Rust and Elixir SDKs SHALL fill it from the registered class, and the shared core SHALL fill it for every host SDK from the registry the class declaration landed in, where it fills `sdk_lang`. The connect/reconnect init frame's factory entries SHALL carry the same keys, since the init frame is the resync of record. The message SHALL be fire-and-forget: the controller SHALL NOT reply with an ack, and the SDK SHALL NOT block on it. Full-set semantics make delivery idempotent; the connect/reconnect init frame remains the resync of record, so a lost `UpdateFactories` frame is corrected by the next frame or the next reconnect. A stale placement racing a removal fails at the SDK's `AddRelay` handler and is re-placed by convergence — the same failure mode as a runner dying mid-placement.
+The wire protocol SHALL define an SDK→controller control message `UpdateFactories` (proto tag 33 in the `CommandRequest` oneof, carried as the `request` of a `ControlFrame`) carrying the runner's **full current factory set** as `repeated FactoryDecl { id, description, sdk_lang, run, each, on_failure, api, graph }`. `sdk_lang` SHALL be the language byte of the class registered under that factory id — the same value the SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0 of every durable record it writes. `run` SHALL be exactly `"flow"` or `"steps"`, the run of the class registered under that id, and the shared core SHALL fill every field for every SDK from the registry the class declaration landed in. The connect/reconnect init frame's `factories` SHALL be the same `FactoryDecl` values serialized once by serde, under the proto field names, so the init frame and `UpdateFactories` carry one struct in one form and the controller reads both with one reader; the init frame is the resync of record. The message SHALL be fire-and-forget: the controller SHALL NOT reply with an ack, and the SDK SHALL NOT block on it. Full-set semantics make delivery idempotent; the connect/reconnect init frame remains the resync of record, so a lost `UpdateFactories` frame is corrected by the next frame or the next reconnect. A stale placement racing a removal fails at the SDK's `AddRelay` handler and is re-placed by convergence — the same failure mode as a runner dying mid-placement.
 
 #### Scenario: A post-start define reaches the controller
 - **GIVEN** a connected runner that declared factory A at connect time
@@ -27,11 +27,15 @@ The wire protocol SHALL define an SDK→controller control message `UpdateFactor
 
 #### Scenario: The advertised kind rides both halves of the seam
 - **WHEN** a runner advertises a flow factory A in its connect init frame and later ships `UpdateFactories{factories: [A, W]}` where W is a steps class
-- **THEN** the init frame's entry for A SHALL carry `kind` `"flow"`, the `UpdateFactories` entries SHALL carry `"flow"` for A and `"steps"` for W, and the controller SHALL store each beside the id, description and language
+- **THEN** the init frame's entry for A SHALL carry `run` `"flow"`, the `UpdateFactories` entries SHALL carry `"flow"` for A and `"steps"` for W, and the controller SHALL store each beside the id, description and language
+
+#### Scenario: Both frames serialize one struct
+- **WHEN** the init frame's `factories` entry for A is compared with the `FactoryDecl` the core builds for A
+- **THEN** the entry SHALL be that struct's serde form, key for key, with no separate announcement type in the core
 
 ### Requirement: Controller applies UpdateFactories as a full-set replacement
 
-`Flezha.Runner.ControlChannel` SHALL decode `UpdateFactories` on the existing SDK-initiated-command seam (alongside `TaskCommit`/`IterCommit`/`IterPark`) and dispatch it as an asynchronous cast to FleetManager — decoding SHALL NOT block the control channel. FleetManager SHALL replace the runner's stored factory list with the message's set by composing its existing removal and store paths (remove-then-store), scoped to that namespace + runner id; other runners' factory lists SHALL be untouched. An empty set SHALL be legal and SHALL leave the runner connected with zero placeable factories.
+`Flezha.Runner.ControlChannel` SHALL decode `UpdateFactories` from the `request` half of a control frame, beside the other runner-initiated commands (`TaskCommit`/`IterCommit`/`IterPark`), and dispatch it as an asynchronous cast to FleetManager — decoding SHALL NOT block the control channel. FleetManager SHALL replace the runner's stored factory list with the message's set by composing its existing removal and store paths (remove-then-store), scoped to that namespace + runner id; other runners' factory lists SHALL be untouched. An empty set SHALL be legal and SHALL leave the runner connected with zero placeable factories. The entries SHALL be read by the same reader the connect init frame's entries are read by.
 
 #### Scenario: Full-set replacement drops removed factories
 - **GIVEN** the controller's stored factory list for runner R is {A, B}
@@ -233,3 +237,54 @@ accepted, and its factories SHALL have no graph.
 
 - **WHEN** a runner announces a factory with no `graph`
 - **THEN** its factory is placed as before and reads as having no announced graph
+
+### Requirement: A factory change after start SHALL reach the controller from every SDK
+
+Every SDK's register and unregister of a factory SHALL work before and after the runner starts,
+through the core's one session. After start, a register or an unregister SHALL ship
+`UpdateFactories` with the full current set. An unregister after start SHALL be checked on the
+core's coordinator, serialized with `AddRelay`, and SHALL be refused with
+`runtime.relay_type_in_use` while live instances of the factory exist on the runner, and only then.
+The unregister SHALL wait for the coordinator's answer holding no session lock, so a register from
+another thread proceeds meanwhile, and for at most `FLEZHA_RUNNER_START_WAIT_MS` (`0` waits for
+ever); past it the unregister SHALL fail with `runtime.runner_unavailable`, the factory SHALL stay
+registered and declared, and the coordinator SHALL NOT apply that removal later.
+No SDK SHALL refuse an unregister after start for any other reason, and no SDK SHALL accept a
+register after start that the controller never learns of. The one exception is PHP's Swoole
+executor, whose threads each serve the classes registered before start: under it a register or
+an unregister after start SHALL be refused with `runtime.executor_unavailable` naming `swoole`. The SDK's executor SHALL serve the change too:
+a factory registered after start SHALL run its activations, and one unregistered after start SHALL
+no longer be served.
+
+#### Scenario: Ruby registers after start
+
+- **WHEN** a started Ruby runner registers factory C
+- **THEN** the controller's stored factory list for that runner SHALL include C, and a relay of C SHALL be placeable on it
+
+#### Scenario: Node unregisters an idle factory after start
+
+- **WHEN** a started Node runner unregisters factory B with no live instance of B
+- **THEN** the call SHALL succeed and the controller's stored list SHALL no longer include B
+
+#### Scenario: A factory with a live instance is kept
+
+- **WHEN** any SDK unregisters factory B after start while an instance of B runs on that runner
+- **THEN** the call SHALL fail with `runtime.relay_type_in_use` naming B and the instance count, and the controller's stored list SHALL still include B
+
+#### Scenario: PHP's Swoole executor refuses a change after start
+
+- **WHEN** a PHP runner started under the Swoole executor registers or unregisters a factory
+- **THEN** the call SHALL fail with `runtime.executor_unavailable` naming `swoole`, and the runner's registered classes SHALL be unchanged
+
+#### Scenario: An unanswered unregister gives up and is never applied
+
+- **WHEN** a started runner unregisters factory B while its coordinator answers nothing (a controller outage it is reconnecting through)
+- **THEN** a register of factory C on another thread SHALL complete meanwhile
+- **AND** the unregister SHALL fail with `runtime.runner_unavailable` within `FLEZHA_RUNNER_START_WAIT_MS`
+- **AND** B SHALL stay registered when the coordinator reaches the removal
+
+#### Scenario: A factory removed after start is no longer served
+
+- **WHEN** a started PHP runner unregisters an idle factory B and an activation for B then reaches it
+- **THEN** the runner SHALL refuse the activation as an unregistered class rather than run it
+

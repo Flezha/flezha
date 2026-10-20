@@ -274,11 +274,13 @@ refusal SHALL live in the SDK at the `AddRelay` boundary: when `partition_count 
 steps class whose loop mode is not `per_input`, the SDK SHALL refuse the `AddRelay` with an
 error named `topology.partitions_without_per_input_loop` that names the class, its loop mode and `each
 per_input` as the remedy, and the controller SHALL treat that refusal as a member start failure
-(group rollback, error surfaced to the caller). Additionally, a steps class SHALL declare its
-loop mode as `each` (`once` | `per_input` | `chained`) in the `AddRelayResponse.metadata`
-declaration seam beside `keyed`, recorded against the factory as the keyless fact is, so a later
-partitioned start of a known `once` or `chained` class is refused at the controller before any
-member starts, with the same sentence. The keyless refusal applies to a steps relay unchanged: a
+(group rollback, error surfaced to the caller). Additionally, a steps class's loop mode `each`
+(`once` | `per_input` | `chained`) SHALL be read from the class's one factory announcement (the
+`FactoryDecl` a runner sends at connect and in `UpdateFactories`) and established against the
+factory as an attribute of its record, as `run` is; `AddRelayResponse.metadata` SHALL NOT carry
+`each` or `on_failure`. A bind records the class's established `each` against the factory, so
+a later partitioned start of a `once` or `chained` class that has bound once is refused at the
+controller before any member starts, with the same sentence. The keyless refusal applies to a steps relay unchanged: a
 `per_input` steps relay whose entry-fed tasklet declares neither `key_by` nor cell keys SHALL be
 refused with `topology.partitions_without_keyed_tasklet`.
 
@@ -292,16 +294,16 @@ refused with `topology.partitions_without_keyed_tasklet`.
 
 #### Scenario: Repeat partitioned start of a known chained steps relay fails immediately
 
-- **WHEN** a `chained` steps class has bound before, so its `each` declaration is
-  recorded against its factory, and a partitioned start of it is attempted
+- **WHEN** a `chained` steps class has bound once, so the controller recorded the `each` that
+  bind read as placement reads it, and a partitioned start of it is attempted
 - **THEN** the controller refuses before starting any member, with the same named error
 
 #### Scenario: A per-input steps relay with a keyed entry partitions normally
 
 - **WHEN** a `per_input` steps relay whose entry edge declares `key_by` is started with
   `--partitions 2`
-- **THEN** the start succeeds, both members bind, and each member's response metadata carries
-  `each: "per_input"`
+- **THEN** the start succeeds, both members bind, and the factory's established `each` is
+  `per_input`, read from its announcement
 
 #### Scenario: A per-input steps relay with a single-cell entry is refused as keyless
 

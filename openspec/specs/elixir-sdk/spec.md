@@ -233,8 +233,9 @@ own namespace with one call, under the contract the other SDKs implement
 payload and a keyword list of options defaulting to `[]`, whose keys are `id:` (an instance id)
 and `if_running:` (`:deliver` or `:error`, `:deliver` when an `id:` is given without it). The call
 SHALL make the core's spawn request from the invocation's live activation and return a handle
-without waiting for the controller. An `if_running:` given without an `id:` SHALL raise
-`ArgumentError` at the call and send nothing.
+without waiting for the controller. An `if_running:` given without an `id:` SHALL be refused
+by the core at the call, resolving the handle to the error coded `spawn.if_running_without_id`,
+and nothing SHALL be sent; the SDK SHALL NOT check the rule itself.
 
 The handle SHALL resolve, through `Flezha.SDK.Spawn.await/2` or `Flezha.SDK.Spawn.try_result/1`,
 which read the core's spawn result, to `{:ok, %{id: id, outcome: :spawned | :delivered | :skipped_on_replay}}`, where `id` is the
@@ -255,10 +256,10 @@ SHALL be logged once as a warning. A call from a process other than the invoking
 - **WHEN** a tasklet calls `spawn_steps(ctx, "worker", payload)` with no options
 - **THEN** the handle resolves `{:ok, %{id: id, outcome: :spawned}}` where `id` begins `worker-` and names the running instance
 
-#### Scenario: if_running without an id raises at the call
+#### Scenario: if_running without an id is refused at the call
 
 - **WHEN** a tasklet calls `spawn_steps(ctx, "worker", payload, if_running: :error)`
-- **THEN** the call raises `ArgumentError` naming `if_running` and `id`, and no request leaves the runner
+- **THEN** the handle resolves `{:error, %Flezha.SDK.Error{code: "spawn.if_running_without_id"}}`, and no request leaves the runner
 
 #### Scenario: A refusal leaves the invocation intact
 
@@ -280,7 +281,7 @@ The SDK SHALL reach the controller through a Rustler crate of its own, Apache-2.
 - **THEN** it SHALL hold the server half only and SHALL keep `publish = false`
 
 ### Requirement: The Elixir SDK authors with `use` macros that expand to its behaviours
-The SDK SHALL provide `use Flezha.SDK.Tasklet` and `use Flezha.SDK.Relay`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `idle_ttl_seconds`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `logical_clock` and `max_timers_per_cell`, plus the short-form options; `idle_ttl_seconds` SHALL be a positive integer and `logical_clock` a boolean, any other value being a `CompileError` naming the option; the retired options `cell_idle_ttl_ms` and `clock`, and a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` the module defines with `def` or `defp`, SHALL each be a `CompileError` naming what replaced it; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.Relay` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `run` and `durable`; under `run: {:steps, ...}` `each` SHALL accept only `:once`, `:per_input` and `:chained`, and `on_failure` only `:undo_all` and `:keep_progress`, any other value, or a setting under a parent that does not carry it, being a `CompileError` naming it. The relay macro SHALL import `Flezha.SDK.Channels`; a tasklet of either run ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module that `use`s `Flezha.SDK.Tasklet`, or a short-form relay module, that writes `event_time/1` and declares `logical_clock: true` SHALL fail to compile with a `CompileError` naming both and the module the author wrote. A module written with `@behaviour` and hand-written callbacks is the reference form: it SHALL keep registering and running, with the clock and idle TTL read from its callbacks, and SHALL be documented on the Elixir SDK reference page only, never in the guides.
+The SDK SHALL provide `use Flezha.SDK.Tasklet` and `use Flezha.SDK.Relay`. Each SHALL set the module's `@behaviour` and, for every option written, define the zero-arity callback of the same name returning the option's value, and SHALL define nothing for an option not written, so every default stays resolved by `function_exported?` as it is for a hand-written module. `use Flezha.SDK.Tasklet` SHALL require `name` and accept `cell_keys`, `mailbox_capacity`, `max_cells`, `idle_ttl_seconds`, `compact_after_bytes`, `schema_version`, `min_readable_schema_version`, `logical_clock` and `max_timers_per_cell`, plus the short-form options; `idle_ttl_seconds` SHALL be a positive integer and `logical_clock` a boolean, any other value being a `CompileError` naming the option; the retired options `cell_idle_ttl_ms` and `clock`, and a `clock/0`, `event_time_of/1` or `cell_idle_ttl_ms/0` the module defines with `def` or `defp`, SHALL each be a `CompileError` naming what replaced it; it SHALL import `Flezha.SDK.Ctx`'s authoring functions except `apply/3`, SHALL remove any `Flezha.SDK.Channels` import the module inherits lexically, and SHALL define `init_state/1` returning `nil` at `@before_compile` when the module defines neither a `state` block nor its own `init_state/1`. `use Flezha.SDK.Relay` SHALL require `factory_id` and accept `description`, `max_duration_ms`, `run` and `durable`; it SHALL NOT parse the settings tree, which the core judges at registration. The relay macro SHALL import `Flezha.SDK.Channels`; a tasklet of either run ends its instance with `complete/2`, which `use Flezha.SDK.Tasklet` imports with the rest of `Flezha.SDK.Ctx`. An unknown option, or a missing required one, SHALL be a `CompileError` naming it. Callbacks that take arguments stay `def`s the author writes. A module that `use`s `Flezha.SDK.Tasklet`, or a short-form relay module, that writes `event_time/1` and declares `logical_clock: true` SHALL fail to compile with a `CompileError` naming both and the module the author wrote. A module written with `@behaviour` and hand-written callbacks is the reference form: it SHALL keep registering and running, with the clock and idle TTL read from its callbacks, and SHALL be documented on the Elixir SDK reference page only, never in the guides.
 
 #### Scenario: A written option is a callback, an unwritten one is not
 
@@ -403,17 +404,17 @@ The Elixir SDK cannot see a tasklet's output type, owes no `topology.output_with
 
 ### Requirement: The Elixir SDK announces each class's run and refuses a misplaced setting
 
-Every class the SDK declares to the core SHALL carry its settings tree as the module writes it: `run/0`, `durable/0`, `description/0` and `max_duration_ms/0`. `use Flezha.SDK.Relay` SHALL refuse a setting written under a parent that does not carry it with a `CompileError` naming the setting and the parent, and a value outside its choice naming the value; a module that writes `run/0` or `durable/0` by hand SHALL meet the core's check at `register_factory/2`, as `topology.unknown_field` or `topology.invalid_setting`, carried in the same `{:error, %Flezha.SDK.Error{}}` as its other refusals are. `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` SHALL answer inside a steps tasklet exactly as inside a flow tasklet, and `on_timer/4` SHALL run on a firing in both runs.
+Every class the SDK declares to the core SHALL carry its settings tree as the module writes it: `run/0`, `durable/0`, `description/0` and `max_duration_ms/0`. The SDK SHALL forward the tree as written and SHALL NOT parse it: a setting written under a parent that does not carry it, or a value outside its choice, whether `use Flezha.SDK.Relay` or a hand-written `run/0` or `durable/0` answers the tree, SHALL meet the core's check at `register_factory/2`, as `topology.unknown_field` naming the setting and the parent or `topology.invalid_setting` naming the setting and the value, carried in the same `{:error, %Flezha.SDK.Error{}}` as its other refusals are. `Flezha.SDK.Ctx.timer_after/2`, `timer_at_event_time/2`, `cancel_processing_time_timer/2` and `cancel_event_time_timer/2` SHALL answer inside a steps tasklet exactly as inside a flow tasklet, and `on_timer/4` SHALL run on a firing in both runs.
 
 #### Scenario: The handshake carries the run
 
 - **WHEN** a runner starts with a flow relay module and a steps relay module under `relays:`
 - **THEN** its handshake's factory entries carry `"run" => "flow"` and `"run" => "steps"` respectively
 
-#### Scenario: The tier under a steps run does not compile
+#### Scenario: The tier under a steps run is refused at registration
 
 - **WHEN** a module writes `run: {:steps, exactly: :effectively_once}` in its `use`
-- **THEN** compilation fails with a `CompileError` naming `exactly` and `steps`
+- **THEN** it compiles, and `register_factory/2` answers `{:error, %Flezha.SDK.Error{code: "topology.unknown_field"}}` whose details name `exactly` and `steps`
 
 #### Scenario: A hand-written run outside its set is refused
 
@@ -460,7 +461,7 @@ The Elixir SDK SHALL run every relay through `flz_core` by way of `flz_core_ffi:
 - work items by running `run/3` or `on_timer/4`;
 - `restore_fold` by folding the snapshot and the changes through `apply_change/2`, migrating with `migrate_state/2` and `migrate_change/2` when a record's stamped version asks for it;
 - `snapshot_request` with the encoded state;
-- `live_state_read` and `migration_serialize` with the state as JSON;
+- `live_state_read` with the state as JSON, for a live read and a migration alike;
 - `apply_state` through `state_from_json/1`;
 - `key_request` with each payload's keys and event time;
 - `compensate_run` through `compensate/3`;

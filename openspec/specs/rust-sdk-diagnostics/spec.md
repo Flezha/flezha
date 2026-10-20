@@ -20,7 +20,7 @@ The Rust SDK SHALL export a public constant `flezha_runner::diag::DEFAULT_DIRECT
 
 ### Requirement: Opt-in default subscriber installation
 
-The Rust SDK SHALL export `flezha_runner::diag::init_default_tracing()`, which installs a `tracing_subscriber::fmt` subscriber whose filter is taken from the `RUST_LOG` environment variable when set and from `DEFAULT_DIRECTIVES` otherwise. The SDK SHALL NOT install any global subscriber implicitly — the helper runs only when the application calls it. A second call SHALL be a no-op that logs a warning rather than panicking, so two components defensively initializing tracing cannot take the process down.
+The Rust SDK SHALL export `flezha_runner::diag::init_default_tracing()`, which installs a `tracing_subscriber::fmt` subscriber whose filter is taken from the `RUST_LOG` environment variable when set, otherwise from `DEFAULT_DIRECTIVES` at the level `FLEZHA_LOG_LEVEL` names (`warn` when unset), and which registers the core's notice hook so core notices are emitted as `tracing` events on target `flezha`. The SDK SHALL NOT install any global subscriber implicitly — the helper runs only when the application calls it. A second call SHALL be a no-op that logs a warning rather than panicking, so two components defensively initializing tracing cannot take the process down.
 
 #### Scenario: RUST_LOG overrides the exported defaults
 
@@ -36,6 +36,16 @@ The Rust SDK SHALL export `flezha_runner::diag::init_default_tracing()`, which i
 
 - **WHEN** `init_default_tracing()` is called after a global subscriber is already installed
 - **THEN** the call SHALL return without panicking and SHALL emit a single warning
+
+#### Scenario: FLEZHA_LOG_LEVEL sets the default level
+
+- **WHEN** an application calls `init_default_tracing()` with `RUST_LOG` unset and `FLEZHA_LOG_LEVEL=info`
+- **THEN** the SDK's diagnostic targets SHALL pass at `info`
+
+#### Scenario: A core notice reaches the subscriber
+
+- **WHEN** an application called `init_default_tracing()` and a local run starts
+- **THEN** the local-mode notice SHALL be emitted on target `flezha` and nothing SHALL be written to standard error by the core
 
 ### Requirement: The repository's own runner applications SHALL install the default subscriber
 

@@ -148,9 +148,9 @@ Cell count, or transport.
 ### Requirement: Command Dispatch
 
 Control commands SHALL be handled by the core. Of the command surface, only
-the five host-participating interactions SHALL reach Java — as activation
-kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
-`MigrationSerialize`), subject to per-cell exclusivity; every other
+the four host-participating interactions SHALL reach Java — as activation
+kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`; a
+migration reads the state as a `LiveStateRead`), subject to per-cell exclusivity; every other
 command (including `Ping`, credit frames, acks, `AssignRunnerId`,
 `ConnectSocket`, `RemRelay`, `StepsStop`) SHALL be answered by the
 core without surfacing to Java, except that a relay leaving the runner
@@ -1124,4 +1124,26 @@ A tasklet that writes `eventTime` and declares `logicalClock = true` SHALL fail 
 
 - **WHEN** a tasklet declares `logicalClock = true` and `Void` state
 - **THEN** registration SHALL fail with a `FlezhaException` whose code is `topology.unservable_clock`
+
+### Requirement: The Java SDK SHALL hand termination signals to the core
+
+A started Java runner SHALL leave SIGTERM and SIGINT to the core's termination
+handler, as the Ruby and Node SDKs do: before the core starts, the SDK SHALL
+replace the JVM's default handling of both signals with one that does not end
+the process, unless the application installed its own, so the core's drain is
+the one drain and the process ends with the core's exit status. The JVM shutdown
+hook SHALL stay for an exit the application asks for, and SHALL be idempotent
+with the core's drain; on SIGTERM the process ends through the core, so the
+application's own JVM shutdown hooks SHALL NOT run and the exit status SHALL be
+0, not 143.
+
+#### Scenario: SIGTERM drains a Java runner through the core
+
+- **WHEN** a started Java runner holding a relay with state receives SIGTERM
+- **THEN** the controller SHALL receive that relay's shutdown notification with its state, and the process SHALL exit with status 0 once the drain completes
+
+#### Scenario: An application's own handler is kept
+
+- **WHEN** a Java application installed its own SIGTERM handler before starting the runner
+- **THEN** the SDK SHALL leave that handler in place
 

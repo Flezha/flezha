@@ -175,29 +175,27 @@ Encoding SHALL be validated at registration: a `@flezha.state` class containing 
 
 ### Requirement: Dynamic Factory Declaration
 
-`register_factory` and its inverse `unregister_factory` SHALL be legal both before and after `start()`, each taking a relay of either run, the run read from the relay. The declared factory set SHALL be per-runner and SHALL start empty each generation. A post-start declaration SHALL reach the core immediately, so the set the reconnect init frame is serialized from at send time carries it; that frame is the resync of record. Removing a type with live instances SHALL raise; removing an undeclared type SHALL raise naming the id.
-
-Shipping an `UpdateFactories` frame to a *live* controller is out of reach for a veneer host: the ABI exposes no entry point that emits one, and none that retracts a declaration, so only the in-process Rust host — which owns the runner channel directly — can notify a live controller of a post-start change. The Java SDK carries the identical gap. Closing it is a change to `sdk-core-abi`, owed to the follow-up `sdk-abi-factory-resync`; until it lands, a veneer host's post-start change reaches the controller at the next bind.
+`register_factory` and its inverse `unregister_factory` SHALL be legal both before and after `start()`, each taking a relay of either run, the run read from the relay. The declared factory set SHALL be per-runner and SHALL start empty each generation. A post-start declaration or removal SHALL reach the core immediately, and the core SHALL send the controller the runner's full factory set as `UpdateFactories`; the reconnect init frame stays the resync of record. Removing a type with live instances on the runner SHALL raise the core's `runtime.relay_type_in_use`; removing an undeclared type SHALL raise naming the id.
 
 #### Scenario: Post-start define reaches the core and the next bind
 - **WHEN** `register_factory` is called on a started runner
 - **THEN** the class SHALL be declared to the core immediately, SHALL appear in the runner's declared set, and SHALL NOT block on an acknowledgement
 
-#### Scenario: The live-controller resync is deferred by name
-- **WHEN** the SDK's documentation describes a post-start declaration
-- **THEN** it SHALL name the ABI gap and the follow-up that owes it, rather than claiming a frame the host cannot send
-
 #### Scenario: Removing an in-use type is refused
 - **WHEN** removal targets a type with a live instance
-- **THEN** the SDK SHALL raise and the type SHALL remain declared
+- **THEN** the SDK SHALL raise `runtime.relay_type_in_use` and the type SHALL remain declared
 
 ### Requirement: Diagnostics Use the Standard Library, Not a Tracing Vendor
 
-The SDK SHALL emit its diagnostics through the standard library `logging` module under a named logger hierarchy, SHALL install no handler by default, and SHALL provide one opt-in helper that configures a sensible default — the same posture the Rust SDK's diagnostics defaults and the Elixir SDK's `Logger` use provide. The SDK SHALL NOT depend on or emit OpenTelemetry spans while no other SDK does; adding them is a cross-SDK change.
+The SDK SHALL emit its diagnostics through the standard library `logging` module under a named logger hierarchy. When a runner starts and the application has configured no handler for that hierarchy or the root logger, the SDK SHALL install one handler on its own logger writing to standard error at the level `FLEZHA_LOG_LEVEL` names, `warn` when unset — the level every other SDK starts at; an application's own logging configuration SHALL win. The SDK SHALL keep the one helper that configures this default explicitly, and core notices SHALL reach the same logger. The SDK SHALL NOT depend on or emit OpenTelemetry spans while no other SDK does; adding them is a cross-SDK change.
 
-#### Scenario: A quiet library by default
-- **WHEN** a user imports the SDK and starts a runner without configuring logging
-- **THEN** the SDK SHALL install no handler and SHALL NOT write to the root logger's stream on its own initiative
+#### Scenario: A runner starts at warn on standard error
+- **WHEN** a user starts a runner without configuring logging and with `FLEZHA_LOG_LEVEL` unset
+- **THEN** the SDK's warnings SHALL reach standard error and its info lines SHALL NOT
+
+#### Scenario: The application's logging wins
+- **WHEN** the application configured a handler on the root logger before starting a runner
+- **THEN** the SDK SHALL install no handler of its own and its records SHALL reach the application's handler
 
 #### Scenario: One call turns diagnostics on
 - **WHEN** a user calls the opt-in diagnostics helper

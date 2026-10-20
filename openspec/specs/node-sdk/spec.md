@@ -400,22 +400,22 @@ The initial state SHALL come from `initState(cellKey)`, and its absence SHALL de
 - **THEN** loading it SHALL throw `FlezhaError` naming that field and the tasklet, and the same object literal in TypeScript SHALL fail to type-check
 
 ### Requirement: A Node tasklet's cell mode is read from the wiring
-The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's definition writes `cells`, dynamic when a chain of the relay records a `key` link (from `keyBy` on a stream or on a merge) before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL NOT have a `dynamicCells` field or export a `DynamicCells` type. A tasklet writing `cells` and reached by a `keyBy` edge SHALL be refused with the core's `topology.key_by_on_unkeyable_target`, as a `FlezhaError` carrying that name. A dynamic node SHALL honour its `idleTtlSeconds` and `maxCells` through the core's existing eviction.
+The core SHALL derive the cell mode per tasklet node from what is declared, and the SDK SHALL send none: static when the tasklet's definition writes `cells`, dynamic when a chain of the relay records a `key` link (from `keyBy` on a stream or on a merge) before the `into` or `merge` link that names the node, and single otherwise. The SDK SHALL NOT have a `dynamicCells` field or export a `DynamicCells` type. A tasklet writing `cells` and reached by a `keyBy` edge SHALL be refused with the core's `topology.key_by_on_unkeyable_target`, as a `FlezhaError` carrying that name. A dynamic node SHALL honour its `idleTtlSeconds` and `maxCells` through the core's existing eviction.
 
 #### Scenario: keyBy alone makes a tasklet dynamic
 
 - **WHEN** a relay declares `c.input('orders').keyBy((o) => o.customer).into(Totals)` and `Totals` writes only `name`, `initState`, `applyChange` and `run`
-- **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Totals`, and each customer SHALL get its own Cell
+- **THEN** the core SHALL derive dynamic mode for `Totals`, and each customer SHALL get its own Cell
 
 #### Scenario: A keyed merge makes its tasklet dynamic
 
 - **WHEN** a relay declares `c.merge().from(a, f).from(b, g).keyBy((v) => v.symbol).into(Detector)`
-- **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Detector`
+- **THEN** the core SHALL derive dynamic mode for `Detector`
 
 #### Scenario: One definition takes its mode from each wiring
 
 - **WHEN** one tasklet definition is wired through `keyBy` in one relay and without it in another
-- **THEN** the first relay's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
+- **THEN** the core SHALL derive dynamic mode for it in the first relay and single in the second
 
 #### Scenario: A static key set fed by keyBy is refused
 

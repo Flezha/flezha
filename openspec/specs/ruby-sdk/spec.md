@@ -300,22 +300,22 @@ A tasklet class body SHALL NOT offer `dynamic_cells`, `clock`, `idle_ttl_ms`, or
 - **THEN** loading it raises `NoMethodError` naming the declaration, the declaration no longer existing
 
 ### Requirement: A Ruby tasklet's cell mode is read from the wiring
-The Ruby SDK SHALL declare each tasklet node's cell mode from what is written, never from a flag: static when the tasklet's class body writes `cell_keys`, dynamic when a chain of the relay keys its values with `key_by` before the `into` or merge that reaches the node, and single otherwise. The mode SHALL belong to the node, so one class MAY take a different mode in each relay that wires it. A tasklet writing `cell_keys` and fed by `key_by` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`. A dynamic node SHALL carry the tasklet's `idle_ttl_seconds` and `max_cells`.
+The core SHALL derive each tasklet node's cell mode from what is written, and the Ruby SDK SHALL send none: static when the tasklet's class body writes `cell_keys`, dynamic when a chain of the relay keys its values with `key_by` before the `into` or merge that reaches the node, and single otherwise. The mode SHALL belong to the node, so one class MAY take a different mode in each relay that wires it. A tasklet writing `cell_keys` and fed by `key_by` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`. The record SHALL carry the tasklet's `idle_ttl_seconds` and `max_cells`, which a dynamic node honours.
 
 #### Scenario: key_by alone makes a tasklet dynamic
 
 - **WHEN** a relay declares `c.input("orders").key_by { |o| o[:customer] }.into(Counter)` and `Counter`'s class body writes only `tasklet_name "counter"`
-- **THEN** the declaration record carries `cell_mode` `dynamic` for `counter`, and each customer gets its own Cell whose key is the customer
+- **THEN** the core SHALL derive dynamic mode for `counter`, and each customer SHALL get its own Cell whose key is the customer
 
 #### Scenario: A merge keyed by key_by makes its tasklet dynamic
 
 - **WHEN** a relay declares `c.merge.from(ticks) { |t| t }.from(quotes) { |q| q }.key_by { |v| v[:symbol] }.into(Detector)` and `Detector` writes no cell declaration
-- **THEN** the declaration record carries `cell_mode` `dynamic` for `Detector`'s node
+- **THEN** the core SHALL derive dynamic mode for `Detector`'s node
 
 #### Scenario: One class takes its mode from each wiring
 
 - **WHEN** one tasklet class is wired through `key_by` in one relay and without it in another
-- **THEN** the first relay's record carries `cell_mode` `dynamic` for it and the second's `single`
+- **THEN** the core SHALL derive dynamic mode for it in the first relay and single in the second
 
 #### Scenario: A static key set fed by key_by is refused
 

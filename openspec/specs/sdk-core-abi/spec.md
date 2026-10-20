@@ -306,13 +306,14 @@ the raw checkpoint flags, and the key set SHALL be pinned by
 
 `flz_core` SHALL own the standard-input end-of-file watch beside the SIGTERM
 handler it already installs, and `flz_core_ffi` SHALL export it as one ABI entry
-taking a grace in milliseconds. Every erased host SHALL reach it through that
-entry rather than reading descriptor 0 itself, so that the rule "a read error is
-not end of file, and conflating the two shuts the runner down moments after
-connecting" is written once instead of once per host. The watch SHALL end the
-process through the same `run_active_graceful_shutdown` path the SIGTERM handler
-uses, so a host needs no thread of its own and no callback into its own virtual
-machine.
+that takes no grace: the watch SHALL use the core's own termination grace, the one
+the SIGTERM handler uses, so no host carries a grace constant of its own. Every
+erased host SHALL reach it through that entry rather than reading descriptor 0
+itself, so that the rule "a read error is not end of file, and conflating the two
+shuts the runner down moments after connecting" is written once instead of once
+per host. The watch SHALL end the process through the same runner exit the
+SIGTERM handler uses, so a host needs no thread of its own and no callback into
+its own virtual machine.
 
 The entry SHALL appear in the C ABI table of every host that carries one, and
 the existing Node-only export SHALL become a caller of it rather than a second
@@ -322,13 +323,14 @@ implementation.
 
 - **WHEN** an erased host starts its runner
 - **THEN** one ABI call SHALL install the watch, and the host SHALL carry no
-  reader of descriptor 0 of its own
+  reader of descriptor 0 of its own and no grace constant
 
 #### Scenario: The watch and the signal handler share one exit
 
 - **WHEN** either standard-input end-of-file or SIGTERM is observed
-- **THEN** the same registered shutdown bridge SHALL run, so the two facts have
-  one remedy and a host cannot drain differently for one than for the other
+- **THEN** the same registered shutdown bridge SHALL run with the same grace, so
+  the two facts have one remedy and a host cannot drain differently for one than
+  for the other
 
 #### Scenario: The ABI table names the entry in every host
 
@@ -363,19 +365,27 @@ checksum in the same manifest. The binary SHALL NOT be tracked.
 
 ### Requirement: The C ABI surface is a fixture the crate asserts against
 
-`test/fixtures/abi_surface.txt` SHALL list every `extern "C"` entry point the
-crate exports, and a test in the crate SHALL assert the exports equal the file
-in both directions. A host binding that declares the C surface in its own
-language SHALL assert its declaration against that file and SHALL NOT read the
-crate's source.
+`flz_core_ffi`'s `veneer::SURFACE` table SHALL be the one list of the native
+surface: each row names an entry, its C symbol and whether it may block, and the
+blocking list and the Python, Ruby and Node native-surface tables SHALL be read
+from it. `test/fixtures/abi_surface.txt` SHALL list every `extern "C"` entry point
+the crate exports, and a test in the crate SHALL assert the exports, the table and
+the file equal each other in every direction; `test/fixtures/jni_surface.txt`
+SHALL equal the table's JNI rows. A host binding that declares the C surface in
+its own language SHALL keep that declaration hand-written, SHALL assert it
+against the file by a test of its own, and SHALL NOT read the crate's source.
 
 #### Scenario: An entry point added without the file is red here
-- **WHEN** an `extern "C" fn flz_core_*` is added to `lib.rs` or `local.rs` and not to the file
+- **WHEN** an `extern "C" fn flz_core_*` is added to the crate and not to the file
 - **THEN** the crate's test SHALL fail naming the entry point
 
 #### Scenario: A host declaration reads the file, not the source
 - **WHEN** the PHP surface test runs from a tree that carries the fixtures and no Rust source
 - **THEN** it SHALL run and pass against the file rather than skip
+
+#### Scenario: A row dropped from the table is red here
+- **WHEN** a row is removed from `veneer::SURFACE` while its entry is still exported
+- **THEN** the crate's surface test SHALL fail naming the entry
 
 ### Requirement: A spawn is a request and a result read through a handle
 
@@ -450,9 +460,9 @@ catalogue renders for `code` with its details filled from `details_json`, borrow
 next call on the same thread, and NULL when an argument is not UTF-8 or the details are not a
 JSON object. A host that makes a refusal itself SHALL build its one error type from this
 document, or from its glue's wrapper of the same renderer, and SHALL NOT hold a copy of the
-catalogue. The Java SDK's API module is the one exception: it compiles and tests without the
-native module, so it renders from the catalogue packaged into it, held to the shared rendering
-fixture.
+catalogue. The Java SDK SHALL reach it through a JNI export its runtime module installs into the
+API module; with no runtime on the class path the API module's error SHALL carry its code and
+details unrendered rather than render from a copy.
 
 #### Scenario: A host refusal reads as the core's
 
@@ -464,6 +474,11 @@ fixture.
 
 - **WHEN** a host passes `[]` as the details
 - **THEN** the entry SHALL answer NULL
+
+#### Scenario: Java holds no catalogue
+
+- **WHEN** the Java SDK's modules are searched for a packaged `errors.json` or a message-template renderer
+- **THEN** none SHALL be found, and a Java refusal's message SHALL equal the core's document for the same code and details
 
 ### Requirement: A part is one entry point that never waits
 
@@ -554,4 +569,127 @@ A start that the controller refuses, or that is not confirmed in time, SHALL end
 
 - **WHEN** an Elixir runner in the controller's node is closed
 - **THEN** the controller SHALL list no runner for its namespace once the session has ended
+
+### Requirement: The core's notices SHALL reach every host's log
+
+The core SHALL report every notice it writes for a reader (a warning, an error, a
+connect or retry line, the local-mode banner) through one function taking a level
+(`info`, `warn`, `error` or `always`), a target and a text, owned by
+`flz_transport` so the controller's NIF reaches it too. With no hook registered
+it SHALL write the line to standard error without failing on a closed pipe. Every
+host SHALL register a hook that writes notices through its own log: the
+controller and the Elixir SDK through an Elixir process writing `Logger`, Node
+through its host log callback, Java through its runner's logger, Rust through
+`tracing` once the application installed the SDK's default subscriber, and
+Python, Ruby, PHP and Java through a bounded queue their own threads drain off the
+per-activation path (Java's on a daemon thread, never the user's logger on a
+core thread). No hook SHALL call `OwnedEnv` send on a BEAM scheduler thread:
+there it SHALL queue, and a core-owned thread SHALL send. Node's host callback
+queue SHALL be bounded. A notice dropped by a full queue SHALL be counted in
+`NOTICES_DROPPED_TOTAL`. The lines the core writes right before ending the
+process SHALL go straight to standard error, never through a hook. A notice of level `always` SHALL be written whatever the
+host log's level filter says. `flz_core_set_log_callback` SHALL register a C
+callback a host may take on any thread. A child runner the controller starts
+SHALL have its output logged by the controller line by line rather than written
+to the controller's own standard error.
+
+#### Scenario: A host test captures a core notice
+
+- **WHEN** a test in any of the seven SDKs, or in the controller, provokes a core retry notice
+- **THEN** the test SHALL capture the notice through that host's own log capture, and nothing SHALL reach file descriptor 2 of the process
+
+#### Scenario: The Elixir local banner does not panic the scheduler
+
+- **WHEN** an Elixir local run starts with the notice sink registered, from a plain NIF on a scheduler thread
+- **THEN** the banner SHALL reach `Logger` through the queue and nothing SHALL panic
+
+#### Scenario: A terminal exit's reason reaches standard error
+
+- **WHEN** the core ends the process with code 70 after a terminal disconnect while a hook is registered
+- **THEN** the reason line SHALL be on standard error before the process ends
+
+#### Scenario: A full queue drops and says so
+
+- **WHEN** more notices are written than a draining host's queue holds before its next drain
+- **THEN** the newest SHALL be dropped and the next drain SHALL write one line naming how many were dropped
+
+#### Scenario: A runner started by the controller is heard in its log
+
+- **WHEN** a runner the controller started prints a reconnect line
+- **THEN** the line SHALL appear in the controller's `Logger` naming the runner, and not on the controller's standard error
+
+### Requirement: Every runner SHALL wait for its start under one bounded policy
+
+A start SHALL wait for the controller's confirmation or refusal for the time
+`FLEZHA_RUNNER_START_WAIT_MS` names, read by the core (default 10 000; `0` waits
+for ever), in every SDK and in the Rust SDK alike, and SHALL then fail with
+`runtime.connect_unconfirmed` naming the wait in `wait_ms`. A host that hands
+the core its connect settings MAY name the wait there (`start_wait_ms`), and the
+Elixir SDK SHALL, since the core cannot read the BEAM's environment. A start
+that failed this way SHALL leave no runner dialling behind it.
+
+#### Scenario: The Rust SDK no longer waits for ever
+
+- **WHEN** a Rust runner starts with no controller to reach and the setting unset
+- **THEN** `start()` SHALL fail with `runtime.connect_unconfirmed` after about 10 seconds
+
+#### Scenario: Waiting for ever is a setting
+
+- **WHEN** any runner starts with `FLEZHA_RUNNER_START_WAIT_MS=0` and the controller appears a minute later
+- **THEN** the start SHALL succeed when the controller confirms it
+
+### Requirement: A host SHALL read a knob through the core's one parse rule
+
+`flz_core_ffi` SHALL export one context-free entry that parses the text a host
+looked up for a knob of a named type (`positive`, `ms`, `int`, `bool`) by the
+rule `flz_transport::env` applies and `test/fixtures/knob_parse_cases.txt`
+writes down, and SHALL answer "unset" for a value that is absent or does not
+parse, so the host keeps its default. The host keeps only its lookup. No SDK but Elixir, whose reader the controller
+shares, SHALL carry a parse rule of its own.
+
+#### Scenario: One rule answers every host
+
+- **WHEN** `FLEZHA_WORKER_POOL_SIZE` is `"0"` in a Python, Ruby, Node, PHP and Java runner
+- **THEN** each SDK SHALL keep its default pool size, because the core answered "unset"
+
+### Requirement: The core SHALL decode the call `Response` envelope for every host
+
+`flz_core_ffi` SHALL export one entry that decodes a `Response` envelope into its
+target, `created`, request bytes and either value bytes or an error document,
+through `flz_core::call::Envelope`. Every hosted SDK SHALL decode its `Response`
+input through it and SHALL keep only the codec calls and its language's
+`Response` type; a malformed envelope SHALL be refused by the core with one code
+in every SDK.
+
+#### Scenario: A malformed envelope is refused alike
+
+- **WHEN** each SDK decodes an envelope that carries neither a value nor an error
+- **THEN** each SHALL raise its one error type with the same code
+
+### Requirement: The core SHALL derive what a declaration's chains already say
+
+The core SHALL derive a tasklet's cell mode from the declaration it receives:
+static when the tasklet declares cell keys, dynamic when a chain reaches it
+through a `key` link followed by `into` or `merge`, single otherwise; no host
+SHALL send a cell mode. A tasklet SHALL declare whether it supplies a migration
+(`migrates`), and the core SHALL refuse at registration a schema floor above the
+tasklet's own version (`topology.schema_floor_above_version`) and a floor below
+it with no migration (`topology.schema_floor_without_migration`). A tasklet that
+declares no mailbox capacity SHALL get the value of `FLEZHA_MAILBOX_CAPACITY`
+when it is set and valid, else 1024, in every SDK.
+
+#### Scenario: A keyed tasklet is dynamic without saying so
+
+- **WHEN** a Python class wires `.key(...)` then `.into(t)` and declares no cell mode
+- **THEN** the core SHALL run `t` with dynamic cells
+
+#### Scenario: A schema floor without a migration is refused by the core
+
+- **WHEN** a Java tasklet declares schema version 3, readable back to 1, and no migration
+- **THEN** registration SHALL fail with `topology.schema_floor_without_migration` naming the tasklet and the floor
+
+#### Scenario: The mailbox knob works in every SDK
+
+- **WHEN** `FLEZHA_MAILBOX_CAPACITY=64` is set for a Node runner whose tasklet declares no capacity
+- **THEN** the tasklet's mailbox SHALL hold 64 items
 

@@ -106,7 +106,7 @@ SHALL only increment a counter.
 
 ### Requirement: Missing persistence degrades to fresh-identity-per-boot, never a hard failure
 
-When the persistence path is unavailable (unset, unwritable, or not mounted), the SDK SHALL generate a fresh stable identity for the current boot, log the condition once at `warn`, and operate normally for the lifetime of the process. A subsequent restart SHALL present a new stable identity; the prior binding SHALL age out via `FLEZHA_RUNNER_KEEPALIVE`. The runner SHALL NOT refuse to start, and SHALL NOT crash, due to missing persistence.
+When the persistence path is unavailable (unset, unwritable, or not mounted), the SDK SHALL generate a fresh stable identity for the current boot, log the condition once at `warn`, and operate normally for the lifetime of the process. A subsequent restart SHALL present a new stable identity; the prior binding SHALL age out via `FLEZHA_RUNNER_REMOVAL_GRACE_MS`. The runner SHALL NOT refuse to start, and SHALL NOT crash, due to missing persistence.
 
 #### Scenario: ephemeral runner with no mounted volume still runs
 
@@ -361,4 +361,30 @@ id, the refusal also with the pid and the refusing node.
 - **WHEN** `readmit_runner/3` is called for a marked stable id
 - **THEN** the mark is gone from `dropped_runners/2` and the same process is admitted on its
   next retry
+
+### Requirement: Every control frame SHALL carry its direction
+
+Every `control_command` payload in either direction SHALL be one `ControlFrame`
+whose `oneof` is either a `request` (a `CommandRequest`: a command its sender
+initiated, or a typed reply to one) or a `response` (a `CommandResponse` to a
+request the reader sent). Each side SHALL decode an inbound control payload once
+and SHALL dispatch on that `oneof`; neither side SHALL keep a list of the commands
+the other side initiates, and neither SHALL tell a request from a response by
+trying one decode and then another. A command tag a side never receives SHALL be
+logged and dropped, never answered.
+
+#### Scenario: The controller decodes a runner's frame once
+
+- **WHEN** a runner sends a `TaskCommit` request and then a `CommandResponse` to the controller's `AddRelay`
+- **THEN** the controller SHALL decode each payload once, dispatch the first by its tag and hand the second to the ControlUnit already decoded
+
+#### Scenario: A new runner-initiated command needs no direction list
+
+- **WHEN** a runner-initiated command is added to the proto and given a handler on the controller
+- **THEN** the controller SHALL dispatch it with no edit to any list of runner-initiated tags
+
+#### Scenario: A response to a runner is a protocol mistake
+
+- **WHEN** a runner receives a control frame whose `oneof` is `response`
+- **THEN** the runner SHALL drop it with a notice and keep its session
 

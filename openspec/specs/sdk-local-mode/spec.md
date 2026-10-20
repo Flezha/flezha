@@ -60,7 +60,11 @@ or cell path on whether a controller is attached.
 Local mode MUST emit a notice on every run stating that state is held in memory
 and that nothing is persisted. The notice SHALL be produced by the runtime core
 rather than by each host SDK, so that no host can ship local mode without it, and
-SHALL NOT be suppressible by ordinary configuration.
+SHALL NOT be suppressible by ordinary configuration. The core SHALL emit it as a
+notice of level `always` through the one core notice seam: a host that registered a
+notice hook SHALL write it through its own log whatever that log's level filter is,
+so a test in that host can capture it; a host that registered none SHALL see it on
+standard error.
 
 Documentation that introduces local mode SHALL state the same limitation before
 any example, and SHALL name what requires a controller: durability, plugins,
@@ -76,6 +80,11 @@ multi-runner scale.
 
 - **WHEN** a host SDK's local-mode entry point is invoked
 - **THEN** the notice SHALL originate from the shared runtime core, so that adding a new host SDK cannot produce a local mode that is silent about durability
+
+#### Scenario: A level filter does not hide the notice
+
+- **WHEN** an SDK's log level is set to `error` and a relay is started in local mode
+- **THEN** the notice SHALL still be written through that SDK's log, and a test in that SDK SHALL capture it
 
 ### Requirement: Outputs SHALL be delivered to a caller-supplied callback
 

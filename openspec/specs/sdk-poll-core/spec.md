@@ -94,9 +94,10 @@ immediately; exhausted retries park; a park closes the checkpoint interval).
 
 ### Requirement: Host-participating commands are activation kinds
 
-The five control interactions requiring host participation SHALL be expressed as
-activation kinds — `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
-`MigrationSerialize` — subject to the same per-cell exclusivity. All other control
+The four control interactions requiring host participation SHALL be expressed as
+activation kinds — `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState` —
+subject to the same per-cell exclusivity; a live read and a migration both read the
+state as a `LiveStateRead`. All other control
 commands SHALL be handled entirely inside the core and SHALL NOT surface to the host.
 
 #### Scenario: Restore is a fold handed to the host

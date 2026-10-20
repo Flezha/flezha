@@ -18,7 +18,8 @@ and `on_failure` (`undo_all`, the default, or `keep_progress`). `durable` SHALL 
 runs as a flow and six hours for a class that runs in steps. The names are the ones the
 change's design table settles; each SDK SHALL spell them in its own idiom and SHALL express
 each "one of" as a sum type of its language and each nested setting as a member of its
-parent only.
+parent only. The core SHALL be the one judge of a tree an SDK cannot type: such an SDK SHALL forward
+the tree as the author wrote it and SHALL NOT parse it itself.
 
 #### Scenario: A class with no settings is a flow relay kept on disk that never sleeps
 
@@ -33,12 +34,12 @@ parent only.
 #### Scenario: A steps class declares its loop shape and failure mode under `steps`
 
 - **WHEN** a class declares `run: steps` with `each: chained` and `on_failure: keep_progress`
-- **THEN** its registration SHALL announce a steps run with that loop shape and failure mode, and the same class with `each` or `on_failure` written outside `steps` SHALL fail to compile or be refused at registration naming the misplaced setting, whichever the SDK's language allows first
+- **THEN** its registration SHALL announce a steps run with that loop shape and failure mode, and the same class with `each` or `on_failure` written outside `steps` SHALL fail to compile where the SDK's type system makes the setting unwritable, and otherwise SHALL be refused at registration by the core naming the misplaced setting
 
 #### Scenario: A setting that belongs under another cannot be written elsewhere
 
 - **WHEN** an author writes `sleep_after` under `durable: false`, `ack` or `correction_ms` under `run: steps`, or `each` under `run: flow`, in any SDK
-- **THEN** the SDK SHALL refuse it at compile time where its language can, and otherwise at registration with `topology.unknown_field` naming the setting and its parent; no SDK SHALL accept it and ignore it
+- **THEN** an SDK whose type system makes the setting unwritable SHALL refuse it at compile time, and every other SDK, Elixir included, SHALL forward the tree as written and the core SHALL refuse it at registration with `topology.unknown_field` naming the setting and its parent; no SDK SHALL accept it and ignore it, and no SDK that forwards the tree SHALL keep a parser of it
 
 ### Requirement: Invalid combinations SHALL be unwritable, with one stated exception
 

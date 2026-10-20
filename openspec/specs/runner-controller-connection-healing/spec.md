@@ -118,7 +118,7 @@ The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateRe
 
 ### Requirement: Runner restart while the Controller is alive SHALL heal stream binding cleanly
 
-When a Runner process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_KEEPALIVE`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_relay` per affected relay from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler. The rebind the loop drives SHALL be the one bind path: the Overwatch's `runner_migrate` runs `Lifecycle.complete_init/4` in its supervised bind task for every state, so the `AddRelay` it sends carries the relay's kind and, for a durable steps instance, its `task_journal`, `resume_cell_count` and `inbox_tail_count`, the persisted Cells are restored by that bind, and the undelivered inbox tail is delivered by it; the heal SHALL dispatch no second restore after the bind. When the replacement presents the dead session's stable identity before the loop has placed the relays, the takeover binds them through the same path instead, and the loop finds nothing left to plan.
+When a Runner process restarts and its reconnect loop succeeds against the still-alive Controller, the fleet manager SHALL declare the disconnect (`{:runner_disconnected, ns, runner_id}`) and, under `FLEZHA_RUNNER_REMOVAL_GRACE_MS`, preserve the runner as `:inactive` — a keepalive fact, not a remedy; the convergence loop SHALL plan `rebind_relay` per affected relay from the declared fact, choosing the returned or a surviving runner through the placement function, and the new data streams the Runner opens SHALL bind cleanly to nil-ref `StreamChannel`s without silent traffic drops. No reroute SHALL run inside the session handler. The rebind the loop drives SHALL be the one bind path: the Overwatch's `runner_migrate` runs `Lifecycle.complete_init/4` in its supervised bind task for every state, so the `AddRelay` it sends carries the relay's kind and, for a durable steps instance, its `task_journal`, `resume_cell_count` and `inbox_tail_count`, the persisted Cells are restored by that bind, and the undelivered inbox tail is delivered by it; the heal SHALL dispatch no second restore after the bind. When the replacement presents the dead session's stable identity before the loop has placed the relays, the takeover binds them through the same path instead, and the loop finds nothing left to plan.
 
 #### Scenario: Runner restart with single-replica-in-namespace
 - **GIVEN** Runner A is the only Runner in namespace `ns1` on this Controller, running Relays `r1` and `r2`
@@ -130,24 +130,9 @@ When a Runner process restarts and its reconnect loop succeeds against the still
 - **WHEN** runner A is killed, its disconnect is declared, and the loop plans `rebind_relay` onto runner B
 - **THEN** the `AddRelay` runner B receives SHALL carry the folded `task_journal`, a `resume_cell_count` equal to the instance's persisted Cells and the undelivered `inbox_tail_count`, runner B's driver SHALL be held until those Cells are restored, tasklet A SHALL NOT run on runner B, and the instance SHALL reach its terminal completion
 
-### Requirement: `FLEZHA_RUNNER_KEEPALIVE` controls inactive-Runner retention
-
-The Controller SHALL retain a disconnected Runner's peer entry (including its assigned Relays in the `:inactive` set) for the duration specified by the `FLEZHA_RUNNER_KEEPALIVE` environment variable (default 30 seconds). After that window elapses without reconnect, the Controller SHALL discard the inactive entry and ProcessHub SHALL redistribute its Relays.
-
-#### Scenario: Reconnect within keepalive preserves Relays
-- **GIVEN** a Runner with assigned Relays `[r1, r2]` disconnects
-- **AND** `FLEZHA_RUNNER_KEEPALIVE=30`
-- **WHEN** the same Runner reconnects 10 seconds later with the same identity
-- **THEN** the Controller SHALL re-issue `AddRelay` for `r1` and `r2` to the reconnected Runner without redistributing them
-
-#### Scenario: Reconnect after keepalive triggers redistribution
-- **GIVEN** a Runner with assigned Relays disconnects and `FLEZHA_RUNNER_KEEPALIVE=30`
-- **WHEN** no reconnect occurs within 30 seconds
-- **THEN** the Controller SHALL discard the inactive entry; ProcessHub SHALL redistribute the Relays to other Runners via normal placement
-
 ### Requirement: SDK SHALL ship final state to the agent on graceful shutdown so reconnect-resume is loss-free
 
-When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`), it SHALL serialize each local relay's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{relay_id, serialized_state}` on the control channel for each relay, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `migration_serialize` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(relay_id)`) only when the relay's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming a relay bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{relay_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
+When an SDK that carries `state_persistence` shuts down gracefully (SIGTERM, `Drop` of the SDK handle, explicit `disconnect()` call — or, for an erased host over `flz_core_ffi`, the host's own stop path calling `flz_core_shutdown`), it SHALL serialize each local relay's state via the same per-driver serializer used for `MigrationSerialization`, and emit `RunnerShutdownNotification{relay_id, serialized_state}` on the control channel for each relay, before the core reports shutting down to the host's pollers — an erased host's loops keep answering `live_state_read` until then. The agent's `ControlChannel` SHALL forward each notification to the corresponding `Overwatch` GenServer (looked up via `Identificator.overwatch(relay_id)`) only when the relay's ownership record names the sending session's stable identity or records no owner on this node; that Overwatch SHALL replace `state.snapshot` with the supplied binary atomically. A notification naming a relay bound to another runner's identity SHALL be refused as `runner-identity-and-session` prescribes and SHALL NOT touch the snapshot. The agent SHALL respond with `RunnerShutdownAck{relay_id}` once the snapshot is enqueued, and SHALL respond with it for a refused notification too.
 
 The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across relays) and SHALL exit regardless of ack receipt after the timeout. The SDK MUST NOT block the container's shutdown grace period if the agent has crashed or become unresponsive.
 
@@ -233,7 +218,7 @@ The repository SHALL include a unit test that loads `kubernetes/flezha-daemonset
 #### Scenario: Required volumes and env vars are present
 - **GIVEN** the k8s manifests at `kubernetes/flezha-daemonset.yaml` and `kubernetes/flezha-configmap.yaml`
 - **WHEN** the manifest sanity test runs
-- **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_RUNNER_KEEPALIVE` with a positive integer (in milliseconds)
+- **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_RUNNER_REMOVAL_GRACE_MS` with a positive integer (in milliseconds)
 - **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails
 
 ### Requirement: Rust SDK SHALL bound the wait for the controller's registration ack and reconnect on timeout
@@ -981,4 +966,23 @@ controller boots and then refuses at connect every runner whose id is long.
 #### Scenario: A directory at the limit is prepared
 - **WHEN** a controller prepares a socket directory of 60 bytes
 - **THEN** the directory is prepared
+
+### Requirement: `FLEZHA_RUNNER_REMOVAL_GRACE_MS` controls inactive-Runner retention
+
+The Controller SHALL retain a disconnected Runner's peer entry (including its assigned Relays in the `:inactive` set) for the duration specified by the `FLEZHA_RUNNER_REMOVAL_GRACE_MS` environment variable, application key `:runner_removal_grace_ms` (default 30 000 ms; `0` disables the hold). After that window elapses without reconnect, the Controller SHALL discard the inactive entry and ProcessHub SHALL redistribute its Relays. The former name `FLEZHA_RUNNER_KEEPALIVE` SHALL NOT be read.
+
+#### Scenario: Reconnect within keepalive preserves Relays
+- **GIVEN** a Runner with assigned Relays `[r1, r2]` disconnects
+- **AND** `FLEZHA_RUNNER_REMOVAL_GRACE_MS=30000`
+- **WHEN** the same Runner reconnects 10 seconds later with the same identity
+- **THEN** the Controller SHALL re-issue `AddRelay` for `r1` and `r2` to the reconnected Runner without redistributing them
+
+#### Scenario: Reconnect after keepalive triggers redistribution
+- **GIVEN** a Runner with assigned Relays disconnects and `FLEZHA_RUNNER_REMOVAL_GRACE_MS=30000`
+- **WHEN** no reconnect occurs within 30 seconds
+- **THEN** the Controller SHALL discard the inactive entry; ProcessHub SHALL redistribute the Relays to other Runners via normal placement
+
+#### Scenario: The former name is not read
+- **WHEN** a Controller starts with `FLEZHA_RUNNER_KEEPALIVE=0` and the new variable unset
+- **THEN** the removal grace SHALL be the default 30 000 ms
 
