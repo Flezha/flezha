@@ -128,6 +128,7 @@ guaranteed output SHALL be held and left in the outbox, and a plain one dropped 
 
 The plugin's queue SHALL hold at most `queue_max` payloads and `queue_max_bytes` payload
 bytes, except for payloads already on their way to it when it filled under `drop_nothing`,
+and under `drop_nothing` a payload larger than `queue_max_bytes` once the queue is empty,
 which SHALL be admitted. Past the bound, `drop_nothing` (the default) SHALL make the dispatch
 wait as above and overflow the payload when `queue_block_timeout_ms` passes, `drop_oldest`
 SHALL drop the oldest waiting plain payloads and then the oldest guaranteed one, and

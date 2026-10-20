@@ -417,5 +417,5 @@ defmodule Flezha.Plugin.Installer do
     do: {:error, {:fetch_failed, request.source, describe(reason)}}
 
   defp describe(%{__exception__: true} = exception), do: Exception.message(exception)
-  defp describe(reason), do: inspect(reason)
+  defp describe(reason), do: reason
 end

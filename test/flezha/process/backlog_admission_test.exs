@@ -7,6 +7,7 @@ defmodule Flezha.Process.BacklogAdmissionTest do
   """
   use ExUnit.Case, async: true
 
+  alias Flezha.Config.Durations
   alias Flezha.Process.Backlog
 
   defp sink(policy, opts \\ []),
@@ -48,6 +49,49 @@ defmodule Flezha.Process.BacklogAdmissionTest do
     assert :ok = Task.await(task)
 
     assert :none = Backlog.dispatch({:via, Registry, {registry, :gone}}, :third)
+  end
+
+  # Fails when: a dispatch waits on a worker that never answers with no bound.
+  test "a waiting dispatch gives up at the block timeout plus the headroom" do
+    registry = :"#{__MODULE__}.#{System.unique_integer([:positive])}"
+    start_supervised!({Registry, keys: :unique, name: registry})
+    flag = Backlog.flag()
+    _queue = Backlog.new(:infinity, 2, flag: flag, block_ms: 10)
+    {:ok, _} = Registry.register(registry, :sink, flag)
+    :atomics.add(flag, 1, 1)
+
+    task = Task.async(fn -> Backlog.dispatch({:via, Registry, {registry, :sink}}, :stuck) end)
+    assert_receive {:"$gen_call", _from, :stuck}
+    bound = 10 + Durations.get(:backlog_wait_headroom_ms)
+    assert {:ok, :ok} = Task.yield(task, bound * 5)
+  end
+
+  # Fails when: an entry larger than the byte bound waits for room an empty
+  # queue can never give it, and the waiters behind it wait too.
+  test "a waiter larger than the byte bound is admitted once the queue is empty" do
+    b = Backlog.new(10, 4, policy: :drop_nothing, flag: Backlog.flag(), tag: :sink)
+    {:queued, b, []} = Backlog.offer(b, :small, 8, :cast)
+    {big, big_ref} = waiter(:wait)
+    {next, next_ref} = waiter(:wait)
+
+    assert {:waiting, b, []} = Backlog.offer(b, :big, 20, big)
+    assert {:waiting, b, []} = Backlog.offer(b, :next, 3, next)
+
+    b = drain_one(b)
+    assert_received {^big_ref, :ok}
+    refute_received {^next_ref, _}
+    assert Backlog.to_list(b) == [:big] and up?(b)
+
+    b = drain_one(b)
+    assert_received {^next_ref, :ok}
+    assert Backlog.to_list(b) == [:next]
+    refute up?(b)
+
+    {:next, empty} = Backlog.out(b)
+    {late, late_ref} = waiter(:wait)
+    assert {:queued, b, []} = Backlog.offer(empty, :late, 20, late)
+    assert_received {^late_ref, :ok}
+    assert Backlog.to_list(b) == [:late] and up?(b)
   end
 
   # Fails when: the admission never makes a dispatch wait.

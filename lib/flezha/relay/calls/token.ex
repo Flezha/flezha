@@ -59,16 +59,16 @@ defmodule Flezha.Relay.Calls.Token do
   def strip(metadata), do: Map.drop(metadata, @routing)
 
   @doc """
-  Put back on `after_hooks` the token `before_hooks` arrived with, so no
-  `:on_input` hook adds, removes or rewrites one.
+  Put back on `after_hooks` the keys only the controller sets as
+  `before_hooks` arrived with them, the token included, so no `:on_input` hook
+  adds, removes or rewrites one.
   """
   @spec restore(map(), map()) :: map()
-  def restore(after_hooks, before_hooks) do
-    case Map.fetch(before_hooks, @reply_to) do
-      {:ok, token} -> Map.put(after_hooks, @reply_to, token)
-      :error -> Map.delete(after_hooks, @reply_to)
-    end
-  end
+  # Metadata no hook changed is answered as it is.
+  def restore(unchanged, unchanged), do: unchanged
+
+  def restore(after_hooks, before_hooks),
+    do: after_hooks |> Map.drop(@routing) |> Map.merge(Map.take(before_hooks, @routing))
 
   @doc """
   The token a relay's call rides: built from the delivery's own fields,

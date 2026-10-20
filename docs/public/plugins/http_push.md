@@ -112,7 +112,7 @@ to be sent, under `queue_overflow`:
 
 | Policy | A payload that does not fit |
 | --- | --- |
-| `drop_nothing` (default) | the dispatch waits until there is room, at most `queue_block_timeout_ms`, and the payload then overflows |
+| `drop_nothing` (default) | the dispatch waits until there is room, at most `queue_block_timeout_ms`, and the payload then overflows; one larger than `queue_max_bytes` goes in once the queue is empty |
 | `drop_oldest` | the oldest waiting plain payloads are dropped to make room, then the oldest guaranteed one |
 | `drop_newest` | the new payload overflows |
 

@@ -40,7 +40,8 @@
   (`max_relays`); it was `--Xmax_relays`. A quota override names one of the documented quota
   fields, written as text or as an atom; any other name is `namespace.unknown_quota_field`.
 - A relay process that exits under a call answers `call.unavailable` with its exit term,
-  which a caller over the network reads as the controller log's pointer.
+  which a caller over the network reads as the controller log's pointer. `plugin.fetch_failed`
+  and `http.listen_failed` carry their reason's term the same way.
 - `Flezha.Service.RelayApi.answer/1` reads a `Relay.call_channel` answer for `flz relay call`,
   the MCP tools and the HTTP API alike.
 
@@ -65,7 +66,9 @@
   removed; they are `Flezha.Process.Backlog`'s, beside the admission every sink with a
   `queue_overflow` policy uses (`Backlog.dispatch/2`, `offer/5`, `room/1`). An `http_push`
   dispatch now waits once an output found the queue full, as Kafka's did, rather than as
-  soon as the queue reached its bound.
+  soon as the queue reached its bound. A waiting dispatch gives up `backlog_wait_headroom_ms`
+  (1 s) past `queue_block_timeout_ms` should its worker not answer by then, and under
+  `drop_nothing` an output larger than `queue_max_bytes` goes in once the queue is empty.
 - `Flezha.Plugin.Provider.Batcher` is the one batching loop of the file and Postgres sink
   workers; a worker writes `commit_batch/2`, what one batch commits.
 
@@ -180,16 +183,19 @@
 
 ### Changed: a log line that repeated an event is rendered from the event
 
-- **BREAKING:** twenty-one warning and error lines that said again what a telemetry event
+- **BREAKING:** nineteen warning and error lines that said again what a telemetry event
   already said (a restore refused, a refused or repaired record, a disk quota breach, a missed
   RPO, a compaction given up, a stuck relay, a runner restart, and others) are now written once,
   by the telemetry bridge, as `[<source>] <name> key=value ...` at the same level. A log search
   for the old sentences needs the new form; the facts a sentence carried and its event lacked
   (a schedule failure's reason, a refused correction's target, a hub call's answer, a factory
-  conflict's attribute) are now in the event's metadata.
+  conflict's attribute) are now in the event's metadata. A restore from remote storage that
+  failed or found a copy missing keeps its own error line, because a boot restore runs before
+  the bridge starts.
 - A bridge line, a detector event and a plugin's own verb may declare `level:` beside
   `meaning:`; such an event is also its log line. With `FLEZHA_OBSERVABILITY_ENABLED=false`
-  the bridge still writes these lines and nothing else.
+  the bridge still writes these lines and nothing else, and `FLEZHA_OBSERVABILITY_LOG_SOURCES`
+  does not write them a second time.
 - `Flezha.Service.EventManager` is gone, and `blockade` is no longer a direct dependency: a
   runner connect reaches the convergence loop as its `runner_connected` fact, and code that
   waited on `:runner_connected_event` waits on `[:flezha, :runner, :connected]`.

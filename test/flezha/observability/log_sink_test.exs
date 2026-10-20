@@ -35,6 +35,27 @@ defmodule Flezha.Observability.LogSinkTest do
     refute log =~ "8192"
   end
 
+  # fails when: a signal the telemetry bridge already writes as its log line
+  # is written a second time by the sink.
+  test "a signal the bridge writes at its level is not written again" do
+    {:ok, pid} =
+      Registry.register_sink(%{
+        name: @sink,
+        module: LogSink,
+        filter: %{kinds: :any, sources: [:flezha_durability]}
+      })
+
+    log =
+      capture_log([level: :info], fn ->
+        :telemetry.execute([:flezha, :state, :rpo_exceeded], %{count: 1}, %{ref: "leveled"})
+        :telemetry.execute([:flezha, :state, :hydrated], %{count: 1}, %{ref: "plain"})
+        :sys.get_state(pid)
+      end)
+
+    assert [_, _] = String.split(log, "[flezha_durability] rpo_exceeded ref=leveled")
+    assert [_, _] = String.split(log, "[flezha_durability] hydrated ref=plain")
+  end
+
   test "not registered, it writes nothing" do
     assert Registry.lookup_sink(:log) == :error
 

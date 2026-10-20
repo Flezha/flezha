@@ -229,13 +229,13 @@ lost connection before its ack is counted `failed`.
 While the connection is down, outputs wait in the worker's queue, bounded by `queue_max`
 and `queue_max_bytes`, and `queue_overflow` decides what a full queue does. Under
 `drop_nothing` (the default) the hook waits for room, at most `queue_block_timeout_ms`;
-an output already on its way when the queue filled is admitted past the bound, and one
-still waiting at the timeout overflows, counted as `overflowed` and, when guaranteed,
-parked with `rabbitmq.exhausted` and the reason `queue_full`. Under `drop_oldest` the
-oldest plain output is dropped, under `drop_newest` the new one, each counted as
-`overflowed`; a guaranteed output is kept, past the bound if it must: the outbox bounds how
-many there are. A stop parks every guaranteed output the worker still holds, as
-`http_push` does.
+an output already on its way when the queue filled is admitted past the bound, as is one
+larger than `queue_max_bytes` once the queue is empty, and one still waiting at the timeout
+overflows, counted as `overflowed` and, when guaranteed, parked with `rabbitmq.exhausted`
+and the reason `queue_full`. Under `drop_oldest` the oldest plain output is dropped, under
+`drop_newest` the new one, each counted as `overflowed`; a guaranteed output is kept, past
+the bound if it must: the outbox bounds how many there are. A stop parks every guaranteed
+output the worker still holds, as `http_push` does.
 
 ## Topology declaration
 

@@ -425,7 +425,7 @@ defmodule Flezha.State.DurabilityTierTest do
         TestHelpers.wipe_cell(ctx.cell_id)
         log = AuthTestHelper.capture_log_at(:error, fn -> assert :ok = land.() end)
 
-        assert log =~ "[flezha_durability] artifact_missing artifact="
+        assert log =~ "which the backend does not hold"
         refute File.exists?(Paths.lineage_path(ctx.cell_id))
         refute File.exists?(Paths.outbox_dedup_path(ctx.cell_id))
       end
@@ -681,6 +681,28 @@ defmodule Flezha.State.DurabilityTierTest do
       File.rm!(path)
       assert :ok = Hydrator.hydrate_cspecs()
       assert File.read!(path) == "local-registry"
+    end
+
+    # fails when: a boot restore's missing copy is said only through the
+    # telemetry bridge, which the application starts after the durability tier.
+    test "a boot restore says a missing copy before the telemetry bridge is up", ctx do
+      path = Path.join([ctx.hub_root, "ns_hub", "registry.dets"])
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "cspec-bytes")
+      ref = {:cspec, {"ns_hub", DurabilityTier.writer_id()}}
+      assert :ok = Shipper.ship_now(ref)
+      Stub.delete(Stub.stored_manifest(ref).file.blob, [])
+      File.rm!(path)
+
+      bridges = Flezha.Observability.Supervisor
+      bridge = Flezha.Observability.TelemetryBridge
+      :ok = Supervisor.terminate_child(bridges, bridge)
+      on_exit(fn -> Supervisor.restart_child(bridges, bridge) end)
+
+      log = AuthTestHelper.capture_log_at(:error, fn -> Hydrator.hydrate_on_boot() end)
+
+      assert log =~ "which the backend does not hold"
+      refute File.exists?(path)
     end
   end
 

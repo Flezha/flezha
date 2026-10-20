@@ -13,7 +13,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.{Overwatch, Plugins}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.Service.{Relay, RelayManager}
@@ -106,6 +106,25 @@ defmodule FlezhaTest.Relay.IngestTest do
       assert_receive {:channel_got, ^inst, {"c", %{"flz.reply_to" => "w:" <> _} = metadata}}
       assert Map.take(metadata, tl(@controller_keys)) == %{}
       Task.shutdown(caller, :brutal_kill)
+    end
+
+    # fails when: an `:on_input` hook can add a key only the controller sets.
+    test "no :on_input hook sets them" do
+      inst = instance_id()
+      {:ok, host} = start_supervised({Host, state(inst, channel: fake_channel(:ok))})
+      forged = Map.new(@controller_keys, &{&1, "true"})
+
+      stub(Plugins, :transform_io, fn
+        _state, :on_input, message, metadata ->
+          {message, Map.merge(metadata, forged)}
+
+        state, chain, message, metadata ->
+          call_original(Plugins, :transform_io, [state, chain, message, metadata])
+      end)
+
+      assert :ok = PluginHost.inject(host, "x", %{"k" => "v"}, :confirming, 1_000)
+      assert_receive {:channel_got, ^inst, {"x", %{"k" => "v"} = metadata}}
+      assert Map.take(metadata, @controller_keys) == %{}
     end
   end
 

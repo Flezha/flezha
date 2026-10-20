@@ -19,6 +19,7 @@ defmodule Flezha.Process.Backlog do
   `release_waiters/1` finds room, with no block timeout.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Process.Timer
 
   @type t :: %__MODULE__{
@@ -67,20 +68,26 @@ defmodule Flezha.Process.Backlog do
   @doc """
   A sink's queue, admitting under `opts`: `:policy` (`:drop_nothing` by
   default), `:block_ms`, the longest a waiter waits for room (nil: until there
-  is room), `:flag`, the worker's full flag (`flag/0`), and `:tag`, which names
-  this queue in its block timer's message, `{:block_timeout, tag, waiter}`.
+  is room), `:flag`, the worker's full flag (`flag/0`), which also carries
+  `:block_ms` to `dispatch/2`, and `:tag`, which names this queue in its block
+  timer's message, `{:block_timeout, tag, waiter}`.
   """
   @spec new(pos_integer() | :infinity, pos_integer(), keyword()) :: t()
-  def new(max_bytes, max_frames, opts), do: struct(new(max_bytes, max_frames), opts)
+  def new(max_bytes, max_frames, opts) do
+    b = struct(new(max_bytes, max_frames), opts)
+    if b.flag && b.block_ms, do: :atomics.put(b.flag, 2, b.block_ms)
+    b
+  end
 
   @doc """
   A worker's full flag: up while any queue sharing it has a waiter or an entry
-  past its bound. Published as the registry value of the worker `name` names,
-  when it is registered, for `dispatch/2` to read.
+  past its bound, and the block timeout of the queues sharing it (`new/3`).
+  Published as the registry value of the worker `name` names, when it is
+  registered, for `dispatch/2` to read.
   """
   @spec flag(GenServer.name() | nil) :: :atomics.atomics_ref()
   def flag(name \\ nil) do
-    flag = :atomics.new(1, [])
+    flag = :atomics.new(2, [])
 
     with {:via, Registry, {registry, key}} <- name,
          do: Registry.update_value(registry, key, fn _ -> flag end)
@@ -231,7 +238,8 @@ defmodule Flezha.Process.Backlog do
   @doc """
   The client half: hand `message` to the worker `server` names. While its full
   flag is down `message` is cast; while it is up the dispatch waits in a call
-  with the same `message` until the worker admits it or lets it go. `:none`
+  with the same `message` until the worker admits it or lets it go, or its
+  queue's block timeout and `backlog_wait_headroom_ms` have passed. `:none`
   when no worker is registered.
   """
   @spec dispatch(GenServer.server(), term()) :: :ok | :none
@@ -240,7 +248,7 @@ defmodule Flezha.Process.Backlog do
       # The flag is published once the worker's `init/1` runs; until then it is nil.
       [{pid, flag}] ->
         if flag != nil and :atomics.get(flag, 1) > 0,
-          do: wait(pid, message),
+          do: wait(pid, message, :atomics.get(flag, 2)),
           else: GenServer.cast(pid, message)
 
       [] ->
@@ -250,10 +258,17 @@ defmodule Flezha.Process.Backlog do
 
   def dispatch(pid, message) when is_pid(pid), do: GenServer.cast(pid, message)
 
-  defp wait(pid, message) do
-    GenServer.call(pid, message, :infinity)
+  # The worker's block timer is the policy; this bound only stops a worker too
+  # busy to reach it from holding the caller.
+  defp wait(pid, message, 0), do: call(pid, message, :infinity)
+
+  defp wait(pid, message, block_ms),
+    do: call(pid, message, block_ms + Durations.get(:backlog_wait_headroom_ms))
+
+  defp call(pid, message, timeout) do
+    GenServer.call(pid, message, timeout)
   catch
-    # The worker stopped with the message waiting.
+    # The worker stopped with the message waiting, or never answered in time.
     :exit, _gone -> :ok
   end
 
@@ -266,8 +281,9 @@ defmodule Flezha.Process.Backlog do
     * `{:refused, backlog, dropped}`: `entry` is not in (`:drop_newest`, or
       `:drop_oldest` with nothing droppable left). A dispatch waiter is let go
       and a synchronous caller answered `{:error, {:queue_full, :overflow}}`.
-    * `{:waiting, backlog, []}`: `:drop_nothing` and no room. A cast is
-      admitted past the bound instead (`:queued`). Either raises the flag.
+    * `{:waiting, backlog, []}`: `:drop_nothing` and no room. A cast, or any
+      arrival at an empty queue, is admitted past the bound instead
+      (`:queued`). Either raises the flag.
 
   What becomes of `dropped` and of a refused `entry` is the holder's.
   """
@@ -283,7 +299,9 @@ defmodule Flezha.Process.Backlog do
         refuse(waiter)
         {:refused, b, dropped}
 
-      {:full, b} when waiter == :cast ->
+      # An entry larger than the bound comes into an empty queue, or it never would.
+      {:full, b} when waiter == :cast or b.frames == 0 ->
+        release(waiter)
         {:queued, b |> push(entry, size) |> mark(true), []}
 
       {:full, b} ->
@@ -300,8 +318,9 @@ defmodule Flezha.Process.Backlog do
   end
 
   @doc """
-  Entries were taken out: the waiters that fit now come in, oldest first, and
-  the flag comes down once none is left and there is room for one more.
+  Entries were taken out: the waiters that fit now come in, oldest first (one
+  larger than the bound once the queue is empty), and the flag comes down once
+  none is left and there is room for one more.
   """
   @spec room(t()) :: t()
   def room(%__MODULE__{full: false} = b), do: b
@@ -309,7 +328,7 @@ defmodule Flezha.Process.Backlog do
   def room(b) do
     case :queue.peek(b.waiters) do
       {:value, {waiter, entry, size}} ->
-        if fits?(b, size) do
+        if fits?(b, size) or b.frames == 0 do
           release(waiter)
           rest = %{b | waiters: :queue.drop(b.waiters), timers: Timer.cancel(b.timers, waiter)}
           room(push(rest, entry, size))

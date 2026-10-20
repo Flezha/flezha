@@ -193,6 +193,9 @@ defmodule Flezha.Config.DurationRows do
     {:plugin_client_call_ms, :ms, 30_000, []},
     # A record handed to a producing worker that answers once it is delivered.
     {:plugin_enqueue_call_ms, :ms, 35_000, []},
+    # How far past its queue's block timeout an output waiting for room gives
+    # up, should the worker be too busy to answer at its own timer.
+    {:backlog_wait_headroom_ms, :ms, 1_000, []},
     # Strictly inside `route_call_timeout_ms`, which bounds a plugin verb run
     # on another controller, and strictly outside `plugin_call_timeout_ms`: an
     # inner bound equal to the outer one is no bound at all — both give up at

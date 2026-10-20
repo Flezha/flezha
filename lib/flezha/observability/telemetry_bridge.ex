@@ -406,7 +406,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     provider_lines = provider_lines()
     # A leveled line has a handler of its own carrying it, so the merged
     # handler's events cost what they did.
-    logged = logged(Map.merge(@all_lines, provider_lines))
+    logged = logged(provider_lines)
     plain = Map.drop(provider_lines, Map.keys(logged))
 
     handlers =
@@ -450,8 +450,14 @@ defmodule Flezha.Observability.TelemetryBridge do
     [handle_line: strip(plain), handle_hook: @hook_mapping, handle_logged: logged]
   end
 
-  defp logged(lines) do
-    for {event, {source, name, kind, words}} <- lines,
+  @doc """
+  The events whose line carries a level, each with its source, name, kind and
+  level: the bridge writes them as log lines. `providers` as in
+  `registrations/1`.
+  """
+  @spec logged(map()) :: %{[atom()] => {atom(), atom(), Signal.kind(), Logger.level()}}
+  def logged(providers \\ provider_lines()) do
+    for {event, {source, name, kind, words}} <- Map.merge(@all_lines, providers),
         level = is_list(words) && words[:level],
         level,
         into: %{},

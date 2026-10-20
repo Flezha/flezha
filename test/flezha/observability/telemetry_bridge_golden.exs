@@ -607,7 +607,6 @@
        [
          label: "Copy missing",
          outcome: :failure,
-         level: :error,
          meaning: "Remote storage lacks a copy that a relay's saved state refers to."
        ]},
     [:flezha, :state, :artifact_shipped] =>
@@ -697,7 +696,6 @@
        [
          label: "Restore failed",
          outcome: :failure,
-         level: :error,
          meaning: "Restoring a relay's state from remote storage failed."
        ]},
     [:flezha, :state, :inbox_duplicate] =>

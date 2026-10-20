@@ -235,7 +235,15 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
         # still has a local copy to re-ship from. Degrading it into a silent cold
         # start is what made this class of damage discoverable only on recovery
         # day.
+        #
+        # A boot restore runs before the telemetry bridge starts, so the error
+        # line is written here rather than by the bridge.
         {:error, {:missing_artifact, artifact}} ->
+          Logger.error(
+            "[durability] #{inspect(ref)} references #{artifact}, which the backend does not " <>
+              "hold. Its remote lineage is incomplete and cannot be recovered from as it stands."
+          )
+
           :telemetry.execute(
             [:flezha, :state, :artifact_missing],
             %{count: 1},
@@ -243,6 +251,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
           )
 
         {:error, reason} ->
+          Logger.error("[durability] hydration failed for #{inspect(ref)}: #{inspect(reason)}")
+
           :telemetry.execute(
             [:flezha, :state, :hydration_failed],
             %{count: 1},
