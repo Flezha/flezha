@@ -197,7 +197,9 @@ defmodule FlezhaTest.Handover do
   end
 
   # fails when: a compaction where the relay moved snapshots a Cell holding no
-  # timers, so the restore after it rebuilds none and the session never closes.
+  # timers, so the restore after it rebuilds none and the session never closes;
+  # or the destination's own bind restores nothing, so `idle`, moved and then
+  # left alone, never closes.
   @tag :multi_node
   @tag :drain_migration_timers
   @tag timeout: 180_000
@@ -207,12 +209,17 @@ defmodule FlezhaTest.Handover do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_timer_node)
     System.delete_env("TIMER_TEST_TIMEOUT_MS")
     op = RelayFixture.start_on(peer_node, "drain_timer", "session_timeout")
-    assert NodeTestHelper.wait_until(fn -> session(op) != nil end, 30_000)
-    RelayManager.send_io(op, @default_namespace, "hello", %{"input_type" => "2"})
-    assert NodeTestHelper.wait_until(fn -> session(op)["touched"] == ["hello"] end, 15_000)
+    idle = RelayFixture.start_on(peer_node, "drain_timer_idle", "session_timeout")
+
+    for id <- [op, idle] do
+      assert NodeTestHelper.wait_until(fn -> session(id) != nil end, 30_000)
+      RelayManager.send_io(id, @default_namespace, "hello", %{"input_type" => "2"})
+      assert NodeTestHelper.wait_until(fn -> session(id)["touched"] == ["hello"] end, 15_000)
+    end
 
     assert :ok = shutdown_peer(peer_node, 30_000)
-    assert arrived?(op)
+    assert arrived?(op) and arrived?(idle)
+    assert session(idle) == %{"touched" => ["hello"], "closed_at" => []}
     :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :compaction_completed]])
     cell = {op, "session_timeout_tasklet", ""}
     {:ok, _} = Commands.dispatch_compact_cell(overwatch(op, @default_namespace).runner_id, cell)
@@ -221,6 +228,13 @@ defmodule FlezhaTest.Handover do
 
     TierE2EHarness.force_fresh_rebind(@default_namespace, op)
     assert NodeTestHelper.wait_until(fn -> session(op)["closed_at"] not in [nil, []] end, 60_000)
+
+    assert NodeTestHelper.wait_until(
+             fn -> session(idle)["closed_at"] not in [nil, []] end,
+             30_000
+           ),
+           "the destination's bind did not restore the moved Cell's timer"
+
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 

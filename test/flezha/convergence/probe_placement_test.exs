@@ -3,7 +3,8 @@ defmodule Flezha.Convergence.ProbePlacementTest do
   Who the probe reads as hosting a relay's factory elsewhere: the nodes serving
   the factory's group on the namespace hub, the table the hub places by, never
   the nodes whose runners merely advertise it. A relay with no local runner is
-  waiting only while one of those nodes exists.
+  waiting only while one of those nodes exists. A suspended relay is read
+  suspended from its own Overwatch, so it is never planned.
   """
 
   # async: false: Mimic stubs on modules the live controller also calls.
@@ -39,7 +40,7 @@ defmodule Flezha.Convergence.ProbePlacementTest do
       relays: [%{namespace: ns, relay_id: id, factory_id: @factory, plugins: []}]
     }
 
-    %{ns: ns, ref: {ns, id}, intent: intent}
+    %{ns: ns, ref: {ns, id}, intent: intent, pid: pid}
   end
 
   # fails when: the probe reads the peers that advertise the factory, so a
@@ -69,6 +70,17 @@ defmodule Flezha.Convergence.ProbePlacementTest do
     reality = Probe.snapshot()
 
     assert reality.placement == %{{ctx.ns, @factory} => %{local: [], remote_nodes: [@peer]}}
+    assert diff(ctx.intent, reality).unbound_relays == []
+  end
+
+  # fails when: the probe reads a suspended Overwatch's phase as running, so
+  # the loop rebinds a relay its own park released from its runner.
+  test "a suspended relay is read suspended and its missing runner is not planned", ctx do
+    :sys.replace_state(ctx.pid, &%{&1 | phase: :suspended})
+
+    reality = Probe.snapshot()
+
+    assert reality.relays[ctx.ref].phase == :suspended
     assert diff(ctx.intent, reality).unbound_relays == []
   end
 end
