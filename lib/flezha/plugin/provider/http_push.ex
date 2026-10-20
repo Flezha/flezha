@@ -22,9 +22,8 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Plugin.ProviderBehaviour.Options
-
-  # Resolved once: the dispatch looks its worker up here for every payload.
-  @registry WorkerSup.registry_name(WorkerSup.family(__MODULE__))
+  alias Flezha.Process.Backlog
+  alias Flezha.State.Outbox
 
   # Headers the request sets from its own options and its output's identity.
   @reserved ~w(content-type content-length host transfer-encoding connection idempotency-key)
@@ -78,7 +77,10 @@ defmodule Flezha.Plugin.Provider.HttpPush do
           default: 30_000,
           min: 1,
           doc: "Time from a payload's first attempt after which it is not retried again"
-        ]
+        ],
+        # The worker this plugin's payloads are cast to, named once here so the
+        # dispatch builds nothing per payload.
+        sender: [type: :any, internal: true, transient: true]
       ] ++
         Options.channel(:out, "payload") ++
         Options.retry(retry_max_backoff_ms: 10_000) ++
@@ -89,8 +91,10 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   def init_provider(opts) do
     with {:ok, url} <- HttpFetch.validate_url(opts.url, "http_push"),
          :ok <- sendable_headers(opts.headers) do
+      sender = WorkerSup.worker(__MODULE__, WorkerSup.key(opts))
+
       if sendable_value?(opts.content_type),
-        do: {:ok, %{opts | url: url}},
+        do: {:ok, Map.merge(opts, %{url: url, sender: sender})},
         else: {:error, {:headers_invalid, "http_push", :content_type, "content-type"}}
     end
   end
@@ -147,12 +151,22 @@ defmodule Flezha.Plugin.Provider.HttpPush do
   @impl true
   def on_output(%Ctx.IO{} = ctx, opts), do: send_payload(ctx, opts)
 
+  # The hold and the dispatch, a guaranteed output first held. With no worker
+  # running it stays held, waiting in the outbox, and a plain one is dropped,
+  # counted as `failed` with the reason `:not_running`.
   defp send_payload(%Ctx.IO{message: message, metadata: metadata} = ctx, opts) do
-    if ProviderBehaviour.in_channel?(metadata, opts.filter_channel),
-      do: HttpSend.push(@registry, opts.worker_key, message, metadata)
+    if ProviderBehaviour.in_channel?(metadata, opts.filter_channel) do
+      Outbox.hold(metadata)
+
+      with :none <- Backlog.dispatch(opts.sender, {:push, message, metadata}),
+           false <- Outbox.guaranteed?(metadata),
+           do: ProviderBehaviour.emit(:http_push, :failed, %{count: 1}, not_running(opts))
+    end
 
     {:ok, ctx}
   end
+
+  defp not_running(opts), do: %{plugin: opts[:source_plugin_id], reason: :not_running}
 
   @doc """
   `{:unhealthy, :send_stalled}` once `failure_threshold` requests in a row have

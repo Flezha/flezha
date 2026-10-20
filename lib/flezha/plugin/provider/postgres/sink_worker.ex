@@ -14,14 +14,14 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   flush cursor.
   """
 
-  alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Provider.Postgres.Connection
-  alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Process.Backlog
   alias Flezha.State.Outbox
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry]
+  use Flezha.Plugin.Provider.Batcher, ladder: :postgres_flush, retry: :retry_flush
 
   require Logger
 
@@ -158,27 +158,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   end
 
   @impl true
-  def handle_call({:enqueue, msg, metadata}, from, state) do
-    state = %{
-      state
-      | buffer: :queue.in(decode_record(msg, metadata), state.buffer),
-        buffer_len: state.buffer_len + 1
-    }
-
-    state =
-      cond do
-        state.buffer_len >= state.max_batch and not timer_armed?(state, :retry) ->
-          state |> cancel_timer(:linger) |> flush()
-
-        not timer_armed?(state, :linger) and not timer_armed?(state, :retry) ->
-          arm_timer(state, :linger, state.linger_ms, :linger)
-
-        true ->
-          state
-      end
-
-    ProviderBehaviour.park_or_reply(state, from)
-  end
+  def handle_call({:enqueue, msg, metadata}, from, state),
+    do: state |> batch(decode_record(msg, metadata)) |> Backlog.park_or_reply(from)
 
   def handle_call(:stats, _from, state) do
     {:reply,
@@ -212,58 +193,30 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   # ---------- flush ----------
 
-  defp flush(%{buffer_len: 0} = state), do: state
-
-  defp flush(state) do
-    {batch, rest, rest_len} = take_batch(state)
-
-    case commit_batch(state, batch) do
+  # The commit is the confirmation: every guaranteed record in the batch
+  # answers its outbox hold, and only then may its cursor advance.
+  defp commit_batch(state, batch) do
+    case transact(state, batch) do
       :ok ->
-        # The commit is the confirmation: every guaranteed record in the batch
-        # answers its outbox hold in one report, and only now may its cursor
-        # advance.
-        Outbox.confirm_many(Enum.map(batch, & &1.metadata))
-
-        state = %{
-          state
-          | buffer: rest,
-            buffer_len: rest_len,
-            consecutive_failures: Backoff.reset(:postgres_flush, state.plugin_id),
-            last_error: nil,
-            missing_tables: nil,
-            last_commit_ms: System.monotonic_time(:millisecond)
-        }
-
-        state = ProviderBehaviour.release_waiters(state)
-        flush(state)
+        now = System.monotonic_time(:millisecond)
+        {:ok, %{state | missing_tables: nil, last_commit_ms: now}, Enum.map(batch, & &1.metadata)}
 
       {:error, reason} ->
-        failures = state.consecutive_failures + 1
-        log_failure(state, "flush failed (attempt #{failures})", reason)
-
-        backoff =
-          Backoff.arm(:postgres_flush, failures, state.plugin_id,
-            base: state.retry_backoff_ms,
-            cap: state.retry_max_backoff_ms
-          )
-
-        %{
-          state
-          | consecutive_failures: failures,
-            last_error: Connection.sanitize_error(reason),
-            missing_tables: missing_tables_from(reason) || state.missing_tables
-        }
-        |> arm_timer(:retry, backoff, :retry_flush)
+        {:error, reason, state}
     end
   end
 
-  defp take_batch(state) do
-    take = min(state.buffer_len, state.max_batch)
-    {taken, rest} = :queue.split(take, state.buffer)
-    {:queue.to_list(taken), rest, state.buffer_len - take}
+  defp batch_failed(state, reason, failures) do
+    log_failure(state, "flush failed (attempt #{failures})", reason)
+
+    %{
+      state
+      | last_error: Connection.sanitize_error(reason),
+        missing_tables: missing_tables_from(reason) || state.missing_tables
+    }
   end
 
-  defp commit_batch(state, batch) do
+  defp transact(state, batch) do
     records = dedup_newest_by_key(batch)
     progress = progress_rows(batch)
 

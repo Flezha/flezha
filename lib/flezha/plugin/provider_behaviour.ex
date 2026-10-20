@@ -461,42 +461,6 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def in_channel?(_metadata, nil), do: true
   def in_channel?(metadata, channels), do: Map.get(metadata, "channel") in channels
 
-  @doc "Has the worker's queue reached its bound?"
-  @spec saturated?(struct()) :: boolean()
-  def saturated?(state), do: state.buffer_len >= state.queue_max
-
-  @doc """
-  Reply to an enqueueing caller, or park it — the "delay, never loss" overflow
-  policy shared by the sink workers that bound their queue and back-pressure
-  instead of dropping. Pairs with `release_waiters/1`; the worker state must
-  carry `:buffer_len`, `:queue_max`, and `:waiters`.
-  """
-  @spec park_or_reply(struct(), GenServer.from()) ::
-          {:reply, :ok, struct()} | {:noreply, struct()}
-  def park_or_reply(state, from) do
-    if saturated?(state) do
-      {:noreply, %{state | waiters: [from | state.waiters]}}
-    else
-      {:reply, :ok, state}
-    end
-  end
-
-  @doc """
-  Release every parked enqueue caller once the queue has drained back under
-  `:queue_max`. Counterpart to `park_or_reply/2`.
-  """
-  @spec release_waiters(struct()) :: struct()
-  def release_waiters(%{waiters: []} = state), do: state
-
-  def release_waiters(state) do
-    if saturated?(state) do
-      state
-    else
-      Enum.each(state.waiters, &GenServer.reply(&1, :ok))
-      %{state | waiters: []}
-    end
-  end
-
   @doc """
   The per-plugin health-probe budget. Callers that time-box a whole relay's
   probe sweep size their allowance from this rather than from a provider's own

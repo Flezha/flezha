@@ -19,16 +19,17 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   written again.
   """
 
-  alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry, as: DlqEntry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Plugin.Provider.File.Storage
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Process.Backlog
   alias Flezha.State.{Durable, Outbox}
 
   use GenServer
   use Flezha.Process.Timer, keys: [:linger, :retry, :roll]
+  use Flezha.Plugin.Provider.Batcher, ladder: :file_flush, retry: :retry, before_batch: true
 
   require Logger
 
@@ -133,7 +134,7 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
   @impl true
   def handle_call({:enqueue, msg, metadata}, from, state) do
     if :binary.match(msg, "\n") == :nomatch do
-      state |> buffer(msg, metadata) |> ProviderBehaviour.park_or_reply(from)
+      state |> batch({msg, metadata}) |> Backlog.park_or_reply(from)
     else
       park(state, msg, metadata)
       {:reply, :ok, state}
@@ -181,25 +182,6 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   # ---------- the queue ----------
 
-  defp buffer(state, msg, metadata) do
-    state = %{
-      state
-      | buffer: :queue.in({msg, metadata}, state.buffer),
-        buffer_len: state.buffer_len + 1
-    }
-
-    cond do
-      state.buffer_len >= state.max_batch and not timer_armed?(state, :retry) ->
-        state |> cancel_timer(:linger) |> flush()
-
-      not timer_armed?(state, :linger) and not timer_armed?(state, :retry) ->
-        arm_timer(state, :linger, state.linger_ms, :linger)
-
-      true ->
-        state
-    end
-  end
-
   # A record holding a newline cannot be one line, and the sink writes bytes
   # rather than editing them, so it is parked whole. A delivery-guaranteed
   # record's hold is answered once the park is durable, which is what moves its
@@ -228,40 +210,20 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   # A due roll is committed before another batch is written, so one roll is in
   # flight at a time: what lets the reconcile trust a part one ahead.
-  defp flush(%{roll: %{due?: true}} = state) do
-    case commit_roll(state) do
-      {:ok, state} -> flush(state)
-      {:error, reason, state} -> retry(state, reason)
-    end
+  defp before_batch(%{roll: %{due?: true}} = state) do
+    with {:ok, state} <- commit_roll(state), do: before_batch(state)
   end
 
-  defp flush(%{buffer_len: 0} = state), do: state
+  defp before_batch(state), do: {:ok, state}
 
-  defp flush(state) do
-    {taken, rest} = :queue.split(min(state.buffer_len, state.max_batch), state.buffer)
-    records = :queue.to_list(taken)
-
+  # The sync is what these holds waited on: the batch answers them in one
+  # report, and only then may their cursors advance.
+  defp commit_batch(state, records) do
     with {:ok, state} <- reconciled(state),
          {lines, confirmed, rolled} = admit(state, records),
          {:ok, state} <- write(state, lines) do
-      # The sync is what these holds waited on: the batch answers them in one
-      # report, and only now may their cursors advance.
-      Outbox.confirm_many(confirmed)
       emit(:shipped, %{count: length(lines)}, labels(state))
-
-      %{
-        state
-        | buffer: rest,
-          buffer_len: state.buffer_len - length(records),
-          consecutive_failures: Backoff.reset(:file_flush, state.plugin_id),
-          last_error: nil,
-          last_flush_ms: now()
-      }
-      |> into_roll(rolled)
-      |> ProviderBehaviour.release_waiters()
-      |> flush()
-    else
-      {:error, reason, state} -> retry(state, reason)
+      {:ok, into_roll(%{state | last_flush_ms: now()}, rolled), confirmed}
     end
   end
 
@@ -319,28 +281,14 @@ defmodule Flezha.Plugin.Provider.File.WriteWorker do
 
   defp line({msg, _metadata}), do: [msg, ?\n]
 
-  defp retry(state, reason) do
-    failures = state.consecutive_failures + 1
-
+  defp batch_failed(state, reason, failures) do
     Logger.warning(
       "[Plugin.Provider.File.Sink] write failed path=#{state.path} attempt=#{failures} " <>
         "pending=#{state.buffer_len}: #{inspect(reason)}"
     )
 
     emit(:failed, %{consecutive_failures: failures}, Map.put(labels(state), :reason, reason))
-
-    delay =
-      Backoff.arm(:file_flush, failures, state.plugin_id,
-        base: state.retry_backoff_ms,
-        cap: state.retry_max_backoff_ms
-      )
-
-    arm_timer(
-      %{state | consecutive_failures: failures, last_error: reason},
-      :retry,
-      delay,
-      :retry
-    )
+    %{state | last_error: reason}
   end
 
   defp write(state, []), do: {:ok, state}

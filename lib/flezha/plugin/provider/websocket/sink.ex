@@ -25,6 +25,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   alias Flezha.Config.Backoff
   alias Flezha.Plugin.Provider.Websocket.Subscription
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Process.Backlog
   alias Flezha.State.Outbox
 
   @payload_placeholder "{{payload}}"
@@ -196,7 +197,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
   defp accept(%{sink: sink} = state, entry, from) do
     sink = %{sink | queue: :queue.in(entry, sink.queue), buffer_len: sink.buffer_len + 1}
 
-    case ProviderBehaviour.park_or_reply(sink, from) do
+    case Backlog.park_or_reply(sink, from) do
       {:reply, :ok, sink} ->
         GenServer.reply(from, :ok)
         %{state | sink: sink}
@@ -226,7 +227,7 @@ defmodule Flezha.Plugin.Provider.Websocket.Sink do
     sink =
       %{sink | queue: :queue.new(), buffer_len: 0}
       |> settle(entries, now)
-      |> ProviderBehaviour.release_waiters()
+      |> Backlog.release_waiters()
 
     emit(:shipped, %{count: length(entries)}, state)
     {%{state | sink: sink}, Enum.map(entries, fn {frame, _md, _id} -> frame end)}

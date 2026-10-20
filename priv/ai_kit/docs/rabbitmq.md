@@ -73,14 +73,15 @@ confirms, recovery, topology declaration, health, telemetry and limits.
 | `declare_exchange` | bool | `false` | no | Declare `exchange` durable when it does not exist |
 | `exchange_type` | enum | `"direct"` | no | With `declare_exchange`: the exchange's type |
 | `retries` | int | `5` | no | Publishes again of a guaranteed output the broker refused or a lost connection left unconfirmed |
-| `queue_max` | int | `10000` | no | Payloads waiting while the connection is down |
-| `queue_max_bytes` | int | `67108864` | no | Payload bytes waiting while the connection is down |
-| `queue_overflow` | enum | `:drop_oldest` | no | What a full queue does with a plain output: keep it past the bound, drop the oldest plain one, or drop the newest; a guaranteed one always waits |
 | `channel` | names | none | no | The channel this plugin is attached to: only a payload naming it reaches the plugin. Several names, comma-separated, take them all |
 | `channel_out` | names | none | no | Only a payload whose metadata channel matches reaches the plugin; the explicit spelling of `channel`. Several names, comma-separated, take them all |
 | `plugin_id` | string | none | no | Plugin id; defaults to the id it was enabled under |
 | `retry_backoff_ms` | int | `250` | no | First delay before a failed attempt is made again |
 | `retry_max_backoff_ms` | int | `10000` | no | Ceiling for that delay |
+| `queue_max` | int | `10000` | no | Outputs the queue holds before it is full |
+| `queue_max_bytes` | int | `67108864` | no | Output bytes the queue holds before it is full |
+| `queue_overflow` | enum | `:drop_nothing` | no | What a full queue does: make the dispatch wait, drop the oldest, or drop the newest |
+| `queue_block_timeout_ms` | int | `5000` | no | How long a dispatch waits on a full queue before its output overflows |
 <!-- provider-options:end -->
 
 ## Example
@@ -188,7 +189,7 @@ them again.
 | Hooks | `:on_output` or `:on_input` |
 | Shared | yes: every relay bound to one plugin on a controller publishes through one worker and one connection |
 | Downstream | one exchange |
-| Delivery | a guaranteed output is held until the broker confirms it; a plain one is published without the relay waiting |
+| Delivery | a guaranteed output is held until the broker confirms it; a plain one is published without the relay waiting, unless the queue is full under `drop_nothing` |
 
 ```sh
 $ flz plugin enable rates-out rabbitmq_producer Xhost=broker Xexchange=rates \
@@ -226,11 +227,14 @@ lost connection before its ack is counted `failed`.
 ### The queue
 
 While the connection is down, outputs wait in the worker's queue, bounded by `queue_max`
-and `queue_max_bytes`. A guaranteed output always waits, past the bound if it must: the
-outbox bounds how many there are. For a plain output `queue_overflow` decides:
-`drop_oldest` (the default) drops the oldest plain output, `drop_newest` drops the new one,
-and `drop_nothing` keeps it past the bound, since the hook never waits. Every drop is
-counted as `overflowed`. A stop parks every guaranteed output the worker still holds, as
+and `queue_max_bytes`, and `queue_overflow` decides what a full queue does. Under
+`drop_nothing` (the default) the hook waits for room, at most `queue_block_timeout_ms`;
+an output already on its way when the queue filled is admitted past the bound, and one
+still waiting at the timeout overflows, counted as `overflowed` and, when guaranteed,
+parked with `rabbitmq.exhausted` and the reason `queue_full`. Under `drop_oldest` the
+oldest plain output is dropped, under `drop_newest` the new one, each counted as
+`overflowed`; a guaranteed output is kept, past the bound if it must: the outbox bounds how
+many there are. A stop parks every guaranteed output the worker still holds, as
 `http_push` does.
 
 ## Topology declaration

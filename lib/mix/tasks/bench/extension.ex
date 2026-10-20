@@ -179,7 +179,7 @@ defmodule Mix.Tasks.Bench.Extension do
       })
 
     {key, worker} = start_worker(HttpPush, HttpSend, opts)
-    opts = %{opts | worker_key: key}
+    opts = Map.merge(opts, %{worker_key: key, sender: WorkerSup.worker(HttpPush, key)})
 
     timed("admission:http_push", records, fn ->
       Enum.each(1..records, fn _ -> {:ok, _} = HttpPush.on_output(output(), opts) end)

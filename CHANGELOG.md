@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed: one sink admission and one batching loop
+
+- **BREAKING:** the RabbitMQ producer's `queue_overflow` default is `drop_nothing` (was
+  `drop_oldest`), and it gains `queue_block_timeout_ms` (default 5000): a dispatch to a full
+  queue waits for room up to that long, then its output overflows, and a guaranteed one is
+  parked with `rabbitmq.exhausted` and the reason `queue_full` instead of waiting past the
+  bound with no deadline.
+- **BREAKING:** an explicit RabbitMQ `drop_nothing` changes meaning: it kept a plain output
+  past the bound; it now waits for room up to `queue_block_timeout_ms`, then overflows.
+- **BREAKING:** `ProviderBehaviour.park_or_reply/2`, `release_waiters/1` and `saturated?/1` are
+  removed; they are `Flezha.Process.Backlog`'s, beside the admission every sink with a
+  `queue_overflow` policy uses (`Backlog.dispatch/2`, `offer/5`, `room/1`). An `http_push`
+  dispatch now waits once an output found the queue full, as Kafka's did, rather than as
+  soon as the queue reached its bound.
+- `Flezha.Plugin.Provider.Batcher` is the one batching loop of the file and Postgres sink
+  workers; a worker writes `commit_batch/2`, what one batch commits.
+
 ### Changed: every sink park carries a code, and a withheld reason carries a pointer
 
 - **BREAKING:** the dead-letter `error` of a Kafka or websocket output a sink gave up on is now

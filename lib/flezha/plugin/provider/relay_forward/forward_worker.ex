@@ -25,6 +25,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.Process.Backlog
   alias Flezha.Relay.Ingest.Verdict
   alias Flezha.State.Outbox
 
@@ -152,11 +153,11 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
     emit_queue_depth(state.buffer_len, state.labels)
     state = deliver_next(state)
 
-    if ProviderBehaviour.saturated?(state) do
+    if Backlog.saturated?(state) do
       emit_saturated(state.buffer_len, state.labels)
     end
 
-    ProviderBehaviour.park_or_reply(state, from)
+    Backlog.park_or_reply(state, from)
   end
 
   def handle_call({:absorb, message, metadata}, _from, state) do
@@ -285,7 +286,7 @@ defmodule Flezha.Plugin.Provider.RelayForward.ForwardWorker do
         attempts: Backoff.reset(:forward_deliver, state.target_relay_id)
     }
 
-    {head, ProviderBehaviour.release_waiters(state)}
+    {head, Backlog.release_waiters(state)}
   end
 
   defp arm_idle(%{idle_ms: ms, buffer_len: 0, inflight: nil} = state) when is_integer(ms),

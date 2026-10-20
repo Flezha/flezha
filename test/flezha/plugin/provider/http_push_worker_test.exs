@@ -77,16 +77,6 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
   defp error_of(entry), do: Jason.decode!(entry["error"])
 
-  # Bodies the server received, each retry of one body read as that body once.
-  defp received_bodies(until) do
-    receive do
-      {:request, _line, _headers, ^until} -> [until]
-      {:request, _line, _headers, body} -> [body | received_bodies(until)]
-    after
-      5_000 -> flunk("#{inspect(until)} never arrived")
-    end
-  end
-
   test "each output is one request, in order, on one connection, with its identity" do
     server = WebhookServer.start([200])
     {opts, _pid} = start!(server)
@@ -278,8 +268,8 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
   describe "a full queue" do
     # The first payload stays in flight, failing every try, until `set/2` lets
-    # it through; what is queued behind it meets the policy.
-    defp stalled(policy, extra \\ %{}) do
+    # it through; what is queued behind it meets the full queue.
+    defp stalled(extra) do
       server = WebhookServer.start([503])
 
       {opts, pid} =
@@ -288,7 +278,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
           Map.merge(
             %{
               queue_max: 10,
-              queue_overflow: policy,
+              queue_overflow: :drop_nothing,
               retries: 100,
               retry_backoff_ms: 20,
               retry_max_backoff_ms: 20,
@@ -303,73 +293,14 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
       {server, opts, pid}
     end
 
-    test "drop_oldest keeps the last ten" do
-      {server, opts, pid} = stalled(:drop_oldest)
-      for n <- 1..29, do: out(opts, "#{n}")
-
-      assert %{queued: 10, overflowed: 19} = HttpSend.stats(pid)
-      WebhookServer.set(server, [200])
-
-      assert Enum.dedup(received_bodies("29")) == ["0" | Enum.map(20..29, &"#{&1}")]
-
-      assert_received {:telemetry, [:flezha, :plugin, :http_push, :overflowed], _,
-                       %{policy: :drop_oldest}}
-    end
-
-    test "drop_newest keeps the first ten" do
-      {server, opts, pid} = stalled(:drop_newest)
-      for n <- 1..29, do: out(opts, "#{n}")
-
-      assert %{queued: 10, overflowed: 19} = HttpSend.stats(pid)
-      WebhookServer.set(server, [200])
-      assert "10" in received_bodies("10")
-      refute_receive {:request, _, _, "11"}, 300
-    end
-
-    test "drop_oldest parks a guaranteed output only when no plain one is left",
+    # The one sink-level case; `Flezha.Process.BacklogAdmissionTest` covers every policy.
+    test "drop_nothing makes a dispatch wait, then parks its guaranteed payload at the timeout",
          %{cell: cell, rc: rc} do
-      {server, opts, pid} = stalled(:drop_oldest, %{queue_max: 2})
-
-      capture_log(fn ->
-        out(opts, "g1", guaranteed(cell, 1))
-        out(opts, "plain")
-        out(opts, "g2", guaranteed(cell, 2))
-        assert %{queued: 2, overflowed: 1} = HttpSend.stats(pid)
-        out(opts, "g3", guaranteed(cell, 3))
-        assert %{queued: 2, overflowed: 2} = HttpSend.stats(pid)
-        assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
-      end)
-
-      assert [entry] = dead_letters(rc)
-      assert %{"details" => %{"reason" => "queue_full"}} = error_of(entry)
-      WebhookServer.set(server, [200])
-      assert received_bodies("g3") |> Enum.dedup() |> Enum.take(-2) == ["g2", "g3"]
-      assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 2}, {:cursor, 3}], 5_000)
-    end
-
-    test "drop_nothing makes the dispatch wait until there is room" do
-      {server, opts, pid} =
-        stalled(:drop_nothing, %{queue_max: 2, queue_block_timeout_ms: 30_000})
-
+      {_server, opts, pid} = stalled(%{queue_max: 1, queue_block_timeout_ms: 200})
       out(opts, "1")
+      # On its way when the queue filled: admitted past the bound, which raises the flag.
       out(opts, "2")
-      assert %{queued: 2} = HttpSend.stats(pid)
-
-      test = self()
-      spawn(fn -> send(test, {:dispatched, out(opts, "3")}) end)
-      assert wait_until(fn -> HttpSend.stats(pid)[:waiting] == 1 end, 2_000)
-      refute_received {:dispatched, _}
-
-      WebhookServer.set(server, [200])
-      assert_receive {:dispatched, {:ok, _}}, 5_000
-      assert "3" in received_bodies("3")
-      assert %{overflowed: 0} = HttpSend.stats(pid)
-    end
-
-    test "drop_nothing overflows a payload that waited past its timeout",
-         %{cell: cell, rc: rc} do
-      {_server, opts, pid} = stalled(:drop_nothing, %{queue_max: 1, queue_block_timeout_ms: 200})
-      out(opts, "1")
+      assert %{queued: 2, waiting: 0} = HttpSend.stats(pid)
 
       capture_log(fn ->
         started = System.monotonic_time(:millisecond)
@@ -378,7 +309,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
         assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
       end)
 
-      assert %{overflowed: 1, queued: 1} = HttpSend.stats(pid)
+      assert %{overflowed: 1, queued: 2} = HttpSend.stats(pid)
       assert [entry] = dead_letters(rc)
       assert %{"details" => %{"reason" => "queue_full"}} = error_of(entry)
     end

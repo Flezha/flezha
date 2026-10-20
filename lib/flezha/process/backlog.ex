@@ -8,24 +8,85 @@ defmodule Flezha.Process.Backlog do
   holder names droppable. `admit/5` is the one reading of a sink's
   `queue_overflow` policy; what becomes of an entry it refuses or drops (a
   park, a reply, a count) is the holder's own rule, so it is not decided here.
+
+  It is also a sink's admission, in two forms. The cast form is a soft bound:
+  `dispatch/2` casts while the worker's full flag is down and waits in a call
+  while it is up, and the worker answers each arrival with `offer/5`, which
+  admits a cast already on its way past the bound, holds a waiter until
+  `room/1` finds space, at most `block_ms`, and keeps the flag in step. The
+  call form is a hard bound for a sink that buffers every enqueue in a call
+  and never drops: `park_or_reply/2` holds the caller until
+  `release_waiters/1` finds room, with no block timeout.
   """
+
+  alias Flezha.Process.Timer
 
   @type t :: %__MODULE__{
           queue: :queue.queue({term(), non_neg_integer()}),
           bytes: non_neg_integer(),
           frames: non_neg_integer(),
           max_bytes: pos_integer() | :infinity,
-          max_frames: pos_integer()
+          max_frames: pos_integer(),
+          policy: policy(),
+          block_ms: pos_integer() | nil,
+          flag: :atomics.atomics_ref() | nil,
+          tag: term(),
+          full: boolean(),
+          waiters: :queue.queue({waiter(), term(), non_neg_integer()}),
+          timers: Timer.timers()
         }
 
   @type policy :: :drop_nothing | :drop_newest | :drop_oldest
 
+  @typedoc """
+  Who an arrival came from: a cast already on its way, a dispatch that read
+  the flag up and waits for room, or a synchronous caller.
+  """
+  @type waiter :: :cast | {:wait, GenServer.from()} | {:call, GenServer.from()}
+
   @enforce_keys [:max_bytes, :max_frames]
-  defstruct [:max_bytes, :max_frames, queue: :queue.new(), bytes: 0, frames: 0]
+  defstruct [
+    :max_bytes,
+    :max_frames,
+    :block_ms,
+    :flag,
+    :tag,
+    queue: :queue.new(),
+    bytes: 0,
+    frames: 0,
+    policy: :drop_nothing,
+    full: false,
+    waiters: :queue.new(),
+    timers: %{}
+  ]
 
   @doc "An empty backlog; `:infinity` bytes bounds it by entries alone."
   @spec new(pos_integer() | :infinity, pos_integer()) :: t()
   def new(max_bytes, max_frames), do: %__MODULE__{max_bytes: max_bytes, max_frames: max_frames}
+
+  @doc """
+  A sink's queue, admitting under `opts`: `:policy` (`:drop_nothing` by
+  default), `:block_ms`, the longest a waiter waits for room (nil: until there
+  is room), `:flag`, the worker's full flag (`flag/0`), and `:tag`, which names
+  this queue in its block timer's message, `{:block_timeout, tag, waiter}`.
+  """
+  @spec new(pos_integer() | :infinity, pos_integer(), keyword()) :: t()
+  def new(max_bytes, max_frames, opts), do: struct(new(max_bytes, max_frames), opts)
+
+  @doc """
+  A worker's full flag: up while any queue sharing it has a waiter or an entry
+  past its bound. Published as the registry value of the worker `name` names,
+  when it is registered, for `dispatch/2` to read.
+  """
+  @spec flag(GenServer.name() | nil) :: :atomics.atomics_ref()
+  def flag(name \\ nil) do
+    flag = :atomics.new(1, [])
+
+    with {:via, Registry, {registry, key}} <- name,
+         do: Registry.update_value(registry, key, fn _ -> flag end)
+
+    flag
+  end
 
   @doc "Whether one more entry of `size` bytes stays inside both bounds."
   @spec fits?(t(), non_neg_integer()) :: boolean()
@@ -65,7 +126,7 @@ defmodule Flezha.Process.Backlog do
   """
   @spec admit(t(), term(), non_neg_integer(), policy(), (term() -> boolean())) ::
           {:queued | :refused, t(), [term()]} | {:full, t()}
-  def admit(%__MODULE__{} = b, entry, size, policy, droppable? \\ fn _held -> true end) do
+  def admit(%__MODULE__{} = b, entry, size, policy, droppable? \\ &any/1) do
     cond do
       fits?(b, size) -> {:queued, push(b, entry, size), []}
       policy == :drop_nothing -> {:full, b}
@@ -73,6 +134,8 @@ defmodule Flezha.Process.Backlog do
       policy == :drop_oldest -> admit_dropping(b, entry, size, droppable?)
     end
   end
+
+  defp any(_held), do: true
 
   defp admit_dropping(b, entry, size, droppable?) do
     {b, dropped} = evict(b, size, droppable?, [])
@@ -159,7 +222,185 @@ defmodule Flezha.Process.Backlog do
     }
   end
 
-  @doc "The same bounds, holding nothing."
+  @doc "The same bounds, holding nothing; a sink's queue then admits its waiters (`room/1`)."
   @spec clear(t()) :: t()
-  def clear(%__MODULE__{} = b), do: %{b | queue: :queue.new(), bytes: 0, frames: 0}
+  def clear(%__MODULE__{} = b), do: room(%{b | queue: :queue.new(), bytes: 0, frames: 0})
+
+  ## The cast form
+
+  @doc """
+  The client half: hand `message` to the worker `server` names. While its full
+  flag is down `message` is cast; while it is up the dispatch waits in a call
+  with the same `message` until the worker admits it or lets it go. `:none`
+  when no worker is registered.
+  """
+  @spec dispatch(GenServer.server(), term()) :: :ok | :none
+  def dispatch({:via, Registry, {registry, key}}, message) do
+    case Registry.lookup(registry, key) do
+      # The flag is published once the worker's `init/1` runs; until then it is nil.
+      [{pid, flag}] ->
+        if flag != nil and :atomics.get(flag, 1) > 0,
+          do: wait(pid, message),
+          else: GenServer.cast(pid, message)
+
+      [] ->
+        :none
+    end
+  end
+
+  def dispatch(pid, message) when is_pid(pid), do: GenServer.cast(pid, message)
+
+  defp wait(pid, message) do
+    GenServer.call(pid, message, :infinity)
+  catch
+    # The worker stopped with the message waiting.
+    :exit, _gone -> :ok
+  end
+
+  @doc """
+  The server half, for one arrival: `entry`, of `size` bytes, from `waiter`.
+
+    * `{:queued, backlog, dropped}`: `entry` is in, and a dispatch waiter is
+      let go. `dropped` are the entries `:drop_oldest` took out, oldest first,
+      each one `droppable?` accepts.
+    * `{:refused, backlog, dropped}`: `entry` is not in (`:drop_newest`, or
+      `:drop_oldest` with nothing droppable left). A dispatch waiter is let go
+      and a synchronous caller answered `{:error, {:queue_full, :overflow}}`.
+    * `{:waiting, backlog, []}`: `:drop_nothing` and no room. A cast is
+      admitted past the bound instead (`:queued`). Either raises the flag.
+
+  What becomes of `dropped` and of a refused `entry` is the holder's.
+  """
+  @spec offer(t(), term(), non_neg_integer(), waiter(), (term() -> boolean())) ::
+          {:queued | :waiting | :refused, t(), [term()]}
+  def offer(%__MODULE__{} = b, entry, size, waiter, droppable? \\ &any/1) do
+    case admit(b, entry, size, b.policy, droppable?) do
+      {:queued, b, dropped} ->
+        release(waiter)
+        {:queued, b, dropped}
+
+      {:refused, b, dropped} ->
+        refuse(waiter)
+        {:refused, b, dropped}
+
+      {:full, b} when waiter == :cast ->
+        {:queued, b |> push(entry, size) |> mark(true), []}
+
+      {:full, b} ->
+        {:waiting, b |> hold(entry, size, waiter) |> mark(true), []}
+    end
+  end
+
+  defp hold(b, entry, size, waiter) do
+    b = %{b | waiters: :queue.in({waiter, entry, size}, b.waiters)}
+
+    if b.block_ms,
+      do: %{b | timers: Timer.arm(b.timers, waiter, b.block_ms, {:block_timeout, b.tag, waiter})},
+      else: b
+  end
+
+  @doc """
+  Entries were taken out: the waiters that fit now come in, oldest first, and
+  the flag comes down once none is left and there is room for one more.
+  """
+  @spec room(t()) :: t()
+  def room(%__MODULE__{full: false} = b), do: b
+
+  def room(b) do
+    case :queue.peek(b.waiters) do
+      {:value, {waiter, entry, size}} ->
+        if fits?(b, size) do
+          release(waiter)
+          rest = %{b | waiters: :queue.drop(b.waiters), timers: Timer.cancel(b.timers, waiter)}
+          room(push(rest, entry, size))
+        else
+          b
+        end
+
+      :empty ->
+        mark(b, not fits?(b, 0))
+    end
+  end
+
+  @doc """
+  `waiter`'s wait for room ran out (`{:block_timeout, tag, waiter}`). A
+  synchronous caller is answered `{:error, {:queue_full, :timeout}}`; a
+  dispatch waiter is let go and its entry is answered, overflowed.
+  """
+  @spec block_timeout(t(), waiter()) :: {t(), [term()]}
+  def block_timeout(%__MODULE__{} = b, waiter) do
+    b = %{b | timers: Timer.fired(b.timers, waiter)}
+
+    case Enum.split_with(:queue.to_list(b.waiters), &(elem(&1, 0) == waiter)) do
+      {[{{:wait, from}, entry, _size}], kept} ->
+        GenServer.reply(from, :ok)
+        {room(%{b | waiters: :queue.from_list(kept)}), [entry]}
+
+      {[{{:call, from}, _entry, _size}], kept} ->
+        GenServer.reply(from, {:error, {:queue_full, :timeout}})
+        {room(%{b | waiters: :queue.from_list(kept)}), []}
+
+      {[], _kept} ->
+        {b, []}
+    end
+  end
+
+  @doc "Every waiter let go, oldest first, with the entries they held; their timers cancelled."
+  @spec release_waiting(t()) :: {[term()], t()}
+  def release_waiting(%__MODULE__{} = b) do
+    waiting = :queue.to_list(b.waiters)
+    Enum.each(waiting, &release(elem(&1, 0)))
+    timers = Enum.reduce(waiting, b.timers, &Timer.cancel(&2, elem(&1, 0)))
+    {Enum.map(waiting, &elem(&1, 1)), room(%{b | waiters: :queue.new(), timers: timers})}
+  end
+
+  @doc "How many arrivals wait for room."
+  @spec waiting(t()) :: non_neg_integer()
+  def waiting(%__MODULE__{} = b), do: :queue.len(b.waiters)
+
+  defp release({:wait, from}), do: GenServer.reply(from, :ok)
+  defp release(_cast_or_call), do: :ok
+
+  defp refuse({:call, from}), do: GenServer.reply(from, {:error, {:queue_full, :overflow}})
+  defp refuse(waiter), do: release(waiter)
+
+  # The flag counts the queues sharing it that are full, so it is up while any is.
+  defp mark(%{full: up} = b, up), do: b
+  defp mark(%{flag: nil} = b, up), do: %{b | full: up}
+
+  defp mark(b, up) do
+    :atomics.add(b.flag, 1, if(up, do: 1, else: -1))
+    %{b | full: up}
+  end
+
+  ## The call form
+
+  @doc "Has the worker's buffer (`buffer_len`) reached `queue_max`?"
+  @spec saturated?(map()) :: boolean()
+  def saturated?(state), do: state.buffer_len >= state.queue_max
+
+  @doc """
+  Answer an enqueueing caller whose entry is buffered, or hold it in `waiters`
+  while the buffer is saturated: delay, never loss. The worker state carries
+  `:buffer_len`, `:queue_max` and `:waiters`.
+  """
+  @spec park_or_reply(map(), GenServer.from()) :: {:reply, :ok, map()} | {:noreply, map()}
+  def park_or_reply(state, from) do
+    if saturated?(state),
+      do: {:noreply, %{state | waiters: [from | state.waiters]}},
+      else: {:reply, :ok, state}
+  end
+
+  @doc "Answer every held caller once the buffer is back under `queue_max`."
+  @spec release_waiters(map()) :: map()
+  def release_waiters(%{waiters: []} = state), do: state
+
+  def release_waiters(state) do
+    if saturated?(state) do
+      state
+    else
+      Enum.each(state.waiters, &GenServer.reply(&1, :ok))
+      %{state | waiters: []}
+    end
+  end
 end

@@ -238,7 +238,7 @@ queued-but-undelivered payloads survive it.
 ## Implementation notes
 
 The worker is built from the seams every queue-holding provider shares:
-`WorkerSup` for supervision, `ProviderBehaviour.park_or_reply/2` /
+`WorkerSup` for supervision, `Flezha.Process.Backlog.park_or_reply/2` /
 `release_waiters/1` for the overflow policy, and the `:forward_deliver` row of
 `Flezha.Config.Backoff` for the ladder. Two rules are load-bearing for an output plugin of this
 shape: never deliver from the worker's own `handle_call`, and pick `restart` deliberately.
