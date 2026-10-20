@@ -562,6 +562,7 @@ dependencies = [
  "ring",
  "rustls",
  "rustls-pemfile",
+ "serde",
  "serde_json",
  "tempfile",
 ]

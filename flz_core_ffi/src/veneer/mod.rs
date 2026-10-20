@@ -18,7 +18,6 @@ use flz_core::schema;
 /// The core's notice seam, for a host that forwards notices itself.
 pub use flz_transport::notice;
 
-pub use crate::ResponseParts;
 use crate::{
     FlzContext, FLZ_EFFECT_KEPT, FLZ_EFFECT_RUN, FLZ_EFFECT_UNRECORDED, FLZ_OK,
     FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT, FLZ_SPAWN_PENDING,
@@ -651,32 +650,54 @@ pub fn knob(kind: &str, raw: &str) -> Result<Option<i64>, Refusal> {
     }
 }
 
-/// Decode a `Response` channel payload with the core's decoder, handing
-/// `read` the encoded [`ResponseParts`] before the buffer is freed: for a
-/// host that reads postcard on its own side. Context-free.
-pub fn response_bytes<T>(payload: &[u8], read: impl FnOnce(&[u8]) -> T) -> Result<T, Refusal> {
-    let (status, value) = with_buffer(
-        &[FLZ_OK],
-        |out, out_len| unsafe {
-            crate::flz_core_response_decode(payload.as_ptr(), payload.len(), out, out_len)
-        },
-        read,
-    );
-    match (status, value) {
-        (FLZ_OK, Some(value)) => Ok(value),
+/// A decoded `Response`: the answer's bytes, or the JSON error document the
+/// call ended in.
+#[derive(Debug)]
+pub struct ResponseParts<'a> {
+    pub target: &'a str,
+    pub created: bool,
+    pub request: &'a [u8],
+    pub result: Result<&'a [u8], &'a str>,
+}
+
+/// Decode a `Response` channel payload with the core's decoder into `out`,
+/// as [`crate::flz_core_response_decode`] lays it out. Context-free.
+pub fn response_into(
+    payload: &[u8],
+    out: &mut [u8],
+    parts: &mut [usize; 5],
+) -> Result<(), Refusal> {
+    let Some(out) = out.get_mut(..payload.len()) else {
+        return Err(Refusal::Shape(
+            "a Response buffer shorter than its payload".into(),
+        ));
+    };
+    let (bytes, len, out) = (payload.as_ptr(), payload.len(), out.as_mut_ptr());
+    match unsafe { crate::flz_core_response_decode(bytes, len, out, parts.as_mut_ptr()) } {
+        FLZ_OK => Ok(()),
         _ => Err(Refusal::Core(
             read_c_str(crate::flz_core_init_error()).unwrap_or_default(),
         )),
     }
 }
 
-/// [`response_bytes`] read into its borrowed [`ResponseParts`].
+/// [`response_into`] read into its [`ResponseParts`].
 pub fn response_decode<T>(
     payload: &[u8],
     read: impl FnOnce(ResponseParts<'_>) -> T,
 ) -> Result<T, Refusal> {
-    response_bytes(payload, |bytes| postcard::from_bytes(bytes).map(read))?
-        .map_err(|e| Refusal::Shape(format!("a decoded Response failed to read: {e}")))
+    let (mut out, mut p) = (vec![0; payload.len()], [0; 5]);
+    response_into(payload, &mut out, &mut p)?;
+    let text = |range| std::str::from_utf8(&out[range]).unwrap_or_default();
+    let result = p[0] + p[1]..p[0] + p[1] + p[2];
+    Ok(read(ResponseParts {
+        target: text(0..p[0]),
+        created: p[3] == 1,
+        request: &out[p[0]..p[0] + p[1]],
+        result: (p[4] == 1)
+            .then(|| &out[result.clone()])
+            .ok_or_else(|| text(result)),
+    }))
 }
 
 /// One core notice a host writes through its own log.

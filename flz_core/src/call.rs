@@ -4,6 +4,7 @@
 //! own codecs.
 
 use flz_transport::errors::FlezhaError;
+use serde_json::value::RawValue;
 
 /// One call's outcome with its request and answer still bytes.
 #[derive(Debug, Clone, PartialEq)]
@@ -15,33 +16,40 @@ pub struct Envelope {
 }
 
 #[derive(serde::Deserialize)]
-struct Wire {
+struct Wire<'a> {
     target: String,
     created: bool,
     request: String,
     #[serde(default)]
     value: Option<String>,
-    #[serde(default)]
-    error: Option<serde_json::Value>,
+    #[serde(default, borrow)]
+    error: Option<&'a RawValue>,
 }
 
 impl Envelope {
     /// Read one Response channel payload.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        Self::read(bytes).map(|(envelope, _)| envelope)
+    }
+
+    /// [`Envelope::decode`], with the error object's JSON text as `bytes`
+    /// carry it, when the call ended in an error.
+    pub fn read(bytes: &[u8]) -> Result<(Self, Option<&str>), String> {
         let wire: Wire =
             serde_json::from_slice(bytes).map_err(|e| format!("a Response envelope: {e}"))?;
         let result = match (wire.value, wire.error) {
-            (_, Some(error)) => Err(FlezhaError::from_value(&error)
+            (_, Some(error)) => Err(FlezhaError::from_object(error.get())
                 .ok_or("a Response error that is not an error document")?),
             (Some(value), None) => Ok(base64_decode(&value)?),
             (None, None) => return Err("a Response with neither a value nor an error".into()),
         };
-        Ok(Self {
+        let envelope = Self {
             request: base64_decode(&wire.request)?,
             result,
             target: wire.target,
             created: wire.created,
-        })
+        };
+        Ok((envelope, wire.error.map(RawValue::get)))
     }
 }
 

@@ -8,7 +8,7 @@
 
 use std::ffi::CString;
 
-use jni::objects::{JByteArray, JClass, JString, JThrowable, JValue};
+use jni::objects::{JByteArray, JClass, JIntArray, JString, JThrowable, JValue};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 
@@ -688,17 +688,27 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_errorDocument<'l>(
     string_or_throw(&mut env, document.map(Some).map_err(Refusal::Shape))
 }
 
-/// A `Response` channel payload as the core's decoder reads it: the postcard
-/// `ResponseParts` Java reads itself. Throws `call.malformed_response`.
+/// A `Response` channel payload as the core's decoder reads it: its target,
+/// request and result back to back, with `[target length, request length,
+/// result length, created, answered]` written into `parts`. Throws
+/// `call.malformed_response`.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_responseDecode<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass,
     payload: JByteArray,
+    parts: JIntArray,
 ) -> jbyteArray {
-    let parts = bytes_of(&mut env, "Response payload", &payload)
-        .and_then(|payload| veneer::response_bytes(&payload, <[u8]>::to_vec));
-    bytes_or_throw(&mut env, parts.map(Some))
+    let decoded = bytes_of(&mut env, "Response payload", &payload).and_then(|payload| {
+        let (mut out, mut decoded) = (vec![0; payload.len()], [0; 5]);
+        veneer::response_into(&payload, &mut out, &mut decoded)?;
+        let unwritable = |e| Refusal::Shape(format!("Response parts unwritable: {e}"));
+        env.set_int_array_region(&parts, 0, &decoded.map(|part| part as jint))
+            .map_err(unwritable)?;
+        out.truncate(decoded[..3].iter().sum());
+        Ok(Some(out))
+    });
+    bytes_or_throw(&mut env, decoded)
 }
 
 /// Wake every blocked poller and stop the runner loop.

@@ -15,7 +15,7 @@ signal-hook.workspace = true
 tracing.workspace = true
 crc32fast.workspace = true
 dashmap.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 crossbeam.workspace = true
 crossbeam-deque.workspace = true
 thiserror.workspace = true

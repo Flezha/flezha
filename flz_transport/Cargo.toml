@@ -26,7 +26,8 @@ bytes.workspace = true
 ring = "0.17"
 rustls.workspace = true
 rustls-pemfile.workspace = true
-# The error catalogue, `errors.json`, read once per process.
+# The error catalogue, `errors.json`, and error documents, read typed.
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

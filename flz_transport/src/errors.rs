@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::mem::take;
 use std::sync::OnceLock;
 
 use serde_json::{Map, Value};
@@ -158,6 +159,22 @@ pub struct FlezhaError {
     pub hint: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct Document {
+    error: Object,
+}
+
+/// An error object read typed: a `Value` tree first costs more than the rest
+/// of a call's answer.
+#[derive(serde::Deserialize)]
+struct Object {
+    code: String,
+    class: String,
+    message: String,
+    details: Option<Value>,
+    hint: Option<Value>,
+}
+
 /// The error model's fields on every error type a caller can receive: the
 /// catalogue `code` a program branches on, its `class`, the `details` its
 /// message names, and the `hint` naming the next command, when there is one.
@@ -236,25 +253,27 @@ impl FlezhaError {
     /// The error a JSON error document carries, as the controller and the core
     /// render it. `None` when `document` is not one.
     pub fn from_document(document: &str) -> Option<Self> {
-        let root: Value = serde_json::from_str(document).ok()?;
-        FlezhaError::from_value(root.get("error")?)
+        Self::read(serde_json::from_str::<Document>(document).ok()?.error)
     }
 
-    /// The error one `{code, class, message, details, hint}` object carries.
-    pub fn from_value(error: &Value) -> Option<Self> {
+    /// The error one `{code, class, message, details, hint}` JSON object
+    /// carries. `None` when `object` is not one.
+    pub fn from_object(object: &str) -> Option<Self> {
+        Self::read(serde_json::from_str(object).ok()?)
+    }
+
+    fn read(object: Object) -> Option<Self> {
+        let details = object
+            .details
+            .and_then(|mut details| details.as_object_mut().map(take));
         Some(FlezhaError {
-            code: error.get("code")?.as_str()?.to_string(),
-            class: Class::parse(error.get("class")?.as_str()?)?,
-            message: error.get("message")?.as_str()?.to_string(),
-            details: error
-                .get("details")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default(),
-            hint: error
-                .get("hint")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            code: object.code,
+            class: Class::parse(&object.class)?,
+            message: object.message,
+            details: details.unwrap_or_default(),
+            hint: object
+                .hint
+                .and_then(|hint| hint.as_str().map(str::to_owned)),
         })
     }
 
