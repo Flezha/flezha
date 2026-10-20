@@ -313,10 +313,11 @@ defmodule Flezha.Relay.Calls.Inbound do
 
   defp sent_as(_metadata), do: nil
 
-  # Who waits on `token`: an outside caller's process, or, for a relay's call, the caller its token names, with a row or
-  # without one (a callee restarted since it took the call has none, and an
-  # answer sent again as `sent_as` finds its own) until the call's deadline,
-  # when the caller has answered itself `call.timeout`; else why nobody does.
+  # Who waits on `token`: an outside caller's process, or, for a relay's call,
+  # the caller its token names, with a row or without one (a callee restarted
+  # since it took the call has none, and an answer sent again as `sent_as` finds
+  # its own) until the call's deadline, when the caller has answered itself
+  # `call.timeout`; else why nobody does.
   defp waiting(calls, token, sent_as \\ nil) do
     now = System.system_time(:millisecond)
 
@@ -698,7 +699,7 @@ defmodule Flezha.Relay.Calls.Inbound do
       @source => "relay",
       "flz.call_caller" => call.caller,
       @answer_channel => Map.get(call, :answer_channel),
-      "flz.call_deadline_ms" => max(call.deadline_at - System.system_time(:millisecond), 0)
+      "flz.call_deadline_ms" => left_ms(call.deadline_at)
     }
 
   # How the call `token` names ended, to its listeners: `answer` for an
