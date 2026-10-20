@@ -7,8 +7,8 @@ use std::sync::Arc;
 use super::compensation::{node_completion, unwind_steps, CellRun, RecordSpan};
 use super::effects::{Frame, MessagePark};
 use super::instance::{
-    AfterUndo, Attempt, BarrierFor, Carry, CellPos, Deadline, Failure, Firing, FiringKey, Message,
-    Pass, PassOrigin, Phase, Release, Stage, StageState, Trigger,
+    AfterUndo, Attempt, BarrierFor, Carry, CellPos, Failure, Firing, FiringKey, Message, Pass,
+    PassOrigin, Phase, Release, Stage, StageState, Trigger,
 };
 use super::resume::Seed;
 use super::run::{Decide, Source};
@@ -16,6 +16,7 @@ use super::StepsError;
 use crate::cell::CellSlot;
 use crate::channel::ChannelId;
 use crate::relay::sleep::OWED_INBOX_WAIT;
+use crate::relay::Deadline;
 use crate::state_sink::COMPENSATION_INTENT_PAYLOAD_ID;
 use crate::timer::TimerKind;
 

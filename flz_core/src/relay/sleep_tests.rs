@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use crossbeam::channel::{unbounded, Receiver};
 
 use crate::relay::instance::RelayInstance;
+use crate::relay::Deadline;
 use crate::runner::{RunnerMessage, RunnerNode};
-use crate::steps::Deadline;
 use crate::ErrorModel;
 
 const WINDOW_MS: u64 = 150;

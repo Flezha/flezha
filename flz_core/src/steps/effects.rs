@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::commit::{ack_timeout, iteration_frame, task_frame};
 use super::compensation::CellRun;
 use super::events::{barrier_acked, crossed, items_dropped, undo_answered};
-use super::instance::{Deadline, Failure, FiringKey, HeldArm, Release, Value};
+use super::instance::{Failure, FiringKey, HeldArm, Release, Value};
 use super::run::{Run, Source, ADMIT_RETRY, UNDO_GATE_RETRY};
 use super::StepsError;
 use crate::cell::{CellItem, CellSlot};
@@ -15,6 +15,7 @@ use crate::channel::{ChannelId, OverflowPolicy};
 use crate::host::HostPayload;
 use crate::pb::command_request::Command;
 use crate::relay::sleep::iter_park;
+use crate::relay::Deadline;
 use crate::timer::TimerOp;
 
 // ---- effects, after the lock --------------------------------------------------

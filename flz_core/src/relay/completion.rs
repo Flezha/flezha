@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::cell::CellSlot;
 use crate::relay::instance::RelayInstance;
-use crate::steps::Deadline;
+use crate::relay::Deadline;
 use crate::util::LockRecover;
 
 /// How long a completing instance waits before it looks at its Cells again.

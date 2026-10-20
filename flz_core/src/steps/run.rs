@@ -14,8 +14,8 @@ use flz_transport::transport::FlezhaStream;
 use super::commit::ack_timeout;
 use super::effects::{Effects, Frame};
 use super::instance::{
-    AfterUndo, Barrier, BarrierFor, Carry, CellPos, Deadline, Firing, Message, MidResume,
-    PassOrigin, PassSheet, Phase, Release, StepsRun, Value,
+    AfterUndo, Barrier, BarrierFor, Carry, CellPos, Firing, Message, MidResume, PassOrigin,
+    PassSheet, Phase, Release, StepsRun, Value,
 };
 use super::resume::{resumed_seed, seed_from_journal, Seed};
 use super::spec::{Chain, StepsSpec};
@@ -25,6 +25,7 @@ use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
 use crate::host::{Crossed, HostPayload};
 use crate::relay::instance::RelayInstance;
 use crate::relay::topology::{CellMode, TaskletDescriptor};
+use crate::relay::Deadline;
 use crate::routing::{Destination, Entering, Routed};
 
 /// How long a message's item waits before a full mailbox is tried again.

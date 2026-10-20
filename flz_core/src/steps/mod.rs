@@ -30,7 +30,7 @@ pub(crate) use events::{
     committed_firings, crossed, deadline_due, firing_assembled, firing_promoted, firings_joined,
     held_removals, hold_arm, hold_removal, items_dropped, message, pass_dead, reap_holds,
 };
-pub use instance::{Deadline, Resume, StepsRun};
+pub use instance::{Resume, StepsRun};
 pub use run::unwired_stream;
 
 pub use crate::relay::settings::{Each, OnFailure};

@@ -7,7 +7,7 @@ use std::sync::{Arc, Weak};
 use flz_transport::transport::FlezhaStream;
 
 use super::compensation::{plan_compensation, RecordSpan};
-use super::instance::{CellPos, Deadline, Failure, Firing, Pass, Phase, Value};
+use super::instance::{CellPos, Failure, Firing, Pass, Phase, Value};
 use super::run::{Run, RESTORE_GATE};
 use super::StepsError;
 use crate::cell::CellSlot;
@@ -16,6 +16,7 @@ use crate::flusher::FlushableBuffer;
 use crate::header::HeaderTemplate;
 use crate::host::Crossed;
 use crate::relay::instance::RelayInstance;
+use crate::relay::Deadline;
 use crate::routing::Entering;
 use crate::timer::{TimerFire, TimerKind, TimerOp};
 

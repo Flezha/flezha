@@ -11,14 +11,15 @@ use flz_transport::transport::FlezhaStream;
 
 use super::compensation::{rewind_steps, stages_from_intents, CellRun, StageRecord};
 use super::instance::{
-    AfterUndo, CommittedTask, Completion, Deadline, JournalResume, MidResume, PassOrigin, Phase,
-    Release, Value,
+    AfterUndo, CommittedTask, Completion, JournalResume, MidResume, PassOrigin, Phase, Release,
+    Value,
 };
 use super::run::{unwired_stream, Decide, Run, Source};
 use super::spec::Chain;
 use super::StepsError;
 use crate::channel::{ChannelId, ChannelKind};
 use crate::relay::topology::RelayTopology;
+use crate::relay::Deadline;
 
 /// The chain a carry-fed pass re-enters: the one the loop's first message
 /// picked, from the journaled entry channel.

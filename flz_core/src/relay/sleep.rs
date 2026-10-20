@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::relay::instance::RelayInstance;
 use crate::relay::settings::DEFAULT_SLEEP_AFTER;
-use crate::steps::Deadline;
+use crate::relay::Deadline;
 use crate::util::LockRecover;
 
 /// How long a rehydrated instance waits for the owed input tail before it

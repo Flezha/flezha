@@ -14,6 +14,7 @@ use flz_transport::transport::FlezhaStream;
 
 use super::PollCore;
 use crate::cell::{CellItem, CellSlot};
+use crate::relay::Deadline;
 use crate::timer::{TimerFire, TimerKind};
 use crate::util::LockRecover;
 
@@ -42,7 +43,7 @@ pub(super) enum WakeTiebreak {
     Interval(Arc<Vec<u8>>),
     /// One deadline of one instance, by its seq: re-arming it replaces the
     /// entry.
-    Instance(u64, crate::steps::Deadline),
+    Instance(u64, Deadline),
 }
 
 pub(super) enum Wake {
@@ -66,7 +67,7 @@ pub(super) enum Wake {
     /// deadlines die with it.
     Instance {
         instance: Weak<crate::relay::instance::RelayInstance>,
-        deadline: crate::steps::Deadline,
+        deadline: Deadline,
     },
 }
 
@@ -324,7 +325,7 @@ impl PollCore {
         &self,
         instance: Weak<crate::relay::instance::RelayInstance>,
         seq: u64,
-        deadline: crate::steps::Deadline,
+        deadline: Deadline,
         due_at_ms: u64,
     ) {
         self.wakes.record(
@@ -338,7 +339,7 @@ impl PollCore {
     }
 
     /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.
-    pub fn disarm_instance(&self, seq: u64, deadline: crate::steps::Deadline, due_at_ms: u64) {
+    pub fn disarm_instance(&self, seq: u64, deadline: Deadline, due_at_ms: u64) {
         self.wakes.remove(&WakeKey {
             due_at_ms,
             tiebreak: WakeTiebreak::Instance(seq, deadline),
@@ -348,7 +349,7 @@ impl PollCore {
     /// The deadlines armed for the instance numbered `seq`, with their due
     /// times.
     #[cfg(test)]
-    pub(crate) fn instance_deadlines(&self, seq: u64) -> Vec<(crate::steps::Deadline, u64)> {
+    pub(crate) fn instance_deadlines(&self, seq: u64) -> Vec<(Deadline, u64)> {
         self.wakes
             .entries
             .lock_recover()
