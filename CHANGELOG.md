@@ -10,6 +10,14 @@
   `control.unknown_function`, and an internal failure reaches the console as its code, the
   reason in the controller's log.
 
+### Changed: one payload encoding for a runner send
+
+- A runner's `send` through the controller carries its bytes as base64, as a call already does,
+  so a byte string from Ruby, PHP or Elixir that is not UTF-8 reaches the relay unchanged; it
+  was refused with `runtime.argument_not_utf8`. No SDK's `send` signature changes.
+- `Relay.send` takes `payload` (`text`, the default, or `base64`) in its options; any other word
+  is refused with `usage.unknown_word`.
+
 ### Changed: one operation per concept; only called operations in the catalogue
 
 - **BREAKING:** `Flezha.Service.Relay.list_relays/2` and `Flezha.Service.PluginManager.list/1`

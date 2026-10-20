@@ -76,7 +76,8 @@ pub fn call(verb: &str, args: &str) -> Result<String, AdminError> {
 
 /// Send `message` to the entry channel `channel` of `relay`, answering as
 /// JSON. Through the controller's `Relay.send` by default, answering its
-/// verdict; `msg_id` and `key` ride as its named fields. With `local`, in
+/// verdict; the bytes ride as base64, so they need not be text, and `msg_id`
+/// and `key` as its named fields. With `local`, in
 /// process to a relay bound on this runner
 /// ([`crate::runner::BoundRelays::send`]), answering `null`; an id or a key
 /// beside it is refused before anything is sent, since only the controller
@@ -102,9 +103,6 @@ pub fn send(
             .map_err(|e| AdminError::Refused(e.to_error()))?;
         return Ok("null".to_string());
     }
-    let message = std::str::from_utf8(message).map_err(|_| {
-        AdminError::Refused(Code::ArgumentNotUtf8.with([("argument", "message".into())]))
-    })?;
     call("Relay.send", &send_args(relay, message, channel, &given))
 }
 
@@ -129,18 +127,15 @@ fn call_channel_args(relay: &str, channel: &str, payload: &[u8]) -> String {
     .to_string()
 }
 
-/// `Relay.send`'s arguments: the named fields ride only when one is given,
-/// so a send without them is the request it always was.
-fn send_args(relay: &str, message: &str, channel: &str, given: &[(&str, Option<&str>)]) -> String {
-    let mut args = vec![json!(relay), json!(message), json!(channel)];
-    let fields: Map<String, Value> = given
+/// `Relay.send`'s arguments: the payload as base64, and each named field
+/// that is given.
+fn send_args(relay: &str, message: &[u8], channel: &str, given: &[(&str, Option<&str>)]) -> String {
+    let mut fields: Map<String, Value> = given
         .iter()
         .filter_map(|(name, value)| value.map(|v| (name.to_string(), json!(v))))
         .collect();
-    if !fields.is_empty() {
-        args.push(Value::Object(fields));
-    }
-    Value::Array(args).to_string()
+    fields.insert("payload".to_string(), json!("base64"));
+    json!([relay, crate::call::base64_encode(message), channel, fields]).to_string()
 }
 
 #[cfg(test)]
@@ -156,19 +151,24 @@ mod tests {
     }
 
     #[test]
-    fn a_send_names_its_fields_only_when_given() {
+    fn a_send_carries_its_bytes_as_base64_and_names_its_fields_only_when_given() {
         assert_eq!(
-            send_args("orders", "x", "in", &[("msg_id", None), ("key", None)]),
-            r#"["orders","x","in"]"#
+            send_args(
+                "orders",
+                b"\xff\x00\x7f",
+                "in",
+                &[("msg_id", None), ("key", None)]
+            ),
+            r#"["orders","/wB/","in",{"payload":"base64"}]"#
         );
         assert_eq!(
             send_args(
                 "orders",
-                "x",
+                b"x",
                 "in",
                 &[("msg_id", Some("o/0/41")), ("key", Some("EURUSD"))]
             ),
-            r#"["orders","x","in",{"key":"EURUSD","msg_id":"o/0/41"}]"#
+            r#"["orders","eA==","in",{"key":"EURUSD","msg_id":"o/0/41","payload":"base64"}]"#
         );
     }
 

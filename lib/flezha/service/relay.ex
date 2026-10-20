@@ -351,7 +351,9 @@ defmodule Flezha.Service.Relay do
   message's id, stamped as `flz.msg_id` so a relay whose input log still holds
   that id absorbs the repeat. The answer names the relay that took it and the
   relay's own verdict: `:delivered`, `:absorbed` for a duplicate, or
-  `:suspended` for one journaled until the instance wakes.
+  `:suspended` for one journaled until the instance wakes. `opts[:payload]`
+  is `"text"` (the default), `message` as it is, or `"base64"`, `message` as
+  the base64 of its bytes, which need not be text.
   """
   @spec send(String.t(), String.t(), binary(), String.t(), keyword(), caller_context()) ::
           {:ok, map()} | {:error, term()}
@@ -365,11 +367,27 @@ defmodule Flezha.Service.Relay do
       opts: [
         type: :keyword,
         default: [],
-        doc: "`key`, for a partition group, and `msg_id`, the message's id."
+        doc:
+          "`key`, for a partition group, `msg_id`, the message's id, and `payload` (`text` or `base64`)."
       ]
     ] do
-    send_input(Namespace.or_default(namespace), relay_id, message, channel, opts)
+    with {:ok, message} <- sent_payload(message, opts[:payload], channel),
+         do: send_input(Namespace.or_default(namespace), relay_id, message, channel, opts)
   end
+
+  defp sent_payload(message, payload, _channel) when payload in [nil, "text"], do: {:ok, message}
+
+  defp sent_payload(message, "base64", channel),
+    do: RelayApi.encode(%{channel: channel, codec: "bytes"}, message, "base64")
+
+  defp sent_payload(_message, payload, _channel),
+    do:
+      {:error,
+       Flezha.Error.new("usage.unknown_word",
+         noun: "payload",
+         value: payload,
+         allowed: ["text", "base64"]
+       )}
 
   defp send_input(namespace, relay_id, message, channel, opts) do
     with {:ok, metadata} <-

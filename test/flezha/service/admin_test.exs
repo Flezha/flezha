@@ -331,6 +331,16 @@ defmodule Flezha.Service.AdminTest do
 
       refute code == "internal.uncatalogued"
     end
+
+    # Fails when: a send's payload word outside text and base64 is taken as
+    # text, or a base64 payload is sent undecoded.
+    test "a send's payload is text or base64, and base64 is decoded" do
+      assert {:error, %Flezha.Error{code: "usage.unknown_word"}} =
+               door("Relay.send", ~s(["o1", "m", "in", {"payload": "hex"}]))
+
+      assert {:error, %Flezha.Error{code: "api.input_invalid"}} =
+               door("Relay.send", ~s(["o1", "not base64!", "in", {"payload": "base64"}]))
+    end
   end
 
   describe "an internal failure" do

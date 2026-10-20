@@ -243,7 +243,9 @@ skips the controller for input you can afford to lose.
 ### Send through the controller
 
 A send names the relay, the message and the entry channel, and blocks for the
-answer: the relay that took the message and its verdict.
+answer: the relay that took the message and its verdict. The message reaches
+the relay byte for byte; a byte string from Ruby, PHP or Elixir need not be
+UTF-8.
 
 | Verdict | Means |
 | --- | --- |
