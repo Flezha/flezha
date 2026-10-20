@@ -10,7 +10,6 @@ defmodule Flezha.ChildSpecTest do
   # Each worker and the one supervision option it declares. A wrong option, or
   # one lost in a later edit, is red on the next run.
   @workers [
-    {Flezha.AuthZ.SourceRegistration, %{restart: :transient}},
     {Flezha.AuthZ.Bootstrap.OnBoot, %{restart: :transient}},
     {Flezha.Shutdown.SignalHandler, %{shutdown: 5_000}},
     {Flezha.Shutdown.Coordinator, %{shutdown: 30_000}},

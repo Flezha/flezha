@@ -27,7 +27,7 @@ defmodule Flezha.AuthZ.Verbs do
   """
 
   alias Flezha.AuthZ.Action
-  alias Flezha.Observability.{SignalWords, Source}
+  alias Flezha.Observability.SignalWords
 
   @public [action: :public]
 
@@ -465,15 +465,17 @@ defmodule Flezha.AuthZ.Verbs do
     action |> Atom.to_string() |> String.split(".") |> List.last() |> String.to_atom()
   end
 
-  @doc "The records the rows auditing to `source` write, as signal declarations."
-  @spec audit_signals(atom()) :: [map()]
+  @doc """
+  The records the rows auditing to `source` write, declared as
+  `use Flezha.Observability.Source` takes its `signals:`.
+  """
+  @spec audit_signals(atom()) :: keyword()
   def audit_signals(source) do
     for(
       %{audit: {_order, ^source}} = row <- all(),
       do: {record_name(row), audit_words(row)}
     )
     |> Enum.uniq_by(&elem(&1, 0))
-    |> Source.signals()
   end
 
   defp audit_words(row) do

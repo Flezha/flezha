@@ -213,6 +213,16 @@ A failed read is tried again after `interval_ms`; the connection reconnects by i
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_postgres_poll -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_postgres_poll` | `caught_up` | event |  | The poll reached the newest row in the table. |
+| `flezha_postgres_poll` | `failed` | event |  | Reading the table failed. |
+| `flezha_postgres_poll` | `shipped` | metric | `flezha_postgres_poll_shipped` | New rows read from the table were handed to the relay. |
+<!-- bridge-signals:end -->
+
 | Event | Measurements | Metadata |
 | --- | --- | --- |
 | `[:flezha, :plugin, :postgres_poll, :shipped]` | `count` (rows taken in one batch) | `plugin_id`, `table`, `channel` |
@@ -220,7 +230,7 @@ A failed read is tried again after `interval_ms`; the connection reconnects by i
 | `[:flezha, :plugin, :postgres_poll, :caught_up]` | `count` (1) | `plugin_id`, `table`, `channel` |
 
 `caught_up` is emitted once each time the reader reaches the end of the table after reading
-full batches. `shipped` is bridged to the observability bus as the metric `injected` under the
+full batches. `shipped` is bridged to the observability bus as the metric `shipped` under the
 source `:flezha_postgres_poll`; the other two are events. No lag is measured: a count per read
 would cost more than the read.
 

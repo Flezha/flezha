@@ -456,6 +456,24 @@ flz plugin enable writer relay_file_output \
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_file_source -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_file_source` | `failed` | event |  | Reading the file failed. |
+| `flezha_file_source` | `shipped` | metric | `flezha_file_source_shipped` | A line read from the file was handed to the relay. |
+| `flezha_file_source` | `truncated` | event |  | The file was cut short or replaced, so it is read again from the start. |
+<!-- bridge-signals:end -->
+
+<!-- bridge-signals:begin flezha_file_sink -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_file_sink` | `failed` | event |  | Writing to the file failed; it will be tried again. |
+| `flezha_file_sink` | `refused` | event |  | A record was refused because it cannot be written as one line. |
+| `flezha_file_sink` | `shipped` | metric | `flezha_file_sink_shipped` | Records were written to the file. |
+<!-- bridge-signals:end -->
+
 | Event | Measurements | Metadata |
 | --- | --- | --- |
 | `[:flezha, :plugin, :file_source, :shipped]` | `bytes`, `offset` | `plugin_id`, `path`, `channel` |
@@ -465,9 +483,9 @@ flz plugin enable writer relay_file_output \
 | `[:flezha, :plugin, :file_sink, :refused]` | `bytes` | `plugin_id`, `path`, `reason` (a record holding a newline, parked in the dead-letter store) |
 | `[:flezha, :plugin, :file_sink, :failed]` | `consecutive_failures` | `plugin_id`, `path`, `reason` |
 
-The source's `shipped` is bridged to the observability bus as the metric `injected`
-under source `:flezha_file_source`, and the output plugin's as `flushed` under
-`:flezha_file_sink`; the rest are events, because a `reason` is read one at a time.
+The source's `shipped` is bridged to the observability bus as the metric `shipped`
+under source `:flezha_file_source`, and the output plugin's under `:flezha_file_sink`; the
+rest are events, because a `reason` is read one at a time.
 
 ## Limits
 

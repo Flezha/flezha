@@ -22,12 +22,11 @@ defmodule Flezha.Observability.AuditLog.Writer do
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Observability.AuditLog.Codec, as: AuditCodec
   alias Flezha.Observability.AuditLog.Reader
-  alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Observability.AuditLog
   alias Flezha.Observability.AuditLog.Index
   alias Flezha.SDK.SafeCall
 
   @active_filename "audit-current.jsonl"
-  @audit_source :audit_log
 
   @type state :: %{
           dir: String.t(),
@@ -482,14 +481,10 @@ defmodule Flezha.Observability.AuditLog.Writer do
   end
 
   defp emit_rotated_event(info) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @audit_source,
-        name: :audit_rotated,
-        measurements: %{size_bytes: info.size_bytes, record_count: info.record_count},
-        metadata: %{rotated_to: info.rotated_to, sha256: info.sha256}
-      })
+    AuditLog.Supervisor.emit(
+      :audit_rotated,
+      %{size_bytes: info.size_bytes, record_count: info.record_count},
+      %{rotated_to: info.rotated_to, sha256: info.sha256}
     )
   end
 

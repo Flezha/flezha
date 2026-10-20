@@ -16,7 +16,7 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
 
   use GenServer
 
-  alias Flezha.Observability.Bus
+  alias Flezha.Observability.Export
   alias Flezha.Observability.Registry, as: ObsRegistry
   alias Flezha.Observability.Signal
 
@@ -329,15 +329,10 @@ defmodule Flezha.Observability.Export.PrometheusRegistry do
   end
 
   defp emit_truncation_event(source, name) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: :observability_export,
-        name: :prometheus_label_truncated,
-        measurements: %{count: 1},
-        metadata: %{source: source, metric: name}
-      })
-    )
+    Export.Source.emit(:prometheus_label_truncated, %{count: 1}, %{
+      source: source,
+      metric: name
+    })
   end
 
   defp write_metric(:counter, source, name, labels, meas) do

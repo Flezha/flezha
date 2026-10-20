@@ -799,7 +799,7 @@ defmodule Flezha.Observability.AuditLogTest do
 
     _ =
       Flezha.Observability.Registry.register_source(
-        Flezha.Observability.AuditLog.Supervisor.registration()
+        Flezha.Observability.AuditLog.Supervisor.__source__()
       )
 
     children = [Writer, Rotation, Retention, Sink]

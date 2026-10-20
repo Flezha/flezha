@@ -125,6 +125,17 @@ new copy both run for a moment, so an event can be sent twice. The DLQ and
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_hook_webhook -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_hook_webhook` | `failed` | event |  | A webhook request failed too often and was given up. |
+| `flezha_hook_webhook` | `overflowed` | metric | `flezha_hook_webhook_overflowed` | The webhook queue was full, so requests were dropped. |
+| `flezha_hook_webhook` | `retried` | metric | `flezha_hook_webhook_retried` | A webhook request failed and will be tried again. |
+| `flezha_hook_webhook` | `shipped` | metric | `flezha_hook_webhook_shipped` | A webhook request was sent. |
+<!-- bridge-signals:end -->
+
 | Event | Source | Measurements | Metadata |
 | --- | --- | --- | --- |
 | `[:flezha, :plugin, :hook_webhook, :shipped]` | `:flezha_hook_webhook` metric `shipped` | `count` | `plugin` |

@@ -308,6 +308,7 @@ defmodule Flezha.MixProject do
         "docs/public/topics/deploying/connecting_a_runner.md",
         "docs/public/topics/deploying/clustering.md",
         "docs/public/topics/deploying/kubernetes.md",
+        "docs/public/topics/deploying/telemetry_and_metrics.md",
         "docs/public/architecture/overview.md",
         "docs/public/architecture/kernel.md",
         "docs/public/architecture/flow_profile.md",

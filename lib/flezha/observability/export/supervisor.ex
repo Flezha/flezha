@@ -8,8 +8,8 @@ defmodule Flezha.Observability.Export.Supervisor do
   each exporter has its own enable flag and both off means zero
   children.
 
-  Also registers the declarative `:observability_export` source, so the
-  exporters' own operational events ride the bus like any other.
+  The exporters' own operational events ride the bus like any other, on the
+  `:observability_export` source `Flezha.Observability.Export.Source` declares.
   """
 
   use Supervisor
@@ -24,19 +24,12 @@ defmodule Flezha.Observability.Export.Supervisor do
     PrometheusSink
   }
 
-  alias Flezha.Observability.Registry, as: ObsRegistry
-  alias Flezha.Observability.Source
-
-  @export_source :observability_export
-
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
   @impl true
   def init(_opts) do
-    register_export_source()
-
     children =
       List.flatten([
         if(prometheus_enabled?(), do: prometheus_children(), else: []),
@@ -44,41 +37,6 @@ defmodule Flezha.Observability.Export.Supervisor do
       ])
 
     Supervisor.init(children, strategy: :one_for_one)
-  end
-
-  defp register_export_source(), do: ObsRegistry.register_source(registration())
-
-  @doc "The export source's registration."
-  @spec registration() :: map()
-  def registration() do
-    %{
-      name: @export_source,
-      kinds: [:event],
-      flavour: :declarative,
-      cardinality_budget: 200,
-      area: :controller,
-      title: "Metric export",
-      description: "Signals handed to Prometheus and to an OTLP collector.",
-      signals:
-        Source.signals(
-          prometheus_scrape:
-            {:event, label: "Scraped", meaning: "Prometheus collected the current metrics."},
-          prometheus_label_truncated:
-            {:event,
-             label: "Label cut short",
-             outcome: :failure,
-             meaning: "A label value was too long for Prometheus, so it was cut short."},
-          otlp_batch_flushed:
-            {:event,
-             label: "Batch sent", meaning: "A batch of signals was sent to the OTLP collector."},
-          otlp_batch_dropped:
-            {:event,
-             label: "Batch dropped",
-             outcome: :failure,
-             meaning:
-               "A batch of signals could not be sent to the OTLP collector and was dropped."}
-        )
-    }
   end
 
   defp prometheus_children() do
@@ -103,8 +61,4 @@ defmodule Flezha.Observability.Export.Supervisor do
   defp otlp_enabled?() do
     Config.get(:otlp_enabled)
   end
-
-  @doc false
-  @spec export_source() :: atom()
-  def export_source(), do: @export_source
 end

@@ -200,6 +200,17 @@ restart of either end.
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_relay_forward -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_relay_forward` | `queue_depth` | metric | `flezha_relay_forward_queue_depth` | How many messages are waiting to be forwarded. |
+| `flezha_relay_forward` | `retried` | metric | `flezha_relay_forward_retried` | A forward failed and will be tried again. |
+| `flezha_relay_forward` | `saturated` | event |  | The forward queue was full and turned messages away. |
+| `flezha_relay_forward` | `shipped` | metric | `flezha_relay_forward_shipped` | Messages were handed to the next relay. |
+<!-- bridge-signals:end -->
+
 | Event | Measurements | Metadata |
 |---|---|---|
 | `[:flezha, :plugin, :relay_forward, :shipped]` | `%{count: 1}` | `+ :outcome` (`:delivered`, `:absorbed`, `:suspended`) |

@@ -47,9 +47,7 @@ defmodule Flezha.AuthZ do
 
   alias Flezha.AuthZ.Action
   alias Flezha.AuthZ.{AuthState, Config, Namespace, Policy, Principal, RoleStore, Scope}
-  alias Flezha.Observability.{Bus, Signal}
-
-  @source :platform_authz
+  alias Flezha.AuthZ.SourceRegistration
 
   @type caller_context :: %{
           required(:source) => :cli | :ui | :sdk | :http | :mcp | :internal,
@@ -297,17 +295,10 @@ defmodule Flezha.AuthZ do
   defp recorded(decision, _action), do: decision
 
   defp emit_denial(refusal, action, record) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @source,
-        name: :authorization_denied,
-        metadata:
-          Map.merge(record, %{
-            reason: Flezha.Error.from_reason(refusal, action).code,
-            action: action
-          })
-      })
+    SourceRegistration.emit(
+      :authorization_denied,
+      %{},
+      Map.merge(record, %{reason: Flezha.Error.from_reason(refusal, action).code, action: action})
     )
   rescue
     _ -> :ok

@@ -35,11 +35,10 @@ defmodule Flezha.AuthZ.TokenStore do
 
   require Logger
 
-  alias Flezha.AuthZ.{Namespace, Replica, Role}
+  alias Flezha.AuthZ.{Namespace, Replica, Role, SourceRegistration}
   alias Flezha.Config.Durations
   alias Flezha.DetsStore
   alias Flezha.Identificator
-  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Runner.FleetManager
 
   @table :flz_authz_tokens
@@ -408,22 +407,15 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   defp emit_issued(entry) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: :platform_authz,
-        name: :token_issued,
-        metadata: %{
-          principal: entry.principal,
-          namespace: entry.namespace,
-          role: entry.role,
-          created_by_principal: entry.created_by_principal,
-          token_hash_prefix: String.slice(entry.token_hash, 0, 12),
-          expires_at: entry.expires_at,
-          label: entry.label
-        }
-      })
-    )
+    SourceRegistration.emit(:token_issued, %{}, %{
+      principal: entry.principal,
+      namespace: entry.namespace,
+      role: entry.role,
+      created_by_principal: entry.created_by_principal,
+      token_hash_prefix: String.slice(entry.token_hash, 0, 12),
+      expires_at: entry.expires_at,
+      label: entry.label
+    })
 
     :ok
   rescue
@@ -431,21 +423,14 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   defp emit_expiring(entry) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: :platform_authz,
-        name: :token_expiring,
-        metadata: %{
-          principal: entry.principal,
-          namespace: entry.namespace,
-          role: entry.role,
-          token_hash_prefix: String.slice(entry.token_hash, 0, 12),
-          expires_at: entry.expires_at,
-          label: entry.label
-        }
-      })
-    )
+    SourceRegistration.emit(:token_expiring, %{}, %{
+      principal: entry.principal,
+      namespace: entry.namespace,
+      role: entry.role,
+      token_hash_prefix: String.slice(entry.token_hash, 0, 12),
+      expires_at: entry.expires_at,
+      label: entry.label
+    })
 
     :ok
   rescue
@@ -453,20 +438,13 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   defp emit_revoked(entry, revoked_by) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: :platform_authz,
-        name: :token_revoked,
-        metadata: %{
-          principal: entry.principal,
-          namespace: entry.namespace,
-          role: entry.role,
-          revoked_by_principal: revoked_by,
-          token_hash_prefix: String.slice(entry.token_hash, 0, 12)
-        }
-      })
-    )
+    SourceRegistration.emit(:token_revoked, %{}, %{
+      principal: entry.principal,
+      namespace: entry.namespace,
+      role: entry.role,
+      revoked_by_principal: revoked_by,
+      token_hash_prefix: String.slice(entry.token_hash, 0, 12)
+    })
 
     :ok
   rescue

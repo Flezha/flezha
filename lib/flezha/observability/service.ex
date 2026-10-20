@@ -18,6 +18,15 @@ defmodule Flezha.Service.Observability do
 
   use Flezha.AuthZ.Verb
 
+  use Flezha.Observability.Source,
+    name: :observability_service,
+    emit: false,
+    cardinality_budget: 1_000,
+    area: :controller,
+    title: "Observability calls",
+    description: "Calls that tail a source, or switch one on or off.",
+    signals: Flezha.AuthZ.Verbs.audit_signals(:observability_service)
+
   # Taken as text so the service, not the door, refuses an unknown source:
   # it names the registered ones and mints no atom.
   @source [type: :string, doc: "A registered observability source."]

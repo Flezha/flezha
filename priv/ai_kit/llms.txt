@@ -93,6 +93,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Connecting a runner](connecting_a_runner.md): A runner is a program of your own that runs your relays.
 - [Clustering](clustering.md): One controller can carry a whole application, but it is then a single machine to lose.
 - [Kubernetes](kubernetes.md): A controller and its runners run on Kubernetes as they run in Docker or Docker Compose: the same images, the same settings as environment variables, and a shared folder for the Unix sockets the runner reaches the controller through.
+- [Telemetry and metrics](telemetry_and_metrics.md): The controller describes what it does as signals: counts and measurements (metrics), and single happenings such as a refusal or a restart (events).
 
 ## Reference
 

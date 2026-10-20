@@ -14,7 +14,6 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
 
   use Flezha.Observability.OtpBackend.Poller,
     source: :host,
-    kinds: [:metric, :event],
     cardinality_budget: 50,
     default_poll_ms: 5_000,
     area: :machine,
@@ -64,7 +63,6 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
            "This platform does not expose the host's figures, so none are reported; sent once."}
     ]
 
-  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.OtpBackend.ProcParser
 
   @stat_path "/proc/self/stat"
@@ -84,7 +82,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
         handle_task_read(state, stat_bytes)
 
       {:error, _reason} ->
-        emit_degraded()
+        emit(:host_source_degraded, %{count: 1}, %{reason: :proc_self_stat_unreadable})
         %{state | status: :degraded}
     end
   end
@@ -104,7 +102,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
       {:ok, status_bytes} ->
         case ProcParser.parse_status(status_bytes) do
           {:ok, %{vm_rss_bytes: rss}} when is_integer(rss) and rss > 0 ->
-            emit_metric(:rss_bytes, %{value: rss})
+            emit(:rss_bytes, %{value: rss})
 
           _ ->
             :ok
@@ -115,7 +113,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
     end
 
     case open_fd_count() do
-      n when is_integer(n) and n >= 0 -> emit_metric(:open_fds, %{value: n})
+      n when is_integer(n) and n >= 0 -> emit(:open_fds, %{value: n})
       _ -> :ok
     end
 
@@ -123,9 +121,9 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
       {:ok, loadavg_bytes} ->
         case ProcParser.parse_loadavg(loadavg_bytes) do
           {:ok, %{load_1m: l1, load_5m: l5, load_15m: l15}} ->
-            emit_metric(:load_avg_1m, %{value: l1})
-            emit_metric(:load_avg_5m, %{value: l5})
-            emit_metric(:load_avg_15m, %{value: l15})
+            emit(:load_avg_1m, %{value: l1})
+            emit(:load_avg_5m, %{value: l5})
+            emit(:load_avg_15m, %{value: l15})
 
           _ ->
             :ok
@@ -142,8 +140,8 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
     # Linux jiffies are 100 Hz by default — surface as microseconds so
     # the unit is consistent with the rest of the foundation's
     # measurement vocabulary.
-    emit_metric(:cpu_user_us, %{count: jiffies_to_us(stat.utime)})
-    emit_metric(:cpu_system_us, %{count: jiffies_to_us(stat.stime)})
+    emit(:cpu_user_us, %{count: jiffies_to_us(stat.utime)})
+    emit(:cpu_system_us, %{count: jiffies_to_us(stat.stime)})
   end
 
   defp emit_cpu_utilisation(%{prev_cpu_jiffies: nil} = state, _stat), do: state
@@ -154,7 +152,7 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
     # interval is in ms; one jiffy ≈ 10 ms on stock Linux (100Hz).
     elapsed_jiffies = max(interval_ms / 10, 1.0)
     util = max(min(delta_jiffies / elapsed_jiffies, 1.0), 0.0)
-    emit_metric(:cpu_utilisation, %{value: util})
+    emit(:cpu_utilisation, %{value: util})
     state
   end
 
@@ -166,27 +164,4 @@ defmodule Flezha.Observability.OtpBackend.HostSource do
   end
 
   defp jiffies_to_us(jiffies), do: jiffies * 10_000
-
-  defp emit_metric(name, measurements) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: name,
-        measurements: measurements
-      })
-    )
-  end
-
-  defp emit_degraded() do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @source,
-        name: :host_source_degraded,
-        measurements: %{count: 1},
-        metadata: %{reason: :proc_self_stat_unreadable}
-      })
-    )
-  end
 end

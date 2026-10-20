@@ -12,9 +12,6 @@ defmodule Flezha.AuthZ.Supervisor do
     5. `Flezha.AuthZ.TokenStore` — scoped-token registry.
     6. `Flezha.Runner.DropMarks` — the runner processes refused until a
        different one connects, replicated the way revoked tokens are.
-    7. `Flezha.AuthZ.SourceRegistration` — one-shot worker that
-       registers the `:platform_authz` source on the observability
-       bus so authz signals participate in fan-out.
 
   Crash-recovery boot policy: if `:authn_authz, :enabled` is `true`
   AND none of the three preconditions hold (an `admin@_system`
@@ -59,7 +56,6 @@ defmodule Flezha.AuthZ.Supervisor do
       TokenStore,
       Flezha.Runner.DropMarks,
       Flezha.AuthZ.QuotaCounters,
-      Flezha.AuthZ.SourceRegistration,
       Flezha.AuthZ.Bootstrap.OnBoot
     ]
 

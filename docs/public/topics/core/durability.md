@@ -265,7 +265,7 @@ holds entries ([`partitioning.md`](partitioning.md)).
 Retention bounds the queue by age and size, 30 days or 4 GiB, whichever is
 stricter. A retention deletion is real loss, and loud:
 `[:flezha, :dlq, :retention_dropped]`, exported as
-`dlq_dropped_by_retention_total`. Each new entry also emits
+`flezha_dlq_dropped_by_retention_total`. Each new entry also emits
 `[:flezha, :dlq, :dead_lettered]`, naming the entry, which reaches controller
 plugins only ([`../../plugins/hook_webhook.md`](../../plugins/hook_webhook.md)).
 

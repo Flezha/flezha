@@ -12,6 +12,18 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
   alias Flezha.Relay.Calls.{Inbound, Outbound}
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.SourceWalk
+
+  # Each catalogue page and the bridged sources its telemetry section renders.
+  @catalogue [
+    {"docs/public/plugins/file.md", [:flezha_file_source, :flezha_file_sink]},
+    {"docs/public/plugins/hook_webhook.md", [:flezha_hook_webhook]},
+    {"docs/public/plugins/http_poll.md", [:flezha_http_poll]},
+    {"docs/public/plugins/http_push.md", [:flezha_http_push]},
+    {"docs/public/plugins/postgres_poll.md", [:flezha_postgres_poll]},
+    {"docs/public/plugins/relay_forward.md", [:flezha_relay_forward]},
+    {"docs/public/plugins/websocket_subscription.md", [:flezha_ws]}
+  ]
 
   setup do
     sink_name = :"obs_tbridge_test_sink_#{:erlang.unique_integer([:positive])}"
@@ -216,6 +228,35 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     end)
   end
 
+  test "every metric line is named by the one rule" do
+    broken =
+      for {event, {source, name, :metric, _words}} <- TelemetryBridge.lines(),
+          fault <- name_faults(event, Atom.to_string(source), Atom.to_string(name)),
+          do: "#{inspect(event)} #{name}: #{fault}"
+
+    assert broken == [], Enum.join(broken, "\n")
+  end
+
+  test "the telemetry pages carry the signal tables the bridge renders" do
+    registered = TelemetryBridge.registrations()
+
+    for area <- [:controller, :storage, :relays, :plugins] do
+      sources = for %{name: name, area: ^area} <- registered, do: name
+
+      SourceWalk.assert_block(
+        "docs/public/topics/deploying/telemetry_and_metrics.md",
+        "bridge-signals",
+        Atom.to_string(area),
+        TelemetryBridge.render_table(Enum.sort(sources))
+      )
+    end
+
+    for {page, sources} <- @catalogue, source <- sources do
+      rendered = TelemetryBridge.render_table([source])
+      SourceWalk.assert_block(page, "bridge-signals", Atom.to_string(source), rendered)
+    end
+  end
+
   test "convergence stuck / intent-mismatch verdicts are bridged" do
     conv_sink = :"obs_tbridge_convergence_sink_#{:erlang.unique_integer([:positive])}"
     ref = :counters.new(1, [:atomics])
@@ -287,7 +328,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     parked =
       receive_until(
-        fn s -> s.source == :flezha_relay and s.name == :relay_halted_total end,
+        fn s -> s.source == :flezha_relay and s.name == :halted_total end,
         500
       )
 
@@ -333,11 +374,11 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :ok = Outbound.recovered_unanswered(callee, row)
 
     for {name, measurement} <- [
-          flezha_call_answer_duration: :duration_us,
-          flezha_call_answers_dropped_total: :count,
-          flezha_call_timeouts_total: :count,
-          flezha_call_refused_total: :count,
-          flezha_call_recovered_unanswered_total: :count
+          answer_duration: :duration_us,
+          answers_dropped_total: :count,
+          timeouts_total: :count,
+          refused_total: :count,
+          recovered_unanswered_total: :count
         ] do
       signal = receive_until(fn s -> s.source == :flezha_call and s.name == name end, 500)
       assert signal, "#{name} never reached the bus"
@@ -376,7 +417,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
       })
 
     parked =
-      receive_until(fn s -> s.source == :flezha_dlq and s.name == :dlq_parked_total end, 1_000)
+      receive_until(fn s -> s.source == :flezha_dlq and s.name == :parked_total end, 1_000)
 
     assert parked
     assert parked.kind == :metric
@@ -384,7 +425,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     assert parked.metadata[:relay_class] == "ObsRelay"
     assert parked.metadata[:channel] == "input"
 
-    usage = receive_until(fn s -> s.source == :flezha_dlq and s.name == :dlq_usage end, 1_000)
+    usage = receive_until(fn s -> s.source == :flezha_dlq and s.name == :usage end, 1_000)
     assert usage
     assert usage.measurements[:entries] == 1
     assert usage.measurements[:bytes] > 0
@@ -403,7 +444,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
 
     dropped =
       receive_until(
-        fn s -> s.source == :flezha_dlq and s.name == :dlq_dropped_by_retention_total end,
+        fn s -> s.source == :flezha_dlq and s.name == :dropped_by_retention_total end,
         1_000
       )
 
@@ -468,7 +509,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
           config: %{
             counter_ref: :counters.new(1, [:atomics]),
             parent: self(),
-            sources: [:flezha_acme_sink, :flezha_http_poll]
+            sources: [:flezha_acme_sink, :flezha_ws, :flezha_websocket]
           }
         })
 
@@ -536,12 +577,12 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     end
 
     test "a first-party hand-kept line wins over the derived one" do
-      :telemetry.execute([:flezha, :plugin, :http_poll, :shipped], %{count: 1}, %{})
+      :telemetry.execute([:flezha, :plugin, :websocket, :shipped], %{count: 1}, %{})
 
       assert %Signal{kind: :metric} =
-               receive_until(&(&1.source == :flezha_http_poll and &1.name == :injected), 500)
+               receive_until(&(&1.source == :flezha_ws and &1.name == :shipped), 500)
 
-      refute receive_until(&(&1.source == :flezha_http_poll and &1.name == :shipped), 100)
+      refute receive_until(&(&1.source == :flezha_websocket), 100)
     end
   end
 
@@ -667,6 +708,21 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     """
 
     assert_raise CompileError, ~r/telemetry verb :shipped/, fn -> Code.compile_string(source) end
+  end
+
+  # A series is its source and its name joined, so the name repeats neither the
+  # prefix nor the source's tail, and a provider's is the verb it counts.
+  defp name_faults(event, source, name) do
+    tail = String.replace_prefix(source, "flezha_", "")
+
+    checks = [
+      {String.starts_with?(name, "flezha_"), "starts with flezha_"},
+      {String.starts_with?(name, tail <> "_"), "repeats its source's tail #{tail}"},
+      {match?([:flezha, :plugin, _, _], event) and name != Atom.to_string(List.last(event)),
+       "is not its event's verb"}
+    ]
+
+    for {true, fault} <- checks, do: fault
   end
 
   defp restart_bridge() do

@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Changed: every metric series names its source once
+
+- **BREAKING:** seventeen exported series are renamed, so a name no longer repeats its source
+  and a plugin's metric is named by the verb it counts. A dashboard or alert on an old name
+  reads nothing until it is moved to the new one; there is no alias.
+
+  | Old series | New series |
+  |---|---|
+  | `flezha_call_flezha_call_answer_duration` | `flezha_call_answer_duration` |
+  | `flezha_call_flezha_call_timeouts_total` | `flezha_call_timeouts_total` |
+  | `flezha_call_flezha_call_answers_dropped_total` | `flezha_call_answers_dropped_total` |
+  | `flezha_call_flezha_call_refused_total` | `flezha_call_refused_total` |
+  | `flezha_call_flezha_call_recovered_unanswered_total` | `flezha_call_recovered_unanswered_total` |
+  | `flezha_dlq_dlq_parked_total` | `flezha_dlq_parked_total` |
+  | `flezha_dlq_dlq_dropped_by_retention_total` | `flezha_dlq_dropped_by_retention_total` |
+  | `flezha_dlq_dlq_usage` | `flezha_dlq_usage` |
+  | `flezha_relay_relay_halted_total` | `flezha_relay_halted_total` |
+  | `flezha_steps_flezha_steps_turns_dead_lettered_total` | `flezha_steps_turns_dead_lettered_total` |
+  | `flezha_durability_durability_gc` | `flezha_durability_gc` |
+  | `flezha_http_poll_injected` | `flezha_http_poll_shipped` |
+  | `flezha_file_source_injected` | `flezha_file_source_shipped` |
+  | `flezha_postgres_poll_injected` | `flezha_postgres_poll_shipped` |
+  | `flezha_file_sink_flushed` | `flezha_file_sink_shipped` |
+  | `flezha_relay_forward_delivered` | `flezha_relay_forward_shipped` |
+  | `flezha_relay_forward_retry` | `flezha_relay_forward_retried` |
+
+  The signal names on the bus (`flz observe tail`) change the same way, for example `shipped`
+  where the HTTP poll plugin said `injected`.
+- The new page *Telemetry and metrics* lists every signal the controller's telemetry carries,
+  with its series and what it says; each plugin page's Telemetry section lists its own.
+
+### Changed: an observability source is declared once
+
+- `flz observe sources` lists `platform_authz` with the kind `event` only: it emits no metric.
+- The access control, audit log and metric export sources come back after the observability
+  registry restarts, and the audit log source is listed whether or not the audit log runs.
+- `use Flezha.Observability.Source` declares a source: its registration (`__source__/0`, kinds
+  taken from its signals) and an `emit/3` that refuses a signal the source does not declare.
+  `Flezha.Observability.SourceSupervisor` is removed; it never had a child.
+
+### Changed: an observability source is declared once
+
+- `flz observe sources` lists `platform_authz` with the kind `event` only: it emits no metric.
+- The access control, audit log and metric export sources come back after the observability
+  registry restarts, and the audit log source is listed whether or not the audit log runs.
+- `use Flezha.Observability.Source` declares a source: its registration (`__source__/0`, kinds
+  taken from its signals) and an `emit/3` that refuses a signal the source does not declare.
+  `Flezha.Observability.SourceSupervisor` is removed; it never had a child.
+
 ### Changed: one layer per setting, and the boot refuses a key it cannot read
 
 - **BREAKING:** the per-class maps `:compact_after_bytes`, `:output_stall_timeout_ms` (the map;

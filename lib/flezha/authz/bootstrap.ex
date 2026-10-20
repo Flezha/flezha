@@ -40,11 +40,9 @@ defmodule Flezha.AuthZ.Bootstrap do
 
   require Logger
 
-  alias Flezha.AuthZ.{AuthState, Config, Namespace, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Config, Namespace, RoleStore, SourceRegistration, TokenStore}
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.Observability.{Bus, Signal}
 
-  @source :platform_authz
   @token_bytes 32
   @recovery_marker "REBOOTSTRAP"
 
@@ -345,18 +343,11 @@ defmodule Flezha.AuthZ.Bootstrap do
   end
 
   defp emit_recovery(mode, unbound_principals, revoked_count) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @source,
-        name: :rebootstrap_recovery,
-        metadata: %{
-          mode: mode,
-          unbound_principals: unbound_principals,
-          revoked_tokens: revoked_count
-        }
-      })
-    )
+    SourceRegistration.emit(:rebootstrap_recovery, %{}, %{
+      mode: mode,
+      unbound_principals: unbound_principals,
+      revoked_tokens: revoked_count
+    })
 
     :ok
   rescue
@@ -364,14 +355,7 @@ defmodule Flezha.AuthZ.Bootstrap do
   end
 
   defp emit_bootstrap_completed(principal) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @source,
-        name: :bootstrap_completed,
-        metadata: %{principal: principal}
-      })
-    )
+    SourceRegistration.emit(:bootstrap_completed, %{}, %{principal: principal})
 
     :ok
   rescue

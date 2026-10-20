@@ -2,7 +2,20 @@ defmodule Flezha.Observability.RegistryTest do
   # async: false: the observability registry.
   use ExUnit.Case, async: false
 
-  alias Flezha.Observability.{Registry, SignalWords, Source}
+  alias Flezha.Observability.{Registry, SignalWords, Source, TelemetryBridge, TestSinks}
+
+  @observability Flezha.Observability.Supervisor
+
+  defmodule BlankDescription do
+    @moduledoc false
+    use Flezha.Observability.Source,
+      name: :registry_test_blank,
+      emit: false,
+      area: :controller,
+      title: "Blank",
+      description: " ",
+      signals: [noted: {:event, "Something was noted."}]
+  end
 
   doctest SignalWords
 
@@ -291,24 +304,32 @@ defmodule Flezha.Observability.RegistryTest do
 
   describe "the sources core registers" do
     test "each has a title, a description, an area, and words for every signal" do
-      for entry <- core_registrations() do
-        assert text?(entry[:title]), "#{entry.name} has no title"
-        assert text?(entry.description), "#{entry.name} has no description"
+      assert undescribed(core_registrations()) == []
+    end
 
-        assert entry.area in Registry.areas(), "#{entry.name} has no area"
-        assert entry.signals != [], "#{entry.name} declares no signal"
+    test "a declaration with a blank description is named by the check" do
+      blank = BlankDescription.__source__()
 
-        for signal <- entry.signals do
-          assert signal.kind in entry.kinds,
-                 "#{entry.name}.#{signal.name} is a #{signal.kind}, which the source does not declare"
+      assert undescribed(core_registrations() ++ [blank]) == [
+               "#{blank.name} has no description"
+             ]
+    end
 
-          assert text?(signal.description), "#{entry.name}.#{signal.name} has no meaning"
-          assert text?(signal[:label]), "#{entry.name}.#{signal.name} has no label"
+    test "every source outside the bridge is listed with the kinds its signals have" do
+      kinds =
+        Map.new(core_registrations() -- TelemetryBridge.registrations(), &{&1.name, &1.kinds})
 
-          assert signal[:outcome] in SignalWords.outcomes(),
-                 "#{entry.name}.#{signal.name} has no outcome"
-        end
-      end
+      assert kinds == %{
+               platform_authz: [:event],
+               audit_log: [:event],
+               observability_export: [:event],
+               observability_registry: [:event],
+               observability_service: [:event],
+               beam_vm: [:metric],
+               host: [:metric, :event],
+               processhub: [:metric],
+               flezha_transport: [:metric]
+             }
     end
 
     test "every sentence template they declare parses" do
@@ -351,16 +372,53 @@ defmodule Flezha.Observability.RegistryTest do
     end
   end
 
+  describe "a registry restart" do
+    setup do
+      on_exit(&TestSinks.restart_after_registry/0)
+    end
+
+    test "lists every declared source again" do
+      :ok = Supervisor.terminate_child(@observability, Registry)
+      {:ok, _pid} = Supervisor.restart_child(@observability, Registry)
+
+      listed = MapSet.new(Registry.list_sources(), & &1.name)
+
+      for entry <- Source.declared(),
+          do: assert(entry.name in listed, "#{entry.name} is gone after the restart")
+    end
+  end
+
   defp text?(text), do: is_binary(text) and String.trim(text) != ""
 
+  # What a reader would miss about each registration, as one line per gap.
+  defp undescribed(entries) do
+    for entry <- entries, gap <- gaps(entry), do: "#{entry.name} #{gap}"
+  end
+
+  defp gaps(entry) do
+    source = [
+      {text?(entry[:title]), "has no title"},
+      {text?(entry[:description]), "has no description"},
+      {entry[:area] in Source.areas(), "has no area"},
+      {entry.signals != [], "declares no signal"}
+    ]
+
+    signals =
+      for signal <- entry.signals,
+          check <- [
+            {signal.kind in entry.kinds, "#{signal.name} is a kind the source does not declare"},
+            {text?(signal.description), "#{signal.name} has no meaning"},
+            {text?(signal[:label]), "#{signal.name} has no label"},
+            {signal[:outcome] in SignalWords.outcomes(), "#{signal.name} has no outcome"}
+          ],
+          do: check
+
+    for {false, gap} <- source ++ signals, do: gap
+  end
+
   defp core_registrations() do
-    Flezha.Observability.TelemetryBridge.registrations(%{}) ++
-      Enum.map(Flezha.Observability.OtpBackend.Supervisor.source_modules(), & &1.registration()) ++
-      Registry.own_registrations() ++
-      [
-        Flezha.Observability.Export.Supervisor.registration(),
-        Flezha.Observability.AuditLog.Supervisor.registration(),
-        Flezha.AuthZ.SourceRegistration.registration()
-      ]
+    TelemetryBridge.registrations() ++
+      Enum.map(Flezha.Observability.OtpBackend.Supervisor.source_modules(), & &1.__source__()) ++
+      Source.declared()
   end
 end

@@ -199,16 +199,26 @@ costs one frame whether or not the content moved.
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_http_poll -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_http_poll` | `failed` | event |  | A poll request failed. |
+| `flezha_http_poll` | `shipped` | metric | `flezha_http_poll_shipped` | A poll got a new response and handed it to the relay. |
+| `flezha_http_poll` | `unchanged` | metric | `flezha_http_poll_unchanged` | A poll's response matched the last one, so it was skipped. |
+<!-- bridge-signals:end -->
+
 | Event | Measurements | Metadata |
 | --- | --- | --- |
 | `[:flezha, :plugin, :http_poll, :shipped]` | `bytes`, `latency_ms` | `plugin_id`, `channel`, `seed` |
 | `[:flezha, :plugin, :http_poll, :unchanged]` | `latency_ms` | `plugin_id`, `channel` |
 | `[:flezha, :plugin, :http_poll, :failed]` | `consecutive_failures`, `latency_ms` | `plugin_id`, `channel`, `reason` |
 
-All three bridge to the observability bus under source `:flezha_http_poll`: `:injected`
+All three bridge to the observability bus under source `:flezha_http_poll`: `:shipped`
 and `:unchanged` as metrics, `:failed` as an event, because its `reason` carries
 per-poll values (an observed body size, an ingest verdict) that would be unbounded
-cardinality on a metric. Alert on the absence of `:injected` / `:unchanged` or on the
+cardinality on a metric. Alert on the absence of `:shipped` / `:unchanged` or on the
 plugin's health verdict, not on a failure-rate metric.
 
 ## Limits

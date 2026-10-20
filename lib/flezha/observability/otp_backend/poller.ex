@@ -3,15 +3,15 @@ defmodule Flezha.Observability.OtpBackend.Poller do
   Shared GenServer plumbing for the periodic observability sources
   (`:beam_vm`, `:host`, `:processhub`, `:flezha_transport`).
 
-  `use Flezha.Observability.OtpBackend.Poller, source: :name, kinds: [...],
+  `use Flezha.Observability.OtpBackend.Poller, source: :name,
   cardinality_budget: N, default_poll_ms: N, area: :machine, title: "…",
   description: "…", signals: [name: {:metric, "what it says"}]` (or any form
-  `Flezha.Observability.Source.signals/1` takes) injects the whole lifecycle:
-  `start_link/1`, `init/1` (registers the source and arms the first tick),
-  `handle_info(:poll, …)` with its catch-all, `poll_interval_ms/0`
-  (per-source override under `:flezha, :observability, :otp_backend,
-  :poll_intervals`, else the default), and the
-  `Flezha.Observability.Source` contract the module registers under.
+  `Flezha.Observability.Source.signals/1` takes) declares the source through
+  `use Flezha.Observability.Source` (process-backed, so `__source__/0` and
+  `emit/3`) and injects the whole lifecycle: `start_link/1`, `init/1`
+  (registers `__source__/0` and arms the first tick), `handle_info(:poll, …)`
+  with its catch-all and `poll_interval_ms/0` (per-source override under
+  `:flezha, :observability, :otp_backend, :poll_intervals`, else the default).
 
   A source supplies only what varies: `init_state/1` for state beyond
   `:interval`, `poll/1`, which does the work and returns the new state,
@@ -25,6 +25,9 @@ defmodule Flezha.Observability.OtpBackend.Poller do
   @callback poll(state :: map()) :: map()
 
   defmacro __using__(opts) do
+    {source, opts} = Keyword.pop!(opts, :source)
+    {default_poll_ms, opts} = Keyword.pop!(opts, :default_poll_ms)
+
     quote do
       use GenServer
 
@@ -35,14 +38,11 @@ defmodule Flezha.Observability.OtpBackend.Poller do
       # by every source that uses this template.
       use Flezha.Process.Timer, keys: [:poll]
 
-      @source unquote(Keyword.fetch!(opts, :source))
-      @kinds unquote(Keyword.fetch!(opts, :kinds))
-      @cardinality_budget unquote(Keyword.fetch!(opts, :cardinality_budget))
-      @default_poll_ms unquote(Keyword.fetch!(opts, :default_poll_ms))
-      @area unquote(Keyword.fetch!(opts, :area))
-      @title unquote(Keyword.fetch!(opts, :title))
-      @description unquote(Keyword.fetch!(opts, :description))
-      @signals Flezha.Observability.Source.signals(unquote(Keyword.fetch!(opts, :signals)))
+      use Flezha.Observability.Source,
+          unquote([name: source, flavour: :process_backed] ++ opts)
+
+      @source unquote(source)
+      @default_poll_ms unquote(default_poll_ms)
 
       unquote(driven_half())
       unquote(source_half())
@@ -57,7 +57,7 @@ defmodule Flezha.Observability.OtpBackend.Poller do
 
       @impl GenServer
       def init(opts) do
-        Flezha.Observability.Registry.register_source(registration())
+        Flezha.Observability.Registry.register_source(__source__())
 
         interval = poll_interval_ms()
         {:ok, opts |> init_state() |> Map.put(:interval, interval) |> arm_poll()}
@@ -85,23 +85,6 @@ defmodule Flezha.Observability.OtpBackend.Poller do
 
       @impl Flezha.Observability.Source
       def config_schema(), do: %{}
-
-      @doc "The cardinality budget this source declares, readable without starting it."
-      def cardinality_budget(), do: @cardinality_budget
-
-      @doc "What this source registers, readable without starting it."
-      def registration() do
-        %{
-          name: @source,
-          kinds: @kinds,
-          flavour: :process_backed,
-          cardinality_budget: @cardinality_budget,
-          area: @area,
-          title: @title,
-          description: @description,
-          signals: @signals
-        }
-      end
 
       defp poll_interval_ms() do
         Flezha.Config.get(:observability_poll_intervals)

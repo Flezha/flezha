@@ -16,7 +16,6 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
 
   use Flezha.Observability.OtpBackend.Poller,
     source: :beam_vm,
-    kinds: [:metric],
     cardinality_budget: 50,
     default_poll_ms: 1_000,
     area: :machine,
@@ -76,10 +75,13 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
          meaning: "How busy the schedulers were since the last reading, from 0 to 1."}
     ]
 
-  alias Flezha.Observability.{Bus, Signal}
-
-  @memory_names for bucket <- [:total, :processes, :atom, :binary, :ets],
-                    do: {bucket, :"memory_#{bucket}"}
+  @memory_names [
+    total: :memory_total,
+    processes: :memory_processes,
+    atom: :memory_atom,
+    binary: :memory_binary,
+    ets: :memory_ets
+  ]
 
   @doc """
   The VM's memory and size now, by the name each value is emitted under: the
@@ -121,51 +123,20 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
   end
 
   defp emit_reading() do
-    for {name, value} <- reading() do
-      Bus.emit(
-        Signal.new(%{
-          kind: :metric,
-          source: @source,
-          name: name,
-          measurements: %{value: value}
-        })
-      )
-    end
+    for {name, value} <- reading(), do: emit(name, %{value: value})
   end
 
   defp emit_run_queues() do
     total = :erlang.statistics(:total_run_queue_lengths_all)
 
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: :run_queue_total,
-        measurements: %{value: total}
-      })
-    )
+    emit(:run_queue_total, %{value: total})
   end
 
   defp emit_gc_counts() do
     {gc_count, words_reclaimed, _} = :erlang.statistics(:garbage_collection)
 
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: :gc_count,
-        measurements: %{count: gc_count}
-      })
-    )
-
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: :gc_words_reclaimed,
-        measurements: %{count: words_reclaimed}
-      })
-    )
+    emit(:gc_count, %{count: gc_count})
+    emit(:gc_words_reclaimed, %{count: words_reclaimed})
   end
 
   defp emit_scheduler_utilisation(%{last_scheduler_sample: nil} = state) do
@@ -177,16 +148,7 @@ defmodule Flezha.Observability.OtpBackend.BeamVmSource do
     current = :erlang.statistics(:scheduler_wall_time)
 
     if is_list(current) and is_list(prev) do
-      utilisation = scheduler_utilisation(prev, current)
-
-      Bus.emit(
-        Signal.new(%{
-          kind: :metric,
-          source: @source,
-          name: :scheduler_utilisation,
-          measurements: %{value: utilisation}
-        })
-      )
+      emit(:scheduler_utilisation, %{value: scheduler_utilisation(prev, current)})
     end
 
     %{state | last_scheduler_sample: current}

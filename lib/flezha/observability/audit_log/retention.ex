@@ -19,10 +19,8 @@ defmodule Flezha.Observability.AuditLog.Retention do
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Layout.Table, as: Layout
-  alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Observability.AuditLog
   alias Flezha.Observability.AuditLog.{Index, Writer}
-
-  @audit_source :audit_log
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -163,20 +161,12 @@ defmodule Flezha.Observability.AuditLog.Retention do
   end
 
   defp emit_sweep(result) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: @audit_source,
-        name: :audit_retention_sweep,
-        measurements: %{
-          deleted_count: result.deleted_count,
-          deleted_bytes: result.deleted_bytes,
-          remaining_count: result.remaining_count,
-          total_bytes: result.total_bytes
-        },
-        metadata: %{}
-      })
-    )
+    AuditLog.Supervisor.emit(:audit_retention_sweep, %{
+      deleted_count: result.deleted_count,
+      deleted_bytes: result.deleted_bytes,
+      remaining_count: result.remaining_count,
+      total_bytes: result.total_bytes
+    })
   end
 
   defp arm_tick(state), do: arm_timer(state, :tick, state.interval_ms, :tick)

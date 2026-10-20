@@ -20,6 +20,29 @@ defmodule Flezha.Observability.TestSinks do
     end
   end
 
+  # Everything that starts after the registry, in its boot order.
+  @after_registry [
+    Flezha.Observability.SinkSupervisor,
+    Flezha.Observability.LoggerHandler,
+    Flezha.Observability.TelemetryBridge,
+    Flezha.Observability.DefaultSinks,
+    Flezha.Observability.OtpBackend.Supervisor,
+    Flezha.Observability.Export.Supervisor,
+    Flezha.Observability.AuditLog.Supervisor
+  ]
+
+  @doc """
+  Start the observability registry again, if a test stopped it, and everything
+  after it: a fresh registry holds no sink and no bridge source.
+  """
+  def restart_after_registry() do
+    sup = Flezha.Observability.Supervisor
+    _ = Supervisor.restart_child(sup, Flezha.Observability.Registry)
+    for child <- Enum.reverse(@after_registry), do: :ok = Supervisor.terminate_child(sup, child)
+    for child <- @after_registry, do: {:ok, _} = Supervisor.restart_child(sup, child)
+    :ok
+  end
+
   @doc """
   Wait for a signal the `Counting` sink forwarded to the calling process that
   satisfies `pred`, or `nil` once `timeout` ms have elapsed. Signals that do

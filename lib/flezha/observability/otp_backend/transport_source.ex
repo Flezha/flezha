@@ -20,7 +20,6 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
 
   use Flezha.Observability.OtpBackend.Poller,
     source: :flezha_transport,
-    kinds: [:metric],
     cardinality_budget: 40,
     default_poll_ms: 1_000,
     area: :machine,
@@ -58,7 +57,6 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
           {:metric, label: "Open streams", meaning: "Streams the transport's driver holds open."}
       ] ++ LivenessCounters.metric_signals()
 
-  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Transport.Server, as: TransportServer
 
   @impl Flezha.Observability.OtpBackend.Poller
@@ -137,16 +135,4 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
   end
 
   defp sum(rows, key), do: Enum.reduce(rows, 0, fn row, acc -> acc + Map.fetch!(row, key) end)
-
-  defp emit(name, measurements, metadata) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: name,
-        measurements: measurements,
-        metadata: metadata
-      })
-    )
-  end
 end

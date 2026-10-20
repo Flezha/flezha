@@ -18,7 +18,6 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
 
   use Flezha.Observability.OtpBackend.Poller,
     source: :processhub,
-    kinds: [:metric],
     cardinality_budget: 1_000,
     default_poll_ms: 1_000,
     area: :machine,
@@ -44,7 +43,6 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
     ]
 
   alias Flezha.Identificator
-  alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Load
   alias Flezha.Service.HubManager
@@ -67,11 +65,11 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
     hub = Identificator.hub(namespace)
 
     registered = length(HubManager.local_children(namespace, :all))
-    emit_metric(:registered_processes, %{value: registered}, %{hub: hub})
+    emit(:registered_processes, %{value: registered}, %{hub: hub})
 
     recovery_state = safe_recovery_state(hub)
 
-    emit_metric(:pending_recoveries, %{value: pending_recoveries_value(recovery_state)}, %{
+    emit(:pending_recoveries, %{value: pending_recoveries_value(recovery_state)}, %{
       hub: hub
     })
 
@@ -88,7 +86,7 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
     |> HubManager.registry_dump()
     |> Load.counts(safe_active_runners(namespace))
     |> Enum.each(fn {runner_id, bound} ->
-      emit_metric(:runner_bound_relays, %{value: bound}, %{hub: hub, runner: runner_id})
+      emit(:runner_bound_relays, %{value: bound}, %{hub: hub, runner: runner_id})
     end)
   end
 
@@ -114,16 +112,4 @@ defmodule Flezha.Observability.OtpBackend.ProcessHubSource do
   defp pending_recoveries_value(:recovering), do: 1
   defp pending_recoveries_value(:recovery_pending), do: 1
   defp pending_recoveries_value(_), do: 0
-
-  defp emit_metric(name, measurements, metadata) do
-    Bus.emit(
-      Signal.new(%{
-        kind: :metric,
-        source: @source,
-        name: name,
-        measurements: measurements,
-        metadata: metadata
-      })
-    )
-  end
 end

@@ -3,9 +3,8 @@ defmodule Flezha.Observability.Supervisor do
   Top-level supervisor for the observability foundation.
 
   Starts, in order: `Registry` (ETS state and the cardinality tracker),
-  `Phoenix.PubSub`, `SinkSupervisor`, `SourceSupervisor`,
-  `LoggerHandler`, `TelemetryBridge`, and the one-shot `DefaultSinks`
-  that registers the two built-in sinks.
+  `Phoenix.PubSub`, `SinkSupervisor`, `LoggerHandler`, `TelemetryBridge`,
+  and the one-shot `DefaultSinks` that registers the two built-in sinks.
 
   Under `:observability` → `enabled: false` it starts no sinks, no logger
   handler and no bus: only the telemetry bridge's leveled lines, so an event
@@ -24,7 +23,6 @@ defmodule Flezha.Observability.Supervisor do
     LoggerHandler,
     Registry,
     SinkSupervisor,
-    SourceSupervisor,
     TelemetryBridge
   }
 
@@ -49,7 +47,6 @@ defmodule Flezha.Observability.Supervisor do
           Registry,
           {Phoenix.PubSub, name: Flezha.Observability.PubSub},
           SinkSupervisor,
-          SourceSupervisor,
           LoggerHandler,
           TelemetryBridge,
           DefaultSinks,

@@ -34,19 +34,36 @@ defmodule Flezha.Observability.Registry do
       [name: :crashes, kind: :count]
     ]
 
-  alias Flezha.AuthZ.Verbs
   alias Flezha.Config.Durations
-  alias Flezha.Observability.{Signal, SignalWords, Source}
+  alias Flezha.Observability.{Signal, Source}
   alias Flezha.Process.Cspec
 
   @sources :flezha_observability_sources
   @sinks :flezha_observability_sinks
   @registry_topic "flezha.observability.registry"
 
-  @system_source :observability_registry
-
-  # Where a source sits, for a reader grouping the listing.
-  @areas [:relays, :storage, :plugins, :controller, :machine]
+  # Its own diagnostics, which `Flezha.Observability.Bus` writes.
+  use Source,
+    name: :observability_registry,
+    emit: false,
+    cardinality_budget: 1_000,
+    area: :controller,
+    title: "Observability warnings",
+    description:
+      "Warnings about sources that send signals they did not declare, or too many label combinations.",
+    signals: [
+      source_kind_violation:
+        {:event,
+         label: "Undeclared kind",
+         outcome: :failure,
+         meaning: "A source sent a kind of signal it did not declare, so it was dropped."},
+      cardinality_budget_exceeded:
+        {:event,
+         label: "Too many labels",
+         outcome: :failure,
+         meaning:
+           "A source sent more label combinations than allowed, so the extra ones were dropped."}
+    ]
 
   @type source_flavour :: :declarative | :process_backed
 
@@ -98,63 +115,14 @@ defmodule Flezha.Observability.Registry do
   @doc """
   Register a source: `name`, `kinds`, `flavour`, and optionally a
   `cardinality_budget`, a plain `title`, a one-line `description`, an `area`
-  (see `areas/0`) and the `signals` it can emit, each `%{name, kind,
-  description}` with an optional `label`, `outcome` and `sentence` template
-  (`Flezha.Observability.Source.signals/1` builds them).
-  Contract: `Flezha.Observability.Source`.
+  (see `Flezha.Observability.Source.areas/0`) and the `signals` it can emit,
+  each `%{name, kind, description}` with an optional `label`, `outcome` and
+  `sentence` template, as `Flezha.Observability.Source.registration/1` builds
+  them and `Flezha.Observability.Source.validate/1` checks them.
   """
   @spec register_source(map()) :: :ok | {:error, term()}
   def register_source(%{name: _, kinds: _, flavour: _} = entry) do
     call({:register_source, entry})
-  end
-
-  @doc "The areas a source may declare."
-  @spec areas() :: [area()]
-  def areas(), do: @areas
-
-  @doc """
-  The two sources the foundation registers itself: `:observability_registry`
-  for its own diagnostics and `:observability_service` for the service API's
-  audit records.
-  """
-  @spec own_registrations() :: [map()]
-  def own_registrations() do
-    [
-      %{
-        name: @system_source,
-        kinds: [:event],
-        flavour: :declarative,
-        cardinality_budget: 1_000,
-        area: :controller,
-        title: "Observability warnings",
-        description:
-          "Warnings about sources that send signals they did not declare, or too many label combinations.",
-        signals:
-          Source.signals(
-            source_kind_violation:
-              {:event,
-               label: "Undeclared kind",
-               outcome: :failure,
-               meaning: "A source sent a kind of signal it did not declare, so it was dropped."},
-            cardinality_budget_exceeded:
-              {:event,
-               label: "Too many labels",
-               outcome: :failure,
-               meaning:
-                 "A source sent more label combinations than allowed, so the extra ones were dropped."}
-          )
-      },
-      %{
-        name: :observability_service,
-        kinds: [:event],
-        flavour: :declarative,
-        cardinality_budget: 1_000,
-        area: :controller,
-        title: "Observability calls",
-        description: "Calls that tail a source, or switch one on or off.",
-        signals: Verbs.audit_signals(:observability_service)
-      }
-    ]
   end
 
   @spec unregister_source(atom()) :: :ok
@@ -334,7 +302,8 @@ defmodule Flezha.Observability.Registry do
     :ets.new(@sources, [:set, :protected, :named_table, read_concurrency: true])
     :ets.new(@sinks, [:set, :protected, :named_table, read_concurrency: true])
 
-    Enum.each(own_registrations(), &do_register_source/1)
+    # Every declarative source, so each one comes back after a restart.
+    Enum.each(Source.declared(), &do_register_source/1)
 
     {:ok, %{}}
   end
@@ -412,7 +381,7 @@ defmodule Flezha.Observability.Registry do
   # ---------- Internal helpers ----------
 
   defp do_register_source(entry) do
-    case validate_source(entry) do
+    case Source.validate(entry) do
       :ok ->
         budget = Map.get(entry, :cardinality_budget, default_budget())
         counters_ref = source_counter_new()
@@ -504,69 +473,6 @@ defmodule Flezha.Observability.Registry do
       pid: pid,
       counters: sink_counter_new()
     }
-  end
-
-  defp validate_source(%{name: name, kinds: kinds, flavour: flavour} = entry)
-       when is_atom(name) and is_list(kinds) and flavour in [:declarative, :process_backed] do
-    cond do
-      not Enum.all?(kinds, &(&1 in Signal.kinds())) ->
-        {:error, {:invalid_kinds, kinds}}
-
-      # A source name is the head of every metric name it emits, and a metric
-      # name outside the exposition grammar fails the whole scrape. Refused
-      # here, where the developer wrote it, rather than rewritten at scrape
-      # time — a source name is chosen, not forwarded from a third party.
-      not Signal.legal_exposition_name?(Atom.to_string(name)) ->
-        {:error, {:invalid_source_name, name}}
-
-      true ->
-        validate_meaning(entry)
-    end
-  end
-
-  defp validate_source(_), do: {:error, :invalid_source_entry}
-
-  # What a reader is told about the source: every key is optional.
-  defp validate_meaning(entry) do
-    %{title: title, description: description, area: area, signals: signals} =
-      Map.merge(%{title: nil, description: nil, area: nil, signals: []}, entry)
-
-    cond do
-      not (is_nil(title) or SignalWords.text?(title)) ->
-        {:error, {:invalid_title, title}}
-
-      not (is_nil(description) or SignalWords.text?(description)) ->
-        {:error, {:invalid_description, description}}
-
-      area not in [nil | @areas] ->
-        {:error, {:invalid_area, area}}
-
-      not signal_decls?(signals) ->
-        {:error, {:invalid_signals, signals}}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp signal_decls?(signals) when is_list(signals) do
-    Enum.all?(signals, fn
-      %{name: name, kind: kind, description: _} = signal ->
-        is_atom(name) and kind in Signal.kinds() and words?(signal)
-
-      _other ->
-        false
-    end)
-  end
-
-  defp signal_decls?(_other), do: false
-
-  # The meaning is required; the other words are checked when present.
-  defp words?(signal) do
-    signal
-    |> Map.take([:label, :outcome, :sentence])
-    |> Map.put(:meaning, signal.description)
-    |> Enum.all?(fn {k, v} -> SignalWords.valid_word?(k, v) end)
   end
 
   defp validate_config(schema, config) when is_map(schema) and is_map(config) do

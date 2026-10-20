@@ -16,9 +16,8 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
   use Flezha.Http.Listener, port: :prometheus_port, bind: :prometheus_bind
 
   alias Flezha.Http.Listener
-  alias Flezha.Observability.Bus
+  alias Flezha.Observability.Export
   alias Flezha.Observability.Export.PrometheusRegistry
-  alias Flezha.Observability.Signal
 
   defp route(socket, "/metrics"), do: respond_metrics(socket)
   defp route(socket, "/"), do: respond_index(socket)
@@ -32,14 +31,10 @@ defmodule Flezha.Observability.Export.PrometheusHttp do
 
     duration_us = System.monotonic_time(:microsecond) - start
 
-    Bus.emit(
-      Signal.new(%{
-        kind: :event,
-        source: :observability_export,
-        name: :prometheus_scrape,
-        measurements: %{duration_us: duration_us, series_count: series_count}
-      })
-    )
+    Export.Source.emit(:prometheus_scrape, %{
+      duration_us: duration_us,
+      series_count: series_count
+    })
   end
 
   defp respond_index(socket) do

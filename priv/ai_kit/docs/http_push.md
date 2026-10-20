@@ -143,6 +143,17 @@ have failed, and is healthy again after the next 2xx.
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_http_push -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_http_push` | `failed` | event |  | An HTTP request failed too often and was given up. |
+| `flezha_http_push` | `overflowed` | metric | `flezha_http_push_overflowed` | The HTTP queue was full, so requests were dropped. |
+| `flezha_http_push` | `retried` | metric | `flezha_http_push_retried` | An HTTP request failed and will be tried again. |
+| `flezha_http_push` | `shipped` | metric | `flezha_http_push_shipped` | An HTTP request was sent. |
+<!-- bridge-signals:end -->
+
 | Event | Source | Measurements | Metadata |
 | --- | --- | --- | --- |
 | `[:flezha, :plugin, :http_push, :shipped]` | `:flezha_http_push` metric `shipped` | `count` | `plugin` |

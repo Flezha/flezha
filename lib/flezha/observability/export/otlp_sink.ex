@@ -21,7 +21,7 @@ defmodule Flezha.Observability.Export.OtlpSink do
 
   alias Flezha.Config
   alias Flezha.Config.Backoff
-  alias Flezha.Observability.{Bus, Signal}
+  alias Flezha.Observability.{Export, Signal}
   alias Flezha.Observability.Export.{OtlpClient, OtlpCodec}
 
   # ---------- Sink behaviour ----------
@@ -132,25 +132,12 @@ defmodule Flezha.Observability.Export.OtlpSink do
     failures = Enum.filter(results, fn {_kind, r} -> match?({:error, _}, r) end)
 
     if failures == [] do
-      Bus.emit(
-        Signal.new(%{
-          kind: :event,
-          source: :observability_export,
-          name: :otlp_batch_flushed,
-          measurements: %{batch_size: size, duration_us: duration_us}
-        })
-      )
+      Export.Source.emit(:otlp_batch_flushed, %{batch_size: size, duration_us: duration_us})
     else
-      Bus.emit(
-        Signal.new(%{
-          kind: :event,
-          source: :observability_export,
-          name: :otlp_batch_dropped,
-          measurements: %{batch_size: size, attempts: Backoff.ladder(:otlp_post).give_up},
-          metadata: %{
-            failures: Enum.map(failures, fn {kind, {:error, r}} -> {kind, r} end) |> inspect()
-          }
-        })
+      Export.Source.emit(
+        :otlp_batch_dropped,
+        %{batch_size: size, attempts: Backoff.ladder(:otlp_post).give_up},
+        %{failures: Enum.map(failures, fn {kind, {:error, r}} -> {kind, r} end) |> inspect()}
       )
     end
   end

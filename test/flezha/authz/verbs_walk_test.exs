@@ -295,7 +295,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
     _ =
       Flezha.Observability.Registry.register_source(
-        Flezha.Observability.AuditLog.Supervisor.registration()
+        Flezha.Observability.AuditLog.Supervisor.__source__()
       )
 
     {:ok, sup} =

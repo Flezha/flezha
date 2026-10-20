@@ -386,6 +386,20 @@ two watchdog tiers alone.
 
 ## Telemetry
 
+What each signal says on the observability bus, and the series an exporter names a metric by:
+
+<!-- bridge-signals:begin flezha_ws -->
+| Source | Signal | Kind | Series | Meaning |
+| --- | --- | --- | --- | --- |
+| `flezha_ws` | `failed` | event |  | A websocket send failed and was given up. |
+| `flezha_ws` | `idle_reconnect` | event |  | A websocket was silent for too long, so it was reconnected. |
+| `flezha_ws` | `overflowed` | event |  | A websocket's queue was full, so messages were dropped. |
+| `flezha_ws` | `reconcile` | event |  | A websocket compared its subscriptions with what its feed reports. |
+| `flezha_ws` | `resubscribe` | event |  | A websocket sent its subscriptions again after its feed went quiet. |
+| `flezha_ws` | `retried` | event |  | A websocket send failed and will be tried again. |
+| `flezha_ws` | `shipped` | metric | `flezha_ws_shipped` | Messages were sent over a websocket. |
+<!-- bridge-signals:end -->
+
 | Event | Measurements | Metadata |
 |---|---|---|
 | `[:flezha, :plugin, :websocket, :reconcile]` | `%{added: integer(), removed: integer()}` | `%{plugin_id: binary()}` |

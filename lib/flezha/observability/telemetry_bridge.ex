@@ -4,7 +4,7 @@ defmodule Flezha.Observability.TelemetryBridge do
   `[:flezha, ...]` telemetry events onto the observability bus.
 
   No producer call-site is rewritten. The mapping has three halves: the
-  hand-kept lifecycle half in `@lines`; a half DERIVED from the convergence
+  hand-kept half, kept under each source in `Lines.sources/0`; a half DERIVED from the convergence
   loop's detector table, so every event a detector entry declares is bridged by
   that declaration and a new detector needs no edit here; and a half derived at
   start from the providers packages installed (`provider_mapping/0`), so a
@@ -42,10 +42,17 @@ defmodule Flezha.Observability.TelemetryBridge do
 
   @handler_id :flezha_observability_telemetry_bridge
 
+  # Every source the bridge registers: area, title, description and its
+  # hand-kept lines.
+  @sources Lines.sources()
+
   # The hand-kept half: event => {source, name, kind, words}. The words never
   # reach the per-event path, which reads `@all_mapping`, the same lines
   # without them.
-  @lines Lines.hand_kept()
+  @lines for {source, {_area, _title, _description, lines}} <- @sources,
+             {event, name, kind, words} <- lines,
+             into: %{},
+             do: {event, {source, name, kind, words}}
 
   # Every `[:flezha, …]` event name the tree writes that reaches no exporter,
   # grouped under the reason it has none. A ratchet: the suite pins the total,
@@ -108,82 +115,14 @@ defmodule Flezha.Observability.TelemetryBridge do
                  {event, {source, name, kind}}
                end)
 
-  # Every source a line names: where it sits, its plain title and what it is.
-  @sources %{
-    flezha_boot:
-      {:controller, "Controller start-up",
-       "Bringing relays back and starting each namespace's hub when the controller starts."},
-    flezha_shutdown:
-      {:controller, "Controller shutdown",
-       "A graceful stop of the controller, step by step, moving relays off first."},
-    flezha_error:
-      {:controller, "Undocumented errors",
-       "Errors a caller got without a documented code; each one is a defect to report."},
-    flezha_state:
-      {:storage, "Saved relay state",
-       "Each relay's state saved on this node: writes, clean-ups and repairs."},
-    flezha_durability:
-      {:storage, "Remote backups",
-       "Copies of relay state sent to remote storage and restored from it."},
-    flezha_relay:
-      {:relays, "Relay lifecycle", "Relays starting, stopping, and halting after a failure."},
-    flezha_runner:
-      {:relays, "Runner connections",
-       "Runners opening and closing their connection to the controller, and the ones it turned away."},
-    flezha_call:
-      {:relays, "Relay calls", "Calls made to relays: answers, timeouts and refusals."},
-    flezha_steps:
-      {:relays, "Steps sessions", "Turns of steps relays that failed and were set aside."},
-    flezha_dlq:
-      {:relays, "Dead letters",
-       "Messages that failed and were set aside in dead-letter queues, and those that expired."},
-    flezha_stream:
-      {:relays, "Runner streams",
-       "The streams that carry messages between runners and their relays."},
-    flezha_schedule: {:relays, "Schedules", "Schedules that start relays on a timetable."},
-    flezha_health:
-      {:relays, "Health findings",
-       "What the health checks found about relays, runners and plugins."},
-    flezha_convergence:
-      {:relays, "Self-repair",
-       "The loop that keeps running relays matching what was asked, and its retries."},
-    flezha_correction:
-      {:relays, "Refused corrections",
-       "Corrections to a relay that the controller would not apply."},
-    flezha_plugin:
-      {:plugins, "Plugin lifecycle", "Plugins moving between the phases of their life."},
-    flezha_plugin_packages:
-      {:plugins, "Plugin packages",
-       "Plugin packages the controller loaded or refused when it started."},
-    flezha_hooks:
-      {:plugins, "Notices to controller plugins",
-       "Notices handed to controller plugins, such as a message becoming a dead letter."},
-    flezha_ws:
-      {:plugins, "Websocket plugin",
-       "The websocket plugin: its connections, subscriptions and sends."},
-    flezha_relay_forward:
-      {:plugins, "Relay forward plugin",
-       "The plugin that hands a relay's messages to the next relay."},
-    flezha_http_poll:
-      {:plugins, "HTTP poll plugin",
-       "The plugin that reads a URL on a timer and hands what changed to a relay."},
-    flezha_http_push:
-      {:plugins, "HTTP push plugin", "The plugin that sends a relay's output to a URL."},
-    flezha_hook_webhook:
-      {:plugins, "Webhook plugin", "The plugin that sends controller notices to a URL."},
-    flezha_file_source:
-      {:plugins, "File source plugin", "The plugin that reads lines from a file into a relay."},
-    flezha_file_sink:
-      {:plugins, "File sink plugin", "The plugin that writes a relay's output to a file."},
-    flezha_postgres_poll:
-      {:plugins, "Postgres poll plugin",
-       "The plugin that reads new rows from a table into a relay."}
-  }
+  # Each source's area, title, description and signals, its derived lines
+  # under its hand-kept ones.
+  @groups Map.new(@sources, fn {source, {area, title, description, _lines}} ->
+            signals =
+              for {_event, {^source, name, kind, words}} <- @all_lines, do: {name, {kind, words}}
 
-  for {_event, {source, _name, _kind}} <- @all_mapping, not Map.has_key?(@sources, source) do
-    raise CompileError,
-      description: "bridged source #{inspect(source)} has no area and description in @sources"
-  end
+            {source, {area, title, description, Enum.uniq_by(signals, &elem(&1, 0))}}
+          end)
 
   # The controller hooks' lines: plugin notices, not telemetry, which only the
   # sinks naming their source hear (`Bus.emit_named/1`).
@@ -215,33 +154,30 @@ defmodule Flezha.Observability.TelemetryBridge do
   """
   @spec registrations(map()) :: [map()]
   def registrations(providers \\ provider_lines()) do
-    (Map.values(@all_lines) ++ Map.values(providers))
-    |> Enum.group_by(&elem(&1, 0))
-    |> Enum.map(fn {source, lines} ->
-      {area, title, description} =
-        Map.get_lazy(@sources, source, fn -> package_source(source) end)
-
-      %{
+    providers
+    |> Map.values()
+    |> Enum.group_by(&elem(&1, 0), fn {_source, name, kind, words} -> {name, {kind, words}} end)
+    |> Enum.reduce(@groups, fn {source, signals}, groups ->
+      Map.update(groups, source, package_source(source, signals), fn {area, title, text, own} ->
+        {area, title, text, own ++ signals}
+      end)
+    end)
+    |> Enum.map(fn {source, {area, title, description, signals}} ->
+      Source.registration(
         name: source,
-        kinds: lines |> Enum.map(&elem(&1, 2)) |> Enum.uniq(),
-        flavour: :declarative,
         area: area,
         title: title,
         description: description,
-        signals:
-          Source.signals(
-            for {_source, name, kind, words} <- Enum.uniq_by(lines, &elem(&1, 1)),
-                do: {name, {kind, words}}
-          )
-      }
+        signals: Enum.uniq_by(signals, &elem(&1, 0))
+      )
     end)
   end
 
-  defp package_source(source) do
+  defp package_source(source, signals) do
     name = source |> Atom.to_string() |> String.replace_prefix("flezha_", "")
 
     {:plugins, "#{SignalWords.humanize(name)} plugin",
-     "The #{name} plugin, installed from a package."}
+     "The #{name} plugin, installed from a package.", signals}
   end
 
   @doc """
@@ -303,6 +239,31 @@ defmodule Flezha.Observability.TelemetryBridge do
   @doc "`mapping/0` with each line's words, as `{source, name, kind, words}`."
   @spec lines() :: %{[atom()] => {atom(), atom(), Signal.kind(), String.t() | keyword()}}
   def lines(), do: @all_lines
+
+  @doc """
+  The Markdown table a telemetry page carries for `sources`: every signal each
+  registers, its kind, the series an exporter names a metric by, and what it
+  says.
+  """
+  @spec render_table([atom()]) :: String.t()
+  def render_table(sources) do
+    registered = Map.new(registrations(), &{&1.name, &1.signals})
+
+    rows =
+      for source <- sources,
+          signal <- Enum.sort_by(Map.fetch!(registered, source), & &1.name),
+          do:
+            "| `#{source}` | `#{signal.name}` | #{signal.kind} | #{series(source, signal)} " <>
+              "| #{signal.description} |\n"
+
+    "| Source | Signal | Kind | Series | Meaning |\n| --- | --- | --- | --- | --- |\n" <>
+      Enum.join(rows)
+  end
+
+  defp series(source, %{kind: :metric, name: name}),
+    do: "`#{Signal.exposition_name(source, name, "_")}`"
+
+  defp series(_source, _signal), do: ""
 
   @doc "The half derived from the convergence loop's detector declarations."
   @spec derived() :: %{[atom()] => {atom(), atom(), Signal.kind()}}

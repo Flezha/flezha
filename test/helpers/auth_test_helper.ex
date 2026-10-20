@@ -37,8 +37,8 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
       `:unchanged` leaves the key as configured.
     * `:claim` — flip the durable `AuthState` flag after start (default
       `false`, i.e. the `:bootstrap_pending` posture under `enabled: true`).
-    * `:register_source` — register `:platform_authz` on the observability
-      registry so the RingBufferSink keeps a table for it (default `false`).
+    * `:register_source` — register `:platform_authz` again and wait until
+      the RingBufferSink keeps a table for it (default `false`).
 
   Returns `%{tmp: tmp, auth_dir: auth_dir}` for the test context.
   """
@@ -67,12 +67,10 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
 
     if Keyword.get(opts, :claim, false), do: :ok = AuthState.set_enabled()
 
-    registered_source? = Keyword.get(opts, :register_source, false)
-    if registered_source?, do: register_platform_authz_source()
+    if Keyword.get(opts, :register_source, false), do: register_platform_authz_source()
 
     on_exit(fn ->
       stop_if_running(@all_stores)
-      if registered_source?, do: Flezha.Observability.Registry.unregister_source(:platform_authz)
       Application.put_env(:flezha, :authn_authz, prev)
       File.rm_rf!(tmp)
     end)
@@ -131,13 +129,11 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
   defp put_enabled(config, :unchanged), do: config
   defp put_enabled(config, enabled), do: Keyword.put(config, :enabled, enabled)
 
-  # The Flezha.AuthZ.Supervisor that normally registers the source is gated
-  # off in tests by `application_managed: false`.
+  # The registry registers the source when it starts; registering it again
+  # gives the ring buffer a registration the test can wait on.
   defp register_platform_authz_source() do
     _ =
-      Flezha.Observability.Registry.register_source(
-        Flezha.AuthZ.SourceRegistration.registration()
-      )
+      Flezha.Observability.Registry.register_source(Flezha.AuthZ.SourceRegistration.__source__())
 
     # The registration reaches the RingBufferSink as a message; a call to the
     # sink returns once that message has been handled.

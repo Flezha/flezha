@@ -254,7 +254,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
     # with the driver stats and the connection count that share the source, so
     # a layout that would blow the budget fails here rather than at runtime.
     test "the derived metric rows stay inside the source's declared budget" do
-      budget = Flezha.Observability.OtpBackend.TransportSource.cardinality_budget()
+      budget = Flezha.Observability.OtpBackend.TransportSource.__source__().cardinality_budget
 
       assert length(LivenessCounters.surfaces(:metric)) <= budget,
              "the layout declares #{length(LivenessCounters.surfaces(:metric))} metric rows " <>
