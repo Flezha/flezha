@@ -45,7 +45,7 @@ lib/flezha/relay/calls.ex 842
 lib/flezha/relay/lifecycle.ex::complete_init 65
 lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/service/plugin_manager.ex 879
-lib/flezha/state/durability_tier/shipper.ex 811
+lib/flezha/state/durability_tier/shipper.ex 810
 lib/flezha/state/input_log.ex 1225
 lib/flezha/state/paths.ex 822
 lib/flezha/state/task_journal.ex 1008

@@ -76,10 +76,8 @@ defmodule Flezha.State.Adoption do
   defp newest(relay_class, nil), do: DurabilityTier.shipped(relay_class)
 
   defp newest(relay_class, source) do
-    case WalTransfer.freshness(source, relay_class) do
-      none when none == %{} -> {none, %{}}
-      theirs -> {theirs, WalTransfer.lineage(source, relay_class)}
-    end
+    theirs = WalTransfer.freshness(source, relay_class)
+    {theirs, if(theirs == %{}, do: %{}, else: WalTransfer.lineage(source, relay_class))}
   end
 
   defp fetch(relay_class, nil), do: DurabilityTier.hydrate_relay(relay_class)

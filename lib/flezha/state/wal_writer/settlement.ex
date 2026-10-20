@@ -568,37 +568,39 @@ defmodule Flezha.State.WalWriter.Settlement do
       when key in @reserved_cell_keys or lineage == nil,
       do: state
 
-  def persist_dedup(state) do
+  def persist_dedup(%{folded_offset: folded} = state) do
     # The cursors as one record; only the persistence watermark is clamped,
     # because the dedup file's own guard has no room for the empty-log `-1`.
     progress = %{State.progress(state) | last_persisted_seq: max(state.last_persisted_seq, 0)}
+    lineage = %{epoch: progress.epoch, folded_offset: folded, cut: nil}
 
     # An out-of-order record is not written. The cursor may lag and never lead
     # (`Flezha.State.DurabilityTier.Hydrator`), so keeping the older, consistent
     # record re-drives work the sinks dedup — writing a flush cursor ahead of
     # what is durable would drop those outputs for good.
-    if State.ordered?(progress) do
-      put_progress(state, progress)
-    else
-      Logger.error(
-        "[state] refusing to persist an out-of-order cursor record for " <>
-          "#{inspect(state.cell_id)}: #{inspect(progress)}"
-      )
-
+    with true <- State.ordered?(progress) || out_of_order(state, progress),
+         {:ok, state} <- put_lineage(state, lineage) do
+      _ = Lineage.put_dedup(state.cell_id, Map.put(progress, :folded_offset, folded))
       state
+    else
+      _not_written -> state
     end
   end
 
-  # The lineage record goes first when the dedup file would carry an epoch or
-  # folded offset it does not hold; a failed install writes no dedup file.
-  defp put_progress(%{lineage: lineage, folded_offset: folded} = state, progress) do
-    record = %{lineage | epoch: progress.epoch, folded_offset: folded, cut: nil}
+  defp out_of_order(state, progress) do
+    Logger.error(
+      "[state] refusing to persist an out-of-order cursor record for " <>
+        "#{inspect(state.cell_id)}: #{inspect(progress)}"
+    )
+  end
 
-    if record == lineage or Lineage.put(state.cell_id, record) == :ok do
-      _ = Lineage.put_dedup(state.cell_id, Map.put(progress, :folded_offset, folded))
-      %{state | lineage: record}
-    else
-      state
-    end
+  # The lineage record, synced, goes before the dedup file or disk step that relies
+  # on it; a failed install leaves the writer as it was. A bump's cut stays until
+  # the dedup write after its disk step clears it: only a synced record ends it.
+  def put_lineage(%{lineage: lineage} = state, changes) do
+    record = Map.merge(lineage, changes)
+
+    with :ok <- if(record == lineage, do: :ok, else: Lineage.put(state.cell_id, record)),
+         do: {:ok, %{state | lineage: record, folded_offset: record.folded_offset}}
   end
 end

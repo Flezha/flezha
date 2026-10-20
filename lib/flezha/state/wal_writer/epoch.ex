@@ -61,7 +61,8 @@ defmodule Flezha.State.WalWriter.Epoch do
   # the new runner's history: empty the WAL file and drop its snapshots, then
   # reset the seq baseline so the incoming `seq` appends contiguously.
   def realign_epoch(%{outbox_epoch: epoch} = state, seq, runner_id, now) do
-    with {:ok, state} <- bump(state, %{epoch: epoch + 1, folded_offset: -1, cut: :all}) do
+    with {:ok, state} <-
+           Settlement.put_lineage(state, %{epoch: epoch + 1, folded_offset: -1, cut: :all}) do
       emit_realign(state.cell_id, state.last_persisted_seq, seq, runner_id)
       state = realign_disk(%{state | last_persisted_seq: seq - 1, owning_runner: runner_id})
       {:ok, %{state | last_advance_at: now}}
@@ -95,25 +96,13 @@ defmodule Flezha.State.WalWriter.Epoch do
     bump_epoch(state, :queue.new(), state.last_persisted_seq, -1)
   end
 
-  # The lineage record a bump or a prefix cut writes before its disk step; a
-  # failed install refuses the request with the writer as it was. A bump's cut
-  # stays until the dedup write after the disk step clears it in this record
-  # first: the dedup file is not synced, so only a synced record ends the cut.
-  def bump(state, changes) do
-    lineage = Map.merge(state.lineage, changes)
-
-    with :ok <- Lineage.put(state.cell_id, lineage),
-         do: {:ok, %{state | lineage: lineage, folded_offset: lineage.folded_offset}}
-  end
-
   # The first record of a window marks the Cell dirty; while `mint?` (a landed
   # copy, or no lineage id yet) a new id is installed first. A failed install raises:
   # a refusal would be a result on every append; the restart mints at the resent record.
   def open_window(%{mint?: true, lineage: lineage} = state) do
     fork = %{lineage | epoch: state.outbox_epoch, folded_offset: state.folded_offset}
-    minted = Lineage.mint(fork, state.last_persisted_seq)
-    :ok = Lineage.put(state.cell_id, minted)
-    open_window(%{state | lineage: minted, mint?: false})
+    {:ok, state} = Settlement.put_lineage(state, Lineage.mint(fork, state.last_persisted_seq))
+    open_window(%{state | mint?: false})
   end
 
   def open_window(state), do: tap(state, &FsyncBatcher.mark_dirty(&1.cell_id))
@@ -346,7 +335,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   def rewind(state, seq, epoch) do
     changes = %{epoch: epoch, folded_offset: folded_through(state, seq), cut: {:above, seq}}
 
-    case bump(state, changes) do
+    case Settlement.put_lineage(state, changes) do
       {:ok, state} -> rewind_disk(state, seq)
       {:error, reason} -> {:error, reason, state}
     end

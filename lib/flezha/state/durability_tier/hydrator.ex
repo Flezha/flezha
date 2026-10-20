@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal, WriterRegistry}
+  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal}
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
@@ -313,17 +313,10 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end
   end
 
-  # A Cell is also described by small files no record implies (its lineage
-  # record, its saga markers), written after its data under the Cell's file
-  # lock, so a writer opens only on a whole landing. Each is an overwrite of a
-  # fixed path, so a retry after a partial landing converges.
-  defp land(module, opts, %Manifest{ref: {:cell, cell_id}} = manifest) do
-    WriterRegistry.with_files(cell_id, fn ->
-      with :ok <- fetch_and_write(module, opts, manifest),
-           :ok <- Lineage.arrived(cell_id, facts(manifest)),
-           do: seed_markers(cell_id, manifest)
-    end)
-  end
+  # A Cell's small files no record implies land after its data (`Lineage.land/3`);
+  # each overwrites a fixed path, so a retry after a partial landing converges.
+  defp land(module, opts, %Manifest{ref: {:cell, cell_id}} = manifest),
+    do: Lineage.land(cell_id, facts(manifest), fn -> fetch_and_write(module, opts, manifest) end)
 
   defp land(module, opts, manifest), do: fetch_and_write(module, opts, manifest)
 
@@ -334,7 +327,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     Map.merge(manifest.lineage || %{}, %{
       epoch: manifest.epoch,
       folded_offset: Map.get(manifest.source_offsets, :consumed_offset, -1),
-      landed: manifest.owner != DurabilityTier.writer_id()
+      landed: manifest.owner != DurabilityTier.writer_id(),
+      markers: manifest.markers
     })
   end
 
@@ -350,14 +344,6 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   end
 
   defp seed_floor(_manifest), do: :ok
-
-  defp seed_markers(cell_id, %Manifest{markers: markers}) do
-    for {kind, true} <- Map.to_list(markers || %{}) do
-      Paths.write_compensation_marker(cell_id, kind)
-    end
-
-    :ok
-  end
 
   defp emit(event, ref, manifest) do
     :telemetry.execute(

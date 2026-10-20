@@ -1,19 +1,15 @@
 defmodule Flezha.State.Lineage do
   @moduledoc """
-  A Cell's two small durable records. `<key>.outbox.dedup` holds, in a 32-byte
-  layout a rollback build still reads, the persistence watermark, the flush
-  cursor (both a cache the WAL scan repairs; they may lag, never lead), the
-  epoch and the folded offset (the highest consumed offset a prefix cut
-  dropped, `-1` for none). `<key>.lineage` is the home of the last two: it is
-  installed with a directory fsync before the dedup file carries a new copy of
-  either. `read/1` takes the higher epoch, with that file's folded offset (the
-  lineage file's on a tie), and a pending cut only while the dedup file's epoch
-  is below the lineage file's. An unreadable lineage file reads as none.
+  A Cell's two small durable records. `<key>.outbox.dedup` keeps, in the 32-byte
+  layout a rollback build reads, the persistence watermark and flush cursor (a
+  cache that may lag, never lead), the epoch and the folded offset (what a prefix
+  cut dropped consumed, `-1` for none). `<key>.lineage` is the home of the last
+  two and is installed, directory fsynced, before the dedup file carries either.
   """
 
   require Logger
 
-  alias Flezha.State.{Frame, Paths}
+  alias Flezha.State.{Frame, Paths, WriterRegistry}
 
   @type cut :: nil | :all | {:above, non_neg_integer()}
   @type stored :: %{
@@ -32,7 +28,10 @@ defmodule Flezha.State.Lineage do
   @none %{id: nil, trail: [], landed: false, epoch: nil, folded_offset: -1, cut: nil}
   @keys Map.keys(@none)
 
-  @doc "Both files merged: the lineage record, the winning progress, the pending cut."
+  @doc """
+  Both files merged: the higher epoch with its file's folded offset (the lineage
+  file's on a tie), the cut pending only while the dedup epoch is below it.
+  """
   @spec read(Paths.cell_id()) :: t()
   def read(cell_id) do
     record = record(cell_id)
@@ -58,30 +57,39 @@ defmodule Flezha.State.Lineage do
   end
 
   @doc """
-  A Cell's files landed from elsewhere: a pull's record is marked landed; a
-  hydration's `facts` are installed, then a dedup file whose cursors `{0, -1}`
-  re-drive every effect record (a cursor may lag, never lead).
+  Land a Cell's files from elsewhere: `fetch` under the Cell's file lock, then a
+  pull's lineage record marked landed, or a hydration's `facts` installed with a
+  dedup file whose cursors `{0, -1}` re-drive every effect record, then its markers.
   """
-  @spec arrived(Paths.cell_id(), :pulled | map()) :: :ok | {:error, term()}
-  def arrived(cell_id, :pulled) do
+  @spec land(Paths.cell_id(), :pulled | map(), (-> result)) :: result when result: term()
+  def land(cell_id, facts, fetch) do
+    WriterRegistry.with_files(cell_id, fn ->
+      with ok when ok == :ok or elem(ok, 0) == :ok <- fetch.(),
+           :ok <- arrived(cell_id, facts),
+           do: ok
+    end)
+  end
+
+  defp arrived(cell_id, :pulled) do
     case record(cell_id) do
       %{epoch: nil} -> :ok
       record -> put(cell_id, %{record | landed: true})
     end
   end
 
-  def arrived(cell_id, facts) do
-    %{epoch: epoch, folded_offset: folded} = record = Map.merge(@none, facts)
-    progress = %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: epoch}
-
-    with :ok <- put(cell_id, record),
-         do: put_dedup(cell_id, Map.put(progress, :folded_offset, folded))
+  defp arrived(cell_id, facts) do
+    with :ok <- put(cell_id, Map.merge(@none, facts)),
+         :ok <-
+           put_dedup(cell_id, Map.merge(facts, %{last_persisted_seq: 0, outbox_flushed_seq: -1})) do
+      for {kind, true} <- facts.markers || %{}, do: Paths.write_compensation_marker(cell_id, kind)
+      :ok
+    end
   end
 
   @doc """
-  How lineage `theirs` stands to `ours` (each `%{id, trail}` or `nil`): `:same`
-  when no id tells them apart, `:descendant` when theirs continues ours,
-  `{:ancestor, fork}` when ours continues theirs from seq `fork`, else `:other`.
+  How lineage `theirs` stands to `ours` (`%{id, trail}` or `nil`): `:descendant`,
+  `{:ancestor, fork}` when ours continues theirs from seq `fork`, `:other`, or
+  `:same` when no id tells them apart.
   """
   @spec relation(map() | nil, map() | nil) ::
           :same | :descendant | {:ancestor, integer()} | :other
@@ -106,27 +114,23 @@ defmodule Flezha.State.Lineage do
   defp record(cell_id) do
     path = Paths.lineage_path(cell_id)
 
-    case File.read(path) do
-      {:error, _} ->
-        @none
-
-      {:ok, bytes} ->
-        decode(bytes) ||
-          (Logger.warning("[state] unreadable #{path}: reading the dedup file alone") && @none)
-    end
-  end
-
-  defp decode(<<@head::binary, crc::32, body::binary>>) do
-    with ^crc <- Frame.crc32(@head, body),
+    with {:ok, <<@head::binary, crc::32, body::binary>>} <- File.read(path),
+         ^crc <- Frame.crc32(@head, body),
          %{epoch: epoch} = record when is_integer(epoch) <- :erlang.binary_to_term(body, [:safe]),
-         [] <- @keys -- Map.keys(record),
-         do: record,
-         else: (_ -> nil)
+         [] <- @keys -- Map.keys(record) do
+      record
+    else
+      {:error, _absent} -> @none
+      _unreadable -> unreadable(path)
+    end
   rescue
-    ArgumentError -> nil
+    ArgumentError -> unreadable(Paths.lineage_path(cell_id))
   end
 
-  defp decode(_bytes), do: nil
+  defp unreadable(path) do
+    Logger.warning("[state] unreadable #{path}: reading the dedup file alone")
+    @none
+  end
 
   @doc "The dedup file alone."
   @spec dedup(Paths.cell_id()) :: progress()
@@ -144,14 +148,9 @@ defmodule Flezha.State.Lineage do
 
   @doc "Write the dedup file; an absent `folded_offset` writes `-1`."
   @spec put_dedup(Paths.cell_id(), map()) :: :ok | {:error, term()}
-  def put_dedup(
-        cell_id,
-        %{last_persisted_seq: seq, outbox_flushed_seq: flushed, epoch: epoch} = record
-      )
-      when is_integer(seq) and seq >= 0 and is_integer(flushed) and flushed >= -1 and
-             is_integer(epoch) and epoch >= 0 do
-    folded = Map.get(record, :folded_offset, -1)
-    bytes = <<seq::64-big, flushed::64-big-signed, epoch::64-big, folded::64-big-signed>>
+  def put_dedup(cell_id, %{last_persisted_seq: s, outbox_flushed_seq: f, epoch: e} = record)
+      when is_integer(s) and s >= 0 and is_integer(f) and f >= -1 and is_integer(e) and e >= 0 do
+    bytes = <<s::64, f::64-signed, e::64, Map.get(record, :folded_offset, -1)::64-signed>>
 
     # No directory is created (the WAL open owns that, so a write cannot
     # resurrect a deleted Cell dir) and no fsync owed: the writer's batch syncs.

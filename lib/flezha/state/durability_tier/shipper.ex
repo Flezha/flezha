@@ -383,12 +383,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # A relay's turns ship only while this node runs it (adopted at its bind,
-  # released when it leaves): one that LOST it still holds the files, since a
-  # migration keeps the source copy, and would extend its entry with abandoned
-  # turns or bid it back over the real owner, or over an entry that continues
-  # its own lineage. Until a bind adopts, an extend waits, not owed. Two first
-  # ships both bid `{:claim, 1}` and the strict compare-and-set picks one.
+  # A relay's turns ship only while this node runs it: one that LOST it keeps the
+  # files (a migration keeps the source copy) and would extend its entry with
+  # abandoned turns, or bid back over the owner or an entry continuing its own
+  # lineage. Until a bind adopts, an extend waits, not owed. Two first ships
+  # both bid `{:claim, 1}` and the strict compare-and-set picks one.
   defp entitled?(state, ref) do
     entry = manifest_for(state, ref)
     adopted? = MapSet.member?(state.adopted, Artifact.state_key(ref))

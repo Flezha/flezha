@@ -138,13 +138,9 @@ defmodule Flezha.State.DurabilityTier.Manifest do
     }
   end
 
-  @doc """
-  The entry a copy of `lineage` ships onto: cut above the fork when that copy
-  continues the entry's lineage, emptied (the copy re-ships whole) when the
-  entry's lineage is no ancestor of it, as it is otherwise.
-  """
+  @doc "The entry a copy of `lineage` ships onto: cut above its fork, emptied for an unrelated one."
   @spec rebase(t(), map() | nil) :: t()
-  def rebase(%__MODULE__{} = manifest, lineage) do
+  def rebase(manifest, lineage) do
     case Lineage.relation(manifest.lineage, lineage) do
       {:ancestor, fork} -> prune_above(manifest, fork)
       :other -> prune_above(manifest, -1)

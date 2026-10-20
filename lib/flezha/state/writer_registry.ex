@@ -47,9 +47,8 @@ defmodule Flezha.State.WriterRegistry do
   end
 
   @doc """
-  Run `fun` in a task holding `cell_id`'s file lock: the writer of the Cell's
-  files while it has no running writer (a landing). A booting writer waits for
-  the holder to end (`await_files/1`); a holder never waits on a writer.
+  Run `fun` in a task holding `cell_id`'s file lock, which a booting writer
+  waits on (`await_files/1`); a holder never waits on a writer.
   """
   @spec with_files(tuple(), (-> result)) :: result when result: term()
   def with_files(cell_id, fun) do
@@ -61,9 +60,8 @@ defmodule Flezha.State.WriterRegistry do
       {:ok, _owner} ->
         fun.()
 
-      {:error, {:already_registered, _holder}} ->
-        :ok = await_files(cell_id)
-        hold_files(cell_id, fun)
+      {:error, {:already_registered, _}} ->
+        with :ok <- await_files(cell_id), do: hold_files(cell_id, fun)
     end
   end
 

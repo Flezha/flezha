@@ -426,7 +426,7 @@ defmodule Flezha.State.WalWriter do
     folded =
       case key not in Paths.reserved_cell_keys() and Epoch.scan_consumed_at(state, bound) do
         offset when is_integer(offset) and offset > state.folded_offset ->
-          Epoch.bump(state, %{epoch: state.outbox_epoch, folded_offset: offset})
+          Settlement.put_lineage(state, %{epoch: state.outbox_epoch, folded_offset: offset})
 
         _reserved_refused_or_folded ->
           {:ok, state}

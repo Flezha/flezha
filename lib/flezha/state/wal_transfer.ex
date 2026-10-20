@@ -24,7 +24,7 @@ defmodule Flezha.State.WalTransfer do
 
   alias Flezha.Config.Durations
   alias Flezha.State.DurabilityTier.Artifact
-  alias Flezha.State.{Lineage, Paths, WriterRegistry}
+  alias Flezha.State.{Lineage, Paths}
 
   @chunk_bytes 64 * 1024
 
@@ -236,15 +236,8 @@ defmodule Flezha.State.WalTransfer do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  # A Cell's pull is a landing of another controller's copy: under the Cell's
-  # file lock, its lineage record marked landed once every file is in.
-  defp land({:cell, cell_id}, pull) do
-    WriterRegistry.with_files(cell_id, fn ->
-      with {:ok, _files} = pulled <- pull.(),
-           :ok <- Lineage.arrived(cell_id, :pulled),
-           do: pulled
-    end)
-  end
+  # A Cell's pull is a landing of another controller's copy.
+  defp land({:cell, cell_id}, pull), do: Lineage.land(cell_id, :pulled, pull)
 
   defp land(_ref, pull), do: pull.()
 

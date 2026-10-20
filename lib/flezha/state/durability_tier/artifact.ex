@@ -259,11 +259,10 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc """
   Whether one relay's copy marked `theirs` replaces the local copy marked
   `ours` (both `%{ref => marker}`, lineages `%{ref => lineage/1}`): each of its
-  markers can be read, it shares a reference with ours unless ours is empty,
-  and on every shared one it continues ours, is unrelated, moved past the fork
-  ours continues it from, or, of one lineage, is at least as new (a tie goes to
-  the copy the relay's current owner wrote). A reference only ours holds does
-  not count against it: the adoption keeps it (`Flezha.State.Adoption`).
+  markers can be read, it shares a reference with ours unless ours is empty, and
+  on each shared one it continues ours, is unrelated, moved past the fork ours
+  continues it from, or, of one lineage, is at least as new (a tie goes to it).
+  A reference only ours holds stays (`Flezha.State.Adoption`).
   """
   @spec copy_supersedes?(%{ref() => term()}, %{ref() => term()}, map(), map()) :: boolean()
   def copy_supersedes?(theirs, ours, their_lineage \\ %{}, our_lineage \\ %{}) do
