@@ -497,7 +497,7 @@ read. Every refusal exits non-zero with the reason on stderr; the non-resident f
 | `{:oversized_state, bytes}` | the reply exceeds `:wal_high_watermark_bytes` | controller |
 
 `cell_evicted` vs `cell_not_found` is a real distinction: eviction unlinks the Cell's files,
-so the SDK keeps a bounded FIFO (1024 keys, `flz_core` `EVICTED_TRACE_CAP`) of what its reaper
+so the SDK keeps a bounded FIFO (1024 keys, `flz_core` `EVICTED_TRACE_CAP`) of what its idle sweep
 evicted; past the cap the answer degrades to `cell_not_found`, the safe direction.
 
 **Size bound.** The reply is bounded by `:wal_high_watermark_bytes` (16 MiB), the ceiling the
@@ -560,10 +560,10 @@ the runner with `Recovery.resolve_runner/1` and calls `Commands.dispatch_compact
 ## Dynamic-cell hard delete
 
 A dynamic-mode Tasklet that opts into an idle TTL (`cell_idle_ttl()` returning a duration;
-default none) has its idle, persistence-enabled Cells evicted by the SDK reaper, which ships a
+default none) has its idle, persistence-enabled Cells evicted by the SDK's idle sweep, which ships a
 `delete_cell_state` frame (payload-id `Wire.payload_id_delete_cell_state/0`, body the bare
 `cell_id`) on the secondary stream under the durable guarantee class, so an eviction with no
-stream bound holds the frame for the rebind instead of losing it. The reaper waits for no reply
+stream bound holds the frame for the rebind instead of losing it. The sweep waits for no reply
 and the controller writes none. `StreamChannel` honours it only for a class
 with the `:dynamic_cells?` capability — any other kind gets a warning and is ignored, so a
 durable steps relay's state is never dropped out from under it — and routes it to

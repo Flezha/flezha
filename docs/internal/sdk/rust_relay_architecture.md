@@ -447,7 +447,7 @@ Changes declare `sdk_lang = 2`, `change_format_id = 4` (Kryo). A Java
    creating the Cell on a miss. The key function is total — an input is
    discarded by a `filter` declared before it, never by a keyless return.
 3. **Mailbox push** — one `ArrayQueue::try_push`, one Relaxed `pushes_total`
-   increment, one `last_activity_at` store (the reaper's idle stamp), one
+   increment, one `last_activity_at` store (the idle sweep's stamp), one
    inflight compare-exchange. A winning CAS schedules the Cell's round on
    the poll core; a losing one means an in-progress drain picks the item up
    through the missed-wake re-check. A full mailbox applies the channel's
@@ -484,16 +484,18 @@ a Tasklet with a non-empty `cell_keys()` is refused
 (`TopologyIssue::KeyByOnUnkeyableTarget`). Two per-Tasklet knobs:
 
 - `cell_idle_ttl() -> Option<Duration>` — default `None`, no eviction and no
-  reaper. `Some(ttl)` spawns one `flezha-reaper` thread per Tasklet that
-  sweeps every `min(ttl / 4, 30 s)` (floored at 1 ms; `FLEZHA_REAP_INTERVAL_MS`
-  overrides) and evicts any Cell idle longer than `ttl`. A sweep takes the
+  sweep. `Some(ttl)` arms one idle sweep per Tasklet on the poll core's
+  deferred-wake list every `min(ttl / 4, 30 s)` (at least 1 ms;
+  `FLEZHA_REAP_INTERVAL_MS` overrides), run by the poller that promotes it; a
+  sweep with a host-run Cell to evict runs on a short-lived `flezha-leave`
+  thread. A sweep evicts any Cell idle longer than `ttl`. It takes the
   Cell's drain gate and confirms an empty mailbox first, so it never
   interrupts a running `run`. **Eviction is destructive**: the slot, its
   pending timers and (when persistent) its on-disk WAL/snapshot go — a
   `delete_cell_state` to the controller, durable-class like every other
   record, so an eviction inside a reconnect window holds the frame for the
   rebind rather than losing it — and a later input cold-starts fresh. The
-  reaper waits for no reply and the controller writes none. The registry
+  sweep waits for no reply and the controller writes none. The registry
   keeps the last 1024 evicted keys so a live read can say "idle-evicted"
   rather than "never existed".
 - `max_cells() -> usize` — default `100_000`, a soft cap: at the cap
@@ -787,7 +789,7 @@ postcard body the typed dispatcher encodes under the state lock.
 | Pool governor (sizes, supervisor, grow and retire) | `flz_core/src/poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
 | `RelayInstance`, `KeyGroupRange`; `RelayTopology`, `CellMode`; registries | `flz_core/src/relay/{instance,topology,registry}.rs` |
-| `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |
+| `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and idle sweep | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |
 | Wire dispatch (`RelayDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
 | Relay state JSON shape, `apply_init_values` | `flz_core/src/command/cell_state.rs` |

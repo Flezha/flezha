@@ -1304,7 +1304,7 @@ evicts a persistence-enabled dynamic Cell, under the **durable** class (§7):
 a refused write is held and replayed in write order behind that Cell's own
 records, never dropped at the write site. The controller drops the Cell's
 WAL, snapshot and outbox files so a later recreate cold-starts, ignores the
-frame for a non-dynamic class, and writes no response frame. The reaper waits
+frame for a non-dynamic class, and writes no response frame. The sweep waits
 for none.
 
 ### Data-stream payload-id `park_payload`
