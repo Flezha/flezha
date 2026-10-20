@@ -11,7 +11,8 @@ COMMANDS:
     retention  Set how long a relay class keeps its write-ahead history.
     delete     Hard-delete one Cell's persisted state.
     outbox     One Cell's outbox, with its cursors, epoch and lag.
-    journal    One instance's task journal, in append order.
+    journal    One instance's task journal, in append order, and the run's
+               outcome.
     inbox      An instance's durable input log, record by record.
     help       Show this help message.
 

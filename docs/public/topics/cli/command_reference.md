@@ -109,7 +109,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz state retention <relay_class> <hours>` | Set how long a relay class keeps its write-ahead history. |
 | `flz state delete <relay/tasklet/cell_key>` | Hard-delete one Cell's persisted state. |
 | `flz state outbox <relay/tasklet/cell_key>` | One Cell's outbox, with its cursors, epoch and lag. |
-| `flz state journal <relay/instance>` | One instance's task journal, in append order. |
+| `flz state journal <relay/instance>` | One instance's task journal, in append order, and the run's outcome. |
 | `flz state inbox <relay/instance>` | An instance's durable input log, record by record. |
 <!-- flz-reference:end -->
 
