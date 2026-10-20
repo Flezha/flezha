@@ -11,6 +11,8 @@
   and ignores the lineage file.
 - A writer that refused a Cell's log at open no longer overwrites the Cell's dedup file with
   defaults when it closes.
+- A runner-restart realign or a correction's rewind that a crash interrupts is finished when
+  the Cell's writer next starts, so the outputs it discarded are not sent again.
 
 ### Fixed: a relay stopped from another controller is announced again when it fails
 

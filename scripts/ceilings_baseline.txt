@@ -49,7 +49,6 @@ lib/flezha/state/durability_tier/shipper.ex 812
 lib/flezha/state/input_log.ex 1225
 lib/flezha/state/paths.ex 822
 lib/flezha/state/task_journal.ex 1008
-lib/flezha/state/wal_writer/epoch.ex::do_rewind 53
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
 sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 52
 sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51

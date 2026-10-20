@@ -260,7 +260,12 @@ at its writer's next dedup write; an unreadable one reads as none. `Lineage.read
 higher epoch of the two files with that file's folded offset (the lineage file's on a tie); a
 dedup file ahead means a build without lineage records ran since, and the lineage record is
 rewritten before the next dedup write. Its pending `cut` counts only while the dedup file's epoch
-is below its own. A writer whose open refused the WAL never read either file and writes neither.
+is below its own. A realign (`cut: :all`) and a rewind (`{:above, seq}`) write it with the next
+epoch before their disk step, then clear the cut in it before the dedup file is written (the dedup
+file is not synced, so only the lineage record can end the cut); a writer that boots with the cut
+still pending runs that disk step again before it serves. A prefix cut writes its folded offset to
+it before the cut file is renamed. A writer whose open refused the WAL never read either file and
+writes neither.
 
 `folded_offset` is the highest consumed offset the WAL records a live writer's prefix cut
 (`WalWriter.truncate_up_to/3`: compaction, or retention while the writer runs) dropped carried,

@@ -60,7 +60,16 @@ defmodule Flezha.State.WalWriter.Epoch do
   # Discard the stale pre-restart epoch so a later `RestoreInitState` ships only
   # the new runner's history: empty the WAL file and drop its snapshots, then
   # reset the seq baseline so the incoming `seq` appends contiguously.
-  def realign_epoch(state, seq, runner_id, now) do
+  def realign_epoch(%{outbox_epoch: epoch} = state, seq, runner_id, now) do
+    with {:ok, state} <- bump(state, %{epoch: epoch + 1, folded_offset: -1, cut: :all}) do
+      emit_realign(state.cell_id, state.last_persisted_seq, seq, runner_id)
+      state = realign_disk(%{state | last_persisted_seq: seq - 1, owning_runner: runner_id})
+      {:ok, %{state | last_advance_at: now}}
+    end
+  end
+
+  # A realign's disk step, run live and by a boot completing one.
+  def realign_disk(state) do
     # The truncated epoch's un-fsynced bytes have left the buffer;
     # release them to the stream ledger so the window is not leaked.
     state = RemoteGate.reset(state)
@@ -69,46 +78,39 @@ defmodule Flezha.State.WalWriter.Epoch do
 
     Enum.each(Paths.snapshot_paths(state.cell_id), fn {_seq, path} -> File.rm(path) end)
 
-    emit_realign(state.cell_id, state.last_persisted_seq, seq, runner_id)
-
     Metrics.put(state.metrics, :wal_size_bytes, 0)
     Metrics.put(state.metrics, :snapshot_seq, 0)
 
-    # The stale lineage's undispatched outputs die with its records — the
-    # realigned runner's replay regenerates them under the new epoch.
     state = %{
       state
-      | last_persisted_seq: seq - 1,
-        last_advance_at: now,
-        owning_runner: runner_id,
-        pending_bytes: 0,
+      | pending_bytes: 0,
         pending_since_us: nil,
         oldest_unsnapshotted_at: nil,
         header_index: nil,
-        seq_index: SeqIndex.new(),
-        folded_offset: -1
+        seq_index: SeqIndex.new()
     }
 
-    # A realign discards the whole lineage, so nothing in the new one has been
-    # flushed and nothing is queued.
-    bump_epoch(state, %{
-      pending: :queue.new(),
-      durable_seq: seq - 1,
-      flushed_seq: -1,
-      epoch: state.outbox_epoch + 1
-    })
+    # The stale lineage's undispatched outputs die with its records, so nothing
+    # is flushed or queued; the realigned runner's replay regenerates them.
+    bump_epoch(state, :queue.new(), state.last_persisted_seq, -1)
   end
 
-  # The half a realign and a rewind share: re-seat the outbox cursors on the new
-  # lineage and persist the epoch bump **synchronously**. That `persist_dedup`
-  # is the commit point of both tasklets — it is what stops an output
-  # regenerated above the boundary from colliding with its own pre-boundary
-  # delivery, because the two now key under different epochs.
-  #
-  # `epoch` is passed rather than derived so a caller resuming an interrupted
-  # boundary re-asserts the epoch it already committed to instead of bumping a
-  # second time.
-  defp bump_epoch(state, %{pending: pending, durable_seq: durable, flushed_seq: flushed, epoch: e}) do
+  # The lineage record a bump or a prefix cut writes before its disk step; a
+  # failed install refuses the request with the writer as it was. A bump's cut
+  # stays until the dedup write after the disk step clears it in this record
+  # first: the dedup file is not synced, so only a synced record ends the cut.
+  def bump(state, changes) do
+    lineage = Map.merge(state.lineage, changes)
+
+    with :ok <- Lineage.put(state.cell_id, lineage),
+         do: {:ok, %{state | lineage: lineage, folded_offset: lineage.folded_offset}}
+  end
+
+  # The half a realign and a rewind share: re-seat the outbox cursors on the
+  # lineage record's epoch, which keys an output regenerated above the boundary
+  # apart from its own pre-boundary delivery, then end the cut and write the
+  # dedup file **synchronously**.
+  defp bump_epoch(state, pending, durable, flushed) do
     state = %{
       state
       | pending_outbox: pending,
@@ -116,7 +118,7 @@ defmodule Flezha.State.WalWriter.Epoch do
         outbox_flushed_seq: flushed,
         outbox_awaiting: %{},
         outbox_inflight: :queue.new(),
-        outbox_epoch: e
+        outbox_epoch: state.lineage.epoch
     }
 
     Settlement.persist_dedup(state)
@@ -322,25 +324,34 @@ defmodule Flezha.State.WalWriter.Epoch do
   Cut the WAL and the snapshots above `seq`, re-derive what the boundary left
   un-flushed from the rewritten file, and open the next epoch on it.
 
-  Answers `{:ok, state}`, or `{:error, refusal, state}` when locating the
+  Answers `{:ok, state}`, `{:error, reason, state}` with nothing cut when the
+  lineage install fails, or `{:error, refusal, state}` when locating the
   boundary refused a record: the cut keeps `[0, bound)` and renames it into
   place, so a boundary taken at a record that did not decode would delete the
   valid records between it and the seq the caller asked to rewind to. The
   writer that owns the file then refuses to serve rather than cutting.
   """
   def rewind(state, seq, epoch) do
+    changes = %{epoch: epoch, folded_offset: folded_through(state, seq), cut: {:above, seq}}
+
+    case bump(state, changes) do
+      {:ok, state} -> rewind_disk(state, seq)
+      {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  # A rewind's disk step, run live and by a boot completing one.
+  def rewind_disk(state, seq) do
     case RecordFrame.cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1) do
-      {:ok, file, seq_index} -> {:ok, do_rewind(state, seq, epoch, file, seq_index)}
+      {:ok, file, seq_index} -> {:ok, do_rewind(state, seq, file, seq_index)}
       {:error, refusal} -> {:error, refusal, %{state | refusal: refusal}}
     end
   end
 
-  defp do_rewind(state, seq, epoch, file, seq_index) do
+  defp do_rewind(state, seq, file, seq_index) do
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
     # realign does, would be a wipe, not a rewind.
-    state = %{state | folded_offset: folded_through(state, seq)}
-
     Enum.each(Paths.snapshot_paths(state.cell_id), fn {snap_seq, path} ->
       if snap_seq > seq, do: File.rm(path)
     end)
@@ -367,7 +378,7 @@ defmodule Flezha.State.WalWriter.Epoch do
     Metrics.put(state.metrics, :wal_size_bytes, size)
     Metrics.put(state.metrics, :wal_seq, seq)
     Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.cell_id))
-    emit_rewind(state.cell_id, state.last_persisted_seq, seq, epoch)
+    emit_rewind(state.cell_id, state.last_persisted_seq, seq, state.lineage.epoch)
 
     state = %{
       state
@@ -381,11 +392,6 @@ defmodule Flezha.State.WalWriter.Epoch do
         oldest_unsnapshotted_at: if(size > 0, do: now)
     }
 
-    bump_epoch(state, %{
-      pending: :queue.from_list(surviving),
-      durable_seq: durable,
-      flushed_seq: flushed,
-      epoch: epoch
-    })
+    bump_epoch(state, :queue.from_list(surviving), durable, flushed)
   end
 end

@@ -9,7 +9,9 @@ defmodule Flezha.State.LineageTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.State.{Lineage, Paths, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{InputLog, Lineage, Paths, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.WalWriter.Epoch
+  alias FlezhaTest.OutboxCase
 
   setup do
     %{cell_id: TestHelpers.sample_cell_id("lineage_" <> uniq())}
@@ -23,6 +25,31 @@ defmodule Flezha.State.LineageTest do
   end
 
   defp stored(cell_id), do: Lineage.read(cell_id).record
+
+  # A Cell of its own relay class (no Overwatch, no other reporter), its
+  # records 0..`last` each consuming input `n` and owing one output.
+  defp effect_cell(last) do
+    cell_id = {"lineage_" <> uniq(), "task", "k1"}
+    {:ok, srv} = Supervisor.find_or_start(cell_id)
+
+    for n <- 0..last do
+      body = OutboxCase.effect_body([OutboxCase.output("k", "v#{n}")], n)
+      :ok = WalWriter.append(srv, n, OutboxCase.effect_header(), body)
+    end
+
+    TestHelpers.close_and_await(srv, cell_id)
+    cell_id
+  end
+
+  defp snapshot(cell_id, seq),
+    do: {:ok, _} = Snapshot.write_snapshot(cell_id, seq, <<0::unit(8)-size(16)>>, <<seq>>)
+
+  defp records(cell_id), do: length(TestHelpers.record_offsets(Paths.wal_path(cell_id)))
+
+  defp boot(cell_id) do
+    {:ok, pid} = Supervisor.find_or_start(cell_id)
+    {pid, WalWriter.outbox_status(pid)}
+  end
 
   # fails when: the dedup file's layout changes, so a build from before the
   # lineage file reads it wrong after a rollback (the pattern is that build's).
@@ -102,5 +129,84 @@ defmodule Flezha.State.LineageTest do
     write_records(ctx.cell_id, [4])
 
     assert File.read!(Paths.outbox_dedup_path(ctx.cell_id)) == dedup
+  end
+
+  # fails when: a boot leaves a realign its lineage write committed half done,
+  # so the discarded records' outputs are re-driven under the new epoch.
+  test "a realign interrupted after its lineage write is completed at boot, re-driving nothing" do
+    for empty_wal? <- [false, true] do
+      cell_id = effect_cell(7)
+      for seq <- [2, 5], do: snapshot(cell_id, seq)
+      if empty_wal?, do: File.write!(Paths.wal_path(cell_id), "")
+      :ok = Lineage.put(cell_id, %{stored(cell_id) | epoch: 5, folded_offset: -1, cut: :all})
+      :ok = Lineage.put_dedup(cell_id, %{Lineage.dedup(cell_id) | epoch: 4})
+
+      {pid, status} = boot(cell_id)
+
+      assert %{pending: 0, held: 0, epoch: 5, outbox_flushed_seq: -1} = status
+      assert WalWriter.last_persisted_seq(pid) == -1
+      assert records(cell_id) == 0
+      assert Paths.snapshot_paths(cell_id) == []
+      assert %{epoch: 5, folded_offset: -1} = Lineage.dedup(cell_id)
+      assert %{epoch: 5, cut: nil} = stored(cell_id)
+      TestHelpers.close_and_await(pid, cell_id)
+    end
+  end
+
+  # fails when: a boot leaves a rewind its lineage write committed half done:
+  # the records above the boundary survive and the watermark stays high.
+  test "a rewind interrupted after its lineage write is completed at boot, and its re-run is a no-op" do
+    cell_id = effect_cell(7)
+    rc = elem(cell_id, 0)
+    for seq <- [2, 5], do: snapshot(cell_id, seq)
+    :ok = Lineage.put(cell_id, %{stored(cell_id) | epoch: 6, folded_offset: -1, cut: {:above, 3}})
+
+    {pid, status} = boot(cell_id)
+    on_disk = fn -> {File.read!(Paths.wal_path(cell_id)), Paths.snapshot_paths(cell_id)} end
+    after_boot = {on_disk.(), Lineage.read(cell_id)}
+
+    assert %{epoch: 6, last_persisted_seq: 3} = status
+    assert records(cell_id) == 4
+    assert [{2, _}] = Paths.snapshot_paths(cell_id)
+    assert InputLog.watermark(rc) == 3
+    assert %{epoch: 6} = Lineage.dedup(cell_id)
+    assert %{epoch: 6, cut: nil} = stored(cell_id)
+
+    :ok = WalWriter.rewind_to(pid, 3, 6)
+
+    assert {on_disk.(), Lineage.read(cell_id)} == after_boot
+    assert InputLog.watermark(rc) == 3
+    TestHelpers.close_and_await(pid, cell_id)
+  end
+
+  # fails when: a folded offset that landed before its cut moves the floor,
+  # which is a maximum over what the records still on disk consumed.
+  test "a prefix cut's folded offset over records still in the WAL leaves the floor as it was" do
+    cell_id = effect_cell(7)
+    floor = Epoch.consumed_offset_on_disk(cell_id)
+
+    :ok = Lineage.put(cell_id, %{stored(cell_id) | folded_offset: 3})
+
+    assert floor == 7
+    assert Epoch.consumed_offset_on_disk(cell_id) == floor
+  end
+
+  # fails when: the dedup file a cut left behind narrows the re-drive, which may
+  # only widen when it lags the WAL.
+  test "a cut WAL with the dedup file from before the cut re-drives only above its cursor" do
+    cell_id = effect_cell(7)
+    :ok = Lineage.put_dedup(cell_id, %{Lineage.dedup(cell_id) | outbox_flushed_seq: 5})
+    old_dedup = File.read!(Paths.outbox_dedup_path(cell_id))
+    {pid, _status} = boot(cell_id)
+    :ok = WalWriter.truncate_up_to(pid, 3)
+    TestHelpers.close_and_await(pid, cell_id)
+    File.write!(Paths.outbox_dedup_path(cell_id), old_dedup)
+
+    {pid, status} = boot(cell_id)
+
+    assert %{pending: 2, outbox_flushed_seq: 5} = status
+    assert records(cell_id) == 4
+    assert %{folded_offset: 3} = stored(cell_id)
+    TestHelpers.close_and_await(pid, cell_id)
   end
 end

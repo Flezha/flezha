@@ -136,7 +136,7 @@ defmodule Flezha.State.WalWriter.Boot do
     # Restart re-drive (effectively-once): every durable effect record above
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
-    %{record: lineage, progress: dedup} = Lineage.read(state.cell_id)
+    %{record: lineage, progress: dedup, cut: cut} = Lineage.read(state.cell_id)
     state = %{state | folded_offset: dedup.folded_offset, lineage: lineage}
     durable = RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq)
 
@@ -144,7 +144,9 @@ defmodule Flezha.State.WalWriter.Boot do
       Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq, durable)
 
     {rc, _sh, _pk} = state.cell_id
-    if max_consumed >= 0, do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
+
+    if max_consumed >= 0 and cut == nil,
+      do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
 
     state = %{
       state
@@ -159,11 +161,23 @@ defmodule Flezha.State.WalWriter.Boot do
         outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
     }
 
+    state = complete_bump(state, cut)
+
     # What a closed writer left owed rides this writer's first acknowledgement.
     case state.commit_unit do
       :record -> RemoteGate.synced(%{state | credit_pending: RemoteGate.take_owed(state.cell_id)})
       :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
     end
+  end
+
+  # A bump whose lineage record landed and whose dedup file did not runs its disk step
+  # again, in place of the uncut WAL's re-drive; the scan read every record it keeps.
+  defp complete_bump(state, nil), do: state
+  defp complete_bump(state, :all), do: Epoch.realign_disk(%{state | last_persisted_seq: -1})
+
+  defp complete_bump(state, {:above, seq}) do
+    {:ok, state} = Epoch.rewind_disk(state, seq)
+    state
   end
 
   # A Cell of a steps class commits at its stage marker; every other Cell at

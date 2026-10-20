@@ -352,9 +352,10 @@ defmodule Flezha.State.WalWriter do
         # rebuilt runner is the live source of truth, so adopt its epoch
         # instead of dedup-dropping its Changes as stale retransmits, which
         # would freeze the WAL while the runner keeps producing.
-        state
-        |> Epoch.realign_epoch(seq, runner_id, now)
-        |> write_record(seq, header, change_bytes, runner_id, now)
+        case Epoch.realign_epoch(state, seq, runner_id, now) do
+          {:ok, state} -> write_record(state, seq, header, change_bytes, runner_id, now)
+          {:error, _reason} = refused -> {:reply, refused, state}
+        end
 
       seq <= state.last_persisted_seq ->
         Metrics.add(state.metrics, :dedup_drops_total, 1)
@@ -415,8 +416,8 @@ defmodule Flezha.State.WalWriter do
   # little below it to be worth a rewrite yet, answers at once; a seq ahead of
   # the writer is still recorded, since that snapshot is its new baseline. The
   # dedup window releases the records in every case. What the dropped records
-  # consumed moves to the dedup file's folded offset, behind the remote gate
-  # only once acknowledged; a reserved writer keeps no dedup file.
+  # consumed moves to the lineage record's folded offset before the cut, behind
+  # the remote gate only once acknowledged; a reserved writer keeps no lineage.
   def handle_call({:truncate_up_to, seq, opts}, _from, %{cell_id: {_, _, key}} = state) do
     min_bytes = Keyword.get(opts, :min_bytes, 0)
     state = trim_header_index(state, seq)
@@ -424,27 +425,30 @@ defmodule Flezha.State.WalWriter do
 
     folded =
       case key not in Paths.reserved_cell_keys() and Epoch.scan_consumed_at(state, bound) do
-        offset when is_integer(offset) -> max(state.folded_offset, offset)
-        _reserved_or_refused -> state.folded_offset
+        offset when is_integer(offset) and offset > state.folded_offset ->
+          Epoch.bump(state, %{epoch: state.outbox_epoch, folded_offset: offset})
+
+        _reserved_refused_or_folded ->
+          {:ok, state}
       end
 
-    case RecordFrame.cut_below(
-           state.wal_path,
-           state.file_handle,
-           state.seq_index,
-           seq + 1,
-           min_bytes
-         ) do
-      {:ok, _cut, file, seq_index} ->
-        state = %{state | file_handle: file, seq_index: seq_index, folded_offset: folded}
-        {:reply, :ok, after_prefix_cut(state, seq)}
-
+    with {:ok, state} <- folded,
+         {:ok, _cut, file, seq_index} <-
+           RecordFrame.cut_below(
+             state.wal_path,
+             state.file_handle,
+             state.seq_index,
+             seq + 1,
+             min_bytes
+           ) do
+      {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
+    else
       :none ->
         {:reply, :ok, Epoch.establish_baseline(state, seq)}
 
-      # The file is gone from under a queued cut (its directory removed), or a
-      # record on the way to the floor was refused. Either way nothing was cut
-      # and the handle is untouched; a refusal also stops this writer serving.
+      # The file is gone from under a queued cut (its directory removed), a record
+      # on the way to the floor was refused, or the lineage install failed: nothing
+      # was cut, the handle is untouched; a refusal also stops this writer serving.
       {:error, reason} ->
         {:reply, {:error, reason}, note_refusal(state, reason)}
     end
