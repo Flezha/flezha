@@ -221,7 +221,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   def floor(cell_id, upto) do
     %{outbox_flushed_seq: flushed, folded_offset: folded} = Lineage.progress(cell_id)
     # An atom sorts above every integer: `:latest` passes every snapshot and record.
-    seed = folded_through(%{cell_id: cell_id, folded_offset: folded}, upto)
+    seed = folded_through(cell_id, folded, upto)
     upto = if upto == :latest and RemoteGate.new(cell_id, :record), do: flushed, else: upto
 
     fold = fn
@@ -300,8 +300,8 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   # The folded offset as far as `seq`: a cut is always at a snapshot's seq, so
   # below the newest snapshot it may claim records above `seq`, and counts nothing.
-  defp folded_through(state, seq),
-    do: if(seq >= highest_snapshot_seq(state.cell_id), do: state.folded_offset, else: -1)
+  defp folded_through(cell_id, folded, seq),
+    do: if(seq >= highest_snapshot_seq(cell_id), do: folded, else: -1)
 
   defp highest_snapshot_seq(cell_id) do
     case Paths.snapshot_paths(cell_id) do
@@ -353,7 +353,11 @@ defmodule Flezha.State.WalWriter.Epoch do
   writer that owns the file then refuses to serve rather than cutting.
   """
   def rewind(state, seq, epoch) do
-    changes = %{epoch: epoch, folded_offset: folded_through(state, seq), cut: {:above, seq}}
+    changes = %{
+      epoch: epoch,
+      folded_offset: folded_through(state.cell_id, state.folded_offset, seq),
+      cut: {:above, seq}
+    }
 
     case Settlement.put_lineage(state, changes) do
       {:ok, state} -> rewind_disk(state, seq)
