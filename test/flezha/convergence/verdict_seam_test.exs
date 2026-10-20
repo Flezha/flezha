@@ -48,6 +48,8 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       "both are `{:not_resident, _}` refusal reasons rendered as text, not health",
     "lib/flezha/relay/overwatch.ex" =>
       "both are call refusals naming a lifecycle fact the caller asked against",
+    "lib/flezha/relay/lifecycle.ex" =>
+      "writes the Overwatch's `phase`, the lifecycle fact the probe observes; the judge mints the verdict",
     "lib/flezha/observability/telemetry_bridge/lines.ex" => "event NAMES, never verdicts",
     "lib/flezha/convergence/loop.ex" =>
       "`{:halted, id}` is a backoff key; `:unknown` is the unreadable-roster sentinel",

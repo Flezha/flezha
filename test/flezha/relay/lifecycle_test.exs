@@ -603,6 +603,10 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
                RelayManager.stop_relay(@namespace, id)
 
       assert %{cause: nil, phase: :running} = state = overwatch_state(pid)
+
+      # Durable starts are off under test, so the entry the hub keeps is stubbed:
+      # with no cause left, the departure is the declared entry's, not this stop's.
+      stub(HubManager, :declared_relays, fn @namespace -> [%{id: id, factory_id: @factory}] end)
       assert Lifecycle.departure(state) == :moved
     end
   end

@@ -45,7 +45,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
   # relay-call sessions, the outside call's turn, the steps parts fixture and
   # the recorded effect's steps fixture.
   @steps_elsewhere ~w(sugar_steps sugar_steps_per_input call_agent call_tool_session
-                      call_turn part_echo_steps effect_block_steps)
+                      call_orders_steps call_turn part_echo_steps effect_block_steps)
 
   # A namespace per test: these scenarios start, kill and migrate runners, and
   # a neighbour's teardown must never be able to reach into one of them.

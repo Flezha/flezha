@@ -27,8 +27,9 @@ defmodule Flezha.Service.HubVacancyMultinodeTest do
   setup %{tmp: tmp} do
     Application.put_env(:flezha, :process_hub_registry_root, Path.join(tmp, "process_hub"))
     Application.put_env(:flezha, :auto_restore_enabled, true)
-    # No reconcile round opens, so a declared relay stays running nowhere.
-    Application.put_env(:flezha, :process_hub_cluster_settle_ms, 600_000)
+    # No reconcile round opens, so a declared relay stays running nowhere: the
+    # settle is the hub's ceiling, longer than any test here.
+    Application.put_env(:flezha, :process_hub_cluster_settle_ms, 60_000)
     Application.put_env(:flezha, :process_hub_reconcile_grace_ms, 600_000)
 
     namespace = "vacancy-#{System.unique_integer([:positive])}"

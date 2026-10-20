@@ -8,7 +8,7 @@ defmodule Flezha.State.LineageTest do
   use FlezhaTest.StateCase, async: false
 
   import ExUnit.CaptureLog
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
   alias Flezha.State.{InputLog, Lineage, Paths, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.WalWriter.Epoch
@@ -107,6 +107,7 @@ defmodule Flezha.State.LineageTest do
   end
 
   test "an unreadable lineage file reads as none, with a warning", ctx do
+    on_exit(override_log_level(:warning))
     write_records(ctx.cell_id, 0..3)
 
     for bytes <- ["FLZL" <> <<1, 0::32>> <> "bad crc", "not a lineage file"] do
@@ -123,15 +124,30 @@ defmodule Flezha.State.LineageTest do
 
   # fails when: the dedup file is written though the lineage install meant to
   # precede it failed, so the dedup file holds a fact the lineage file lacks.
+  # A writer with no lineage record installs one at its first record, and a
+  # failed install fails that append.
   test "a failed lineage install writes no dedup file", ctx do
     write_records(ctx.cell_id, 0..3)
     dedup = File.read!(Paths.outbox_dedup_path(ctx.cell_id))
     File.rm!(Paths.lineage_path(ctx.cell_id))
     File.mkdir_p!(Paths.lineage_path(ctx.cell_id))
 
-    write_records(ctx.cell_id, [4])
+    {:ok, srv} = Supervisor.find_or_start(ctx.cell_id)
+
+    # The writer the failed install crashed is started again; it is closed
+    # before the test's directory goes.
+    capture_log(fn ->
+      assert {:error, {:wal_writer_unavailable, _}} = append(srv, 4)
+
+      assert wait_until(
+               fn -> match?({:ok, pid} when pid != srv, Supervisor.lookup(ctx.cell_id)) end,
+               5_000
+             )
+    end)
 
     assert File.read!(Paths.outbox_dedup_path(ctx.cell_id)) == dedup
+    {:ok, restarted} = Supervisor.lookup(ctx.cell_id)
+    TestHelpers.close_and_await(restarted, ctx.cell_id)
   end
 
   # fails when: a boot leaves a realign its lineage write committed half done,

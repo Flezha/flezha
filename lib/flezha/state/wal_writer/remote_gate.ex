@@ -216,10 +216,15 @@ defmodule Flezha.State.WalWriter.RemoteGate do
     await_drains(owed, watch, credit.session)
   end
 
+  # A Cell with a writer running is that writer's to drain: asking the Shipper
+  # about it would wait out the very ship the writer holds, past the writer's end.
   defp unshipped(identity) do
+    running = MapSet.new(WriterRegistry.cell_writers(), &elem(&1, 0))
+
     for class <- Paths.relay_classes(),
         match?({:ok, _, ^identity}, ClassRegistry.owner(class)),
         cell_id <- Paths.cells_of(class),
+        not MapSet.member?(running, cell_id),
         new(cell_id, Boot.commit_unit(cell_id)),
         {_lo, top} <- [Artifact.seq_bounds({:cell, cell_id})],
         top > Shipper.shipped_through({:cell, cell_id}),

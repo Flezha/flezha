@@ -95,7 +95,9 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- relays: the calls the loop and the manager make ----------------
     {:hub_await_recovery_ms, :ms, 60_000, []},
-    {:hub_cross_node_request_ms, :ms, 10_000, []},
+    # The hub kills a request at this bound, a relay stop's included, so it
+    # outwaits the Overwatch's shutdown bound.
+    {:hub_cross_node_request_ms, :ms, nil, derived: {:headroom, :overwatch_shutdown_ms, 1_000}},
     # The declared-set rewrite a plugin mutation issues, and the same bound plus
     # headroom for the hop when the leader is another node: the remote call must
     # outlive the call it carries, or it reports a timeout the leader did not
@@ -113,7 +115,7 @@ defmodule Flezha.Config.DurationRows do
     # own `call.timeout` always reaches it first.
     {:call_grace_ms, :ms, 1_000, key: true},
     # The deadline of a `Relay.call_channel` whose caller names none.
-    {:call_channel_deadline_ms, :ms, 30_000, []},
+    {:call_channel_deadline_ms, :ms, 30_000, key: true},
     # How long an input log keeps a record carrying a call past the call's
     # deadline, so a request sent again is absorbed and a caller's recovery
     # still finds its `Response`.
@@ -241,6 +243,8 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- shutdown ----------------------------------------------------------
     {:drain_budget_slack_ms, :ms, 1_000, []},
+    # How long a stopping controller waits for each running durable task.
+    {:durable_task_shutdown_ms, :ms, 5_000, []},
     {:forced_handover_grace_ms, :ms, 2_000, []},
     {:graceful_shutdown_timeout_ms, :ms, 60_000,
      key: true, env: "FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS"},

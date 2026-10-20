@@ -229,7 +229,9 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   test "a steps tasklet whose channel ends only in a call journals no handoff for it", ctx do
     boot(ctx)
     start(ctx.namespace, "call_pricing", :flow, "pricing")
-    orders = start(ctx.namespace, "call_orders_steps", :steps, unique("orders"), ctx.collector)
+
+    orders =
+      start(ctx.namespace, "call_orders_steps", :steps, unique("ordering_steps"), ctx.collector)
 
     send_in(ctx.namespace, orders, "o1")
     send_in(ctx.namespace, orders, "o2")

@@ -264,6 +264,22 @@ def _e2e(runtime):
     return rows
 
 
+HANDOVER = "test/flezha_handover_test.exs"
+MULTI_NODE_TAG = re.compile(r"@(?:module|describe)?tag\b[^\n#]*:multi_node\b")
+
+
+def _multi_node():
+    """The `:multi_node` tier in two rows, the handover suite apart: in one VM the
+    tier outgrew the 600 s a row may take. `e2e-multi-node` stands for both."""
+    tagged = sorted(os.path.relpath(path, ROOT)
+                    for path in glob.glob(f"{ROOT}/test/**/*_test.exs", recursive=True)
+                    if "/test/apps/" not in path and MULTI_NODE_TAG.search(open(path).read()))
+    rest = [path for path in tagged if path != HANDOVER]
+    return [_mix_test("e2e-multi-node-1", "e2e-multi-node", "--only", "multi_node", HANDOVER),
+            _mix_test("e2e-multi-node-2", "e2e-multi-node", "--only", "multi_node", *rest),
+            {"id": "e2e-multi-node", "group": "e2e", "groups": "@e2e-multi-node"}]
+
+
 # A plugin's mix.lock must pin every git and hex dependency it shares with the
 # core exactly as mix.lock does, or it tests the core against another library.
 PLUGIN_LOCKS = r"""
@@ -471,7 +487,7 @@ GATES += (
     *(row for runtime in RUNTIMES for row in _e2e(runtime)),
     {"id": "e2e", "group": "e2e", "groups": ",".join(f"@e2e-{rt}" for rt in E2E_RUNTIMES)},
     _mix_test("e2e-admin", "e2e", "--include", "system", "test/system/sdk_admin_e2e_test.exs"),
-    _mix_test("e2e-multi-node", "e2e", "--only", "multi_node"),
+    *_multi_node(),
     # The one scenario that places two runtimes in a run (rust and java).
     _mix_test("e2e-interop", "e2e-java", "--include", "system", "--include", "interop",
               "test/system/cross_sdk_placement_e2e_test.exs", env={"FLEZHA_E2E_RUNTIME": "java"}),

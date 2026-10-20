@@ -16,6 +16,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   alias Flezha.Convergence.Facts
   alias Flezha.Convergence.Probe.Fact
   alias Flezha.Convergence.StallClassifier
+  alias Flezha.Convergence.Verdict
 
   @type context :: %{
           relays: [map()],
@@ -127,8 +128,7 @@ defmodule Flezha.Convergence.Probe.Readers do
   defp plugin_readable?(nil), do: false
 
   defp plugin_readable?(observed) do
-    Map.get(observed, :bound_runner) not in [nil, :unknown] and
-      Map.get(observed, :phase, :running) == :running
+    Map.get(observed, :bound_runner) not in [nil, :unknown] and Verdict.running?(observed)
   end
 
   @doc """

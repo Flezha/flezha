@@ -24,8 +24,10 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
   alias FlezhaTest.Fixtures.RelayFixture
+  alias FlezhaTest.Helper.MimicGlobal
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
+  alias ProcessHub.Service.ProcessRegistry
 
   @namespace "task_kind_e2e"
   @factory "echo_steps"
@@ -85,9 +87,20 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   # The hub writes a started relay's row only after the relay runs, and a task
   # takes its first message at once: held behind a busy hub registry, the task
   # completes before its row exists. The completion's teardown still removes it.
+  # The bind's own runner tag reaches that registry first and finds no row, as
+  # it does when its write is queued ahead of the start's.
   test "a task that completes before its hub row is written is still deregistered" do
     relay_id = "task_e2e_early_#{System.unique_integer([:positive])}"
     trace_teardown_lookup(relay_id)
+    MimicGlobal.set_mimic_global_until_exit()
+
+    Mimic.stub(ProcessRegistry, :update, fn
+      _hub_id, ^relay_id, _update, _opts ->
+        {:error, "No child found"}
+
+      hub_id, id, update, opts ->
+        Mimic.call_original(ProcessRegistry, :update, [hub_id, id, update, opts])
+    end)
 
     registry = hub_registry()
     :ok = :sys.suspend(registry)

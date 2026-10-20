@@ -103,6 +103,10 @@ defmodule Flezha.Convergence.Verdict do
   @spec states() :: [state()]
   def states(), do: @states
 
+  @doc "True when a relay observation's phase is `:running`; an observation without one reads running."
+  @spec running?(map()) :: boolean()
+  def running?(observed), do: Map.get(observed, :phase, :running) == :running
+
   @doc "Every subject kind a record can be about."
   @spec kinds() :: [kind()]
   def kinds(), do: @kinds

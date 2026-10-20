@@ -241,9 +241,15 @@ defmodule FlezhaTest.Service.CallsTest do
       writers_of("agent-c6")
       {_router, worker, _from} = answer_in_flight("c6")
 
-      Process.exit(worker, :kill)
+      log =
+        capture_log(fn ->
+          Process.exit(worker, :kill)
+          assert_receive {:"$gen_cast", {:redrive_answers, "gateway"}}, 1_000
+          # The supervisor reports the kill before it answers this.
+          _ = :sys.get_state(Flezha.Service.Calls.Workers)
+        end)
 
-      assert_receive {:"$gen_cast", {:redrive_answers, "gateway"}}, 1_000
+      assert log =~ "Child :undefined of Supervisor Flezha.Service.Calls.Workers terminated"
     end
 
     test "an answer worker stopped idle reports nothing" do

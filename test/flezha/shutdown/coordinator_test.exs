@@ -294,7 +294,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "a timed-out drain leaves finalise its own budget, and a hub stop that never returns ends it" do
       test_pid = self()
       stub_local_relays()
-      expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
         send(test_pid, {:walk, hd(Process.get(:"$callers"))})

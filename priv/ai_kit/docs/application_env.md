@@ -44,6 +44,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 - `:runner_removal_grace_ms`: How long a disconnected runner is kept before removal, `0` removes at once.
 - `:migration_consent[:consent_timeout_ms]` / `:migration_consent[:retry_interval_ms]` / `:migration_consent[:max_defer_ms]`: Default: `5_000` / `2_000` / `:graceful_shutdown_timeout_ms` (derived).
 - `:call_pending_max`: The answers one relay owes the callers waiting on it.
+- `:call_channel_deadline_ms`: The deadline of a relay call whose caller names none, `flz relay call` without `--timeout` included.
 - `:call_grace_ms`: How long an outside caller waits past its call's deadline, so the relay's own `call.timeout` reaches it first.
 - `:call_retention_margin_ms`: Set by `FLEZHA_CALL_RETENTION_MARGIN_MS`, explained in [Controller environment variables](environment_variables.md).
 - `:call_worker_idle_ms`: How long a relay call's delivery worker (one per caller and target) waits with an empty queue before it stops.
@@ -116,6 +117,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:bind_restore_concurrency` | positive_int | `16` |
 | `:boot_replay_timeout_ms` | ms | `60000` |
 | `:ca_cert_path` | path | `app_data/certs/ca.pem` |
+| `:call_channel_deadline_ms` | ms | `30000` |
 | `:call_grace_ms` | ms | `1000` |
 | `:call_pending_max` | positive_int | `10000` |
 | `:call_retention_margin_ms` | ms | `300000` |

@@ -31,9 +31,14 @@ defmodule FlezhaTest.Helper.CallHarness do
       end
     )
 
-    stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, id, payload ->
-      send(test_pid, {:channel_got, id, payload})
-      :ok
+    # A relay with no channel is refused as the real stream refuses it.
+    stub(Flezha.Runner.StreamChannel, :io_in, fn
+      nil, id, payload ->
+        Mimic.call_original(Flezha.Runner.StreamChannel, :io_in, [nil, id, payload])
+
+      _channel, id, payload ->
+        send(test_pid, {:channel_got, id, payload})
+        :ok
     end)
 
     stub(CallDelivery, :request, fn ns, caller, request ->

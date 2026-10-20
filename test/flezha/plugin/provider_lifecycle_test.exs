@@ -50,7 +50,9 @@ defmodule Flezha.Plugin.ProviderLifecycleTest do
 
   # The table owns the phase vocabulary. This file is the seam; every other file
   # reads a predicate.
-  @phase_seam ["lib/flezha/plugin/extension/table.ex"]
+  # The relay's phase shares the word `:running` with the plugin's; its reads go
+  # through `Verdict.running?/1`, the relay phase's one predicate.
+  @phase_seam ["lib/flezha/plugin/extension/table.ex", "lib/flezha/convergence/verdict.ex"]
 
   # The module design §4 names as NOT this lifecycle: the supervisor takes its
   # own name, from keyword opts that are not provider options.

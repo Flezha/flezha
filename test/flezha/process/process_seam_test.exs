@@ -53,8 +53,8 @@ defmodule Flezha.Process.SeamTest do
     # fails when: a module calls `Process.monitor/1` and keeps the ref in a map
     # of its own, which is the bookkeeping `Watch` exists to hold — one monitor
     # per pid however many tags, and `demonitor(:flush)` on the last one.
-    assert hits(~r/Process\.monitor\(/, monitor_allow()) == [],
-           "a monitor outside `Flezha.Process.Watch`"
+    found = hits(~r/Process\.monitor\(/, monitor_allow())
+    assert found == [], "a monitor outside `Flezha.Process.Watch`: #{Enum.join(found, ", ")}"
   end
 
   # A monitor whose ref IS the value — a published subscription handle, a
@@ -70,11 +70,12 @@ defmodule Flezha.Process.SeamTest do
       # the ref is a field of the worker entry the table replaces in place
       "lib/flezha/plugin/extension/table/workers.ex",
       # one monitor for one owner, held in a named field, with no map to book
-      "lib/flezha/state/input_log.ex",
       "lib/flezha/plugin/provider/http_poll/poll_worker.ex",
       "lib/flezha/plugin/provider/relay_forward/forward_worker.ex",
       # a synchronous wait's own monitor, as `GenServer.call` takes one
-      "lib/flezha/relay/calls.ex",
+      "lib/flezha/relay/calls/inbound.ex",
+      "lib/flezha/state/input_log/syncer.ex",
+      "lib/flezha/state/writer_registry.ex",
       "lib/flezha/authz/caller_context.ex"
     ]
   end

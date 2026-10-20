@@ -2,6 +2,7 @@ defmodule FlezhaQuicTest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.EventManager
+  alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
   alias Flezha.State.Paths
   alias FlezhaTest.Fixtures.RelayFixture
@@ -132,19 +133,16 @@ defmodule FlezhaQuicTest do
   # finish-platform-authn-authz §2.1: the server verifies a client cert
   # against the trust anchor, so a peer presenting none is refused at the
   # handshake. The connected runners in `setup_all` are the positive control
-  # (same server, same CA, valid client identity) — and they warmed the cargo
-  # target dir, so the refused runner below starts without a rebuild.
+  # (same server, same CA, valid client identity). The refused runner launches
+  # the same way and is refused where it would connect, so the wait is its
+  # manifest's connect bound, a build behind another cargo included.
   test "a QUIC peer without a client certificate is refused" do
     refused_namespace = "quic_refused_namespace"
     EventManager.add_handler(:runner_connected_event)
 
     Telemetry.capture([:flezha, :transport, :connect_rejected], as: :refused)
 
-    {:ok, current_path} = :file.get_cwd()
-
-    command =
-      "cargo run --quiet --manifest-path=#{current_path}/sdk/rust/test_app/Cargo.toml " <>
-        "--target-dir=./target -- #{refused_namespace}"
+    command = PortPilot.launch_command(:rust, :test, refused_namespace)
 
     {port, _command} =
       NodeTestHelper.open_runner_port(command,
@@ -160,7 +158,9 @@ defmodule FlezhaQuicTest do
       # handshake-stage rejection on `connect_rejected`, so this waits for the
       # refusal to happen rather than waiting out a window to prove it did not
       # connect. The runner retries after a refusal, so it is still running here.
-      assert_receive {:refused, %{count: 1}, %{stage: :handshake}}, 15_000
+      assert_receive {:refused, %{count: 1}, %{stage: :handshake}},
+                     NodeTestHelper.manifest(:rust)["connect_timeout_ms"]
+
       refute_receive {:runner_connected_event, {^refused_namespace, _}}, 100
       assert FleetManager.active_runners(refused_namespace) == []
     after

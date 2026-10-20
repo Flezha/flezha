@@ -856,7 +856,7 @@ forwards the bytes to the instance's Overwatch snapshot and answers
 `RunnerShutdownAck` under the same `reference_id`. The runner waits at most
 **2 s per relay** (parallelised), then exits unconditionally and never
 blocks its container's grace period; the per-relay serializer is capped at
-the controller's `cross_node_request_timeout` ceiling (10 s).
+the controller's `cross_node_request_timeout` ceiling (14 s).
 
 ### RunnerShutdownAck
 

@@ -391,7 +391,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
   # A plugin table is torn down by the process step alone, a handover
   # rebuilds one (not a teardown), and a shared plugin's copy tears down the
   # table it owns when it stops or restarts. Durable state is deleted through the one
-  # guard in `Paths`; the hub registry directory is the hub step's own.
+  # guard in `Paths`; the hub registry directory is the hub step's own, and an
+  # adoption's set-aside copy is the adoption's own, put back or dropped.
   #
   # Scoped to the controller tree: `lib/mix/` is the bench harness, which
   # clears its own namespace directory BEFORE the application boots — offline,
@@ -405,6 +406,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     ],
     {File, :rm_rf} => [
       "lib/flezha/state/paths.ex",
+      "lib/flezha/state/adoption.ex",
       "lib/flezha/service/hub_manager/lifecycle.ex",
       "lib/flezha/plugin/installer.ex",
       "lib/flezha/transport/socket/support.ex"

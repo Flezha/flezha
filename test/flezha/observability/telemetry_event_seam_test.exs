@@ -509,14 +509,18 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
     end)
   end
 
-  # Every call by name, with the definition heads skipped: a head's own
-  # parameter list is not a call site, and reading it as one turns every
-  # resolved domain into `:__dynamic__`.
+  # Every call by name, with the definition heads and module attributes
+  # skipped: a head's own parameter list and a `@spec`'s argument types are not
+  # call sites, and reading either as one turns every resolved domain into
+  # `:__dynamic__`.
   defp call_sites(ast) do
     {_, acc} =
       Macro.prewalk(ast, %{}, fn
         {kind, _, [_head | body]}, acc when kind in [:def, :defp] ->
           {{:__block__, [], body}, acc}
+
+        {:@, _, _}, acc ->
+          {:ok, acc}
 
         {name, _, args} = node, acc when is_atom(name) and is_list(args) ->
           {node, Map.update(acc, name, [args], &[args | &1])}

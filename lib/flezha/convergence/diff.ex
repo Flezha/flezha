@@ -393,8 +393,7 @@ defmodule Flezha.Convergence.Diff do
   # halted one (init failed) activates them when it is rebound. Neither has
   # anything to heal until then.
   defp plugins_diffable?(observed_relay) do
-    is_pid(Map.get(observed_relay, :pid)) and
-      Map.get(observed_relay, :phase, :running) == :running
+    is_pid(Map.get(observed_relay, :pid)) and Verdict.running?(observed_relay)
   end
 
   # I2: a relay's declared plugin set (durable cspec) vs the set actually

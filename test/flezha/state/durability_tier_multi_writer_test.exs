@@ -323,8 +323,11 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     test "an adopting node takes the lineage over and the loser stops quietly", ctx do
       ref = {:cell, ctx.cell_id}
 
+      # The loser still holds the relay's adoption, as a late `:adopt` leaves
+      # it: one that does not waits rather than extend, and learns nothing.
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
       :ok = Shipper.sweep_now()
       assert Stub.stored_manifest(ref).owner == this_writer()
 

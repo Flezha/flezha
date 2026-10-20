@@ -336,8 +336,13 @@ defmodule FlezhaTest.Relay.CallsTest do
       token = called_token(inst)
 
       # A rebind's bind in flight holds the instance's output.
-      binding = %{ref: make_ref(), pid: self()}
-      :sys.replace_state(host, &%{&1 | halt_reason: :sdk_start_failed, bind_task: binding})
+      task = self()
+
+      :sys.replace_state(host, fn state ->
+        binding = %{pid: task, then: nil, from: state.phase}
+        %{state | halt_reason: :sdk_start_failed, bind_task: binding}
+      end)
+
       GenServer.cast(host, {:io_out, "hello", %{"flz.reply_to" => token, "channel" => "out"}})
       assert [_held] = :sys.get_state(host).held_outputs
       refute Task.yield(caller, 50)

@@ -38,9 +38,12 @@ defmodule Flezha.Plugin.Home do
   @spec serialized(binary(), binary(), (-> result)) :: result | {:error, term()}
         when result: term()
   def serialized(namespace, name, fun) do
-    case row(namespace, name) do
+    case row(namespace, name, :hub_down) do
       {_spec, [{_node, home} | _]} ->
         GenServer.call(home, {:serialized, fun}, Durations.get(:route_call_timeout_ms))
+
+      :hub_down ->
+        {:error, :registry_unavailable}
 
       _none ->
         {:error, {:plugin_not_found, name}}
@@ -49,13 +52,13 @@ defmodule Flezha.Plugin.Home do
     :exit, reason -> {:error, {:unreachable, reason}}
   end
 
-  @doc "The `{:plugin, name}` row of `namespace`'s hub, or `nil` while it has none or is down."
-  @spec row(binary(), binary()) :: {map(), [{node(), pid()}]} | nil
-  def row(namespace, name),
+  @doc "The `{:plugin, name}` row of `namespace`'s hub, `nil` while it has none, `on_dead` while it is down."
+  @spec row(binary(), binary(), term()) :: {map(), [{node(), pid()}]} | nil | term()
+  def row(namespace, name, on_dead \\ nil),
     do:
       Hub.with_live(
         Identificator.hub(namespace),
-        nil,
+        on_dead,
         &ProcessHub.child_lookup(&1, {:plugin, name})
       )
 

@@ -30,6 +30,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   use Flezha.State.Store
 
   alias Flezha.DetsStore
+  alias Flezha.Process.Watch
 
   @table :flz_authz_quota_counters
   @cache :flz_authz_quota_counters_cache
@@ -136,15 +137,23 @@ defmodule Flezha.AuthZ.QuotaCounters do
   end
 
   def handle_cast({:settle, pid, key, kept?}, state) do
-    case Enum.find(holds(state), &match?({_ref, {^pid, ^key, _n, _ids}}, &1)) do
-      {ref, _hold} -> {:noreply, release(state, ref, kept?)}
+    case Enum.find(holds(state), &match?({_hold, {^pid, ^key, _n, _ids}}, &1)) do
+      {hold, _entry} -> {:noreply, release(state, hold, kept?)}
       nil -> {:noreply, state}
     end
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state),
-    do: {:noreply, release(state, ref, false)}
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Watch.down(watch(state), ref) do
+      {:unknown, _watch} ->
+        {:noreply, state}
+
+      {held, watch} ->
+        state = Map.put(state, :watch, watch)
+        {:noreply, Enum.reduce(held, state, &release(&2, &1, false))}
+    end
+  end
 
   @impl true
   def handle_call({:set, namespace, kind, value}, _from, state) do
@@ -158,8 +167,11 @@ defmodule Flezha.AuthZ.QuotaCounters do
     current = get(namespace, kind)
 
     if is_nil(limit) or current + n <= limit do
-      holds = Map.put(holds(state), Process.monitor(pid), {pid, key, n, ids})
-      {:reply, :ok, Map.put(do_adjust(namespace, kind, n, state), :holds, holds)}
+      hold = make_ref()
+      holds = Map.put(holds(state), hold, {pid, key, n, ids})
+      watch = Watch.watch(watch(state), pid, hold)
+      state = Map.merge(do_adjust(namespace, kind, n, state), %{holds: holds, watch: watch})
+      {:reply, :ok, state}
     else
       {:reply, {:error, current}, state}
     end
@@ -211,12 +223,17 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   defp kept(state), do: Map.get(state, :kept, %{})
 
-  defp release(state, ref, kept?) do
-    Process.demonitor(ref, [:flush])
+  defp watch(state), do: Map.get(state, :watch, Watch.new())
 
-    case Map.pop(holds(state), ref) do
-      {nil, _holds} -> state
-      {hold, holds} -> state |> Map.put(:holds, holds) |> close(hold, kept?)
+  defp release(state, hold, kept?) do
+    case Map.pop(holds(state), hold) do
+      {nil, _holds} ->
+        state
+
+      {{pid, _key, _n, _ids} = entry, holds} ->
+        state
+        |> Map.merge(%{holds: holds, watch: Watch.unwatch(watch(state), pid, hold)})
+        |> close(entry, kept?)
     end
   end
 
@@ -232,7 +249,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   defp count(value, _key, _state) when is_integer(value), do: value
 
   defp count(ids, key, state) do
-    held = for {_ref, {_pid, ^key, _n, held}} <- holds(state), id <- held, do: id
+    held = for {_hold, {_pid, ^key, _n, held}} <- holds(state), id <- held, do: id
     MapSet.size(MapSet.new(ids ++ held ++ Map.get(kept(state), key, [])))
   end
 

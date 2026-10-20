@@ -7,7 +7,7 @@ defmodule Flezha.Process.DurableTasks do
   the writers close.
   """
 
-  @shutdown_ms 5_000
+  alias Flezha.Config.Durations
 
   @spec child_spec(term()) :: Supervisor.child_spec()
   def child_spec(_arg), do: Task.Supervisor.child_spec(name: __MODULE__)
@@ -24,7 +24,10 @@ defmodule Flezha.Process.DurableTasks do
       fun.()
     end
 
-    {:ok, _pid} = Task.Supervisor.start_child(__MODULE__, run, shutdown: @shutdown_ms)
+    {:ok, _pid} =
+      Task.Supervisor.start_child(__MODULE__, run,
+        shutdown: Durations.get(:durable_task_shutdown_ms)
+      )
   catch
     :exit, _reason -> Task.start(fun)
   end
