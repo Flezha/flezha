@@ -205,6 +205,7 @@ fn entry_wrap(channel_id: u32) -> EntryWrapFn {
             event_time: None,
             metadata: Vec::new(),
             form: InputForm::Untransformed,
+            entry: None,
         }) as Arc<dyn Any + Send + Sync>)
     })
 }

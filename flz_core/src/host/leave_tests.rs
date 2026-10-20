@@ -153,6 +153,40 @@ fn the_identity_crosses_once_per_host_cell() {
     next_leave("leave-12");
 }
 
+/// An abandoned activation may never have reached the host, which keeps the
+/// identity only from one it received: the re-handed work carries it again.
+#[test]
+fn an_abandoned_handout_hands_the_identity_again() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_leave_abandoned_{}", std::process::id());
+    let node = crate::runner::RunnerNode::new("test-ns".to_string());
+    let slot = leaving_relay(&node, &id, "leave-13", None)
+        .get_or_create("k1")
+        .expect("the Cell is minted");
+    let core = crate::poll_core::global();
+    let bytes = Some(slot.cell_identity.to_vec());
+    let (work, effect) = work_and_effect(1, &[]);
+    assert!(slot.mailbox.try_push(work.item).is_ok());
+    assert!(slot.mailbox.claim_inflight());
+    let first = core.try_assemble(&slot).expect("the work is handed out");
+    assert_eq!(crate::host::to_schema(&first).cell_identity, bytes);
+    crate::host::abandon_activation(core, first).expect("abandoned");
+
+    let again = core
+        .try_assemble(&slot)
+        .expect("the work is handed out again");
+    assert_eq!(
+        crate::host::to_schema(&again).cell_identity,
+        bytes,
+        "the re-handed work carries the identity"
+    );
+    let (token, outcome) = (again.token, schema::ActivationOutcome::Work(vec![effect]));
+    let result = schema::ActivationResult { token, outcome };
+    crate::host::apply_result(core, again, result).expect("answered");
+    assert!(node.stop_relay("leave-13"));
+    next_leave("leave-13");
+}
+
 #[test]
 fn an_evicted_cells_key_names_it_until_the_host_answers_its_leave() {
     let _env = crate::runner::env_test_guard();

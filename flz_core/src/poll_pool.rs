@@ -216,17 +216,27 @@ impl Governor {
     }
 
     /// A seat released: a worker that left, or a spawn that failed. Answers
-    /// the seats still taken.
+    /// the seats still taken; a release with none taken changes nothing.
     pub fn left(&self) -> usize {
-        let live = self.live.fetch_sub(1, Ordering::AcqRel) - 1;
+        let taken = self
+            .live
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+                live.checked_sub(1)
+            });
         self.topping_up.store(false, Ordering::Release);
-        live
+        taken.map_or(0, |live| live - 1)
+    }
+
+    /// The claim on a seat already reserved, for a worker whose loop is the
+    /// host's own.
+    pub fn seat(&self) -> Seat<'_> {
+        Seat(self)
     }
 
     /// One worker's loop on the calling thread, `run` answering each
     /// activation. The seat is released on any exit.
     pub fn work(&self, core: &PollCore, grown: bool, mut run: impl FnMut(EngineActivation)) {
-        let _seat = Seat(self);
+        let _seat = self.seat();
         let mut idle = Duration::ZERO;
         loop {
             match core.poll(POLL_TIMEOUT) {
@@ -250,7 +260,7 @@ impl Governor {
 /// denominator and the supervisor's top-up trigger, so a departed worker still
 /// counted would both shrink the pool's headroom and hide the death: an
 /// ordinary trailing release is skipped by exactly the exit that most needs it.
-struct Seat<'a>(&'a Governor);
+pub struct Seat<'a>(&'a Governor);
 
 impl Drop for Seat<'_> {
     fn drop(&mut self) {

@@ -82,6 +82,13 @@ fn identity_once(slot: &CellSlot, kind: &ActivationKind) -> Option<Vec<u8>> {
     Some(slot.cell_identity.to_vec())
 }
 
+/// The identity again on the Cell's next handout: an activation abandoned or
+/// failed whole may never have reached the host that keeps it, and a host
+/// keeps a re-sent identity as it kept the first.
+pub(super) fn identity_unsent(slot: &CellSlot) {
+    slot.identity_handed.store(false, Ordering::Relaxed);
+}
+
 /// A prepare crossing is addressed to the channel's first consumer.
 fn prepare_target(crossing: &PrepareCrossing) -> schema::CellRef {
     schema::CellRef {

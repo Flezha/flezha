@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use flz_core::poll_core::Polled;
 use flz_core::poll_pool::{self, Governor, Supervise};
-use flz_core::schema;
 use flz_core::util::LockRecover;
+use flz_core::{schema, Code};
 
 use crate::{
     hand_out, Error, FlzContext, Outstanding, FLZ_ERR, FLZ_OK, FLZ_POLL_ACTIVATION,
@@ -62,8 +62,9 @@ pub const FLZ_POOL_SPAWN_GROWN: i32 = 3;
 /// and write its policy to `policy_out`: the base, the ceiling, then the poll
 /// timeout, retire time and drain bound in milliseconds. The base and the
 /// ceiling come from `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX`.
-/// The base seats are taken: the host spawns `base` workers next. A second
-/// open replaces the pool.
+/// The base seats are taken: the host spawns `base` workers next. A context
+/// holds one pool: a second open is refused with
+/// `runtime.runner_already_running`.
 ///
 /// # Safety
 /// `ctx` must be live; `policy_out` must point at five writable `u32`s.
@@ -77,6 +78,12 @@ pub unsafe extern "C" fn flz_core_pool_open(
     let Some(policy_out) = policy_out.as_mut() else {
         return FLZ_ERR;
     };
+    // `flz_core_pool_left` names no pool: a replaced one would take seats
+    // the old one reserved.
+    let mut pool = ctx.pool.lock_recover();
+    if pool.is_some() {
+        return ctx.fail(Error::Refused(Code::RunnerAlreadyRunning.with([])));
+    }
     let governor = Governor::from_env(default_base.max(1) as usize);
     let ms = |d: Duration| d.as_millis() as u32;
     let (base, ceiling) = (governor.base as u32, governor.ceiling as u32);
@@ -88,7 +95,7 @@ pub unsafe extern "C" fn flz_core_pool_open(
         retire,
         ms(poll_pool::DRAIN_BOUND),
     ];
-    *ctx.pool.lock_recover() = Some(governor);
+    *pool = Some(governor);
     FLZ_OK
 }
 

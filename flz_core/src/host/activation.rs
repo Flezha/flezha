@@ -13,6 +13,7 @@ use std::sync::Arc;
 use flz_transport::transport::FlezhaStream;
 
 use super::cell::{BytesBuffer, HostPayload, HostTaskletFacts};
+use super::handout::identity_unsent;
 use super::prepare::apply_prepare_outcome;
 use crate::cell::{CellItem, CellSlot};
 use crate::error::{Code, Error};
@@ -34,6 +35,9 @@ pub fn apply_result(
     let EngineActivation { token, payload } = act;
     let (slot, items, change_seq) = match payload {
         EnginePayload::Command { reply, slot, .. } => {
+            if let schema::ActivationOutcome::Failed(_) = result.outcome {
+                identity_unsent(&slot);
+            }
             // Whoever enqueued it validates the outcome; this side lets go of
             // the Cell first, for an eviction that counts who holds it.
             drop(slot);
@@ -83,6 +87,7 @@ fn answer_failed_activation(
     items: Vec<ItemAttempt>,
     err: schema::WorkError,
 ) {
+    identity_unsent(slot);
     let head_final = items.first().map(|w| w.is_final).unwrap_or(false);
     if err.non_retryable || head_final {
         if let Some(head) = items.first() {
@@ -230,12 +235,15 @@ fn finish_batch(core: &PollCore, token: u64, queue: std::collections::VecDeque<I
 pub fn abandon_activation(core: &PollCore, act: EngineActivation) -> Result<(), Error> {
     let EngineActivation { token, payload } = act;
     match payload {
-        EnginePayload::Work { items, .. } => match core.abandon(token, items) {
-            crate::poll_core::Answered::Released => Ok(()),
-            crate::poll_core::Answered::UnknownToken => Err(Error::Answer(
-                Code::UnknownActivationToken.with([("token", token.into())]),
-            )),
-        },
+        EnginePayload::Work { items, slot, .. } => {
+            identity_unsent(&slot);
+            match core.abandon(token, items) {
+                crate::poll_core::Answered::Released => Ok(()),
+                crate::poll_core::Answered::UnknownToken => Err(Error::Answer(
+                    Code::UnknownActivationToken.with([("token", token.into())]),
+                )),
+            }
+        }
         other => apply_result(
             core,
             EngineActivation {
@@ -522,6 +530,7 @@ fn edge_value(
         event_time: output.event_time,
         metadata: output.metadata,
         form,
+        entry: None,
     })
 }
 
@@ -591,12 +600,12 @@ fn committed_timers(item: &CellItem, timers: Vec<TimerOp>, parked: bool) -> Vec<
 
 /// A host input's bytes, what a park or a failed stage records; a firing
 /// carries none.
-fn host_bytes(item: &CellItem) -> Option<Vec<u8>> {
+pub(super) fn host_bytes(item: &CellItem) -> Option<Vec<u8>> {
     match item {
         CellItem::Input(p) => p
             .value
             .downcast_ref::<HostPayload>()
-            .map(|hp| hp.bytes.clone()),
+            .map(|hp| hp.entry.as_deref().unwrap_or(&hp.bytes).clone()),
         CellItem::Timer(_) | CellItem::CloseInterval => None,
     }
 }

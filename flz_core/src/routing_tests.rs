@@ -607,6 +607,7 @@ fn a_host_payload_fanned_across_keys_reaches_every_keyed_cell() {
         event_time: None,
         metadata: Vec::new(),
         form: crate::schema::InputForm::Transformed,
+        entry: None,
     });
 
     let stream = dead_stream();
@@ -647,6 +648,7 @@ fn host_value(bytes: &[u8]) -> Arc<dyn Any + Send + Sync> {
         event_time: None,
         metadata: Vec::new(),
         form: crate::schema::InputForm::Transformed,
+        entry: None,
     })
 }
 

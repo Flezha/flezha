@@ -45,6 +45,7 @@ pub(super) fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, s
                 event_time: None,
                 metadata: Vec::new(),
                 form: crate::schema::InputForm::Transformed,
+                entry: None,
             }) as Arc<dyn Any + Send + Sync>,
             stream: stream_pair().0,
             consumed_offset: Some(offset),

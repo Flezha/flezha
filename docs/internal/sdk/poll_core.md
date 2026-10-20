@@ -73,7 +73,7 @@ base with a replacement; a worker above the base retired after 30 s of
 timed-out polls; and a drain bound of 5 s. A Rust host (the Rust SDK, the Node
 addon's fetchers, the Elixir NIF's pollers) hands the governor a `Spawner`; a
 C ABI host (Python, Ruby, PHP, Java) opens the pool with `flz_core_pool_open`,
-answers `flz_core_pool_supervise` from a thread of its own and gives a seat
+once per context (a second open is refused), answers `flz_core_pool_supervise` from a thread of its own and gives a seat
 back with `flz_core_pool_left`. A host keeps only how it spawns a worker and
 what the worker runs. The hosts differ completely in that and none knows about
 the others:
@@ -157,12 +157,14 @@ An **Activation** targets one cell (a relay-wide `Leave`, one relay) and carries
 
 It also carries `cell_identity`, the Cell's wire identity bytes, on the first
 activation for that Cell since the host last dropped or rebuilt it (its `Leave`
-or `RestoreFold`), and on no other: the host keeps them with the Cell and
-derives `ctx.stable_id()` from them, and never builds the layout itself.
+or `RestoreFold`), again after an activation for it was abandoned or failed
+whole (it may never have reached the host), and on no other: the host keeps
+them with the Cell, a re-sent copy as the first, and derives `ctx.stable_id()`
+from them, and never builds the layout itself.
 
 | Kind                                                                 | What the host does |
 | -------------------------------------------------------------------- | ------------------ |
-| `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`, and `form`: `untransformed` for an entry payload or a steps stage's released value, `transformed` for a stream producer's edge output, `prepared` for a keyed consumer's entry payload with the values its prepare answer named for this Cell; the host applies the consuming edge's chain to an `untransformed` one only, and runs a `prepared` one's values, each decoded as an inter-tasklet value, without the entry decoder or the edge) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
+| `Work(items)`                                                        | An ordered per-cell batch of `Input` items (payload bytes, metadata, `consumed_offset`, replay flag, core-evaluated `now`, and `form`: `untransformed` for an entry payload or a steps stage's released value, `transformed` for a stream producer's edge output, `prepared` for a keyed consumer's entry payload, shipping no payload bytes, only the values its prepare answer named for this Cell; the host applies the consuming edge's chain to an `untransformed` one only, and runs a `prepared` one's values, each decoded as an inter-tasklet value, without the entry decoder or the edge) and `Timer` firings (kind, `scheduled_at`; its `now` IS `scheduled_at`, so a chained `timer_after` anchors replay-stably on the firing that woke it). Timer firings are validated against the pending set at assembly — a stale entry fires nothing. |
 | `RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`                      | The four host-participating command kinds, under the same per-cell exclusivity; a live read and a migration both read the state as `LiveStateRead`. No other controller command produces an activation (pinned: a `Ping` generates none). |
 | `KeyRequest`                                                         | Batched keying for unkeyed entry payloads bound for a keyed edge, answered before anything reaches a cell mailbox: the host decodes each payload once and answers, per keyed consumer edge, every value its chain yields with the Cell keys it names, encoded as an inter-tasklet value. The core enqueues one `prepared` item per Cell carrying that Cell's values; a consumer that needs no keys gets the payload `untransformed`. |
 | `CompensateRun`                                                      | An undo step of a steps chain. |

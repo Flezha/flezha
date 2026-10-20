@@ -703,6 +703,7 @@ fn a_resumed_host_steps_crosses_its_journaled_handoff() {
             event_time: None,
             metadata: Vec::new(),
             form: crate::schema::InputForm::Untransformed,
+            entry: None,
         })
         .expect("encodes"),
     };

@@ -22,6 +22,8 @@ use crate::util::LockRecover;
 /// core resolved about them; the erased value inside a host class's
 /// `CellPayload`.
 pub struct HostPayload {
+    /// What the host receives; empty on a prepared item, whose host runs its
+    /// values instead.
     pub bytes: Vec<u8>,
     pub channel: crate::channel::ChannelId,
     /// The Cells the payload reaches: one per key its host answered.
@@ -29,6 +31,9 @@ pub struct HostPayload {
     pub event_time: Option<u64>,
     pub metadata: Vec<(String, String)>,
     pub form: schema::InputForm,
+    /// A prepared item's entry payload, one copy shared by every Cell its
+    /// crossing named, for a park to record.
+    pub entry: Option<Arc<Vec<u8>>>,
 }
 
 /// The per-tasklet facts a [`HostDispatcher`] answers with; `Some` from
@@ -281,6 +286,7 @@ pub(super) fn host_payload_codec(
                 event_time: form.event_time,
                 metadata: Vec::new(),
                 form: input_form.clone(),
+                entry: None,
             }) as Arc<dyn Any + Send + Sync>)
         }),
     }

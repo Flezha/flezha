@@ -1,7 +1,8 @@
 //! The core's notices over the C ABI: a C callback takes them on the thread
-//! that wrote them, and a host that drains takes them as a batch. Each case
-//! runs in a child process of this test binary: the hook is process-global,
-//! and what reaches standard error can only be read from outside.
+//! that wrote them, and a host that drains takes them as a batch, on the
+//! answers of the one pool a context opens. Each case runs in a child process
+//! of this test binary: the hook is process-global, and what reaches standard
+//! error can only be read from outside.
 
 use std::ffi::{c_char, CStr};
 use std::process::Command;
@@ -128,6 +129,25 @@ fn an_idle_pools_supervisor_answers_within_its_wait() {
         let taken = veneer::take_notices();
         assert_eq!(taken.len(), 1, "{taken:?}");
         assert_eq!(taken[0].text, "Connection attempt 2 failed");
+        veneer::context_free(ctx);
+        return;
+    };
+    assert_eq!(stderr, Vec::<String>::new());
+}
+
+/// A context holds one pool: `flz_core_pool_left` names none, so a second
+/// open replacing a live pool would hand its seats to the wrong governor.
+#[test]
+fn a_second_pool_open_on_one_context_is_refused() {
+    let Some(stderr) = stderr_of_child("a_second_pool_open_on_one_context_is_refused") else {
+        let ctx = veneer::CtxPtr::of(veneer::context_new(flz_core::SCHEMA_VERSION).unwrap());
+        veneer::pool_open(ctx, 1).expect("the first open");
+        let refused = veneer::pool_open(ctx, 1).expect_err("a second open is refused");
+        let message = refused.into_message();
+        assert!(
+            message.contains("runtime.runner_already_running"),
+            "{message}"
+        );
         veneer::context_free(ctx);
         return;
     };

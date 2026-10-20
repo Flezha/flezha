@@ -156,6 +156,22 @@ fn a_stopped_pool_answers_stop_while_the_core_runs_on() {
     assert_eq!(governor.supervise(&core), Supervise::Stop);
 }
 
+/// A seat given back with none taken, as a stray release after its pool
+/// ended, changes nothing: a wrapped count would refuse every later seat.
+#[test]
+fn a_release_with_no_seat_taken_never_underflows() {
+    let core = PollCore::new();
+    let governor = Governor::new(1, 2, RETIRE_AFTER);
+    assert_eq!(governor.left(), 0);
+    assert_eq!(governor.left(), 0, "a stray release changes nothing");
+    assert_eq!(
+        governor.supervise(&core),
+        Supervise::Spawn { grown: false },
+        "the pool still takes a seat to top up"
+    );
+    assert_eq!(governor.live(), 1);
+}
+
 /// The whole point of the adaptive pool: with every base worker blocked in
 /// user code, queued work for another cell is still served — the core reports
 /// starvation, the supervisor answers with a thread — and the grown thread
@@ -197,7 +213,7 @@ fn a_worker_that_unwinds_frees_its_seat() {
 
     let claim = Arc::clone(&governor);
     let died = std::thread::spawn(move || {
-        let _seat = Seat(&claim);
+        let _seat = claim.seat();
         panic!("a poll worker died");
     })
     .join();

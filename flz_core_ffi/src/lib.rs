@@ -147,7 +147,7 @@ pub struct FlzContext {
     /// The spawn handles of every outstanding activation, by number.
     spawns: DashMap<u64, Arc<Mutex<SpawnHandle>>>,
     last_spawn: AtomicU64,
-    /// The poll-worker pool [`flz_core_pool_open`] opened last.
+    /// The poll-worker pool [`flz_core_pool_open`] opened, at most one.
     pool: Mutex<Option<Arc<flz_core::poll_pool::Governor>>>,
 }
 

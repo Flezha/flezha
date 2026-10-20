@@ -5,7 +5,7 @@
 //! The invariant: an end-of-slice broadcast never overtakes a slice member
 //! still waiting on its answer.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use super::cell::HostPayload;
@@ -197,14 +197,15 @@ pub(super) fn apply_prepare_outcome(
         ));
     };
     let mut replay_resolved = 0usize;
-    for (entry, answer) in entries.into_iter().zip(answers) {
+    for (mut entry, answer) in entries.into_iter().zip(answers) {
         if entry.replay {
             replay_resolved += 1;
         }
         match answer {
             Ok(ans) => {
+                let bytes = std::mem::take(&mut entry.bytes);
                 for (slot, item, policy) in
-                    deliver_answered(&instance, channel, channel_desc, &entry, ans)
+                    deliver_answered(&instance, channel, channel_desc, &entry, bytes, ans)
                 {
                     crate::admission::admit_from_reader(&slot, item, policy);
                 }
@@ -261,9 +262,10 @@ fn deliver_answered(
     channel_id: u32,
     channel: &ChannelDescriptor,
     entry: &StagedEntry,
+    bytes: Vec<u8>,
     answer: schema::PrepareAnswer,
 ) -> Vec<crate::admission::Held> {
-    let crossed = answered(instance, channel_id, channel, &entry.bytes, answer);
+    let crossed = answered(instance, channel_id, channel, bytes, answer);
     if let Some(node) = entry.stage {
         let stream = Arc::clone(&entry.stream);
         crate::steps::crossed(instance, node, Ok((channel_id, crossed, stream)));
@@ -284,30 +286,44 @@ impl Entering for Crossed {
     }
 }
 
-/// What a crossing answered for one payload, as each consumer receives it.
+/// What a crossing answered for one payload, as each consumer receives it. A
+/// plain consumer's item ships the payload; prepared items ship none and share
+/// one copy for a park to record, a copy only when a plain consumer owns it.
 fn answered(
     instance: &RelayInstance,
     channel_id: u32,
     channel: &ChannelDescriptor,
-    bytes: &[u8],
+    mut bytes: Vec<u8>,
     mut answer: schema::PrepareAnswer,
 ) -> Crossed {
-    let payload = |keys, form| -> Value {
+    let event_time = answer.event_time;
+    let host = |bytes, keys, form, entry| -> Value {
         Arc::new(HostPayload {
-            bytes: bytes.to_vec(),
+            bytes,
             channel: channel_id,
             keys,
-            event_time: answer.event_time,
+            event_time,
             metadata: Vec::new(),
             form,
+            entry,
         })
     };
-    let mut plain = None;
+    let keyed = |tasklet| {
+        instance
+            .topology
+            .tasklet(tasklet)
+            .is_some_and(keyed_by_host)
+    };
+    let any_plain = channel.consumers.iter().any(|edge| !keyed(edge.tasklet));
+    let any_keyed = channel.consumers.iter().any(|edge| keyed(edge.tasklet));
+    let entry = any_keyed.then(|| match any_plain {
+        true => Arc::new(bytes.clone()),
+        false => Arc::new(std::mem::take(&mut bytes)),
+    });
+    let plain = any_plain.then(|| host(bytes, Vec::new(), InputForm::Untransformed, None));
     let mut crossed = Vec::with_capacity(channel.consumers.len());
     for (index, edge) in channel.consumers.iter().enumerate() {
-        let consumer = instance.topology.tasklet(edge.tasklet);
-        if !consumer.is_some_and(keyed_by_host) {
-            let value = plain.get_or_insert_with(|| payload(Vec::new(), InputForm::Untransformed));
+        if let (Some(value), false) = (&plain, keyed(edge.tasklet)) {
             crossed.push((index, Arc::clone(value)));
             continue;
         }
@@ -315,16 +331,17 @@ fn answered(
             .values
             .extract_if(.., |value| value.consumer == edge.tasklet);
         for (key, values) in per_cell(mine) {
-            crossed.push((index, payload(vec![key], InputForm::Prepared(values))));
+            let form = InputForm::Prepared(values);
+            crossed.push((index, host(Vec::new(), vec![key], form, entry.clone())));
         }
     }
     crossed
 }
 
-/// One consumer's values grouped per Cell key, each Cell's in answer order; a
-/// value naming no key reaches no Cell.
-fn per_cell(values: impl Iterator<Item = schema::PreparedValue>) -> Vec<(String, Vec<Vec<u8>>)> {
-    let mut cells: Vec<(String, Vec<Vec<u8>>)> = Vec::new();
+/// One consumer's values grouped per Cell key in key order, each Cell's in
+/// answer order; a value naming no key reaches no Cell.
+fn per_cell(values: impl Iterator<Item = schema::PreparedValue>) -> BTreeMap<String, Vec<Vec<u8>>> {
+    let mut cells: BTreeMap<String, Vec<Vec<u8>>> = BTreeMap::new();
     for mut value in values {
         let last = value.keys.len().saturating_sub(1);
         for (i, key) in value.keys.drain(..).enumerate() {
@@ -332,10 +349,7 @@ fn per_cell(values: impl Iterator<Item = schema::PreparedValue>) -> Vec<(String,
                 true => std::mem::take(&mut value.bytes),
                 false => value.bytes.clone(),
             };
-            match cells.iter_mut().find(|(cell, _)| *cell == key) {
-                Some((_, joined)) => joined.push(bytes),
-                None => cells.push((key, vec![bytes])),
-            }
+            cells.entry(key).or_default().push(bytes);
         }
     }
     cells
@@ -423,7 +437,12 @@ fn re_cross(
     let channel = (instance.topology.channel(channel_id)).expect("prepare channel present");
     match answer {
         Some(Ok(answer)) => Attempt::Delivered(deliver_answered(
-            instance, channel_id, channel, staged, answer,
+            instance,
+            channel_id,
+            channel,
+            staged,
+            staged.bytes.clone(),
+            answer,
         )),
         Some(Err(e)) => Attempt::Failed(e.message),
         None => Attempt::Failed("prepare re-attempt answered nothing".to_string()),
