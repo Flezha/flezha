@@ -593,7 +593,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
     case Wire.decode_frame(frame) do
       {:ok, %{cell_id: {rc, _sh, _pk} = cell_id, seq: seq, header: header, body: body}} ->
         if admit(state, rc, :cell_state_snapshot),
-          do: spawn(fn -> write_snapshot(cell_id, seq, header, body) end)
+          do: DurableTasks.start(fn -> write_snapshot(cell_id, seq, header, body) end)
 
       {:error, reason} ->
         undecodable(state, "cell_state_snapshot", reason)
@@ -610,7 +610,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
         kind = if payload_id == "compensation_intent", do: :intent, else: :done
 
         if admit(state, rc, :compensation_record),
-          do: spawn(fn -> write_compensation_marker(cell_id, kind) end)
+          do: DurableTasks.start(fn -> write_compensation_marker(cell_id, kind) end)
 
       {:error, reason} ->
         undecodable(state, payload_id, reason)
