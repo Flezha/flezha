@@ -279,7 +279,7 @@ defmodule Flezha.Relay.Ingest do
   def single_input?(%Overwatch{factory_id: nil}), do: false
 
   def single_input?(%Overwatch{} = state),
-    do: ClassRegistry.partitioning(state.factory_id).each in [:once, :chained]
+    do: ClassRegistry.single_input?(ClassRegistry.partitioning(state.factory_id).each)
 
   defp journal_input(state, nil, _reply_to), do: {nil, state}
 

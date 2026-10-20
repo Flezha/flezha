@@ -318,6 +318,13 @@ defmodule Flezha.Relay.ClassRegistry do
   end
 
   @doc """
+  Whether a steps relay with loop shape `each` reads one input only, which
+  also keeps it from running partitioned.
+  """
+  @spec single_input?(each() | nil) :: boolean()
+  def single_input?(each), do: each in [:once, :chained]
+
+  @doc """
   Record the **established** value of `attribute` for `factory_id` in
   `namespace` — the one value every runner of that factory there must
   advertise: its SDK language (`:sdk_lang`), how it runs (`:run`) and a

@@ -141,7 +141,7 @@ defmodule Flezha.Relay.PartitionGroup do
         suffix = byte_size(Partition.member_suffix(partitions - 1))
         {:error, {:group_id_too_long, relay.id, partitions, id_limit() - suffix}}
 
-      known.each in [:once, :chained] ->
+      ClassRegistry.single_input?(known.each) ->
         {:error, {:partitions_without_per_input_loop, relay.factory_id, known.each, partitions}}
 
       known.keyless ->
