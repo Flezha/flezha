@@ -19,7 +19,7 @@ use super::instance::{
 };
 use super::resume::{resumed_seed, seed_from_journal, Seed};
 use super::spec::{Chain, StepsSpec};
-use super::{Each, StepsError};
+use super::StepsError;
 use crate::cell::{make_cell_payload, CellItem, CellSlot};
 use crate::channel::{ChannelDescriptor, ChannelId, ChannelKind, ConsumerEdge};
 use crate::host::{Crossed, HostPayload};
@@ -222,7 +222,7 @@ impl Run<'_> {
         stream: &Arc<FlezhaStream>,
         producer: &Arc<CellSlot>,
     ) -> Vec<Release> {
-        if self.spec.each != Each::Chained {
+        if !self.spec.each.carries_leaf() {
             return Vec::new();
         }
         let Some(channel) = self.run.sheet().pass.as_ref().map(|pass| pass.channel) else {
@@ -462,10 +462,9 @@ impl Decide<'_, '_, '_> {
         self.terminal(status, String::new(), Vec::new());
     }
 
-    /// Whether iteration `iter` takes its seed from a message: every pass of
-    /// a `PerInput` loop, the first pass of any loop.
+    /// Whether the current iteration takes its seed from a message.
     pub(super) fn message_fed(&self) -> bool {
-        self.r.spec.each == Each::PerInput || self.s.iter == 0
+        self.r.spec.each.message_fed(self.s.iter)
     }
 
     pub(super) fn barrier(&mut self, target: BarrierFor) -> u64 {

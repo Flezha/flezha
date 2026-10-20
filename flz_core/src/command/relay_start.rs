@@ -6,7 +6,6 @@ use super::{CommandAction, Reply};
 use crate::error::Code;
 use crate::pb::{AddRelay, AddRelayResponse};
 use crate::relay::instance::KeyGroupRange;
-use crate::relay::settings::Each;
 use crate::relay::topology::RelayTopology;
 use crate::runner::RunnerNode;
 use crate::steps::spec::StepsSpec;
@@ -135,7 +134,7 @@ fn partition_refusal(
     if let Some(spec) = topology
         .steps
         .as_ref()
-        .filter(|spec| spec.each != Each::PerInput)
+        .filter(|spec| !spec.each.partitionable())
     {
         return Some(crate::Error::Declaration(
             Code::PartitionsWithoutPerInputLoop.with([

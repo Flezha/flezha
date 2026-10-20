@@ -104,7 +104,7 @@ pub fn plan_compensation<'a>(
     in_flight: &'a [StageRecord],
 ) -> Vec<&'a StageRecord> {
     let mut plan: Vec<&StageRecord> = in_flight.iter().rev().collect();
-    if mode == OnFailure::UndoAll {
+    if !mode.keeps_committed() {
         for iteration in committed.iter().rev() {
             plan.extend(iteration.iter().rev());
         }

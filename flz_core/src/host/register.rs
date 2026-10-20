@@ -415,7 +415,7 @@ fn refuse_calls<'a>(
         .iter()
         .filter_map(|c| c.call.as_ref().map(|call| (c, call)))
     {
-        if each.is_some_and(|mode| mode != Each::PerInput) {
+        if each.is_some_and(|mode| !mode.calls_allowed()) {
             issues.push(TopologyIssue::CallOutsidePerInputLoop {
                 channel: channel.name.clone(),
             });
@@ -632,7 +632,7 @@ fn steps_shape_issue(
             tasklet: name(task),
         });
     }
-    if each != Each::Chained {
+    if !each.single_leaf_rules() {
         return None;
     }
     let dag = TaskDag::from_walk(walk, entries);

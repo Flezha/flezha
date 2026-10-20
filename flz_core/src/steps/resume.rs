@@ -16,7 +16,7 @@ use super::instance::{
 };
 use super::run::{unwired_stream, Decide, Run, Source};
 use super::spec::Chain;
-use super::{Each, OnFailure, StepsError};
+use super::StepsError;
 use crate::channel::{ChannelId, ChannelKind};
 use crate::relay::topology::RelayTopology;
 
@@ -201,7 +201,7 @@ pub(super) fn journaled_stages(
     let undoable: Vec<CommittedTask> = resume
         .committed_tasks
         .iter()
-        .filter(|task| r.spec.on_failure == OnFailure::UndoAll || task.iter >= resume.iter)
+        .filter(|task| !r.spec.on_failure.keeps_committed() || task.iter >= resume.iter)
         .cloned()
         .collect();
     let mut by_iter = stages_by_iter(r, &undoable);
@@ -346,13 +346,11 @@ impl Decide<'_, '_, '_> {
             });
             return;
         }
-        match self.r.spec.each {
-            Each::Once if self.s.iter > 0 => self.finish_clean(),
-            Each::Chained if self.s.iter > 0 => {
-                self.s.phase = Phase::Starting;
-                self.fx.start = Some(carried);
-            }
-            _ => self.enter_waiting(),
+        if self.s.iter > 0 && self.r.spec.each.carries_leaf() {
+            self.s.phase = Phase::Starting;
+            self.fx.start = Some(carried);
+        } else {
+            self.enter_waiting();
         }
     }
 }

@@ -107,6 +107,63 @@ impl Each {
             Each::Chained => "chained",
         }
     }
+
+    /// Whether pass `iter` takes its seed from a message: every pass of a
+    /// `PerInput` loop, the first pass of any loop.
+    #[inline]
+    pub fn message_fed(self, iter: u32) -> bool {
+        match self {
+            Each::PerInput => true,
+            Each::Once | Each::Chained => iter == 0,
+        }
+    }
+
+    /// Whether the instance ends after its first pass.
+    #[inline]
+    pub fn ends_after_first(self) -> bool {
+        match self {
+            Each::Once => true,
+            Each::PerInput | Each::Chained => false,
+        }
+    }
+
+    /// Whether a pass's leaf batch seeds the next pass.
+    #[inline]
+    pub fn carries_leaf(self) -> bool {
+        match self {
+            Each::Chained => true,
+            Each::Once | Each::PerInput => false,
+        }
+    }
+
+    /// Whether a tasklet may call another relay: only a turn per message can
+    /// wait for its answer.
+    #[inline]
+    pub fn calls_allowed(self) -> bool {
+        match self {
+            Each::PerInput => true,
+            Each::Once | Each::Chained => false,
+        }
+    }
+
+    /// Whether the relay may run as several partitions, each its own loop.
+    #[inline]
+    pub fn partitionable(self) -> bool {
+        match self {
+            Each::PerInput => true,
+            Each::Once | Each::Chained => false,
+        }
+    }
+
+    /// Whether the chain must end in one leaf that hands off, since that
+    /// leaf's batch is the next pass's input.
+    #[inline]
+    pub fn single_leaf_rules(self) -> bool {
+        match self {
+            Each::Chained => true,
+            Each::Once | Each::PerInput => false,
+        }
+    }
 }
 
 /// What a failed steps instance undoes.
@@ -125,6 +182,25 @@ impl OnFailure {
         match self {
             OnFailure::UndoAll => "undo_all",
             OnFailure::KeepProgress => "keep_progress",
+        }
+    }
+
+    /// Whether a committed iteration stays done when the instance fails.
+    #[inline]
+    pub fn keeps_committed(self) -> bool {
+        match self {
+            OnFailure::KeepProgress => true,
+            OnFailure::UndoAll => false,
+        }
+    }
+
+    /// Whether a tasklet's failure ends only its turn, dead-lettered while
+    /// the loop goes on, instead of the instance.
+    #[inline]
+    pub fn fails_turn(self, each: Each) -> bool {
+        match self {
+            OnFailure::KeepProgress => each == Each::PerInput,
+            OnFailure::UndoAll => false,
         }
     }
 }
@@ -494,6 +570,49 @@ pub fn durable_json(durable: &Durable) -> Value {
         SleepAfter::Never => json!({ durable.as_str(): { "sleep_after": false } }),
         SleepAfter::After(after) => {
             json!({ durable.as_str(): { "sleep_after": after.as_millis() as u64 } })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_rules_per_variant() {
+        // (variant, message_fed(0), message_fed(1), ends_after_first,
+        //  carries_leaf, calls_allowed, partitionable, single_leaf_rules)
+        let table = [
+            (Each::Once, true, false, true, false, false, false, false),
+            (Each::PerInput, true, true, false, false, true, true, false),
+            (Each::Chained, true, false, false, true, false, false, true),
+        ];
+        for (each, first, later, ends, carries, calls, partitions, single_leaf) in table {
+            assert_eq!(each.message_fed(0), first, "{each:?}");
+            assert_eq!(each.message_fed(1), later, "{each:?}");
+            assert_eq!(each.ends_after_first(), ends, "{each:?}");
+            assert_eq!(each.carries_leaf(), carries, "{each:?}");
+            assert_eq!(each.calls_allowed(), calls, "{each:?}");
+            assert_eq!(each.partitionable(), partitions, "{each:?}");
+            assert_eq!(each.single_leaf_rules(), single_leaf, "{each:?}");
+        }
+    }
+
+    #[test]
+    fn on_failure_rules_per_variant() {
+        // (variant, keeps_committed, fails_turn for Once, PerInput, Chained)
+        let table = [
+            (OnFailure::UndoAll, false, [false, false, false]),
+            (OnFailure::KeepProgress, true, [false, true, false]),
+        ];
+        for (mode, keeps, turns) in table {
+            assert_eq!(mode.keeps_committed(), keeps, "{mode:?}");
+            for (each, turn) in [Each::Once, Each::PerInput, Each::Chained]
+                .into_iter()
+                .zip(turns)
+            {
+                assert_eq!(mode.fails_turn(each), turn, "{mode:?} {each:?}");
+            }
         }
     }
 }

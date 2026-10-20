@@ -12,7 +12,7 @@ use super::instance::{
 };
 use super::resume::Seed;
 use super::run::{Decide, Source};
-use super::{Each, OnFailure, StepsError};
+use super::StepsError;
 use crate::cell::CellSlot;
 use crate::channel::ChannelId;
 use crate::relay::sleep::OWED_INBOX_WAIT;
@@ -30,7 +30,7 @@ impl Decide<'_, '_, '_> {
         if self.cancelled() {
             return self.terminal("cancelled", String::new(), Vec::new());
         }
-        if self.r.spec.each == Each::Once && self.s.iter > 0 {
+        if self.r.spec.each.ends_after_first() && self.s.iter > 0 {
             return self.finish_clean();
         }
         let source = match self.next_trigger() {
@@ -540,10 +540,7 @@ impl Decide<'_, '_, '_> {
     /// Whether `failure` ends only its turn: a tasklet's failure, not its
     /// commit's, in a `PerInput` keep-progress loop with no stop asked.
     fn fails_turn(&self, failure: &Failure) -> bool {
-        self.r.spec.each == Each::PerInput
-            && self.r.spec.on_failure == OnFailure::KeepProgress
-            && !failure.refused
-            && !self.cancelled()
+        self.r.spec.on_failure.fails_turn(self.r.spec.each) && !failure.refused && !self.cancelled()
     }
 
     /// A failed turn: its iteration commits as dead-lettered, the controller
@@ -597,7 +594,7 @@ impl Decide<'_, '_, '_> {
             return;
         };
         let completion = pass.completion.result();
-        if self.r.spec.each == Each::Once {
+        if self.r.spec.each.ends_after_first() {
             return self.terminal("ok", String::new(), completion.unwrap_or_default());
         }
         if !self.r.journaling() {
@@ -631,7 +628,7 @@ impl Decide<'_, '_, '_> {
         let done = std::mem::take(&mut self.s.done);
         // Keep-progress never undoes a committed iteration, so it keeps no
         // record of one: nothing then holds its Cells past their eviction.
-        if self.r.spec.on_failure == OnFailure::UndoAll {
+        if !self.r.spec.on_failure.keeps_committed() {
             self.s.committed.push(done);
         }
         self.s.iter += 1;
@@ -641,7 +638,7 @@ impl Decide<'_, '_, '_> {
         // A chained loop carries its leaf batch into the next pass and ends
         // on an empty one; a timer-fed pass that released nothing at the
         // leaf leaves the carry as it stood.
-        if self.r.spec.each == Each::Chained {
+        if self.r.spec.each.carries_leaf() {
             if !pass.leaf_values.is_empty() {
                 self.s.carry = Some(Carry {
                     channel: pass.channel,
