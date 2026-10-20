@@ -803,7 +803,7 @@ defmodule Flezha.State.TaskJournal do
        when type in [:task_committed, :compensated] do
     Enum.any?(record_ranges(cells), fn {id, _first, seq} ->
       case Wire.decode_cell_id(id) do
-        {:ok, cell} -> seq > Outbox.read(cell).outbox_flushed_seq
+        {:ok, cell} -> seq > Flezha.State.Lineage.dedup(cell).outbox_flushed_seq
         {:error, _} -> false
       end
     end)

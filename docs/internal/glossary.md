@@ -199,9 +199,13 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   cadence. A park closes the interval, a restore discards the open one, and
   `outputs: at_checkpoint` with its `max_delay_ms` holds the interval's outputs with its changes.
 - **Outbox** — the per-cell record of which outputs are durable and which an output has confirmed
-  (`Flezha.State.Outbox`, the `<key>.outbox.dedup` side-file): `outbox_durable_seq` gates the
+  (`Flezha.State.Outbox`; the cursors live in the `<key>.outbox.dedup` side-file, beside the
+  `<key>.lineage` record, both owned by `Flezha.State.Lineage`): `outbox_durable_seq` gates the
   flush, `outbox_flushed_seq` advances on the output plugin's confirmation of the `flz.ack` token,
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
+- **Lineage record** — the per-cell `<key>.lineage` file (`Flezha.State.Lineage`), the home of
+  the cell's epoch and folded offset, installed with a directory fsync before the dedup file
+  carries a new copy of either. Where the two files disagree, the higher epoch wins.
 - **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
   `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable steps relay). `flz.` is reserved; a user emit carrying one is rejected.
 - **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,

@@ -17,6 +17,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
+  alias Flezha.State.WalWriter.RemoteGate
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -348,6 +349,30 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
       assert log =~ "WalWriter.start_link"
       assert log =~ "killed"
+    end
+
+    test "a fence after a restart ships a Cell whose unshipped tail has no writer", ctx do
+      # fails when: the fence asks only the running writers, so a Cell whose
+      # records sit on this disk alone and whose writer has not started again
+      # lets a marker confirm an input the backend does not hold.
+      ClassRegistry.put_overwatch(ctx.rc, self(), nil)
+      ref = {:cell, ctx.cell_id}
+
+      wal =
+        for seq <- 0..1,
+            into: "",
+            do: Frame.encode_record(seq, effect_header(), effect_body([], seq))
+
+      wal_path = Paths.wal_path(ctx.cell_id)
+      File.mkdir_p!(Path.dirname(wal_path))
+      File.write!(wal_path, wal)
+      refute Manifest.key(ref) in Stub.keys()
+
+      :ok = RemoteGate.await_held(nil)
+
+      assert Manifest.key(ref) in Stub.keys()
+      assert Manifest.shipped_through(Stub.stored_manifest(ref)) == 1
+      assert Supervisor.lookup(ctx.cell_id) == :error
     end
   end
 

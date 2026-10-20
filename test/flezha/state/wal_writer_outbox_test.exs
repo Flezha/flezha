@@ -45,13 +45,13 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     # The cursor does NOT move on the hand-off — only once the chain has run
     # both outputs and no sink is holding either.
-    assert Outbox.read(cell_id).outbox_flushed_seq == -1
+    assert Lineage.progress(cell_id).outbox_flushed_seq == -1
 
     settle(md1)
     settle(md2)
     :ok = WalWriter.fsync(pid)
 
-    assert Outbox.read(cell_id).outbox_flushed_seq == 0
+    assert Lineage.progress(cell_id).outbox_flushed_seq == 0
   end
 
   test "checkpoint granularity: a mid-interval record flushes outputs without acking", %{
@@ -99,7 +99,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     :ok = WalWriter.fsync(pid)
 
-    assert Outbox.read(cell_id).last_persisted_seq == 9
+    assert Lineage.progress(cell_id).last_persisted_seq == 9
   end
 
   test "a stale dedup file is repaired from the WAL scan on reopen", %{
@@ -111,7 +111,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     close_writer(pid, cell_id)
 
     # Crash-outran-the-cache simulation: the file claims an old watermark.
-    :ok = Outbox.write(cell_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: 0})
+    :ok = Lineage.put_dedup(cell_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: 0})
 
     pid = start_writer(cell_id)
     assert WalWriter.last_persisted_seq(pid) == 4, "WAL scan is authoritative"
@@ -129,7 +129,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     refute_dispatched()
     close_writer(pid, cell_id)
 
-    assert Outbox.read(cell_id).outbox_flushed_seq == -1
+    assert Lineage.progress(cell_id).outbox_flushed_seq == -1
 
     # Restart with the relay bound: the re-drive dispatches with the
     # original durable identity.
@@ -360,7 +360,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert {"good", _, _} = next_output()
     assert_receive {:"$gen_cast", {:dead_lettered, %{offset: 1} = first}}, 2_000
     close_writer(pid, cell_id)
-    assert Outbox.read(cell_id).outbox_flushed_seq == -1
+    assert Lineage.progress(cell_id).outbox_flushed_seq == -1
 
     pid = armed_writer(rc, cell_id)
     _ = WalWriter.last_persisted_seq(pid)

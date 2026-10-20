@@ -105,7 +105,7 @@ defmodule Flezha.State.PathsTest do
       File.write!(journal, "journal-bytes")
 
       assert :ok =
-               Flezha.State.Outbox.write(Paths.journal_id("wf-hydrated"), %{
+               Flezha.State.Lineage.put_dedup(Paths.journal_id("wf-hydrated"), %{
                  last_persisted_seq: 3,
                  outbox_flushed_seq: -1,
                  epoch: 0
@@ -227,6 +227,36 @@ defmodule Flezha.State.PathsTest do
       assert classes == ["fills-op"]
       assert Enum.count(calls, &match?({:list_dir, [dir]} when dir == base, &1)) == 1
       refute Enum.any?(calls, &match?({:get_cwd, _}, &1))
+    end
+  end
+
+  describe "atomic_install/3" do
+    setup do
+      context = %{tmp: base} = FlezhaTest.Case.install([:tmp_dir])
+      Application.put_env(:flezha, :state_root, base)
+      Paths.ensure_claims_table()
+
+      context
+    end
+
+    # fails when: an `:inline_dir` install renames its file in without syncing
+    # the directory, so a power loss can lose the new name it installed.
+    test "an :inline_dir install syncs the directory, an :inline one does not", %{tmp: base} do
+      cell = {"install-op", "task-0", "k1"}
+      File.mkdir_p!(Paths.state_dir(cell))
+      install = &Paths.atomic_install(&1, fn fd -> :file.write(fd, "bytes") end, &2)
+
+      {result, calls} =
+        TestHelpers.file_calls(fn -> install.(Paths.lineage_path(cell), :lineage) end)
+
+      assert result == :ok
+      assert [{:sync, [_dir]}] = for({:sync, _} = call <- calls, do: call)
+
+      snapshot = Paths.snapshot_path(cell, 1)
+      {result, calls} = TestHelpers.file_calls(fn -> install.(snapshot, :snapshot) end)
+      assert result == :ok
+      assert for({:sync, _} = call <- calls, do: call) == []
+      assert File.read!(snapshot) == "bytes" and String.starts_with?(snapshot, base)
     end
   end
 end

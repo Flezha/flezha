@@ -23,7 +23,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Config.Durations
   alias Flezha.Relay.{Calls, Lookup}
   alias Flezha.State.Wire
-  alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths}
+  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Outbox, Paths}
   alias Flezha.Process.Timer
   alias Flezha.State.WalWriter.State
 
@@ -559,12 +559,14 @@ defmodule Flezha.State.WalWriter.Settlement do
     end
   end
 
-  # Advance the dedup file (`Outbox.t()`) with one atomic tmp+rename — at
-  # most once per fsync batch. The reserved per-instance identities (the
-  # task-journal, the input log) skip it: they carry no effect records, and the
-  # dedup side-file would register a phantom Cell with `Paths.scan_dir/1`.
-  def persist_dedup(%{cell_id: {_, _, key}} = state) when key in @reserved_cell_keys,
-    do: state
+  # Advance the dedup file with one atomic tmp+rename, at most once per fsync
+  # batch. The reserved per-instance identities (the task-journal, the input
+  # log) skip it: they carry no effect records, and the dedup side-file would
+  # register a phantom Cell with `Paths.scan_dir/1`. A writer whose open never
+  # loaded the Cell's files (`lineage: nil`) would overwrite them with defaults.
+  def persist_dedup(%{cell_id: {_, _, key}, lineage: lineage} = state)
+      when key in @reserved_cell_keys or lineage == nil,
+      do: state
 
   def persist_dedup(state) do
     # The cursors as one record; only the persistence watermark is clamped,
@@ -576,14 +578,27 @@ defmodule Flezha.State.WalWriter.Settlement do
     # record re-drives work the sinks dedup — writing a flush cursor ahead of
     # what is durable would drop those outputs for good.
     if State.ordered?(progress) do
-      _ = Outbox.write(state.cell_id, Map.put(progress, :folded_offset, state.folded_offset))
+      put_progress(state, progress)
     else
       Logger.error(
         "[state] refusing to persist an out-of-order cursor record for " <>
           "#{inspect(state.cell_id)}: #{inspect(progress)}"
       )
-    end
 
-    state
+      state
+    end
+  end
+
+  # The lineage record goes first when the dedup file would carry an epoch or
+  # folded offset it does not hold; a failed install writes no dedup file.
+  defp put_progress(%{lineage: lineage, folded_offset: folded} = state, progress) do
+    record = %{lineage | epoch: progress.epoch, folded_offset: folded, cut: nil}
+
+    if record == lineage or Lineage.put(state.cell_id, record) == :ok do
+      _ = Lineage.put_dedup(state.cell_id, Map.put(progress, :folded_offset, folded))
+      %{state | lineage: record}
+    else
+      state
+    end
   end
 end

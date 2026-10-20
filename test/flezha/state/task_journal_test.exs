@@ -13,7 +13,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.Wire
   alias Flezha.Service.Cli
-  alias Flezha.State.{Commands, Outbox, Paths, TaskJournal, TestHelpers, WalWriter}
+  alias Flezha.State.{Commands, Lineage, Paths, TaskJournal, TestHelpers, WalWriter}
   alias Flezha.State.TaskJournal.Codec
 
   defp instance_id(), do: "opj_inst_#{System.unique_integer([:positive])}"
@@ -711,7 +711,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # sinks confirmed everything up to `flushed`.
   defp confirm_through(cell, flushed) do
     File.mkdir_p!(Path.dirname(Paths.outbox_dedup_path(cell)))
-    :ok = Outbox.write(cell, %{last_persisted_seq: 9, outbox_flushed_seq: flushed, epoch: 0})
+    :ok = Lineage.put_dedup(cell, %{last_persisted_seq: 9, outbox_flushed_seq: flushed, epoch: 0})
   end
 
   test "an entry whose record is still owed holds the cut, and goes once the cursor passes it" do

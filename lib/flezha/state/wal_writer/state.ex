@@ -54,9 +54,11 @@ defmodule Flezha.State.WalWriter.State do
     :outbox_durable_seq,
     :outbox_flushed_seq,
     :outbox_epoch,
-    # The dedup file's `folded_offset`: what the records a prefix cut dropped
-    # consumed, which every consumed-offset scan of the file starts from.
+    # The `folded_offset`: what the records a prefix cut dropped consumed,
+    # which every consumed-offset scan of the file starts from.
     :folded_offset,
+    # The lineage file as stored; `nil` until the open loaded the Cell's files.
+    :lineage,
     :timers,
     # Dispatched but not yet confirmed by the sinks: the per-entry tallies
     # (`Flezha.State.Outbox` keys) and, for a flow relay writer, the dispatch-order
@@ -120,6 +122,7 @@ defmodule Flezha.State.WalWriter.State do
           outbox_flushed_seq: integer(),
           outbox_epoch: non_neg_integer(),
           folded_offset: integer(),
+          lineage: Flezha.State.Lineage.stored() | nil,
           timers: Flezha.Process.Timer.timers(),
           outbox_awaiting: %{optional(Outbox.key()) => map()},
           outbox_inflight: :queue.queue({Outbox.key(), integer()}),

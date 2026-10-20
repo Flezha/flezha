@@ -13,7 +13,7 @@ defmodule Flezha.State.WalWriter.Epoch do
 
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.Wire
-  alias Flezha.State.{InputLog, Metrics, Outbox, Paths, RecordFrame, SeqIndex}
+  alias Flezha.State.{InputLog, Lineage, Metrics, Paths, RecordFrame, SeqIndex}
   alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 
   # Only a frame from a *different* session than the epoch owner consults the
@@ -214,14 +214,14 @@ defmodule Flezha.State.WalWriter.Epoch do
   end
 
   @doc """
-  The highest consumed offset `cell_id`'s WAL records carry, or its dedup
-  file's `folded_offset`, read from disk alone; `nil` when neither holds one.
+  The highest consumed offset `cell_id`'s WAL records carry, or its
+  `folded_offset` (`Flezha.State.Lineage`), read from disk alone; `nil` when neither holds one.
   Behind the remote gate only the records at or below the persisted flush
   cursor count.
   """
   @spec consumed_offset_on_disk(Paths.cell_id()) :: non_neg_integer() | nil
   def consumed_offset_on_disk(cell_id) do
-    dedup = Outbox.read(cell_id)
+    dedup = Lineage.progress(cell_id)
     upto = if RemoteGate.new(cell_id, :record), do: dedup.outbox_flushed_seq, else: :infinity
     fold = consumed_through(upto)
 

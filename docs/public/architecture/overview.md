@@ -364,6 +364,7 @@ app_data/
       <cell_key>.wal               the cell's write-ahead log
       <cell_key>.snap.<seq>        its snapshots
       <cell_key>.outbox.dedup      its outbox position
+      <cell_key>.lineage           its epoch, kept apart from the outbox position
   state/<namespace>/<instance_id>/<instance_id>/task.journal
                                    a steps instance's task journal
   dlq/<relay_class>/<tasklet_id>/entries.jsonl, <entry_id>.bin

@@ -51,7 +51,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
 
     settle(md)
     :ok = WalWriter.fsync(pid)
-    assert Outbox.read(cell_id).outbox_flushed_seq == 0
+    assert Lineage.progress(cell_id).outbox_flushed_seq == 0
   end
 
   test "a held record below a committed range never committed and is dropped", %{
@@ -72,7 +72,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
     # The cursor passes the dropped record with the one that was confirmed.
     settle(md)
     :ok = WalWriter.fsync(pid)
-    assert Outbox.read(cell_id).outbox_flushed_seq == 1
+    assert Lineage.progress(cell_id).outbox_flushed_seq == 1
   end
 
   test "a wait on a record answers once it is durable, and at once when it already is", %{

@@ -67,7 +67,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   alias Flezha.Service.Cli
   alias Flezha.State.Paths
   alias Flezha.State.Wire
-  alias Flezha.State.Outbox
+  alias Flezha.State.Lineage
   alias Flezha.State.TaskJournal
   alias Flezha.State.WalWriter
   alias FlezhaTest.Helper.NodeTestHelper
@@ -704,7 +704,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
         )
 
       :error ->
-        Outbox.read(cell).outbox_flushed_seq >= seq
+        Lineage.progress(cell).outbox_flushed_seq >= seq
     end
   end
 
@@ -723,9 +723,9 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
              )
     end
 
-    dedup = Outbox.read(cell)
+    dedup = Lineage.progress(cell)
     assert dedup.outbox_flushed_seq >= 0, "the output was never confirmed before the crash"
-    :ok = Outbox.write(cell, %{dedup | outbox_flushed_seq: -1})
+    :ok = Lineage.put_dedup(cell, %{dedup | outbox_flushed_seq: -1})
   end
 
   # The one `task_committed` entry of `task_idx`.

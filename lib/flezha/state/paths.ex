@@ -2,7 +2,7 @@ defmodule Flezha.State.Paths do
   require Logger
 
   @moduledoc """
-  Path resolution for per-Cell WAL, snapshot, and outbox-dedup files.
+  Path resolution for per-Cell WAL, snapshot, outbox-dedup and lineage files.
 
   All persistence files live under
   `<state_root>/<namespace>/<relay_class>/<tasklet_id>/`, where
@@ -30,7 +30,7 @@ defmodule Flezha.State.Paths do
           snapshot_files: [
             {cell_key :: binary(), seq :: non_neg_integer(), path :: binary()}
           ],
-          outbox_files: [{cell_key :: binary(), path :: binary()}]
+          side_files: [{cell_key :: binary(), path :: binary()}]
         }
 
   @safe_chars ~r/^[A-Za-z0-9_.-]+$/
@@ -318,31 +318,29 @@ defmodule Flezha.State.Paths do
 
   @spec snapshot_paths(cell_id()) :: [{non_neg_integer(), binary()}]
   def snapshot_paths({_, _, cell_key} = pid) do
-    encoded = encode_cell_key(cell_key)
-    prefix = encoded <> ".snap."
+    dir = state_dir(pid)
+    snaps = for name <- list_dir(dir), seq = snapshot_seq(cell_key, name), do: {seq, name}
 
-    pid
-    |> state_dir()
-    |> list_dir()
-    |> Enum.flat_map(fn name ->
-      case String.split(name, prefix, parts: 2) do
-        ["", seq_str] ->
-          case Integer.parse(seq_str) do
-            {seq, ""} -> [{seq, Path.join(state_dir(pid), name)}]
-            _ -> []
-          end
+    snaps
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.map(fn {seq, name} -> {seq, Path.join(dir, name)} end)
+  end
 
-        _ ->
-          []
-      end
-    end)
-    |> Enum.sort_by(fn {seq, _} -> seq end)
+  defp snapshot_seq(cell_key, name) do
+    with ["", seq_str] <- String.split(name, encode_cell_key(cell_key) <> ".snap.", parts: 2),
+         {seq, ""} <- Integer.parse(seq_str),
+         do: seq,
+         else: (_ -> nil)
   end
 
   @spec outbox_dedup_path(cell_id()) :: binary()
-  def outbox_dedup_path({_, _, cell_key} = pid) do
-    Path.join(state_dir(pid), encode_cell_key(cell_key) <> ".outbox.dedup")
-  end
+  def outbox_dedup_path(pid), do: cell_file(pid, ".outbox.dedup")
+
+  @spec lineage_path(cell_id()) :: binary()
+  def lineage_path(pid), do: cell_file(pid, ".lineage")
+
+  defp cell_file({_, _, cell_key} = pid, suffix),
+    do: Path.join(state_dir(pid), encode_cell_key(cell_key) <> suffix)
 
   @doc """
   Path of an instance's durable input log (a flow relay on the effectively-once
@@ -376,10 +374,8 @@ defmodule Flezha.State.Paths do
   retention sweep.
   """
   @spec compensation_marker_path(cell_id(), :intent | :done) :: binary()
-  def compensation_marker_path({_, _, cell_key} = pid, kind) when kind in [:intent, :done] do
-    suffix = if kind == :intent, do: ".comp_intent", else: ".comp_done"
-    Path.join(state_dir(pid), encode_cell_key(cell_key) <> suffix)
-  end
+  def compensation_marker_path(pid, :intent), do: cell_file(pid, ".comp_intent")
+  def compensation_marker_path(pid, :done), do: cell_file(pid, ".comp_done")
 
   @doc """
   Write one compensation marker for a Cell (presence is the signal — empty
@@ -408,16 +404,16 @@ defmodule Flezha.State.Paths do
 
   @doc """
   Every on-disk path that belongs to one Cell (WAL, all snapshots, the
-  outbox-dedup file, both compensation markers). Paths are returned whether or
-  not the file exists — the one definition of "this Cell's durable set",
-  shared by the hard-delete path and the cross-controller transfer
-  (`durable_files/1`).
+  outbox-dedup and lineage files, both compensation markers), whether or not
+  the file exists: the one definition of "this Cell's durable set", shared by
+  the hard-delete path and the cross-controller transfer (`durable_files/1`).
   """
   @spec cell_files(cell_id()) :: [binary()]
   def cell_files({_, _, _} = pid) do
     [
       wal_path(pid),
       outbox_dedup_path(pid),
+      lineage_path(pid),
       compensation_marker_path(pid, :intent),
       compensation_marker_path(pid, :done)
     ] ++ Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end)
@@ -551,13 +547,7 @@ defmodule Flezha.State.Paths do
   end
 
   defp snapshot_file_path(pid, cell_key, name) do
-    with ["", seq_str] <-
-           String.split(name, encode_cell_key(cell_key) <> ".snap.", parts: 2),
-         {seq, ""} <- Integer.parse(seq_str) do
-      snapshot_path(pid, seq)
-    else
-      _ -> nil
-    end
+    if seq = snapshot_seq(cell_key, name), do: snapshot_path(pid, seq)
   end
 
   @doc """
@@ -580,9 +570,9 @@ defmodule Flezha.State.Paths do
   end
 
   @doc """
-  Remove every on-disk file for one Cell (WAL, all snapshots, the
-  outbox-dedup file). Idempotent: missing files are ignored. Used by the
-  dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_cell/1`).
+  Remove every on-disk file for one Cell (`cell_files/1`); missing files are
+  ignored. Used by the dynamic-mode hard-delete path
+  (`Flezha.State.Supervisor.delete_cell/1`).
   """
   @spec delete_files(cell_id()) :: :ok
   def delete_files({relay_class, _, _} = pid) do
@@ -611,12 +601,7 @@ defmodule Flezha.State.Paths do
   end
 
   @spec snapshot_path(cell_id(), non_neg_integer()) :: binary()
-  def snapshot_path({_, _, cell_key} = pid, seq) do
-    Path.join(
-      state_dir(pid),
-      encode_cell_key(cell_key) <> ".snap." <> Integer.to_string(seq)
-    )
-  end
+  def snapshot_path(pid, seq), do: cell_file(pid, ".snap." <> Integer.to_string(seq))
 
   @doc """
   Enumerate Cell files under a Relay tree.
@@ -632,7 +617,7 @@ defmodule Flezha.State.Paths do
   defp scan(dir) do
     dir
     |> list_dir()
-    |> Enum.reduce(%{wal_files: [], snapshot_files: [], outbox_files: []}, fn name, acc ->
+    |> Enum.reduce(%{wal_files: [], snapshot_files: [], side_files: []}, fn name, acc ->
       cond do
         Durable.in_progress?(name) ->
           acc
@@ -646,14 +631,14 @@ defmodule Flezha.State.Paths do
           key = name |> String.trim_trailing(".wal") |> decode_cell_key()
           %{acc | wal_files: [{key, Path.join(dir, name)} | acc.wal_files]}
 
-        String.ends_with?(name, ".outbox.dedup") ->
-          key = name |> String.trim_trailing(".outbox.dedup") |> decode_cell_key()
+        suffix = Enum.find([".outbox.dedup", ".lineage"], &String.ends_with?(name, &1)) ->
+          key = name |> String.trim_trailing(suffix) |> decode_cell_key()
 
           # A hydration writes the dedup cache of every identity it restores,
           # the journal's included, which is still no Cell.
           if key in @reserved_cell_keys,
             do: acc,
-            else: %{acc | outbox_files: [{key, Path.join(dir, name)} | acc.outbox_files]}
+            else: %{acc | side_files: [{key, Path.join(dir, name)} | acc.side_files]}
 
         true ->
           case parse_snapshot_name(name) do
@@ -748,7 +733,7 @@ defmodule Flezha.State.Paths do
       _ = :file.close(fd)
 
       case result do
-        :ok -> rename_or_discard(in_progress, path)
+        :ok -> rename_or_discard(in_progress, path, row.durability)
         {:error, _} = err -> discard_install(in_progress, err)
       end
     end
@@ -756,17 +741,25 @@ defmodule Flezha.State.Paths do
 
   # A file whose owner already fsyncs on a cadence of its own does not pay a
   # second sync here; the declaration is what says which.
-  defp install_sync(fd, :inline), do: :file.datasync(fd)
   defp install_sync(_fd, :batched), do: :ok
+  defp install_sync(fd, _inline), do: :file.datasync(fd)
+
+  # A renamed-in file survives a power loss only once its directory entry does.
+  defp sync_dir(path, :inline_dir) do
+    with {:ok, synced} <- File.open(Path.dirname(path), [:read, :raw, :directory], &:file.sync/1),
+         do: synced
+  end
+
+  defp sync_dir(_path, _durability), do: :ok
 
   # Where the directory's existence is the signal that a Cell is alive, the
   # install must fail with `:enoent` rather than resurrect a removed one.
   defp ensure_dir(path, true), do: File.mkdir_p(Path.dirname(path))
   defp ensure_dir(_path, false), do: :ok
 
-  defp rename_or_discard(in_progress, path) do
+  defp rename_or_discard(in_progress, path, durability) do
     case File.rename(in_progress, path) do
-      :ok -> :ok
+      :ok -> sync_dir(path, durability)
       {:error, _} = err -> discard_install(in_progress, err)
     end
   end
@@ -815,7 +808,7 @@ defmodule Flezha.State.Paths do
   end
 
   defp cell_keys_in(dir) do
-    %{wal_files: w, snapshot_files: s, outbox_files: o} = scan(dir)
+    %{wal_files: w, snapshot_files: s, side_files: o} = scan(dir)
     keys = Enum.map(w, &elem(&1, 0)) ++ Enum.map(s, &elem(&1, 0)) ++ Enum.map(o, &elem(&1, 0))
     Enum.uniq(keys)
   end

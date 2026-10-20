@@ -12,6 +12,9 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
       `relay.not_found`, and a session asleep is woken by its call;
     * `call_tool_session` calls `call_pricing` from a turn and reads the
       outcome as its next one (a steps caller);
+    * `call_orders_steps` is `call_orders` as a steps session, whose asking
+      tasklet's channel ends only in the call: no runtime journals a handoff
+      for it;
 
   and the crash drills of a durable pair, each asserting exactly one outcome
   per call and one committed turn: the runner killed while a turn runs, and
@@ -51,6 +54,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{Listener, RelayManager}
   alias Flezha.Service.RelayManager.Teardown
+  alias Flezha.Service.Steps.Journal
   alias Flezha.State.{InputLog, TaskJournal}
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -220,6 +224,28 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
              "t1=ok:price:t1@pricing/false",
              "t2=ok:price:t2@pricing/false"
            ]
+  end
+
+  test "a steps tasklet whose channel ends only in a call journals no handoff for it", ctx do
+    boot(ctx)
+    start(ctx.namespace, "call_pricing", :flow, "pricing")
+    orders = start(ctx.namespace, "call_orders_steps", :steps, unique("orders"), ctx.collector)
+
+    send_in(ctx.namespace, orders, "o1")
+    send_in(ctx.namespace, orders, "o2")
+
+    assert lines(ctx.collector, 2) |> Enum.sort() == [
+             "o1=ok:price:o1@pricing/false",
+             "o2=ok:price:o2@pricing/false"
+           ]
+
+    # Two orders and their two answers, each an iteration of its own.
+    assert NodeTestHelper.wait_until(fn -> committed_turns(orders) == 4 end, 10_000)
+    {:ok, %{entries: entries}} = Journal.report(orders)
+
+    handoffs = for %{handoff_items: items, handoff_edges: edges} <- entries, do: {items, edges}
+    assert length(handoffs) >= 4
+    assert Enum.uniq(handoffs) == [{0, []}]
   end
 
   test "a call to an asleep session wakes it and is answered", ctx do

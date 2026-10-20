@@ -186,7 +186,8 @@ cursors:
 - the epoch, described in [the epoch rule](#the-epoch-rule).
 
 The confirmed cursor and the epoch, with the last persisted sequence, are kept in a small
-`<cell>.outbox.dedup` file beside the WAL. A restarted controller re-sends every output that was
+`<cell>.outbox.dedup` file beside the WAL; the epoch is written first to a `<cell>.lineage`
+file, which keeps it if the two ever disagree. A restarted controller re-sends every output that was
 durable but not confirmed. A stale cursor only widens that re-send, which a deduplicating output plugin
 absorbs; it never skips an output.
 

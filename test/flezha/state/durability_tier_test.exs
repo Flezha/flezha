@@ -21,7 +21,7 @@ defmodule Flezha.State.DurabilityTierTest do
   alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{InputLog, Outbox, Paths, TaskJournal, TestHelpers}
+  alias Flezha.State.{InputLog, Lineage, Paths, TaskJournal, TestHelpers}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.NodeTestHelper
@@ -389,7 +389,7 @@ defmodule Flezha.State.DurabilityTierTest do
       # artifact. It does not gate the manifest write, but it is still
       # the supersession fact the manifest algebra reads, so a recovered Cell
       # that came back at epoch 0 would mis-order its own cuts.
-      assert Outbox.read(ctx.cell_id).epoch == 2
+      assert Lineage.progress(ctx.cell_id).epoch == 2
       assert :ok = Shipper.ship_now(ref)
       refute Enum.any?(Shipper.status(), &(&1.ref == ref and &1.superseded_by != nil))
     end
@@ -402,7 +402,7 @@ defmodule Flezha.State.DurabilityTierTest do
       # A cursor restored ahead of the restored WAL would drop those effect
       # records from the boot re-drive (`seq > cursor`) and never dispatch their
       # outputs. `-1` re-drives everything, which sink dedup absorbs.
-      assert Outbox.read(ctx.cell_id).outbox_flushed_seq == -1
+      assert Lineage.progress(ctx.cell_id).outbox_flushed_seq == -1
     end
 
     test "the saga compensation markers survive a recovery", ctx do
@@ -864,7 +864,7 @@ defmodule Flezha.State.DurabilityTierTest do
 
   defp set_epoch(cell_id, epoch) do
     :ok =
-      Outbox.write(cell_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: epoch})
+      Lineage.put_dedup(cell_id, %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: epoch})
   end
 
   defp status_of(ref), do: Enum.find(Shipper.status(), &(&1.ref == ref))

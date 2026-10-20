@@ -23,7 +23,7 @@ defmodule FlezhaTest.OutboxCase do
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.Frame
-  alias Flezha.State.{InputLog, Outbox, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{InputLog, Lineage, Outbox, Supervisor, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.WireEncoders
 
   using do
@@ -56,6 +56,7 @@ defmodule FlezhaTest.OutboxCase do
       alias Flezha.State.{
         FsyncBatcher,
         InputLog,
+        Lineage,
         Outbox,
         Paths,
         Supervisor,
@@ -192,8 +193,8 @@ defmodule FlezhaTest.OutboxCase do
   back owes the whole record again.
   """
   def reopen_with_stale_cursor(cell_id) do
-    dedup = Outbox.read(cell_id)
-    :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
+    dedup = Lineage.progress(cell_id)
+    :ok = Lineage.put_dedup(cell_id, %{dedup | outbox_flushed_seq: -1})
 
     pid = start_writer(cell_id)
     _ = WalWriter.last_persisted_seq(pid)

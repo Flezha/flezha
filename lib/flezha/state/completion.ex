@@ -11,7 +11,7 @@ defmodule Flezha.State.Completion do
   `<state_root>/<namespace>/<relay_class>/completion.record` — a file
   sibling to the tasklet directories, inert to every
   `Flezha.State.Paths` scanner (which only recognise `.wal` /
-  `.snap.<seq>` / `.outbox.dedup`). Its
+  `.snap.<seq>` / `.outbox.dedup` / `.lineage`). Its
   presence is also the retain-vs-delete signal for `stop_relay`.
   """
 

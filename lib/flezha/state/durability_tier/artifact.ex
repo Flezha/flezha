@@ -25,7 +25,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   alias Flezha.State.Wire
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.Store
-  alias Flezha.State.{Outbox, Paths, RecordFrame, Restore}
+  alias Flezha.State.{Lineage, Paths, RecordFrame, Restore}
 
   @type ref :: Manifest.ref()
 
@@ -178,14 +178,14 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc """
   The WAL-owner epoch a manifest write is conditioned on.
 
-  This is the existing local fencing epoch (`Flezha.State.Outbox`), read without
+  This is the existing local fencing epoch (`Flezha.State.Lineage`), read without
   a live writer so a ship never depends on one. References with no dedup file —
   the reserved journal identity, the input log, the cspec — report `0`;
   their remote lineage is then ordered by write order rather than fenced, which
   is exactly the reach the local epoch machinery already has.
   """
   @spec epoch(ref()) :: non_neg_integer()
-  def epoch({:cell, cell_id}), do: Outbox.read(cell_id).epoch
+  def epoch({:cell, cell_id}), do: Lineage.progress(cell_id).epoch
   def epoch(_ref), do: 0
 
   @doc """

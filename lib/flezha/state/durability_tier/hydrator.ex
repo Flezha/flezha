@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{DurabilityTier, InputLog, Outbox, Paths, TaskJournal}
+  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal}
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
@@ -348,7 +348,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
       else: :ok
   end
 
-  # The epoch's only home on disk is the dedup cache, which is not an artifact —
+  # The epoch lives in the Cell's dedup and lineage files, neither an artifact,
   # so without this the recovered Cell reads epoch 0, its next manifest write
   # is refused as stale against the epoch it shipped under, and it fences itself
   # off permanently. It survives one disk loss and is silently unprotected
@@ -362,7 +362,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # everything, which the sinks' dedup absorbs: the cursor may lag, never lead.
   defp seed_epoch(cell_id, %Manifest{epoch: epoch}) do
     _ =
-      Outbox.write(cell_id, %{
+      Lineage.put_dedup(cell_id, %{
         last_persisted_seq: 0,
         outbox_flushed_seq: -1,
         epoch: epoch

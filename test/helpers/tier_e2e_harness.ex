@@ -21,7 +21,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.DurabilityTier.Backend.Postgres, as: PostgresBackend
-  alias Flezha.State.Outbox
+  alias Flezha.State.Lineage
   alias Flezha.State.Paths
   alias Flezha.State.WriterRegistry
   alias FlezhaTest.Helper.NodeTestHelper
@@ -52,8 +52,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
             {:ok, pid} <- [Flezha.State.Supervisor.lookup(id)],
             do: kill(pid)
 
-      dedup = Outbox.read(cell_id)
-      :ok = Outbox.write(cell_id, %{dedup | outbox_flushed_seq: -1})
+      dedup = Lineage.progress(cell_id)
+      :ok = Lineage.put_dedup(cell_id, %{dedup | outbox_flushed_seq: -1})
       Enum.each(killed, &await_handled/1)
     end)
   end

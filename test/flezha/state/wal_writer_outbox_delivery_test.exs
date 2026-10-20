@@ -84,7 +84,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
 
     assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
-    assert Outbox.read(cell_id).outbox_flushed_seq == 0
+    assert Lineage.progress(cell_id).outbox_flushed_seq == 0
   end
 
   test "an unconfirmed entry blocks the cursor behind a later confirmed one", %{
@@ -462,7 +462,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
 
     assert %{outbox_flushed_seq: 9, awaiting: 0} = WalWriter.outbox_status(pid)
-    assert Outbox.read(cell_id).outbox_flushed_seq == 9
+    assert Lineage.progress(cell_id).outbox_flushed_seq == 9
   end
 
   test "an out-of-order batch report cannot carry the cursor past an unconfirmed entry", %{
@@ -667,5 +667,41 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     # A stray answer (its call is over) must be absorbed, not retried.
     assert WalWriter.redrive_calls(pid, started, Calls.durable_id(%{})) == 0
     refute_dispatched(0)
+  end
+
+  test "a held answer goes again at most once while its caller stays away", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    # fails when: every resettle tick copies a held answer again while its
+    # delivery worker is alive, so a caller that is away finds one copy per tick.
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
+
+    pid = armed_writer(rc, cell_id)
+    answer = [{"flz.reply_to", "o:gateway:c1:0:1:"}]
+    append_effect(pid, 0, [output("k", "answer", answer)], 1)
+    assert {"answer", md, _} = next_output()
+    :ok = Outbox.hold_delivery(md)
+    settle(md)
+
+    # Each copy is taken by the same live delivery, which queues it for a caller
+    # that is away; three ticks pass.
+    copies =
+      for _tick <- 1..3, reduce: 0 do
+        count ->
+          send(pid, :outbox_retry)
+          :ok = WalWriter.fsync(pid)
+
+          receive do
+            {:"$gen_cast", {:io_out_batch, [{"answer", again, _}]}} ->
+              :ok = Outbox.hold_delivery(again)
+              settle(again)
+              count + 1
+          after
+            100 -> count
+          end
+      end
+
+    assert copies <= 1
   end
 end

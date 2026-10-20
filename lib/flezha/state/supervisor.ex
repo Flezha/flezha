@@ -82,10 +82,9 @@ defmodule Flezha.State.Supervisor do
   @doc """
   Hard-delete a Cell's persisted state: stop its `WalWriter` (if
   running), drop any pending `FsyncBatcher` dirty mark, and remove the
-  on-disk `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup`
-  files. Idempotent — deleting a never-seen / already-gone cell_id
-  succeeds (`:ok`), which is what the SDK reaper's fire-and-forget send
-  and the `flz state delete` CLI both rely on.
+  on-disk files (`Flezha.State.Paths.cell_files/1`). Idempotent — deleting a
+  never-seen / already-gone cell_id succeeds (`:ok`), which is what the SDK
+  reaper's fire-and-forget send and the `flz state delete` CLI both rely on.
   """
   @spec delete_cell(tuple()) :: {:ok, %{cell_id: tuple(), status: :ok}}
   def delete_cell(cell_id) do

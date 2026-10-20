@@ -32,7 +32,7 @@ defmodule Flezha.Service.Steps do
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
   alias Flezha.State.Metrics
-  alias Flezha.State.Outbox
+  alias Flezha.State.Lineage
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Recovery
@@ -245,7 +245,7 @@ defmodule Flezha.Service.Steps do
         :error ->
           # The same cursor record the writer answers with, read off the dedup
           # file instead of the live writer; only the outbox depth is unknown.
-          Map.merge(Outbox.read(cell_id), %{pending: nil, held: nil})
+          Map.merge(Lineage.progress(cell_id), %{pending: nil, held: nil})
       end
 
     {:ok, Map.merge(status, %{cell: cell, input_watermark: InputLog.watermark(relay_class)})}

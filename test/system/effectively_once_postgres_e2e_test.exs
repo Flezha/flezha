@@ -30,7 +30,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
-  alias Flezha.State.Outbox
+  alias Flezha.State.Lineage
   alias FlezhaTest.Fixtures.RelayFixture
 
   @moduletag :postgres_integration
@@ -139,7 +139,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
     # Every row carries the durable identity under the tier's live epoch;
     # the re-drive (staled cursor ⇒ full outbox replay) regressed nothing.
-    live_epoch = Outbox.read(cell_id).epoch
+    live_epoch = Lineage.progress(cell_id).epoch
     rows = row_identities(db)
     assert rows != []
 

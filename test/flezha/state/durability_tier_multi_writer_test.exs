@@ -28,7 +28,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   alias Flezha.Shutdown
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{Adoption, Paths, TestHelpers}
+  alias Flezha.State.{Adoption, Paths, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.{NodeTestHelper, OverwatchHost}
 
@@ -529,6 +529,68 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       relay_leaves_here(ctx.class, :moved)
     end
 
+    # fails when: two histories of one lineage are compared by epoch and length
+    # alone, so the node that kept unshipped turns past the cut another node
+    # continued from keeps its longer, abandoned history when the relay returns.
+    test "a returning node takes the history its relay continued, not the longer one it left",
+         ctx do
+      ref = {:cell, ctx.cell_id}
+      FlezhaTest.Case.install([:state_tree])
+      write_through_writer(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      assert :ok = Shipper.ship_now(ref)
+      write_through_writer(ctx.cell_id, 4..7)
+
+      peer = start_peer_node(ctx.peer_base)
+
+      continued =
+        with_root(ctx.peer_base, fn ->
+          assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+          assert Artifact.seq_bounds(ref) == {0, 3}
+          write_through_writer(ctx.cell_id, 4..5)
+          GenServer.cast(peer, {:adopt, ctx.class})
+          assert :ok = GenServer.call(peer, {:ship_now, ref})
+          _ = :sys.get_state(peer)
+          File.read!(Paths.wal_path(ctx.cell_id))
+        end)
+
+      assert %{owner: @peer_writer} = Stub.stored_manifest(ref)
+
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == continued
+    end
+
+    # fails when: an adoption that lands after the relay's release still lets
+    # this node bid its own lineage over the node that continued it.
+    test "a late adoption on the node the relay left never bids over its continuation", ctx do
+      ref = {:cell, ctx.cell_id}
+      FlezhaTest.Case.install([:state_tree])
+      write_through_writer(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+      assert %{claim: 1} = Stub.stored_manifest(ref)
+
+      relay_leaves_here(ctx.class, :moved)
+      Shipper.adopt(ctx.class)
+      _ = :sys.get_state(Shipper)
+
+      peer = start_peer_node(ctx.peer_base)
+
+      with_root(ctx.peer_base, fn ->
+        assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+        write_through_writer(ctx.cell_id, [4])
+        GenServer.cast(peer, {:adopt, ctx.class})
+        assert :ok = GenServer.call(peer, :sweep_now)
+      end)
+
+      assert %{owner: @peer_writer, claim: claim} = Stub.stored_manifest(ref)
+
+      write_through_writer(ctx.cell_id, 4..6)
+      :ok = Shipper.sweep_now()
+      assert %{owner: @peer_writer, claim: ^claim} = Stub.stored_manifest(ref)
+    end
+
     # fails when: a relay stopped here is released before its last ships land,
     # so a reference whose takeover claim had not landed is recorded as lost to
     # the writer it moved from, and the turns it took here never reach the
@@ -833,6 +895,15 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   # own pass. That is a cost of simulating two nodes in one VM, not a property
   # of the tier.
   defp peer_gc(peer, peer_root), do: with_root(peer_root, fn -> GenServer.call(peer, :gc) end)
+
+  # Records taken through a writer, as a relay's turns are: the writer is where
+  # a Cell's dedup and lineage files are written.
+  defp write_through_writer(cell_id, seqs) do
+    {:ok, srv} = Flezha.State.Supervisor.find_or_start(cell_id)
+    header = TestHelpers.stub_header()
+    for n <- seqs, do: :ok = WalWriter.append(srv, n, header, "turn-" <> Integer.to_string(n))
+    TestHelpers.close_and_await(srv, cell_id)
+  end
 
   defp with_root(root, fun) do
     own_root = Application.get_env(:flezha, :state_root)

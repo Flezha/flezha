@@ -16,8 +16,8 @@ defmodule Flezha.State.WalWriter.Boot do
 
   alias Flezha.State.{
     InputLog,
+    Lineage,
     Metrics,
-    Outbox,
     Paths,
     RecordFrame,
     SeqIndex,
@@ -136,8 +136,8 @@ defmodule Flezha.State.WalWriter.Boot do
     # Restart re-drive (effectively-once): every durable effect record above
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
-    dedup = Outbox.read(state.cell_id)
-    state = %{state | folded_offset: dedup.folded_offset}
+    %{record: lineage, progress: dedup} = Lineage.read(state.cell_id)
+    state = %{state | folded_offset: dedup.folded_offset, lineage: lineage}
     durable = RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq)
 
     {redrive, max_consumed} =

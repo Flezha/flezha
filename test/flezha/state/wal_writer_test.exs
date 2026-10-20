@@ -11,7 +11,8 @@ defmodule Flezha.State.WalWriterTest do
 
   import ExUnit.CaptureLog
 
-  alias Flezha.State.{Metrics, Paths, RecordFrame, SeqIndex, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Lineage, Metrics, Paths, RecordFrame, SeqIndex, Supervisor, TestHelpers}
+  alias Flezha.State.WalWriter
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter.State, as: WriterState
 
@@ -308,6 +309,37 @@ defmodule Flezha.State.WalWriterTest do
 
       assert Metrics.get(metrics, :wal_size_bytes) == size
       assert Metrics.get(metrics, :wal_seq) == -1
+    end
+
+    # fails when: a writer whose open refused the file never read the Cell's
+    # dedup and lineage files, yet writes its defaults over them at close, so
+    # the Cell loses its epoch and folded offset (epoch 0 written).
+    test "a refused writer's close leaves the dedup and lineage files byte-identical",
+         %{cell_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+      for n <- 0..3, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      TestHelpers.close_and_await(srv, pid)
+
+      progress = %{last_persisted_seq: 3, outbox_flushed_seq: 2, epoch: 5, folded_offset: 9}
+      :ok = Lineage.put_dedup(pid, progress)
+      dedup = File.read!(Paths.outbox_dedup_path(pid))
+      lineage = File.read(Paths.lineage_path(pid))
+
+      path = Paths.wal_path(pid)
+      [_zero, _one, corrupt, _after_corrupt] = TestHelpers.record_offsets(path)
+      TestHelpers.corrupt_record_body(path, corrupt)
+
+      capture_log(fn ->
+        {:ok, _} = Supervisor.find_or_start(pid)
+        {:ok, srv2} = Supervisor.lookup(pid) |> ok!()
+        assert {:error, {:crc_mismatch, 1, ^corrupt}} = WalWriter.append(srv2, 4, header, "x4")
+        TestHelpers.close_and_await(srv2, pid)
+      end)
+
+      assert File.read!(Paths.outbox_dedup_path(pid)) == dedup
+      assert File.read(Paths.lineage_path(pid)) == lineage
     end
 
     test "a rewind refuses rather than cutting at a corrupt record below its boundary",

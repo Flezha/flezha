@@ -72,14 +72,14 @@ defmodule Flezha.State.WalWriterProgressTest do
       :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("out", "p1")], 0))
       :ok = WalWriter.fsync(pid)
 
-      before = Outbox.read(cell_id)
+      before = Lineage.progress(cell_id)
       writer = :sys.get_state(pid)
       ahead = %{writer | outbox_flushed_seq: writer.outbox_durable_seq + 99}
 
       log = capture_log(fn -> Settlement.persist_dedup(ahead) end)
 
       assert log =~ "refusing to persist an out-of-order cursor record"
-      assert Outbox.read(cell_id) == before
+      assert Lineage.progress(cell_id) == before
     end
 
     test "is one predicate over the record, not a rule each reader restates" do

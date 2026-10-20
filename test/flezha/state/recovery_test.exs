@@ -135,6 +135,21 @@ defmodule Flezha.State.RecoveryTest do
       assert {:error, _} = Recovery.resolve_runner({"market", "0", "p1"})
     end
 
+    test "resolves the runner of a relay in a namespace other than default" do
+      # fails when: only the default namespace's registry is read, so a relay
+      # bound in any other namespace answers that no runner owns it.
+      relay = %Builder{id: "bob", factory_id: "f", opts: [relay_class: "desk"]}
+
+      stub(HubManager, :get_running_namespaces, fn -> ["default", "team-b"] end)
+
+      stub(HubManager, :get_registry, fn
+        "default" -> {:ok, %{}}
+        "team-b" -> {:ok, %{"bob" => entry(relay, "exec_b", "team-b")}}
+      end)
+
+      assert Recovery.resolve_runner({"desk", "0", "p1"}) == {:ok, "exec_b"}
+    end
+
     test "surfaces a registry error" do
       stub(HubManager, :get_registry, fn "default" -> {:error, "hub not alive"} end)
 
@@ -146,11 +161,11 @@ defmodule Flezha.State.RecoveryTest do
   # `{relay_id, {cspec, node_pids, metadata}}`, runner = `metadata.tag`,
   # relay_class = the relay's `:relay_class` opt (default: its id),
   # carried in the cspec's start args.
-  defp cspec(relay) do
-    %{start: {Flezha.Relay.Overwatch, :start_link, [{"default", relay}]}}
+  defp cspec(relay, namespace \\ "default") do
+    %{start: {Flezha.Relay.Overwatch, :start_link, [{namespace, relay}]}}
   end
 
-  defp entry(relay, tag) do
-    {cspec(relay), [{node(), self()}], %{tag: tag, health: :healthy}}
+  defp entry(relay, tag, namespace \\ "default") do
+    {cspec(relay, namespace), [{node(), self()}], %{tag: tag, health: :healthy}}
   end
 end

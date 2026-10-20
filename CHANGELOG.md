@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed: a Cell keeps its epoch in a lineage file
+
+- Each Cell gains a `<cell_key>.lineage` file beside its `.outbox.dedup` file. It holds the
+  Cell's epoch and folded offset, is written with a directory fsync before the dedup file
+  carries a new copy of either, and wins when the two disagree by holding the higher epoch.
+- The dedup file keeps its byte layout, so a rollback to an earlier build reads it as before
+  and ignores the lineage file.
+- A writer that refused a Cell's log at open no longer overwrites the Cell's dedup file with
+  defaults when it closes.
+
 ### Fixed: a relay stopped from another controller is announced again when it fails
 
 - A controller plugin's `on_relay_failed` fires again for a relay that failed on one

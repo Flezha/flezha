@@ -235,6 +235,16 @@ defmodule FlezhaTest.Relay.IngestTest do
       assert {:error, :not_ready} = GenServer.call(host, {:ingest, "x", %{}})
       assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
     end
+
+    test "a durable target with no channel holds the input for its next bind" do
+      # fails when: a journaled input whose re-forward has no channel to arm is
+      # answered not-ready, telling the sender to retry a message the log holds.
+      inst = instance_id()
+      {:ok, host} = start_supervised({Host, state(inst, durable_steps: true, channel: nil)})
+
+      assert {:ok, :suspended} = GenServer.call(host, {:ingest, "x", %{}})
+      assert [{0, "x", _metadata}] = InputLog.undelivered(inst)
+    end
   end
 
   test "an unresolvable target is not-found" do

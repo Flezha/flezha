@@ -5,10 +5,10 @@ defmodule Flezha.State.Durable do
   A row says three things about one file: how it is **framed** — `:record` for a
   log appended and cut record by record under `Flezha.State.RecordFrame`,
   `:whole` for a file replaced entire, whatever its bytes hold — the
-  **durability** its writer relies on (`:inline` when the
-  install fsyncs before it renames, `:batched` when a sync the owner already
-  performs is what makes the bytes durable), and the **in-progress suffix** the
-  file wears while it is being written.
+  **durability** its writer relies on (`:inline` when the install fsyncs before
+  it renames, `:inline_dir` when it also fsyncs the directory after, `:batched`
+  when a sync the owner already performs makes the bytes durable), and the
+  **in-progress suffix** the file wears while it is being written.
 
   Two things derive from the table and nothing else. `Paths.atomic_install/3`
   reads a row for the suffix it writes under and the sync it owes, so a new
@@ -31,10 +31,10 @@ defmodule Flezha.State.Durable do
   @type frame :: :record | :whole
 
   @typedoc """
-  What makes the bytes durable: the install's own fsync, or a sync the owner
-  already runs on a cadence of its own.
+  What makes the bytes durable: the install's own fsync (and the directory's,
+  `:inline_dir`), or a sync the owner already runs on a cadence of its own.
   """
-  @type durability :: :inline | :batched
+  @type durability :: :inline | :inline_dir | :batched
 
   @type row :: %{
           file: binary(),
@@ -69,7 +69,8 @@ defmodule Flezha.State.Durable do
     {:task_journal, "lib/flezha/state/task_journal.ex", :record, :batched, ".rewriting", false,
      true},
     {:snapshot, "lib/flezha/state/snapshot.ex", :whole, :inline, ".tmp", false, true},
-    {:outbox_dedup, "lib/flezha/state/outbox.ex", :whole, :batched, ".tmp", false, false},
+    {:outbox_dedup, "lib/flezha/state/lineage.ex", :whole, :batched, ".tmp", false, false},
+    {:lineage, "lib/flezha/state/lineage.ex", :whole, :inline_dir, ".tmp", false, false},
     {:completion, "lib/flezha/state/completion.ex", :whole, :inline, ".tmp", false, true},
     {:class_kind, "lib/flezha/relay/class_registry.ex", :whole, :inline, ".tmp", false, true},
     {:dlq_entries, "lib/flezha/dlq/store.ex", :whole, :inline, ".tmp", false, true},

@@ -230,6 +230,23 @@ defmodule Flezha.State.TimeTravelTest do
     assert result.change_log_bytes == expected
   end
 
+  test "a seq query on a Cell with no snapshot keeps its first record", %{cell_id: pid} do
+    # fails when: a Cell with no snapshot is read as if a snapshot covered seq 0,
+    # so its first record is left out of the change log.
+    header = TestHelpers.stub_header()
+    {:ok, _} = Supervisor.find_or_start(pid)
+    {:ok, srv} = Supervisor.lookup(pid)
+
+    for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "v" <> Integer.to_string(n))
+
+    assert {:ok, result} = TimeTravel.query(pid, {:seq, 3})
+    assert result.snapshot_bytes == ""
+    assert result.terminal_seq == 3
+
+    expected = for n <- 0..3, into: "", do: Frame.encode_record(n, header, "v#{n}")
+    assert result.change_log_bytes == expected
+  end
+
   test "outside_retention error for seq before earliest snapshot", %{cell_id: pid} do
     header = TestHelpers.stub_header()
     {:ok, _} = Snapshot.write_snapshot(pid, 100, header, "snap@100")
@@ -365,6 +382,7 @@ defmodule Flezha.State.RetentionTest do
 
   alias Flezha.State.{
     Completion,
+    Frame,
     Paths,
     RecordFrame,
     Retention,
@@ -375,6 +393,7 @@ defmodule Flezha.State.RetentionTest do
   }
 
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.OutboxCase
 
   setup do
     TestHelpers.start_state_tree([Retention])
@@ -442,6 +461,30 @@ defmodule Flezha.State.RetentionTest do
       assert {:ok, 3, _, "y3", c1} = RecordFrame.decode_record(dev, 0)
       assert {:ok, 4, _, "y4", _} = RecordFrame.decode_record(dev, c1)
       :file.close(dev)
+    end
+
+    test "a cut with no writer keeps the consumed offset its dropped records carry", %{
+      cell_id: pid
+    } do
+      # fails when: the offline cut drops records without folding their
+      # consumed offsets, so the Cell's floor read from disk falls back.
+      header = OutboxCase.effect_header()
+
+      wal =
+        for {seq, offset} <- [{0, 39}, {1, 40}, {2, 41}, {3, nil}], into: "" do
+          Frame.encode_record(seq, header, OutboxCase.effect_body([], offset))
+        end
+
+      wal_path = Paths.wal_path(pid)
+      File.mkdir_p!(Path.dirname(wal_path))
+      File.write!(wal_path, wal)
+      {:ok, _} = Snapshot.write_snapshot(pid, 2, TestHelpers.stub_header(), "snap@2")
+      assert WalWriter.consumed_offset_on_disk(pid) == 41
+
+      :ok = Retention.sweep_cell(pid, 0)
+
+      assert Supervisor.lookup(pid) == :error
+      assert WalWriter.consumed_offset_on_disk(pid) == 41
     end
   end
 

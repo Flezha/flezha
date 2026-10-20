@@ -32,6 +32,7 @@ decided.
         {cell_key}.wal
         {cell_key}.snap.{seq}
         {cell_key}.outbox.dedup
+        {cell_key}.lineage           # the epoch and folded offset's home
         {cell_key}.comp_intent       # saga compensation markers; presence is
         {cell_key}.comp_done         # the signal (empty files)
     {instance_id}/{instance_id}/     # one steps instance, whose class dir is its id
@@ -70,7 +71,8 @@ on the effectively-once tier writes.
 | `Flezha.State.RecordLog` / `SeqIndex` | Append/read for the reserved journal over `WalWriter.append_next/3` (assigns the seq, writes and fsyncs in one call); the sparse seq→position index (one sample per 256 records, pure — no file I/O) shared by the WAL writer and the input log so a prefix cut copies the tail as bytes. |
 | `Flezha.State.FsyncBatcher` | One shared GenServer casting `:fsync` to every dirty writer per tick. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
-| `Flezha.State.Outbox` | Per-Cell dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`, and `folded_offset`, the highest consumed offset of the records a prefix cut dropped; advanced at fsync cadence, the first three repaired at boot from the WAL scan) and the delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a flow relay Cell and a steps relay Cell alike: a flow relay's entry is committed by its record's fsync, a steps relay's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
+| `Flezha.State.Lineage` | A Cell's two small records: the dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`, and `folded_offset`, the highest consumed offset of the records a prefix cut dropped; advanced at fsync cadence, the cursors repaired at boot from the WAL scan) and the lineage file, the home of the epoch and the folded offset (`read/1`, `progress/1`, `dedup/1`, `put/2`, `put_dedup/2`). |
+| `Flezha.State.Outbox` | The delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a flow relay Cell and a steps relay Cell alike: a flow relay's entry is committed by its record's fsync, a steps relay's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
 | `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a flow relay on the effectively-once tier, a durable steps relay): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a steps relay's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
 | `Flezha.State.PersistenceResolver` | Per-class knobs: user map → instance metadata → SDK declaration → global default. |
 | `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
@@ -246,7 +248,19 @@ record.
 `epoch` (unsigned), `folded_offset` (signed, `-1` = none) — written through `.tmp` + rename.
 A v2 file (the first three) reads `folded_offset` as `-1`; a legacy 8-byte file reports its value
 as `last_persisted_seq` with cursor `-1` and epoch `0`; shorter or unreadable files report the
-empty record.
+empty record. The layout does not change, so a build from before the lineage file reads it after
+a rollback.
+
+`<key>.lineage` is the home of the epoch and the folded offset: `"FLZL"`, version byte `1`, a
+crc32 of the body, then the term-encoded record (`id`, `trail`, `landed`, `epoch`,
+`folded_offset`, `cut`). It is installed through `.tmp`, fsynced, renamed, and its directory
+fsynced (durability `:inline_dir`), always before the dedup file carries a new epoch or folded
+offset, so a power loss cannot keep the dedup file's copy and lose it. A Cell without one gets it
+at its writer's next dedup write; an unreadable one reads as none. `Lineage.read/1` takes the
+higher epoch of the two files with that file's folded offset (the lineage file's on a tie); a
+dedup file ahead means a build without lineage records ran since, and the lineage record is
+rewritten before the next dedup write. Its pending `cut` counts only while the dedup file's epoch
+is below its own. A writer whose open refused the WAL never read either file and writes neither.
 
 `folded_offset` is the highest consumed offset the WAL records a live writer's prefix cut
 (`WalWriter.truncate_up_to/3`: compaction, or retention while the writer runs) dropped carried,

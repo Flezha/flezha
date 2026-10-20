@@ -588,7 +588,7 @@ What is kept on disk:
 | What | Where |
 | --- | --- |
 | the registry: each relay's start, with its plugins | `app_data/process_hub/<hub_id>/registry.dets` |
-| each cell's log and snapshots | `app_data/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup}` |
+| each cell's log and snapshots | `app_data/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup,lineage}` |
 | a remote copy of both, unless opted out | Postgres, S3 or a path, by `FLEZHA_DURABILITY_BACKEND` |
 
 **The first recovery round is the boot gate.** Each namespace's hub waits for
