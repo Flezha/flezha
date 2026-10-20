@@ -131,3 +131,21 @@ or with no journal, and a quiet member has neither in flight.
 - **THEN** that entry survives the cut, the member re-drives it on its next bind, and the member
   resumes with the consumed offset and epoch of its latest committed iteration
 
+### Requirement: A group start SHALL wait for a rescale of the same group
+
+Starting a partitioned group SHALL take the lock a rescale of the same group holds, so a start
+issued between a rescale's stop and its restart waits for the rescale, retrying the lock within
+the start's own deadline, and then finds its members, never starting a fresh group over Cells
+already moved for the new count. A start whose deadline passes first SHALL answer
+`{:error, {:rescale_running, namespace, group}}` and start nothing.
+
+#### Scenario: A start during a rescale finds the rescaled group
+- **GIVEN** `flz relay scale orders 3` has stopped the members of a two-member group and is moving its Cells
+- **WHEN** a start of `orders` with three partitions arrives on another controller
+- **THEN** it SHALL wait for the rescale, answer with the three members the rescale started, and start none of its own
+
+#### Scenario: A start that outlasts its deadline behind a rescale starts nothing
+- **GIVEN** a rescale of `orders` that holds its lock longer than a start's deadline
+- **WHEN** a start of `orders` waits for it
+- **THEN** the start SHALL answer `{:error, {:rescale_running, namespace, group}}` and no member SHALL have been started by it
+

@@ -303,3 +303,15 @@ enable and bind them again. Nothing SHALL convert them.
 - **WHEN** `a` starts
 - **THEN** `a` SHALL run with no plugin and the log SHALL hold a warning naming `a` and `w`
 
+### Requirement: A disable during a controller's departure SHALL still stop every copy
+
+A hub stop that a disable sends while a controller leaves the hub, answered `:no_response`, SHALL
+be retried on the `:no_response` backoff the start path uses, each retry within what is left of
+the disable's budget, a child the retry finds gone counting as stopped, so the disable answers
+and leaves no copy of the plugin running on any controller.
+
+#### Scenario: Disable while a peer controller leaves
+- **GIVEN** a `single` plugin whose copy runs on this controller, and a peer controller leaving the namespace hub
+- **WHEN** `flz plugin disable` runs during the departure
+- **THEN** it SHALL answer success once the departure settles, and no copy of the plugin SHALL run on this controller
+

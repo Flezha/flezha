@@ -96,15 +96,15 @@ The guard protects a target that is merely *observed* healthy. It SHALL NOT prot
 
 ### Requirement: A failed heal SHALL NOT erase the divergence it failed to fix
 
-`Overwatch.handle_call({:runner_migrate, new_runner_id})` SHALL commit the new binding only after `attempt_ping_and_start/2` reports the runner answered; on failure it SHALL return the state untouched. A failed migrate MUST leave the relay honestly misbound.
+The Overwatch's rebind (`handle_call({:rebind, new_runner_id})`, `Flezha.Relay.Rebind.rebind/2`) SHALL publish the new binding only after its bind task reports the relay bound on the target; on failure it SHALL leave the registry binding unchanged and halt the relay with the attempt's reason. A failed rebind MUST leave the relay honestly divergent.
 
 Committing the binding first records `bound_runner ∈ active_runners` for a runner the relay cannot reach: `Convergence.Probe` reads it as placed, `Convergence.Diff` stops classifying it misbound, and the delta goes permanently empty. The relay then reports healthy while every frame drops.
 
 #### Scenario: a failed migrate stays visible to the next tick
 - **GIVEN** relay `btc_feed` is misbound and the Heal targets a runner
-- **WHEN** `runner_migrate` cannot reach that runner (`{:ping_failed, :no_control_unit}`)
-- **THEN** the relay's `runner_id` and `channel` SHALL be unchanged
-- **AND** the next Diff SHALL still classify it misbound and re-plan the heal under backoff.
+- **WHEN** the rebind cannot reach that runner (`{:ping_failed, :no_control_unit}`)
+- **THEN** the relay's registry binding SHALL be unchanged and the relay SHALL be halted with that reason
+- **AND** the next Diff SHALL still report it divergent and re-plan the heal under backoff.
 
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
@@ -550,15 +550,18 @@ never assigned to a node whose fleet cannot run it, and there SHALL be no
 `replace_relay` primitive, no `replace_relays` Diff field and no call to
 `ProcessHub.Service.Migration.migrate_child/3` in `lib/`.
 
-A relay whose node has no eligible runner while a peer's fleet has one is
-in that state only during the group withdrawal grace or while the hub's own
-move is in flight. The Diff SHALL classify it as waiting: no op is planned
-against it and no backoff key advances.
+A relay whose node has no eligible runner while a peer serves its factory's
+group is in that state only during the group withdrawal grace or while the
+hub's own move is in flight. The Diff SHALL classify it as waiting: no op is
+planned against it and no backoff key advances. Who serves the group SHALL be
+read from the namespace hub's served-group table, the table the hub places
+by, never from the factories peers advertise: a peer that advertises the
+factory without serving it SHALL NOT make the relay waiting.
 
 #### Scenario: No local runner plans nothing
 
 - **WHEN** a relay's Overwatch is on a node whose local fleet has no
-  runner advertising its factory, while another node's fleet does
+  runner advertising its factory, while another node serves its factory's group
 - **THEN** the plan contains no op targeting the relay
 - **AND** the relay reaches the other node through the hub's
   redistribution once this node withdraws the factory's group
@@ -572,22 +575,29 @@ against it and no backoff key advances.
 
 #### Scenario: No eligible fleet anywhere degrades loudly, without churn
 
-- **WHEN** no node in the cluster has a runner advertising the relay's
-  factory
+- **WHEN** no node in the cluster serves the relay's factory
 - **THEN** the relay stays where it is, visibly degraded under backoff, and
   no move is attempted
+
+#### Scenario: A peer that advertises but does not serve is not waited on
+
+- **GIVEN** a relay whose node has no eligible runner, and a peer whose runner advertises the
+  factory at a language the peer does not serve
+- **WHEN** the loop ticks
+- **THEN** the relay SHALL NOT be classified as waiting, and it SHALL stay where it is, degraded
+  under backoff
 
 ### Requirement: Registry rebinds commit only on a confirmed migrate
 
 Every rebind path SHALL commit the registry binding only after the relay
 confirms the bind — the heal rebind and the runner-disconnect reroute
-alike. The Overwatch's `runner_migrate` SHALL take the one bind path for every
+alike. The Overwatch's rebind (`{:rebind, _}`, `Rebind.rebind/2`) SHALL take the one bind path for every
 state it is in: it starts the bind task an un-park starts, linked to the Overwatch, which runs
-`Lifecycle.complete_init/4` against the target and reports its outcome; the task and every
+`Lifecycle.complete_init/5` against the target and reports its outcome; the task and every
 process it starts SHALL stop when the Overwatch stops, killed or not, so no bind outlives the
 Overwatch that owns it; the
 Overwatch publishes the registry tag and the route when the task reports a bound
-state, and parks the relay with the attempt's reason when it reports a
+state, and halts the relay with the attempt's reason when it reports a
 failure, so the failure is declared to the loop and rebound on the `{:halted, id}`
 ladder. There SHALL be no synchronous running-migrate path beside the task, no
 snapshot-seeded `AddRelay`, and no restore dispatched by the heal after the
@@ -598,12 +608,12 @@ convergence tick.
 
 #### Scenario: Timed-out migrate does not switch the registry
 
-- **WHEN** a `runner_migrate` call times out, or the bind task it spawned reports a failure
-- **THEN** the durable registry binding is not switched to the new runner, the relay is parked with the reason and declared to the loop, and the parked ladder rebinds it
+- **WHEN** a `{:rebind, _}` call times out, or the bind task it spawned reports a failure
+- **THEN** the durable registry binding is not switched to the new runner, the relay is halted with the reason and declared to the loop, and the `{:halted, id}` ladder rebinds it
 
 #### Scenario: A steps instance migrates as a steps relay
 
-- **WHEN** a `runner_migrate` re-adds a durable steps relay on its new runner
+- **WHEN** a rebind re-adds a durable steps relay on its new runner
 - **THEN** the `AddRelay` SHALL carry the relay's kind, its folded `task_journal`, a `resume_cell_count` equal to its persisted Cells and its undelivered `inbox_tail_count`, so the runner starts it as a steps relay, holds its driver until those Cells are restored, skips every committed tasklet and receives the tail it is owed
 
 #### Scenario: A rebind performs one restore

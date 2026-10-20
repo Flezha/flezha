@@ -50,11 +50,11 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when a relay is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `relay-state-persistence` capability. On migration (`handle_call({:runner_migrate, ...})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated relay. On reconnect of a Cell whose Relay has `keeps_state = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `relay-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
+The system SHALL invoke the init-state plugin chain only when a relay is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `relay-state-persistence` capability. On migration (the Overwatch's rebind, `handle_call({:rebind, _})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated relay. On reconnect of a Cell whose Relay has `keeps_state = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `relay-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
 
 For Cells whose Relay has `keeps_state = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated relay).
 
-`RestoreInitState` and `runner_migrate` SHALL be mutually exclusive per Cell: when `runner_migrate` is invoked for a Cell with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Cell. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
+`RestoreInitState` and the rebind SHALL be mutually exclusive per Cell: when the rebind is invoked for a Cell with persisted state, the migration path's snapshot bytes SHALL be the restoration source AND `RestoreInitState` SHALL NOT be issued for that Cell. The agent's `Overwatch.init/1` SHALL enforce this exclusion.
 
 #### Scenario: Cold start with no inline init_values and no persisted state
 
@@ -68,7 +68,7 @@ For Cells whose Relay has `keeps_state = false`, OR whose agent-side state is em
 
 #### Scenario: Relay migration
 
-- **WHEN** an existing relay is migrated to a new compute engine via `runner_migrate`
+- **WHEN** an existing relay is migrated to a new compute engine via the rebind (`{:rebind, _}`)
 - **THEN** the init-state chain MUST NOT run, and migration MUST use the existing snapshot-or-inline-`init_values` selection logic; `RestoreInitState` SHALL NOT be issued for any Cell of the migrated relay (even Cells with persisted state — the migration snapshot is authoritative)
 
 #### Scenario: Cell restart via changelog

@@ -204,7 +204,7 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 
 ### Requirement: Per-namespace quotas at allocation
 
-The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_relays`, `max_cells_per_relay`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.RelayManager.start_relay/2` SHALL call `check_allocation/3` for `max_relays` and `max_cells_per_relay`; `stop_relay/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
+The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_relays`, `max_cells_per_relay`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.RelayManager.start_relay/2` SHALL take its `max_relays` unit and its `max_cells_per_relay` count with `record_allocation/3` before the relay is initialised, each checked and counted in one step so two concurrent starts cannot both fit in the last unit, and SHALL settle the take once the start has succeeded or failed: kept, or given back. A take whose caller exits before settling SHALL be given back, and a counter rebuilt from its source while takes are held SHALL keep them. `stop_relay/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
 
 #### Scenario: Max-relays denial on allocation
 - **WHEN** namespace `team-orders` has `max_relays: 5`, 5 relays already exist, and a user invokes `Flezha.Service.RelayManager.start_relay/2` with a 6th
@@ -213,6 +213,18 @@ The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. 
 #### Scenario: Quota check latency budget
 - **WHEN** `check_allocation/3` runs against a warm ETS cache
 - **THEN** the per-call cost SHALL stay well within the documented hot-path budget
+
+#### Scenario: Two concurrent starts under a one-relay quota admit exactly one
+- **WHEN** namespace `q` has `max_relays: 1`, no relay runs, and two `start_relay/2` calls for different ids run at once
+- **THEN** exactly one SHALL start and the other SHALL return `{:error, {:quota_exceeded, :max_relays, _}}`, and the namespace's relay counter SHALL read 1
+
+#### Scenario: A start killed mid-way gives its unit back
+- **WHEN** a start has taken its `max_relays` unit and its calling process is killed before the start settles
+- **THEN** the unit SHALL be given back, and a later start under the same quota SHALL be admitted
+
+#### Scenario: A start kept across a counter refresh is counted once
+- **WHEN** a start takes its `max_relays` unit, the relay counter's refresh is claimed, the start is kept and its relay is visible to the refresh's truth read before the counter is stored
+- **THEN** the stored counter SHALL count that relay once
 
 ### Requirement: Bootstrap flow
 

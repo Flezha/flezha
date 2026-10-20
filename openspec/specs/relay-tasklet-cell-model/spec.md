@@ -13,7 +13,7 @@ Controller (1 per deployment)
   → Namespace
     ↓ (ProcessHub picks placement by consistent hash)
     → Relay instance (1 per `flz relay start`)
-      ↓ (Controller's `alter_child_data` hook picks an `runner_id`)
+      ↓ (the Relay's Overwatch binds a `runner_id` as it starts)
       → Runner (SDK process) — may host multiple Relays
         ↓ (SDK-internal cell; not ProcessHub-aware)
         → Tasklet (declared per Relay class)

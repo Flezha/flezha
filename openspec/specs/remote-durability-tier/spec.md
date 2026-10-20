@@ -132,7 +132,7 @@ Every manifest write SHALL be applied conditionally against a claim counter held
 
 The fencing token SHALL NOT be any value that travels with the local state it protects. The WAL-owner epoch does travel — it is copied when state is transferred between controllers and restored verbatim by hydration — and therefore SHALL NOT be used as the guard; it remains in the manifest as the supersession fact recovery reads.
 
-Taking over a reference's lineage SHALL require that the relay runs on the controller now, adopted when it binds there and released when it leaves, not merely that the controller holds local state for it or once ran it. A relay that moves away SHALL be released at once; one stopped on the controller SHALL be released after its writers' final flush, once every reference of it that has unshipped progress has shipped or been claimed by another writer: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
+Taking over a reference's lineage SHALL require that the relay runs on the controller now, adopted when it binds there and released when it leaves, not merely that the controller holds local state for it or once ran it. A relay that moves away SHALL be released when its move begins, as the controller it leaves prepares its handover, not when its process there ends; one stopped on the controller SHALL be released after its writers' final flush, once every reference of it that has unshipped progress has shipped or been claimed by another writer: state transfer copies rather than moves, so a controller that has lost a relay still holds its files. Losing a claim SHALL be reported as a routine handover rather than an alarm, and SHALL NOT leave the reference counted as having unshipped progress.
 
 #### Scenario: Split-brain claimant is fenced
 - **WHEN** two controllers both attempt to ship manifests for the same cell and one does not hold the claim
@@ -161,6 +161,10 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 #### Scenario: A handover does not raise an RPO breach
 - **WHEN** a controller with unshipped local progress loses a reference's claim to another writer
 - **THEN** it stops shipping that reference and reports no RPO breach for it, so a migration does not latch a permanent alarm
+
+#### Scenario: A controller a relay is moving from does not bid during the move
+- **WHEN** a relay's handover has been prepared on the controller it leaves, the controller it moves to has claimed a reference, and the leaving controller's backstop sweep reaches a reference it never shipped before its process ends
+- **THEN** the leaving controller SHALL NOT bid for it, and the manifest SHALL keep naming the controller the relay moves to
 
 ### Requirement: RPO breach is loud
 The tier SHALL track per-cell time since last successful ship against the RPO target and SHALL emit an alarm-grade telemetry event when breached, surfaced in `flz controller status` and `/healthz`. A shipping stall SHALL never be observable only by inspecting the backend.

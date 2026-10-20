@@ -92,7 +92,7 @@ line a person can read), and:
 - `on_relay_stopped`, after a deliberate stop or a completion, and not for a partition
   rescale: `relay`, `reason` (`stopped` or `completed`);
 - `on_relay_failed`, when the relay's health reads halted or failed (its runner is
-  lost), once until it reads healthy, degraded or suspended again, is stopped from its own
+  lost), once until it reads healthy, degraded or suspended again, is stopped on any
   controller or is placed on another controller, so neither a park retry nor an unknown or
   unbound read between two failed ones repeats it:
   `relay`, `error` (the error code of the park's reason);
@@ -142,6 +142,14 @@ A hook event SHALL be delivered to a plugin at most once per occurrence.
   bound to a relay in `n`
 - **WHEN** the websocket plugin's health turns unhealthy and stays so for three probe windows
 - **THEN** the controller plugin SHALL receive exactly one event naming the websocket plugin
+
+#### Scenario: A failed relay stopped from another controller and halted here again
+
+- **GIVEN** a controller plugin in `n` taking `on_relay_failed`, told that a relay halted on
+  controller B
+- **WHEN** the relay is stopped from controller A, started again on B and parks there
+- **THEN** the plugin SHALL receive a second event for the second park, and no
+  `on_relay_stopped` event SHALL be delivered on B for the stop made on A
 
 ### Requirement: A controller plugin SHALL hear only its own namespace
 
@@ -196,4 +204,17 @@ waiting in a copy whose controller dies SHALL be lost.
 - **WHEN** 100 relays park
 - **THEN** every park SHALL complete without waiting on the plugin, the plugin SHALL report
   `plugin_lagging`, and its queue SHALL hold at most 10 events
+
+### Requirement: A controller plugin's copy SHALL follow its home when the home moves
+
+A copy of a controller plugin SHALL keep running when the plugin's home moves to another
+controller: when the home it watches ends, the copy SHALL look the home up again and watch the
+one that runs, and SHALL stop only when no home of the plugin runs.
+
+#### Scenario: The home moves and the copy stays
+
+- **GIVEN** a controller plugin with copies on controllers A and B and its home on A
+- **WHEN** A is drained, the home moves to B, and the home on A ends after the moved home placed
+  the copies
+- **THEN** the copy on B SHALL keep running and receive the next event
 

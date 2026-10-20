@@ -274,7 +274,7 @@ The option reader SHALL be unchanged: `--timeout`, `--timeout=`, `-t` and `-t=` 
 
 ProcessHub recovery replay (`Flezha.Service.HubManager.alter_child_data/2`) SHALL drop
 any `{node, pid}` entries that reference nodes absent from the live cluster when it
-rewrites a relay's child-spec to an active runner, so the replayed relay is placed on a
+rewrites a relay's child-spec, so the replayed relay is placed on a
 live node rather than being treated as "already running" on a gone node. This complements
 the generic ProcessHub `post_node_leave` reaping (see `controller-leadership`) and is
 defense-in-depth for the case where reaping has not yet fired at replay time.
@@ -466,11 +466,11 @@ The registry-root walk that produces the first source SHALL be the same walk tha
 
 ### Requirement: A vacancy reclaim SHALL NOT destroy an unreplayed registry
 
-A hub SHALL be reclaimed as vacant only when this node holds none of its relays, its declared set is empty, AND its recovery has reached a terminal state. Reclaiming a hub deletes its registry directory, so each of those three is a reason not to.
+A hub SHALL be reclaimed as vacant only when this node holds none of its relays, its recovery has reached a terminal state, AND either the hub holds nothing here (its declared set is empty and no child of it runs on this node) or another live member holds it: a member hosting a child of the hub, or, when no member at all, this one included, hosts a child, the declared list's leader. The last live member holding anything SHALL never leave, and two members SHALL never both leave a hub that holds anything. A vacancy reclaim SHALL stop the hub on this node without deleting its registry directory; only the explicit namespace teardown deletes it. `Flezha.Service.HubManager.holds_anything?/1` SHALL decide the reclaim, and it and the last-runner keepalive SHALL ask the same question of the other members, through `other_members?/1`.
 
 This is what boot-time creation makes reachable, because it puts hubs exactly where runners are not, and a live-placement read is blind in both of the windows that follow. A hub does not load its durable registry into the live registry when it starts: the rows stay on disk until the reconcile runs, a whole reconcile grace later, and every live read answers "empty" until then. After the reconcile the rows are back but nothing has placed them, because placing a relay needs a runner and there is none. A reclaim keyed on live placement alone would therefore delete, seconds or a grace after boot, the durable state boot-time creation exists to recover.
 
-A hub whose recovery has settled and whose declared set is empty SHALL still be reclaimed, so a node whose fleet does not serve a namespace still leaves that namespace's cluster.
+A settled hub that holds nothing SHALL still be reclaimed, and a member whose namespace's relays all run on other members SHALL leave, so a node whose fleet does not serve a namespace still leaves that namespace's cluster.
 
 #### Scenario: A replayed registry survives the reclaim
 
@@ -480,7 +480,7 @@ A hub whose recovery has settled and whose declared set is empty SHALL still be 
 
 #### Scenario: A declared relay keeps its hub after recovery settles
 
-- **GIVEN** a controller whose hub was declared to hold a relay, with recovery settled, no runner to place it on and nothing running it
+- **GIVEN** a controller whose hub was declared to hold a relay, with recovery settled, no runner to place it on, nothing running it and no other live member of the hub
 - **WHEN** the vacancy reclaim runs for that namespace
 - **THEN** the hub SHALL still be running and its registry directory SHALL still be on disk
 
@@ -489,6 +489,21 @@ A hub whose recovery has settled and whose declared set is empty SHALL still be 
 - **GIVEN** a hub whose recovery has reached a terminal state, declared to hold nothing, holding no relays of this node and serving no runners
 - **WHEN** the vacancy reclaim runs for it
 - **THEN** the hub SHALL be stopped, as before
+
+#### Scenario: Of two members holding nothing local, the leader keeps the hub
+- **GIVEN** controllers A and B, both members of a namespace hub with a declared relay that runs on neither, recovery settled on both, and B the declared list's leader
+- **WHEN** the vacancy reclaim runs on both
+- **THEN** A SHALL stop its hub and B SHALL keep its hub and its registry directory
+
+#### Scenario: A lone hub holding only a plugin home is kept
+- **GIVEN** a single controller with auto-restore off whose `_system` hub holds only a controller plugin's home, with recovery settled
+- **WHEN** the vacancy reclaim runs
+- **THEN** the hub and the plugin SHALL keep running
+
+#### Scenario: A leader hosting nothing and a member hosting only a plugin home do not both leave
+- **GIVEN** controllers A and B, both members of a namespace hub with recovery settled, A the declared list's leader hosting nothing and B hosting only a controller plugin's home
+- **WHEN** the vacancy reclaim runs on both
+- **THEN** A SHALL stop its hub, B SHALL keep its hub and the plugin, and neither registry directory SHALL be deleted
 
 ### Requirement: Readiness SHALL hold until every declared namespace has a hub
 
