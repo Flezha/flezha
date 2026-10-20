@@ -1,417 +1,308 @@
 # Steps Relay
 
-The mechanism reference for a relay whose class sets `run: steps`: what the controller and
-the shared runner core do at each tasklet barrier, iteration boundary, park, rewind and crash,
-for contributors to `flz_core/src/steps/` and `lib/flezha/relay/`. What a user configures,
-sees and runs is in [`../../public/topics/core/workflows.md`](../../public/topics/core/workflows.md). The
-concepts (the graph, the journal layout, the barrier, the outbox, loop modes, suspension, rewind)
-are described once in [`../../public/architecture/steps_profile.md`](../../public/architecture/steps_profile.md) and
-not repeated here; [`../../public/topics/core/durability.md`](../../public/topics/core/durability.md) says what is lost when.
+What must stay true in a relay whose class sets `run: steps`, where each rule is enforced, and
+what a crash in each window leaves behind. Written for contributors to `flz_core/src/steps/`
+and to the controller's steps path. The concepts (the graph, the journal, the stage commit, the
+outbox, retry, undo, the loop, sleeping, rewind, how an instance ends) are described once in
+[`../../public/architecture/steps_profile.md`](../../public/architecture/steps_profile.md) and
+not repeated here. The user's view is
+[`../../public/topics/core/workflows.md`](../../public/topics/core/workflows.md); how the
+controller binds, sleeps and wakes an instance is
+[`../architecture/relay_lifecycle.md`](../architecture/relay_lifecycle.md).
 
-## Structure: a DAG of tasklets, parallel cells
+**Contents**
 
-- **Numbering.** Validation orders the tasklets in Kahn topological order from the entry; the
-  position is the wire `task_idx`. A producer's index is always below its consumers', so
-  completion order is topological and compensation simply reverses it.
-- **Scheduling.** A stage's items reach its cells the way a flow relay's do: through the routing
-  seam into each cell's mailbox, handed out by the poll core under per-cell exclusivity,
-  fairness and the in-flight cap (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), with no queue of their
-  own. A stage commits when its own last item settles, and what it emitted waits on the
-  instance until that commit is acknowledged, then enters its children's mailboxes. A node runs
-  once every producer feeding it in this pass has committed, a join with every producer's
-  items. Sibling stages run and commit independently. Where a stage runs:
-  [`../../public/architecture/runner.md`](../../public/architecture/runner.md#a-stepped-stage).
-- **Done.** The relay is `ok` when every leaf tasklet has committed. The SDK declares its
-  leaf set (`leaf_tasks`) and compensable set (`compensable_tasks`) in the `AddRelay` response
-  metadata, so the controller derives the same fact from the journal. A join with one committed
-  and one uncommitted producer resumes with the committed handoff banked, never re-run.
+1. [Where the code is](#where-the-code-is)
+   1. [The shared runner core](#the-shared-runner-core)
+   2. [The controller](#the-controller)
+   3. [Extension points](#extension-points)
+2. [Invariants of the runner core](#invariants-of-the-runner-core)
+   1. [Decide under the lock, act after it](#decide-under-the-lock-act-after-it)
+   2. [The order inside `act`](#the-order-inside-act)
+   3. [Kahn order is the wire order](#kahn-order-is-the-wire-order)
+   4. [A barrier keeps one identity](#a-barrier-keeps-one-identity)
+   5. [Record, then Mark](#record-then-mark)
+   6. [Nothing runs before the restore gate opens](#nothing-runs-before-the-restore-gate-opens)
+3. [Invariants of the controller](#invariants-of-the-controller)
+   1. [Records, then journal, then ack](#records-then-journal-then-ack)
+   2. [The floor only rises](#the-floor-only-rises)
+   3. [A cut never shortens a history someone replans from](#a-cut-never-shortens-a-history-someone-replans-from)
+   4. [Every resume is a bind](#every-resume-is-a-bind)
+   5. [Owed outputs settle before the teardown](#owed-outputs-settle-before-the-teardown)
+   6. [No behaviour follows from the run alone](#no-behaviour-follows-from-the-run-alone)
+4. [Crash and failure windows](#crash-and-failure-windows)
+5. [How many instances a runner holds](#how-many-instances-a-runner-holds)
+6. [Related pages](#related-pages)
 
-## Lifecycle: exit triggers, inbox, one teardown
+## Where the code is
 
-An instance is spawned with `init_values` as its tasklets' initial state, as a flow relay is,
-from the CLI (`flz relay start`), a schedule (`flz schedule`) or a running tasklet
-(`ctx.spawn_steps`, [`workflows.md`](../../public/topics/core/workflows.md#starting-one-from-a-tasklet)),
-takes its input as messages on its entry channels (the first may ride the start:
-`flz relay start --text`, a schedule's stored `--text`, a spawn's payload) and terminates
-on the first of: chain quiescence (every leaf committed); a tasklet's
-`ctx.complete(result)`, honoured once its iteration commits; a loop that runs out of work (a
-chained loop's empty batch); `max_duration()` / `maxDuration()`
-elapsing (a cooperative cancellation token); `flz relay stop` (a cooperative `StepsStop`
-that trips the same token — an instance not bound to a runner takes the hard `RemRelay`
-teardown, `RelayManager.request_stop/3`).
+### The shared runner core
 
-Every trigger converges on one `RelayCompleted` (`status` `ok | error | cancelled`, `error`,
-`result`). The controller writes the completion record, then tears down off the control-channel
-reader, **settling both output debts first** (`ControlChannel.drain_owed_outputs/2`). They are
-settled differently. The data stream is *flushed*: `StreamPool.flush_channels/1` issues one
-bounded call per stream channel of the runner, and a channel answers only after every frame
-already in its mailbox has been routed to an Overwatch — so an opted-out class's
-last direct output is run before its Overwatch is stopped, however the two sockets interleave on
-arrival, and even when an output of that run was lost rather than delivered. The Cells'
-outboxes are *waited for*: up to `drain_owed_ms` (60 s), polling every 50 ms, until every live
-Cell writer of the instance reports nothing pending and nothing awaiting an output plugin's confirmation
-(`WalWriter.outbox_status/2`). An entry still held for a stage marker belongs to a stage that
-never committed and is owed nothing. A deadline hit is logged (`... still owed`) and the
-retained WAL keeps the debt. `status = "error"` tears down identically: there is no
-platform retry of a failed tasklet. A frame addressed to a running instance takes the
-stream's entrance (channel resolved, parsed, transformed, parked when it cannot enter), never
-dropped: it starts a pass when the instance is waiting at a committed boundary, and otherwise
-waits in the instance's queue for the next one. Every loop mode reads it: `Once` its one
-message, `PerInput` one per iteration, `Chained` the first and then its own carry. An instance
-with no message waits, and a second message to a `Once` instance is accepted and never read.
-A due Cell timer waits in the same queue, in arrival order with messages, and a `Chained`
-loop's carry is fed only once nothing is queued, so a firing that came due during a pass runs
-before the loop's next carry-fed pass.
+The runner side of a steps relay is `flz_core::steps`, whichever SDK hosts it. The instance
+is a `RelayInstance` that also carries a `StepsRun`; the module's files split by concern:
 
-## Durable loop and suspension
+| File | What it holds |
+| --- | --- |
+| `flz_core/src/steps/mod.rs` | the module's doc, its re-exports (`StepsRun`, `Resume`, the event functions) and `StepsError` |
+| `flz_core/src/steps/spec.rs` | `StepsSpec::of` and `TaskDag::of`: the frozen DAG in Kahn order, one `Chain` per entry channel, the class's `each` and `on_failure` |
+| `flz_core/src/steps/instance.rs` | the pass sheet (`PassSheet`, `Phase`, `Pass`), `BarrierFor` with its `impl`, `Barrier`, `Undo` and `UndoStep`, and `JournalResume`, the journal state a bind carries |
+| `flz_core/src/steps/events.rs` | the entry points each thread calls with what it brings: `open`, `restore_landed`, `message`, `stop`, `item_settled`, `complete`, `barrier_acked`, `deadline_due` and the timer hooks |
+| `flz_core/src/steps/run.rs` | `Run` and `Run::decide`, addressing values to Cells off the lock, `begin_pass`, and the decisions on stops, deadlines, barriers and their re-sends |
+| `flz_core/src/steps/pass.rs` | the pass decisions under the lock: messages and passes, settled items, stage commits, `settle_pass`, a failed turn's undo, the iteration ack |
+| `flz_core/src/steps/resume.rs` | what the journal says about where a run resumes (`seed_from_journal`, `resumed_seed`), the restore gate (`landed`, `open_gate`) and `resume` |
+| `flz_core/src/steps/compensation.rs` | `plan_compensation`, the saga, rewind and failed-turn undo plans, and the undo steps a run takes one event at a time |
+| `flz_core/src/steps/effects.rs` | `Effects` and `act`: frames sent, deadlines armed, items admitted and author code run, after the lock |
+| `flz_core/src/steps/commit.rs` | the barrier frames (`task_frame`, `iteration_frame`, `undo_frame`) and `ack_timeout` |
+| `flz_core/src/steps/run_tests.rs` | deadline and restore-gate tests |
+| `flz_core/src/steps/driver_tests.rs`, `flz_core/src/steps/driver_tests/` | the host path as a C-ABI host drives it, on the fake controller in `flz_core/src/test_support/steps.rs`; `driver_tests/undo.rs` holds the unacknowledged-compensation tests |
+| `flz_core/src/steps/spec_tests.rs` | the DAG order a class registers with |
 
-Loop modes are declared with `each()` / `each()`. Registration refuses a class that
-declares no tasklet (`topology.no_tasklets`) and a durable `Chained` loop whose terminal tasklet
-releases no inter-tasklet channel (`topology.chained_loop_terminal_without_handoff`). Two shapes fail that: a
-terminal nothing consumes and that names no output plugin owns no output channel at all, and one whose only
-wiring is a output plugin gets no journal codec, because the runtime attaches one to inter-tasklet
-channels and nothing else. Either way a crash would re-seed empty, read as converged.
+The loop shape and failure mode live beside the other settings, in
+`flz_core/src/relay/settings.rs`, and an instance's deadlines (`Deadline`) in
+`flz_core/src/relay/mod.rs`. The Rust SDK's driver suite (`sdk/rust/src/steps/tests/`)
+runs on the same fake controller.
 
-**The iteration boundary.** `IterCommit` rides the same commit worker as `TaskCommit` (below).
-After the ack the worker reports the iteration's consumed offset into the input log's watermark
-(`TaskJournal.release_input/2`) and cuts the journal (`TaskJournal.cut/1`). The boundary takes
-no snapshot and flushes nothing: the stages' outputs were released at their own markers, and
-the Watchdog's size and age compaction triggers serve a steps relay's Cells as they serve a
-stream's, so a rehydrate replays whatever WAL tail lies above the last snapshot. An iteration
-that consumed no journaled input (a carry-fed pass) reports nothing. Both files are cut by their
-own writers (the journal on this cast, the input log by its retention sweep below the
-watermark), so the worker never waits on a file rewrite,
-and a prefix cut below `:record_log_cut_after_bytes` (64 KiB) is deferred until that many
-released bytes accumulate.
-The journal is cut only for a class whose `compensable_tasks` is `[]` (a saga or a rewind
-replans from the committed history); a cuttable loop can only be rewound to its current
-iteration.
+### The controller
 
-**The durable input log.** `Ingest` holds the one append-before-forward seam, and a durable
-steps relay uses the input log a flow relay on the effectively-once tier uses: input goes to
-`<state_root>/<ns>/<inst>/input.log` (`Flezha.State.InputLog`) before it is forwarded,
-answered once synced and stamped `flz.offset` (0-based; absent means not journaled, never
-`0`); a failed append is not forwarded. A repeat of a `flz.msg_id` the log still retains is
-absorbed, from an in-memory index the log builds from the file on the first append that
-carries an id; a message without an id is always appended. The instance's floor is the log's
-watermark under the journal's identity, seeded at every bind from the journal's **released**
-offset (the maximum consumed offset of any iteration commit over the raw journal, which no rewind
-lowers) and from the park record while the instance sleeps, and raised by every commit and park,
-so a consumed message is never re-delivered. The appends debit the source credit window like a flow relay's, so a sender with
-16 MiB owed by one instance parks until it commits.
+| Module | What it holds |
+| --- | --- |
+| `Flezha.Runner.ControlChannel.Commits` | one process per runner that journals each `TaskCommit` and `IterCommit` and acks it |
+| `Flezha.Runner.ControlChannel.Requests` | `RelayCompleted` (the completion record and the teardown), `IterPark` |
+| `Flezha.State.TaskJournal` | the per-instance journal: append, fold, cut, the rewind marker, what is committed and owed |
+| `Flezha.State.TaskJournal.Codec` | the entry types and their bytes, laid out in [`../state_persistence.md`](../state_persistence.md) |
+| `Flezha.State.InputLog` | the durable input a steps relay shares with the effectively-once tier |
+| `Flezha.State.WalWriter.Settlement` | a Cell writer's held records: released by a stage marker, dropped when no marker will name them |
+| `Flezha.Relay.Lifecycle`, `Flezha.Relay.Replay` | the bind: journal state, Cell restores, the floor and the re-forwarded tail |
+| `Flezha.Relay.Suspend` | the park record, the wake timer, rewind |
+| `Flezha.Relay.ClassRegistry` | what a class declared: `each`, its compensable and leaf tasklets, `single_input?/1` |
+| `Flezha.State.Completion`, `Flezha.State.Retention` | the finished-job record and its reclamation |
+| `Flezha.Service.Steps` | the service API behind `flz state journal`, `flz state inbox`, rewind and rescale |
 
-**Suspension.** Sleeping when idle is a setting of every class that keeps its work:
-`sleep_after` under `durable: local` or `remote`, six hours by default for a steps class (a flow
-class never sleeps unless it says so) and `false` for never; a
-class kept in memory has nothing to sleep on. An instance of any loop shape whose class sleeps
-and whose inbox stays empty past its class's `sleep_after` (announced as `sleep_after_ms`; read
-in the shared core, so every host SDK agrees) at a committed
-boundary, with every Cell drained, asks to sleep without a completion and ships `IterPark`,
-naming the last message it parked to the dead-letter queue unread. The controller writes the
-instance's park record (`Suspend.put_sleep/2`, an ETS entry and a durable sidecar in the
-class directory, never a journal entry) and reports that offset into the input log's watermark,
-releasing the message as an iteration commit releases its input, **before** the Overwatch the
-ownership record names evicts the instance (`Suspend.suspend/5`, `RemRelay`, runner tag
-`nil`); a park whose record fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
-Overwatch **hibernates** (`:hibernate` on both suspension entries, releasing its bind-time heap).
-A flow relay that sleeps takes the same path at iteration `0`
-([`../../public/topics/core/durability.md`](../../public/topics/core/durability.md)).
+### Extension points
 
-**Rehydrate = bind.** A new input-log append, the wake deadline, a crash and a migration all go
-through `Lifecycle.complete_init/5`: respawn on any live runner, `AddRelay.task_journal`
-with the folded journal, `resume_cell_count` Cell restores, and the one re-forward every bind
-of either kind runs (`Replay.reforward_undelivered_tail/1`): the log's records above the floor,
-each with its original `flz.offset`, before the plugins come up.
-`AddRelay.inbox_tail_count` (the log's last offset minus the floor) tells the instance how
-many items it is owed; while any is still owed its park deadline is 60 s instead of the park
-idle, so a tail forwarded under load never meets an instance that already parked. An instance with
-undelivered input is never left suspended (`rehydrate_if_pending/1` runs at every park and at
-boot, and asks the log's tail rather than reading its records), and a park that lands while a
-bind is still binding wins (the bind task records the phase it started from, a halt or a park
-voids it, and a bound state reported after one landed is stale and discarded; the pending tail wakes it again). A steps relay's journal, Cells and input log share one key, its
-instance id, so a bind whose `:relay_class` names anything else is refused.
+A new rule or kind goes into the type that owns it; no trait sits in front of these:
 
-**The wake timer** is the instance's earliest pending processing-time Cell timer, which the
-runner names in the park (`IterPark.wake_deadline_ms`). The controller keeps it in the park
-record and re-arms it with `Process.send_after` from it at boot, so it survives a controller
-redeploy. It fires by rehydrating the instance, nothing appended to its input log: the restored
-Cells re-arm their timers and the due one opens a pass. A racing message and the deadline
-collapse into one rehydration, and an elapsed deadline counts as pending work beside
-undelivered input, so a wake that found no runner is retried on the next convergence tick and a
-controller that boots past it rehydrates at once. At boot an instance with a park record and nothing undelivered
-(`Suspend.suspended_on_disk?/1`) enters suspended without binding; undelivered input outranks
-the park. The bind that wakes it clears the record before the runner is told to start the
-instance, so a park landing after the start keeps its own record. Inspect with
-`flz state journal <relay/instance>` (entries tagged with their iteration, `iter_committed`
-with its consumed offset or "consumed no journaled input"; the journal records no park) and
-`flz state inbox <relay/instance>` (the input log's
-retained records, and which are still above the floor). `flz relay replay` refuses a
-steps relay Cell, since its baseline is a committed iteration across every Cell of the instance and
-its effect records carry no consumed offset; `flz relay rewind` is a loop's way back.
+- **A loop-shape or failure-mode rule** is one inherent method on `Each` or `OnFailure` in
+  `flz_core/src/relay/settings.rs`, one `match` each. Today `Each` answers `as_str`,
+  `message_fed(iter)`, `ends_after_first`, `carries_leaf`, `calls_allowed`, `partitionable` and
+  `single_leaf_rules`, and `OnFailure` answers `as_str`, `keeps_committed` and
+  `fails_turn(each)`. A site outside that file calls a method rather than matching a variant.
+- **A barrier step** is one method on `impl BarrierFor` in `flz_core/src/steps/instance.rs`,
+  beside the enum (`Stage(node)`, `Iteration`, `DeadLetter`, `Undo`): today `on_ack`,
+  `on_refusal`, `on_timeout`, `failed`, `timeout_label` and `commits_iteration`. Outside that
+  file a `BarrierFor` is only constructed, never matched.
+- **The graph order** is `TaskDag::of` in `flz_core/src/steps/spec.rs`, over `graph_order` in
+  `flz_core/src/relay/topology.rs`. A change to the walk changes every journal's `task_idx`, so
+  `spec_tests.rs` pins it.
+- **The controller's loop-shape question** is `ClassRegistry.single_input?/1`, over the `each`
+  the class registered with; partitioning and the one-input rule call it.
+- **A journal entry type** is one encode and one decode clause in
+  `Flezha.State.TaskJournal.Codec`, the other end of the format the core writes.
 
-A steps tasklet's Cell timers fire as passes of their own
-([`../../public/topics/core/timers.md`](../../public/topics/core/timers.md)). A served firing leaves its
-Cell's pending set when the stage that ran it commits, and the root's `TaskCommit` names the
-firing, so a resume knows the pass it opened: a crash before that commit fires the restored
-timer again into a fresh pass, and a crash after it drops the restored timer and resumes the
-pass from the journal.
+## Invariants of the runner core
 
-## Cell retry: the rung before the abort
+### Decide under the lock, act after it
 
-A failing item inside a **structured** tasklet is retried in place on the poll core's
-per-item ladder, the one every flow cell climbs, while what its finished siblings emitted
-waits on the instance for the stage's commit. The policy is the tasklet's input edge's, as on
-a flow relay; a steps class declares none of its own.
+An instance holds no thread. Every event (a settled item on the worker that ran it, an ack or a
+stop on the control reader, a message on the data reader, a deadline on the poller) enters
+through `Run::decide`: the closure decides under the sheet's one `Mutex` and only records what
+to do in an `Effects`; `act` carries it out after the lock is released. No frame is sent, no
+item admitted and no author code run while the lock is held, and nothing waits on it. Edge
+transforms and `cells_for` run on the producing worker before an output is held. A retry's
+backoff is an entry on the poll core's deferred-wake list, so a stop, `max_duration` or a
+sibling's failure disarms every backoff of the pass (`Effects::cancel_retries`) and what the
+pass's Cells still have queued is consumed without running.
 
-- `TaskletError::non_retryable(..)` skips the ladder; every other error — a panic included,
-  which the author never got to classify — is retryable. Where a flow relay parks an exhausted
-  input to the dead-letter queue, a steps relay fails the tasklet and compensates, unless it
-  is a `per_input` loop declaring keep-progress (next section).
-- A retry re-hands the failed item and the items queued behind it, never one that already
-  settled, over the state its failed attempt already applied — the at-least-once contract
-  crash-resume imposes. A failed attempt's outputs are dropped, never double-emitted. The
-  ladder is strictly pre-commit: a journaled tasklet is never retried, and a crash mid-ladder
-  resumes as an ordinary uncommitted-tasklet re-run with the counter reset.
-- The backoff holds no worker and no thread: it is an entry on the poll core's deferred-wake
-  list, and the cell's gates stay held until it comes due. A stop, `max_duration` or a sibling's
-  failure disarms every pending backoff of the pass at once, and whatever the pass's cells still
-  have queued is consumed without running. A failure while the cancel token is set reports
-  `cancelled`. Each retry is logged (`instance / tasklet / cell / attempt / delay`) and counted in
-  the retry counter the flow relay's ladder feeds, shipped in `data_heartbeat` metadata.
+### The order inside `act`
 
-An exhausted ladder fails the stage where a flow relay would park the item: no commit, nothing
-leaked, compensation, status `error`. Abort-and-compensate is the escape where a flow relay
-would [park the payload](../../public/topics/core/durability.md), with
-one exception: a failed turn of a keep-progress session.
+`act` runs one fixed order, and two of its steps depend on it:
 
-## A failed turn of a keep-progress session
+1. **Sent to the controller** (`send`): compensation markers, then barrier frames, then frames
+   sent as they stand (a re-send), then timer removals, then a park, then dropped acks. An intent
+   marker precedes its commit, so a crash between them resolves as "not committed, run again"
+   (window C9).
+2. **Handed to the poller** (`schedule`): deadlines disarmed, then armed, then held timer arms,
+   then items admitted, then Cells made ready, then retries cancelled.
+3. A message parked to the dead-letter queue, then the completion, then an undo hook's run, then
+   the start of a new pass.
 
-A session is a `per_input` loop, one turn per message. When it declares keep-progress
-(`on_failure(KeepProgress)`), a turn whose tasklet exhausts its ladder, or raises a
-non-retryable error, ends only that turn, the way a flow relay parks a poison input and
-goes on:
+A barrier's command is stored on the sheet before it is sent (`send_barrier`), because a refusal
+can answer before the sending thread takes the lock again, and its re-send needs the command.
 
-1. The pass stops; nothing it had not committed is kept.
-2. The driver sends the iteration's `IterCommit` marked `dead_letter` (the failing tasklet, its
-   attempts, its error). The controller parks the turn's message in the dead-letter queue, read
-   from the instance's input log, then journals `dead_lettered` for the iteration, then acks.
-3. The driver undoes the turn's committed tasklets as a rewind undoes an iteration: each
-   `compensate` hook runs once, each undo is journaled as `compensated`.
-4. The next message runs as the next iteration.
+### Kahn order is the wire order
 
-The entry sits under the relay's `_turn` slot with the entry channel, the input-log offset and
-the exact bytes, so `flz dlq replay` sends it back to the session as a new message. A crash
-anywhere in this resumes it: after the `dead_lettered` record the rebind runs the undo still owed
-and waits for input; before it, the turn runs again and the bind removes an entry above the
-instance's floor, so the message is parked at most once. A class kept in memory (`durable: false`)
-parks the turn without its bytes and undoes it in memory.
+`TaskDag::of` numbers the tasklets in Kahn order from the entry channels; a node's index is its
+stage index and its wire `task_idx`. A producer's index is always below its consumers', so
+commits arrive in topological order, `plan_compensation` reverses them without a second walk,
+and a join resumes with each committed producer's hand-off banked rather than run again. The
+relay is `ok` when every leaf tasklet has committed; the SDK declares the leaf set
+(`leaf_tasks`) and the compensable set (`compensable_tasks`) in the `AddRelay` response
+metadata, so the controller reads the same facts from the journal.
 
-Everything else still ends the session: all-or-nothing, a `once` or `chained` loop, a pass a timer
-opened, a commit the controller refuses, a stop and `max_duration`.
+### A barrier keeps one identity
 
-## Rewind: taking a loop back to a committed iteration
+A barrier (`Barrier`) keeps its reference id for its whole life. An ack not received within
+`FLEZHA_STEPS_ACK_TIMEOUT_MS` (30 s) re-sends the same command under the same id, up to
+`BARRIER_SENDS` (three) sends in all, a constant of the controller connection rather than a class
+setting; the ack stays registered across the re-sends, so a late one continues the chain. The
+controller journals a barrier once by the entry's identity, so a re-sent barrier is answered from
+the existing entry. Only an `Undo` barrier is re-sent on a refusal (`resend_refused`, as a new
+frame, since the refusal consumed the first send's waiter); every other refusal fails the
+barrier at once.
 
-```text
-flz relay rewind <instance> --to-iteration N
-```
+### Record, then Mark
 
-`Suspend.rewind_to/2` runs, in order:
+An undo of a saga Cell is three steps on `Undo.steps`: the hook runs (`UndoStep::Cell`), the
+record it wrote is journaled as `compensated` (`UndoStep::Record`), then the Cell's
+compensation-done marker is shipped (`UndoStep::Mark`). The markers live beside the Cell's
+state (`<cell>.comp_intent` when a compensable tasklet completes forward, `<cell>.comp_done`
+when its undo finishes) and ride the rebind as `RestoreInitState.has_compensation_intent` and
+`has_compensation_done`. The done marker stops the hook running again
+on resume, so a crash between the two must fall on the side that runs the hook again, and the
+marker follows only an ack (`undo_journaled`). When the record is never acknowledged the Cell's
+marker step is dropped with it, the rest of the plan still runs, and the run ends `error` naming
+the tasklet (window C7). A rewind's or a failed turn's undo (`unwind_steps`) earns no marker: it
+journals one `compensated` entry per tasklet, even an empty one, so the journal alone says what
+is outstanding.
 
-1. **The guard**, before anything durable changes. `N` must be a committed iteration (the refusal
-   names the committed range), and every tasklet above `N` that wrote plugin output must be in
-   `compensable_tasks` (`TaskJournal.staged_channels_above/2`, which reads the channels each
-   Cell wrote on from the stage entries' `cells_ran`, never from the Cell WALs compaction may
-   have truncated; the refusal names the channels). A rewind is undo-and-continue: nothing
-   re-runs over the unwound inputs, so no later output overwrites the original by its key, and
-   the hook is the only undo the engine can guarantee.
-   A class that declared nothing (`nil`) is not a chain with nothing compensable (`[]`). Neither
-   refusal touches the journal.
-2. **The marker.** `TaskJournal.append_rewound/2` appends `rewound(N)` at `current_epoch + 1` with
-   a synchronous fsync. The fold purges accumulated entries with `iter > N` and keeps everything
-   appended after the marker, so a rewound iteration's records are no longer named by a live
-   entry, and the rebind drops those whose outputs were not yet handed to the plugin chain. The
-   marker's epoch keys the barrier identity of the re-run; an output's `flz.epoch` is its Cell's
-   and does not move.
-3. **Evict and rehydrate unconditionally**: a rebind, not a park: no park record, no wake
-   timer, and the loop comes back with no input waiting because it must run the undo.
+### Nothing runs before the restore gate opens
 
-The undo list rides `TaskJournalState.rewind_undo`: the tasklets committed before the marker at
-an iteration above `N`, minus those with a `compensated` entry appended after their own commit.
-The instance runs them through the ordinary planner under a **forced** `UndoAll` (reverse
-iteration, reverse position) and journals one `compensated` entry per tasklet — an empty one
-for a hookless tasklet, which is what drains the list. It does not consult the per-cell done
-markers: a cell that ran in two rewound iterations is undone once per iteration. A crash
-mid-rewind resumes with exactly the outstanding work; there is no done marker.
+A bind enters `Phase::Gated` and expects `AddRelay.resume_cell_count` restores. The gate counts
+frames, not Cells, so a frame the `max_cells` cap refuses, or one naming a tasklet the class no
+longer declares, still counts; the last frame opens it (`open_gate`) on the reader that brings
+it. While `Gated`, no tasklet and no undo hook runs: `Deadline::RestoreGate` (30 s) ends the run
+`error`, naming how many restores landed, and a stop or `max_duration` ends it `cancelled`
+(window C11). With a journal, intent markers alone never start a compensation at the gate; only
+a shipped done marker proves an undo was in flight, because intent markers also accumulate
+during forward progress.
 
-A rewind **does not replay inputs**: every iteration commit raises the instance's floor in its
-input log and a rewind never lowers it, so a committed turn's message is not delivered again
-even while the log still retains it. Rewind is undo-and-continue — the loop resumes
-waiting and the next message becomes iteration `N + 1`. Cell state is unwound by the hooks,
-not by truncating the state WAL; a hookless tasklet leaves its state change in place.
-Telemetry `[:flezha, :steps, :rewind]` (measurement `epoch`); `flz state journal` renders `rewound`.
+## Invariants of the controller
 
-## Saga: compensation on abnormal termination
+### Records, then journal, then ack
 
-A tasklet declares `compensate(ctx, completed_output, state)`; `on_failure()` /
-`onFailure()` selects `UndoAll` (default) or `KeepProgress`. Both are journal-backed: the
-planner's `committed` input is the journaled tasklets grouped by iteration, so `KeepProgress`
-keeps every committed iteration and `UndoAll` unwinds them after the in-flight one. For a
-single-pass chain the two coincide.
+The control-channel reader decodes a barrier and casts it to `Commits`, so a commit storm never
+queues a ping, stop, park or compaction behind disk I/O. Each step of the path:
 
-**A partitioned loop.** Each member of a partitioned `per_input` steps relay rolls back its own
-passes only. A rescale seals every surviving member's journal at its latest committed iteration,
-because a Cell moved to another member takes its earlier passes out of this member's reach: after
-a rescale, `UndoAll` unwinds only the iterations committed since, and `flz relay rewind`
-refuses an iteration below the seal with the committed range. The scale command names the
-members it sealed. A loop whose passes must stay undoable across the rescale must not be
-rescaled.
-
-- The plan is the Kahn order reversed — a join before any of its producers, a shared root last,
-  independent subtrees in unspecified relative order. Hooks run once per cell that had an
-  effect, inside the single teardown. A hookless tasklet is skipped; a failing hook is logged
-  and the rest of the plan still runs. A clean `ok` never compensates.
-- Each stage commits on its own, so a sibling can be committed, its outputs released, before the
-  stage beside it fails; it is then undone like any committed stage, in reverse completion
-  order. A stage still running when the pass fails is recorded as having run, so it is
-  compensated, and is not committed. A cooperative stop takes the same path, and the undo is
-  never interrupted by the cancel token, because rollback is the response to that cancel.
-
-**Crash-safe compensation** uses per-Cell markers on the state substrate: `compensation_intent`
-(`<cell>.comp_intent`) when a compensable tasklet completes forward, `compensation_done`
-(`<cell>.comp_done`) when its undo finishes. They ride `RestoreInitState.has_compensation_intent`
-/ `has_compensation_done` on the rebind, and the instance skips every cell whose done marker
-landed. A shipped **done** marker proves an undo pass was in flight and wins over journal-gated
-forward resume; intent markers alone do not, because they also accumulate during forward
-progress. Tasklets the journal skipped still roll back on a later abnormal exit, folded into
-the plan from their intent markers. The undo record (`TaskCommit` with `compensating = true`,
-journaled as `compensated`) is written **before** the done marker, so a crash between the two
-re-runs the idempotent hook rather than losing its undo output. The marker follows only an ack: a
-refused undo record is re-sent under its reference id as a fresh send (the refusal consumed the
-first send's waiter), within the three sends a timeout re-send counts; once they run out the
-Cell's record and marker steps are both dropped, the rest of the plan runs, and the undo ends
-`error` naming the tasklet, whether it was planned to end or to resume. Author contract: a
-journal-rebuilt tasklet's `completed_output` is empty on resume (its inter-tasklet output
-was never durable), so a durable compensable tasklet keeps its undo handle in Cell state,
-and hooks are idempotent.
-
-## Durability: effect records, task.journal, outbox, crash-resume
-
-A class is durable by default and opts out with `durable: false`, the setting a flow class
-carries too; the runner announces it (`durable = "memory"` in the `AddRelay` response) and
-the controller records it in `ClassRegistry.persistent?/1`, with no override. Kept in memory, the
-per-Cell flush drains and discards (no WAL, snapshot, journal or handshake); a crash re-runs
-from the top, a live Cell read answers `{:error, :persistence_off}`, and the class cannot sleep.
-
-**The commit path.** Every item a steps relay Cell settles is one `cell_effect_record` (its
-state changes and its plugin outputs with channel, key and metadata), flushed inline by the
-worker that settled it rather than on the flush linger. When a stage's last item settles, that
-worker ships `TaskCommit` (`task_idx`, `iter`, `cells_ran` naming each Cell's record range in the
-stage and the plugin channels those records wrote on, the handoff through the channel's codec;
-no output); nothing waits for the ack, which is an event on the control-channel reader
-that releases the stage's outputs into its children.
-
-| Step | Where | Detail |
+| Step | Where | Rule |
 | --- | --- | --- |
-| decode, hand over | control-channel reader | casts to `ControlChannel.Commits` and returns — no disk I/O on the reader, so a commit storm never delays a ping, stop, park or compaction |
-| records | `Commits` (one per runner) | before a `task_committed` or `compensated` entry, `WalWriter.await_durable_async/4` for every named `{cell, seq}` on its Cell's writer, answered once the record's batch has synced; a refusal, an unreachable writer or `FLEZHA_STEPS_ACK_TIMEOUT_MS` elapsing fails the barrier with `record_not_durable: <cell> seq=<n>`, and a re-sent barrier whose first copy still waits joins that wait |
-| append | `Commits` | once every named record is durable, `TaskJournal.append_async/4`, `sync: :batched`: the reply is deferred until the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; the worker's request collection is the set of acks owed and it never waits on a writer |
-| identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key: a re-sent barrier is answered from the existing entry, never journaled twice |
-| ack | written by the channel | `TaskCommitResponse` under the request's `reference_id`; a non-empty `error` (write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) terminates the run |
-| sync remote | a task, before the ack | `durable: remote` (`durable = "remote"` in the declaration) has `DurabilityTier.commit_sync/1` ship the journal suffix to the [remote tier](../../public/topics/core/durability.md) first — RPO 0, as for a flow class's inputs |
-| release | after the ack, on the worker | `WalWriter.commit_records/3` for each named range: the Cell's writer releases those records' outputs to the plugin chain and drops a held entry of that Cell below the range (an attempt that never committed) |
+| records | `Commits` | before a `task_committed` or `compensated` entry, `WalWriter.await_durable_async/4` for every named `{cell, seq}` on its Cell's writer; a refusal, an unreachable writer or the ack timeout fails the barrier with `record_not_durable: <cell> seq=<n>`, and a re-sent barrier whose first copy still waits joins that wait |
+| append | `Commits` | once every named record is durable, `TaskJournal.append_async/4` with `sync: :batched`, answered when the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; no wait blocks the process |
+| identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key |
+| remote | before the ack | under `durable: remote`, `DurabilityTier.commit_sync/1` ships the journal suffix to the remote tier first |
+| ack | the channel | `TaskCommitResponse` or `IterCommitResponse` under the request's `reference_id`; a non-empty `error` (a write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) ends the run |
+| release | after the ack | `WalWriter.commit_records/3` per named range releases those records' outputs and drops a held entry of that Cell below the range, an attempt that never committed |
 
-Each send arms a deadline of `FLEZHA_STEPS_ACK_TIMEOUT_MS` (default 30 000) on the poll core's
-deferred-wake list. One that comes due with the ack still owed re-sends the same frame under the
-same `reference_id`, up to three sends in all, a constant of the runner's controller connection
-rather than a class setting; the ack stays registered across the re-sends, so a late one
-continues the chain, and only the third expiry is a terminal error. No channel declares how its handoff is encoded — the runtime derives the
-journal codec, in Rust from the producing tasklet's declared `Output` type — and a journal entry
-is bounded by `:wal_high_watermark_bytes` (16 MiB): keep bulk data in Cell state and hand off
-references. Every released output carries the identity a flow relay's does: `flz.cell`,
-`flz.seq = <record seq>.<emit ordinal>`, `flz.epoch` (the Cell's realign epoch, which a rewind
-does not move), `channel`, `flz.key` when the channel is keyed, and the author's metadata. An
-undo output is a newer record of the compensating Cell, so its seq sorts above the forward
-output's. An opted-out class sends its outputs straight to the wire with the same channel, key
-and metadata. Flush contract: [`../../public/topics/core/durability.md`](../../public/topics/core/durability.md).
+A dead-lettered iteration's record is its turn's message: it is parked in the dead-letter queue,
+read from the input log, before the `dead_lettered` entry naming it is appended. An iteration's
+ack gates the input-log release (`TaskJournal.release_input/2`) and the journal cut. A journal
+entry is bounded by `:wal_high_watermark_bytes` (16 MiB).
 
-**Crash-resume.** Journal state rides `AddRelay.task_journal` on the bind — not a per-Cell
-restore, because a class whose tasklets hold no per-Cell state receives no
-`RestoreInitState` at all. Committed tasklets are skipped, the first uncommitted one is seeded
-from the journaled handoff, and only the tasklet mid-flight at the crash re-runs. A
-restore-before-run gate (`AddRelay.resume_cell_count`) holds the first tasklet until
-that many `RestoreInitState` frames land. The persisted Cell set includes keyed Cells, and a
-frame naming one mints it before it folds; the gate counts frames, not Cells, so a frame the
-`max_cells` cap refuses, or one naming a tasklet the class no longer declares, still counts.
-The last frame opens the gate on the reader that brings it.
-A 30 s deadline on the deferred-wake list ends the run `error` when a restore never lands
-(`steps restore gate timed out: <restored> of <expected> restores landed within 30 s`): no pass
-starts and nothing is compensated, since an undo over Cells whose state never landed is the
-fault the gate guards. A stop or `max_duration` before the gate opens ends the run `cancelled`
-the same way. Either is the ordinary run teardown: no re-run, the outcome recorded, the state
-and journal kept for a later start. A restored Cell re-arms its change seq from `RestoreInitState.terminal_seq`, so
-post-resume appends are contiguous and the flow-only seq-gap resync never applies. Execution
-is at-least-once: steps and hooks are idempotent by author contract. A crashed instance reaches
-a new runner in one of two ways: a restarted runner presents the same stable identity
-(`FLEZHA_RUNNER_ID_PATH`) with a new `incarnation`, and the Overwatch binds onto it at the
-connect; or the convergence loop's `rebind_relay` moves it onto another runner once the dead
-session is gone. Both are the full bind, `Lifecycle.complete_init/5`, which stamps
-`resume_cell_count` and the journal from durable state, ships the persisted Cells with their
-compensation markers and re-forwards the input log's undelivered tail, and the instance resumes
-past the journaled tasklets — or resumes the compensation — to a terminal `RelayCompleted`.
-A reconnect of the same process (the same `incarnation`) only moves the binding, because that
-process still runs the instance.
-A live instance and a resumed one are the same data: the pass the journal describes is the
-pass the instance runs.
+### The floor only rises
 
-Telemetry: `[:flezha, :state, :task_commit]` (measurements `count`, `handoff_items`, `cells`),
-`[:flezha, :state, :iter_commit]`,
-`[:flezha, :steps, :completed | :failed | :parked | :suspended | :rehydrating]`.
+The instance's floor in its input log is the log's watermark under the journal's identity. It is
+seeded at every bind from the journal's released offset (`Replay.seed_floor/1`: the highest
+offset an iteration commit or an input released unread consumed, which no rewind lowers) and
+from the park record while the instance sleeps, and raised by every iteration commit and park. A consumed
+message is therefore never delivered again, and a rewind does not replay inputs.
 
-## Finished-job retention
+### A cut never shortens a history someone replans from
 
-On terminal teardown the controller writes `Flezha.State.Completion`
-(`<state_root>/<namespace>/<relay_class>/completion.record` — `status`, `error`, `result`,
-`finished_at`)
-before the teardown, closes the instance's writer processes, and **retains** the state instead
-of deleting it. `Flezha.State.Retention` reclaims state and record once `finished_at + window`
-has passed. During the window `flz relay info <id>` reports phase `finished` with the status,
-result and finish time, and the convergence loop does not read the retained state as an intent
-mismatch. An opted-out class leaves no state to retain; its record is best-effort.
+`TaskJournal.cut/2` cuts the journal only for a class whose `compensable_tasks` is `[]`: a saga
+and a rewind both replan from the committed history, and a class that declared nothing (`nil`)
+keeps its history too. A cut below `:record_log_cut_after_bytes` (64 KiB) waits until that many
+released bytes accumulate. A partition rescale seals each surviving member at its latest
+committed iteration (`cut(id, seal: true)`) whatever the class declares, because a moved Cell's
+earlier passes belong to a member that may no longer own it.
 
-## What decides each behaviour
+### Every resume is a bind
 
-No behaviour is attached to a kind. Each follows from what the class declares or from the
-instance's own state:
+A crash, a migration, a wake and a rewind all go through `Lifecycle.complete_init/5`: the folded
+journal in `AddRelay.task_journal`, `resume_cell_count` Cell restores carrying their compensation
+markers, and the one re-forward (`Replay.reforward_undelivered_tail/1`) of the input log's
+records above the floor, after it removes a dead-letter entry whose `dead_lettered` record never
+landed (`TaskJournal.drop_unrecorded_turns/1`). At a writer's boot, `Settlement.seed_commits/3`
+re-derives from the journal's live entries which held records are committed. A live instance
+and a resumed one are the same data: the pass the journal describes is the pass the instance
+runs. A reconnect of the same runner process (the same `incarnation`) only moves the binding.
+
+### Owed outputs settle before the teardown
+
+Every exit converges on one `RelayCompleted`. The controller writes the completion record, then
+tears down under `Flezha.Process.DurableTasks`, off the control-channel reader, after settling
+two debts. The data stream is flushed (`StreamPool.flush_channels/2`, one bounded call per stream
+channel), so a class kept in memory has its last direct output routed before its Overwatch stops.
+The Cells' outboxes are waited for, up to `drain_owed_ms` (60 s), polling every 50 ms, until
+`TaskJournal.owed_outputs/1` is zero; a deadline hit is logged (`... still owed`) and the
+retained WAL keeps the debt (window C10). An `error` ends the same way: there is no automatic
+re-run of a failed tasklet.
+
+### No behaviour follows from the run alone
+
+Each behaviour follows from what the class declares or from the instance's own state:
 
 | Behaviour | Decided by |
 | --- | --- |
 | per-Cell WAL, bind-time restore, live Cell reads (`flz state get`) | the class's `durable` setting |
 | sleeping when idle, and the durable input a sleeping flow relay keeps | the class's sleep setting |
 | point-in-time queries and history retention (`flz state at`, `time_travel_retention_hours`) | nothing: a steps relay Cell keeps history like a flow relay Cell, then finished-job retention reclaims the directory |
-| dynamic Cells and their destructive idle eviction | nothing: a steps relay evicts only between passes and never within a rollback's reach, and the controller deletes the evicted Cell's state |
+| dynamic Cells and their idle eviction | nothing: a steps relay evicts only between passes and never within a rollback's reach |
 | output-stall watch and the forced rebind it drives | nothing: a wedged steps relay is rebound and resumes at its stage |
 | input-silence sweep | the instance's state: never a sleeping instance, never a checkpoint-ack class between checkpoints |
 
+## Crash and failure windows
+
+Each window, what the next bind does, the code that makes it so, and the test that pins it.
+Paths in the Test column are under `test/system/` unless they name a crate.
+
+| # | Window | Outcome | Guard | Test |
+| --- | --- | --- | --- | --- |
+| C1 | a Cell's record shipped at settle, crash before its stage's `TaskCommit` | no entry names the record, so it is dropped and reaches no output | `Settlement.seed_commits/3` at the writer's boot | `steps_crash_resume_e2e_test.exs` "a failed stage delivers nothing, though its Cell wrote a record", "the record precedes the entry naming it under a long flush linger" |
+| C2 | stage entry durable, crash before the release | the boot re-derives the release and the output goes out with identical stamps | `Settlement.seed_commits/3` | `steps_crash_resume_e2e_test.exs` "a crash before the flush re-drives the output with identical stamps" |
+| C3 | `TaskCommit` durable, crash before the next stage | committed stages are skipped and their children seeded from the journaled hand-off | `open_gate`, `resumed_seed` | `steps_crash_resume_e2e_test.exs` "a fan-in diamond joins once, and a crash re-runs only the uncommitted producer"; `sdk/rust/src/steps/tests/driver/fan_in.rs` `branching_resume` |
+| C4 | `IterCommit` durable, crash before the input release or the cut | the bind seeds the floor from the journal's released offset, so the message drives one iteration | `Replay.seed_floor/1` | `steps_crash_resume_e2e_test.exs` "the re-forwarded message drives one iteration after the resume, never two", "an Overwatch killed mid-bind leaves the message one iteration" |
+| C5 | a completing iteration journaled, crash before `RelayCompleted` | the resumed run ends `ok` with the journaled result and runs nothing | `open_gate` (`JournalResume.completion`) | `sdk/rust/src/steps/tests/driver/durable_loop.rs` `loop_completion` |
+| C6 | a timer firing's stage committed, the firing's removal unwritten | the restored timer is not fired again | `committed_firings` (the root's `TaskCommit` names the firing) | `steps_crash_resume_e2e_test.exs` "a crash after the firing's root committed does not fire it again"; `sdk/rust/src/steps/tests/driver/timers.rs` `a_crash_after_the_roots_ack_does_not_fire_it_again` |
+| C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `resend_refused`, `undo_journaled` | `flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
+| C8 | a failed turn parked, crash before its `dead_lettered` entry | the bind removes the unrecorded entry and the turn runs again, so the message is parked at most once | `TaskJournal.drop_unrecorded_turns/1` | `steps_failed_turn_e2e_test.exs` "after the park and before the record re-runs the turn, and parks it once", "after the record and before the undo is journaled undoes the turn once, on the rebind" |
+| C9 | intent markers sent, crash before the barrier frame they precede | with a journal, intents start no compensation without a done marker; the stage runs again | the order inside `act`; `open_gate` | `steps_crash_resume_e2e_test.exs` "durable saga steps resumes compensation after a SIGKILL mid-rollback" |
+| C10 | `RelayCompleted` written, the drain of owed outboxes times out | the teardown goes on, the warning names what is still owed, the retained WAL keeps the debt; a finished relay is not started again | `drain_owed_ms`, `DurableTasks` | `test/flezha/runner/control_channel_steps_test.exs` "the teardown flushes the runner's stream channels before it deregisters" (the flush); none for the timeout |
+| C11 | a bind's Cell restores do not all land | the run ends `error` after 30 s naming how many landed; a stop or `max_duration` meanwhile ends it `cancelled`; no tasklet or hook runs, and the journal and state stay | `Deadline::RestoreGate` and `stop` in `Phase::Gated` | `flz_core/src/steps/run_tests.rs` `a_restore_gate_timeout_ends_the_run_error`, `a_stop_at_the_restore_gate_ends_the_run_cancelled`; the teardown that follows: `test/flezha/runner/control_channel_steps_test.exs` "RelayCompleted error → failure telemetry + identical teardown" |
+
+Every window also runs end to end on each SDK runtime, over UDS and QUIC, in
+`steps_crash_resume_e2e_test.exs`, `steps_control_flow_e2e_test.exs`,
+`steps_failed_turn_e2e_test.exs` and `steps_timers_e2e_test.exs`.
+
 ## How many instances a runner holds
 
-An instance holds no thread. Its run is a small pass sheet on the instance (iteration, stages
-in flight and done, held outputs, completion, phase) under one lock, advanced by whichever
-thread brings the next event: a worker settling a stage's last item, the control-channel reader
-bringing a commit ack or a stop, the data-channel reader bringing a message, a poller promoting a
-deadline. None of them waits and none runs author code while it holds the lock.
+An instance costs its pass sheet (iteration, stages in flight and done, held outputs,
+completion, phase) and nothing else; it holds no thread. This is the envelope the
+`sdk-poll-core` specification holds the runner to, measured on 8 cores and 32 GiB, release
+build, with the standing probe:
 
-## Proof
+```text
+FLEZHA_SCALE_SHAPE=step FLEZHA_SCALE_N=10000 \
+  cargo bench -p flezha_runner --features bench-internals,testing \
+    --bench steps_scaling
+```
 
-`test/system/steps_crash_resume_e2e_test.exs` and `test/system/steps_control_flow_e2e_test.exs`:
-SIGKILL mid-run and mid-compensation, the fan-in diamond, the outbox re-drive, cell retry, park
-and rehydrate, stopping a sleeper, rewind; `test/system/sleep_after_e2e_test.exs` for a sleeping
-flow relay and the persistence switch; on every SDK runtime, UDS and QUIC.
+| 10 000 instances | blocked mid-step (`step`) | waiting for a message (`idle`) |
+| --- | --- | --- |
+| resident per instance | about 61 KiB | about 61 KiB |
+| threads per instance | 0 (the workers running the steps are the pool's) | 0 |
+| CPU while blocked | 0 % | 0 % |
+| start / teardown | 0.35 s / 0.06 s | 0.35 s / 0.03 s |
+| an unrelated instance's p99 beside them | 0.8x its unloaded latency | 0.9x |
 
-## See also
+A turn blocked on a slow call holds the SDK worker running it (a pool thread in Rust, a virtual
+thread in Java) and one in-flight slot: `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` (1 024 by default)
+bounds how many Cells are handed out at once, so a runner meant to hold more blocked turns than
+that raises it with its worker pool.
 
-- [`../../public/topics/core/workflows.md`](../../public/topics/core/workflows.md): the user's view: settings, undo, retries, sleeping, retention
-- [`../../public/architecture/steps_profile.md`](../../public/architecture/steps_profile.md) — the concepts and the wire table
-- [`../../public/topics/core/durability.md`](../../public/topics/core/durability.md) — the scenario matrix, the durable input log and the outbox
-- [`../state_persistence.md`](../state_persistence.md) — the WAL substrate, `FsyncBatcher`, retention
-- [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — field-level `TaskCommit` / `IterCommit` / `IterPark`
-- [`../../public/topics/core/durability.md`](../../public/topics/core/durability.md) — `sync_remote`
+## Related pages
+
+- [`../../public/architecture/steps_profile.md`](../../public/architecture/steps_profile.md): the concepts, the journal layout and the wire table
+- [`../../public/topics/core/durability.md`](../../public/topics/core/durability.md): what is lost when, the durable input log and the outbox
+- [`../architecture/relay_lifecycle.md`](../architecture/relay_lifecycle.md): bind, sleep, wake and stop on the controller
+- [`../state_persistence.md`](../state_persistence.md): the WAL substrate, `FsyncBatcher`, the journal entry layouts
+- [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md): field-level `TaskCommit`, `IterCommit` and `IterPark`
+- [`../sdk/poll_core.md`](../sdk/poll_core.md): the poll core and the deferred-wake list

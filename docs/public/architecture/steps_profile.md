@@ -24,11 +24,12 @@ who want the mechanism behind the topic page
 7. [The durable loop](#the-durable-loop)
 8. [Sleeping](#sleeping)
 9. [Rewind](#rewind)
-10. [Messages on the wire](#messages-on-the-wire)
-11. [Commands](#commands)
-12. [Host languages](#host-languages)
-13. [Limits and gotchas](#limits-and-gotchas)
-14. [See also](#see-also)
+10. [How an instance ends](#how-an-instance-ends)
+11. [Messages on the wire](#messages-on-the-wire)
+12. [Commands](#commands)
+13. [Host languages](#host-languages)
+14. [Limits and gotchas](#limits-and-gotchas)
+15. [See also](#see-also)
 
 ## A graph of tasklets
 
@@ -236,7 +237,11 @@ A steps relay's answer to a failure that will not go away is abort and undo, whe
 relay parks the payload in the dead-letter queue. Two cases park here too: a message the entry
 channel cannot read, and a failed turn of a `per_input` loop with `on_failure: keep_progress`.
 That turn's message is parked under the `_turn` slot with a `dead_lettered` journal entry, the
-turn is undone, and the loop takes its next message.
+turn is undone, and the loop takes its next message. The entry keeps the entry channel, the
+input-log offset and the exact bytes, so `flz dlq replay` sends it back as a new message. A
+crash before the `dead_lettered` entry runs the turn again and parks its message once; a crash
+after it runs the undo still owed. A class with `durable: false` parks the turn without its
+bytes.
 
 ## Undo
 
@@ -288,6 +293,12 @@ controller's answer.
 The cell's state is reversed by the `compensate` hook, not by cutting its WAL. A tasklet without
 a hook keeps its state change.
 
+Each member of a [partitioned](../topics/core/partitioning.md) `per_input` relay undoes only
+its own passes. A rescale seals every surviving member's journal at its latest committed
+iteration, because a cell moved to another member takes its earlier passes with it: after a
+rescale, `undo_all` undoes only the iterations committed since, and a rewind below the seal is
+refused. A loop whose passes must stay undoable across a rescale is not rescaled.
+
 ## The durable loop
 
 A relay can run its graph more than once. `each` decides how:
@@ -314,10 +325,23 @@ not from the top of the loop.
 
 At each boundary the runner sends `IterCommit`. The controller journals **one**
 `iter_committed` entry with the final hand-off and the consumed input-log offset, answers, and
-only then releases the consumed input in the log and asks for the journal to be cut. The
-boundary takes no snapshot and releases no outputs: each stage's outputs left at its own commit,
-and the watchdog's size and age triggers compact a steps relay's cells as they do a flow
-relay's. A failure in that clean-up costs work, not correctness.
+only then releases the consumed input in the log and asks for the journal to be cut. Only a
+class with no tasklet that has an undo is cut, since undo and rewind both work from the
+committed history. The boundary takes no snapshot and releases no outputs: each stage's outputs
+left at its own commit, and the watchdog's size and age triggers compact a steps relay's cells
+as they do a flow relay's. A failure in that clean-up costs work, not correctness.
+
+**The queue.** A message for a running instance is never dropped. It starts a pass when the
+instance waits at a committed boundary, and otherwise waits in the instance's queue for the
+next one. A `once` instance reads its one message and accepts a second without reading it. A
+due cell timer waits in the same queue, in arrival order with messages, and a `chained` loop is
+fed its own output only once nothing is queued, so a firing that came due during a pass runs
+before the next carry-fed pass.
+
+**Timers.** A tasklet's cell timers fire as passes of their own
+([timers](../topics/core/timers.md)). The root's `TaskCommit` names the firing: a crash before
+that commit fires the restored timer again into a fresh pass, and a crash after it resumes the
+pass from the journal without firing it again.
 
 **The input log.** A durable steps relay's input is written to the same per-instance input
 log the effectively-once tier uses, before it is forwarded, and stamped `flz.offset`
@@ -389,6 +413,27 @@ The rewind raises only the journal's epoch, which keys the re-run's commits; cel
 move ([the epoch rule](kernel.md#the-epoch-rule)). User view:
 [rewinding a turn](../topics/core/sessions.md#rewinding-a-turn).
 
+## How an instance ends
+
+An instance starts from `flz relay start`, a schedule or a running tasklet's
+`ctx.spawn_steps`, with `init_values` as its tasklets' initial state. Its first message may ride
+the start. It ends on the first of:
+
+- its graph finishing: every leaf tasklet committed;
+- a tasklet's `ctx.complete(result)`, honoured once its iteration commits;
+- a `chained` loop whose output comes back empty;
+- `max_duration` passing;
+- `flz relay stop`, carried out by the runner the instance runs on; an instance with no runner
+  to wake on is removed at once.
+
+Every one of them ends in one `RelayCompleted` with a status (`ok`, `error` or `cancelled`), an
+error and a result. The controller writes the completion record, waits for the outputs still
+owed (up to 60 s), and then tears the instance down. A failed run is not started again
+automatically. The record and the state are kept for the retention window
+(`FLEZHA_STEPS_RETENTION_HOURS`, 72 hours by default), during which `flz relay info` shows the
+instance as `finished` with its status, result and finish time
+([after it ends](../topics/core/workflows.md#after-it-ends)).
+
 ## Messages on the wire
 
 | Message | Tag | Direction |
@@ -409,6 +454,12 @@ $ flz state inbox <relay/instance>     # the input log, flow or steps, and how f
 $ flz relay info                       # each relay's phase, suspended while it sleeps
 $ flz relay rewind <instance> --to-iteration N
 ```
+
+`flz relay replay` is refused for a steps relay's cell: its baseline is a committed iteration
+across every cell of the instance, and a rewind is a loop's way back. The steps path reports
+`[:flezha, :state, :task_commit]` and `[:flezha, :state, :iter_commit]` at each barrier, and
+`[:flezha, :steps, :completed]`, `[:flezha, :steps, :failed]`, `[:flezha, :steps, :suspended]`,
+`[:flezha, :steps, :rehydrating]` and `[:flezha, :steps, :rewind]` as an instance moves.
 
 ## Host languages
 
@@ -443,4 +494,4 @@ and [`runner.md`](runner.md).
 - [`../topics/core/workflows.md`](../topics/core/workflows.md): steps, undo and crash recovery from the user's side.
 - [`relay_settings.md`](../configuration/relay_settings.md): `each`, `on_failure`, `durable` and `sleep_after`.
 - [`../topics/core/sessions.md`](../topics/core/sessions.md), [`sessions.md`](../topics/core/sessions.md#rewinding-a-turn), [`../topics/core/partitioning.md`](../topics/core/partitioning.md).
-- [The steps relay internals](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md): the mechanism in more depth.
+- [The steps relay internals](https://github.com/flezha/flezha/blob/main/docs/internal/resilience/steps_relay.md): the invariants, the crash windows and where the code is.

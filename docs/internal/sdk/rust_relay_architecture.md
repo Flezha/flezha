@@ -106,7 +106,21 @@ plus `[:flezha, :steps, :failed]`, no re-run. A job that
 completes before the start RPC confirms its binding is reported as a successful
 start with no live `runner_id`. Lifecycle, durable loop, suspension, saga
 compensation, cell retry and finished-job retention are in
+[`../../public/architecture/steps_profile.md`](../../public/architecture/steps_profile.md);
+the invariants and crash windows in
 [`../resilience/steps_relay.md`](../resilience/steps_relay.md).
+
+The SDK's side is small: `sdk/rust/src/steps/mod.rs` re-exports the core's types, and
+`sdk/rust/src/steps/spec.rs` (`build_spec`) runs the author's `channels` through the shared
+check. The engine is `flz_core/src/steps/`, split by concern: `spec.rs` (`TaskDag::of`, the DAG
+in Kahn order), `instance.rs` (the pass sheet and `BarrierFor`), `events.rs` (the entry point
+each thread calls), `run.rs` (`Run::decide` and addressing), `pass.rs` (passes, items, stages),
+`resume.rs` (the journal's resume point and the restore gate), `compensation.rs` (the undo
+plans), `effects.rs` (`act`, everything done after the lock) and `commit.rs` (the barrier
+frames). A new loop-shape or failure-mode rule is one method on `impl Each` or
+`impl OnFailure` in `flz_core/src/relay/settings.rs`; a new barrier step is one method on
+`impl BarrierFor` in `flz_core/src/steps/instance.rs`. The full file map is in
+[`../resilience/steps_relay.md`](../resilience/steps_relay.md#where-the-code-is).
 
 Every class carries `durable` in its `RelaySettings`: `Durable::Memory`,
 `Durable::Local` (the default) or `Durable::Remote`, the last two with a
@@ -779,6 +793,7 @@ postcard body the typed dispatcher encodes under the state lock.
 | Relay state JSON shape, `apply_init_values` | `flz_core/src/command/cell_state.rs` |
 | Restore fold and compaction snapshot; the typed sink | `flz_core/src/restore.rs`, `flz_core/src/host/commands.rs`; `sdk/rust/src/cell/restore.rs` |
 | `Relay`; `TaskletTestHarness` | `sdk/rust/src/steps/mod.rs`, `flz_core/src/steps/mod.rs`; `sdk/rust/src/testing/harness.rs` |
+| Steps engine: DAG, pass sheet, barriers, resume, undo; `Each`, `OnFailure` | `flz_core/src/steps/{spec,instance,events,run,pass,resume,compensation,effects,commit}.rs`; `flz_core/src/relay/settings.rs` |
 
 ## See also
 
