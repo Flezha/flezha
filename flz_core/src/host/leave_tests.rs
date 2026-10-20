@@ -10,13 +10,15 @@ use crate::test_support::spin_until;
 use crate::util::LockRecover;
 
 /// The next leave for `relay`, taken off the direct queue unanswered, or
-/// `None` once `done` holds first; another test's queued work stays where it is.
+/// `None` once `done` holds first; due wakes are promoted meanwhile, as a
+/// poller would, and another test's queued work stays where it is.
 fn take_leave_unless(
     relay: &str,
     done: impl Fn() -> bool,
 ) -> Option<crate::poll_core::EngineActivation> {
     let taken = std::cell::RefCell::new(None);
     spin_until("a leave", || {
+        crate::poll_core::global().promote_due_wakes();
         *taken.borrow_mut() = crate::poll_core::global().take_leave(relay);
         taken.borrow().is_some() || done()
     });
@@ -378,8 +380,9 @@ fn a_stop_does_not_wait_out_an_evictions_unanswered_leave() {
     let node = crate::runner::RunnerNode::new("test-ns".to_string());
     let registry = leaving_relay(&node, &id, "leave-10", Some(1));
     drop(registry.get_or_create("k1").expect("the Cell is minted"));
-    // The reaper holds the Cell's gate for its leave, which no host takes.
+    // The sweep holds the Cell's gate for its leave, which no host takes.
     spin_until("the eviction's leave", || {
+        crate::poll_core::global().promote_due_wakes();
         let gate = |s: &Arc<crate::cell::CellSlot>| {
             s.drain_active.load(std::sync::atomic::Ordering::Acquire)
         };
@@ -390,7 +393,7 @@ fn a_stop_does_not_wait_out_an_evictions_unanswered_leave() {
     let took = started.elapsed();
     assert!(
         took < std::time::Duration::from_secs(5),
-        "the stop waited {took:?} on the reaper's unanswered leave"
+        "the stop waited {took:?} on the sweep's unanswered leave"
     );
     let evicted = &registry.counters.cells_evicted_total;
     assert_eq!(evicted.load(std::sync::atomic::Ordering::Relaxed), 1);

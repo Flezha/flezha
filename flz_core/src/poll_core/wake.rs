@@ -14,6 +14,7 @@ use flz_transport::transport::FlezhaStream;
 
 use super::PollCore;
 use crate::cell::{CellItem, CellSlot};
+use crate::dynamic::DynamicCellRegistry;
 use crate::relay::Deadline;
 use crate::timer::{TimerFire, TimerKind};
 use crate::util::LockRecover;
@@ -81,8 +82,9 @@ impl WakeKey {
 /// `Retry` comes first, so `Retry(0)` is the least value ([`Lane::floor`]).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum WakeTiebreak {
-    /// Recording order; a slot's gates stay held across its backoff, so a
-    /// second retry for the same cell cannot exist.
+    /// Recording order, for a wake no re-arm replaces: a retry (a slot's
+    /// gates stay held across its backoff, so a second for the same cell
+    /// cannot exist), a push re-arm or an idle sweep.
     Retry(u64),
     /// The Cell's identity: arming `(cell, scheduled_at)` is an idempotent
     /// replace, and the instance id inside it keeps two instances sharing a
@@ -127,6 +129,12 @@ pub(super) enum Wake {
     Instance {
         instance: Weak<crate::relay::instance::RelayInstance>,
         deadline: Deadline,
+    },
+    /// A dynamic tasklet's idle sweep came due; `Weak` as an instance's
+    /// deadline is.
+    Sweep {
+        registry: Weak<DynamicCellRegistry>,
+        idle_ttl: Duration,
     },
 }
 
@@ -277,13 +285,7 @@ impl PollCore {
     /// [`Self::promote_due`] at the times `clock` reads for each lane.
     pub(super) fn promote_due_by(&self, clock: &impl Fn(Lane) -> u64) {
         for (key, wake) in self.wakes.take_due(clock) {
-            if let Wake::Instance { instance, deadline } = wake {
-                if let Some(instance) = instance.upgrade() {
-                    crate::relay::sleep::deadline_due(&instance, deadline, key.due_at_ms);
-                }
-                continue;
-            }
-            let Some((slot, item, retry)) = self.wake_target(wake) else {
+            let Some((slot, item, retry)) = self.wake_target(key.due_at_ms, wake) else {
                 continue;
             };
             if crate::admission::try_admit(&slot, item).is_err() {
@@ -292,10 +294,10 @@ impl PollCore {
         }
     }
 
-    /// What one due wake admits, and the entry to put back if it will not
-    /// fit; a re-arm has no item and finishes here, a wake on an evicted
-    /// Cell is dropped.
-    fn wake_target(&self, wake: Wake) -> Option<(Arc<CellSlot>, CellItem, Wake)> {
+    /// What one wake due at `due_at_ms` admits, and the entry to put back if
+    /// it will not fit; a re-arm, a deadline or a sweep has no item and
+    /// finishes here, a wake on an evicted Cell is dropped.
+    fn wake_target(&self, due_at_ms: u64, wake: Wake) -> Option<(Arc<CellSlot>, CellItem, Wake)> {
         match wake {
             Wake::Retry(slot) => {
                 self.release_and_rearm(&slot);
@@ -312,42 +314,54 @@ impl PollCore {
                 let live = slot.upgrade()?;
                 Some((live, CellItem::CloseInterval, Wake::CloseInterval { slot }))
             }
-            // A timer silently lost is a bug the author cannot see. The
-            // firing keeps its armed `scheduled_at` across every deferral:
-            // that is what the pending set cancels by, and what `ctx.now()`
-            // reads inside `on_timer`.
             Wake::Timer {
                 slot,
                 stream,
                 scheduled_at,
-            } => {
-                let live = slot.upgrade()?;
-                let fire = TimerFire {
-                    kind: TimerKind::ProcessingTime,
-                    scheduled_at,
-                    stream: Arc::clone(&stream),
-                };
-                // A steps relay's firing is a trigger of its run: the pass sheet
-                // decides when it reaches the Cell, and admits it itself.
-                if live.topology.steps.is_some() {
-                    crate::steps::firing_promoted(&live, fire);
-                    return None;
-                }
-                let fire = CellItem::Timer(fire);
-                Some((
-                    live,
-                    fire,
-                    Wake::Timer {
-                        slot,
-                        stream,
-                        scheduled_at,
-                    },
-                ))
+            } => timer_target(slot, stream, scheduled_at),
+            Wake::Instance { instance, deadline } => {
+                let instance = instance.upgrade()?;
+                crate::relay::sleep::deadline_due(&instance, deadline, due_at_ms);
+                None
             }
-            Wake::Instance { .. } => None,
+            Wake::Sweep { registry, idle_ttl } => {
+                crate::dynamic::sweep_due(registry.upgrade()?, idle_ttl);
+                None
+            }
         }
     }
+}
 
+/// A due processing-time timer's firing, and the entry to put back. A timer
+/// silently lost is a bug the author cannot see. The firing keeps its armed
+/// `scheduled_at` across every deferral: that is what the pending set cancels
+/// by, and what `ctx.now()` reads inside `on_timer`.
+fn timer_target(
+    slot: Weak<CellSlot>,
+    stream: Arc<FlezhaStream>,
+    scheduled_at: u64,
+) -> Option<(Arc<CellSlot>, CellItem, Wake)> {
+    let live = slot.upgrade()?;
+    let fire = TimerFire {
+        kind: TimerKind::ProcessingTime,
+        scheduled_at,
+        stream: Arc::clone(&stream),
+    };
+    // A steps relay's firing is a trigger of its run: the pass sheet decides
+    // when it reaches the Cell, and admits it itself.
+    if live.topology.steps.is_some() {
+        crate::steps::firing_promoted(&live, fire);
+        return None;
+    }
+    let wake = Wake::Timer {
+        slot,
+        stream,
+        scheduled_at,
+    };
+    Some((live, CellItem::Timer(fire), wake))
+}
+
+impl PollCore {
     /// Put a wake the target had no room for back on the list, due after
     /// [`WAKE_RETRY_BACKOFF_MS`] — strictly later, or `park_slice` would
     /// return zero and spin the promoter.
@@ -398,24 +412,9 @@ impl PollCore {
     }
 
     /// Arm one of the deadlines of the instance numbered `seq`, due at
-    /// `due_at_ms` on the monotonic clock. A promotion decides whether it
+    /// `due_at_ms` on the monotonic clock, in place of the entry armed for
+    /// `old`, so a re-arm leaves one entry. A promotion decides whether it
     /// still applies.
-    pub fn arm_instance(
-        &self,
-        instance: Weak<crate::relay::instance::RelayInstance>,
-        seq: u64,
-        deadline: Deadline,
-        due_at_ms: u64,
-    ) {
-        self.wakes.record(
-            WakeKey::at(due_at_ms, WakeTiebreak::Instance(seq, deadline)),
-            Wake::Instance { instance, deadline },
-        );
-        self.notify_waiters();
-    }
-
-    /// Move one instance deadline from `old` to `due_at_ms`: the entry armed
-    /// for `old` goes, so a re-arm leaves one entry.
     pub fn rearm_instance(
         &self,
         instance: Weak<crate::relay::instance::RelayInstance>,
@@ -427,7 +426,30 @@ impl PollCore {
         if let Some(old) = old.filter(|&old| old != due_at_ms) {
             self.disarm_instance(seq, deadline, old);
         }
-        self.arm_instance(instance, seq, deadline, due_at_ms);
+        self.wakes.record(
+            WakeKey::at(due_at_ms, WakeTiebreak::Instance(seq, deadline)),
+            Wake::Instance { instance, deadline },
+        );
+        self.notify_waiters();
+    }
+
+    /// Arm `registry`'s next idle sweep, for Cells idle past `idle_ttl`,
+    /// `every` from now.
+    pub(crate) fn arm_sweep(
+        &self,
+        registry: &Arc<DynamicCellRegistry>,
+        idle_ttl: Duration,
+        every: Duration,
+    ) {
+        let tiebreak = WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed));
+        self.wakes.record(
+            WakeKey::after(every.as_millis() as u64, tiebreak),
+            Wake::Sweep {
+                registry: Arc::downgrade(registry),
+                idle_ttl,
+            },
+        );
+        self.notify_waiters();
     }
 
     /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.

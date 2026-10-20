@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed: retries and deadlines run on the monotonic clock, and the idle sweep has no thread
+
+- A retry backoff, a push re-arm, a checkpoint interval's `max_delay_ms` close, a relay's
+  `sleep_after`, `max_duration` and steps deadlines now count on the monotonic clock: a step of
+  the wall clock neither delays nor advances them. Processing-time timers stay on the wall
+  clock.
+- A dynamic tasklet with an idle TTL no longer runs a `flezha-reaper` thread per relay: its
+  sweep is an entry on the poll core's deferred-wake list, run by the poller that promotes it
+  (a host-run Cell's eviction, which waits for the host, on a short-lived `flezha-leave`
+  thread). `FLEZHA_REAP_INTERVAL_MS` still sets the cadence.
+- A repeated bind of a live flow relay re-arms its `max_duration` in place, as a steps relay
+  already did, instead of leaving the earlier deadline armed beside it.
+
 ### Fixed: the task journal reports how the engine ended the run
 
 - **BREAKING:** `flz state journal` ends with `outcome: ok` (or the status and error the run

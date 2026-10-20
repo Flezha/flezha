@@ -1,5 +1,6 @@
 //! The dynamic-mode registry: Cells minted on first sight of a key and,
-//! under a TTL, evicted destructively by a per-tasklet reaper. The
+//! under a TTL, evicted destructively by a sweep the poll core's deferred-wake
+//! list runs. The
 //! invariant: an eviction takes the drain gate and removes the key only while
 //! the mailbox is empty and nothing else holds the Cell, so no item a producer
 //! pushed after the idle check, or pushes later through a Cell it took, is lost.
@@ -7,7 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -50,6 +51,8 @@ pub struct DynamicCellRegistry {
     keeps_state: bool,
     prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     relay_stopped: Arc<AtomicBool>,
+    /// Held by a due sweep while it runs, so a stop can wait it out.
+    sweeping: Mutex<()>,
 }
 
 impl DynamicCellRegistry {
@@ -77,6 +80,7 @@ impl DynamicCellRegistry {
             keeps_state,
             prefix,
             relay_stopped,
+            sweeping: Mutex::new(()),
         }
     }
 
@@ -106,7 +110,6 @@ impl DynamicCellRegistry {
     /// never one a rollback could still reach.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();
-        let ttl_ms = idle_ttl.as_millis() as i64;
         let (held, recorded) = match self.instance.upgrade() {
             Some(instance) => match crate::steps::reap_holds(&instance) {
                 Some(holds) => holds,
@@ -121,9 +124,7 @@ impl DynamicCellRegistry {
         let mut candidates: Vec<(String, Arc<CellSlot>, usize)> = Vec::new();
         for entry in self.cells.iter() {
             let slot = entry.value();
-            if now - slot.last_activity_ms.load(Ordering::Relaxed) <= ttl_ms
-                || held.contains(&slot.cell_identity)
-            {
+            if !idle_past(slot, now, idle_ttl) || held.contains(&slot.cell_identity) {
                 continue;
             }
             if !slot.claim_drained() {
@@ -197,6 +198,25 @@ impl DynamicCellRegistry {
         self.note_evicted(key);
     }
 
+    /// Whether a Cell of this tasklet is host-run and idle past `idle_ttl`:
+    /// evicting it waits for the host to answer its leave.
+    fn host_eviction_due(&self, idle_ttl: Duration) -> bool {
+        let host = self
+            .topology
+            .tasklet(self.tasklet_id)
+            .is_some_and(|tasklet| tasklet.host_facts.is_some());
+        let now = crate::util::monotonic_ms();
+        host && self
+            .cells
+            .iter()
+            .any(|e| idle_past(e.value(), now, idle_ttl))
+    }
+
+    /// Wait out a due sweep in flight; once the relay stopped, none evicts.
+    pub(crate) fn sweep_settled(&self) {
+        drop(self.sweeping.lock_recover());
+    }
+
     /// Whether `key` is in the eviction trace; beyond the cap it reads as
     /// never existed, claiming no eviction it cannot show.
     pub fn recently_evicted(&self, key: &str) -> bool {
@@ -234,21 +254,46 @@ impl DynamicCellRegistry {
     }
 }
 
-/// One reaper, sweeping every `reap_interval(idle_ttl)` until the relay stops.
-pub fn spawn_reaper(idle_ttl: Duration, registry: Arc<DynamicCellRegistry>) -> JoinHandle<()> {
-    let interval = reap_interval(idle_ttl);
-    thread::Builder::new()
-        .name("flezha-reaper".to_string())
-        .spawn(move || {
-            let stop = &registry.relay_stopped;
-            while !stop.load(Ordering::Acquire) {
-                sleep_responsive(interval, stop);
-                if !stop.load(Ordering::Acquire) {
-                    registry.reap_sweep(idle_ttl);
-                }
-            }
-        })
-        .expect("spawning flezha-reaper thread should not fail")
+fn idle_past(slot: &CellSlot, now: i64, idle_ttl: Duration) -> bool {
+    now - slot.last_activity_ms.load(Ordering::Relaxed) > idle_ttl.as_millis() as i64
+}
+
+/// Arm `registry`'s next sweep, `reap_interval(idle_ttl)` out.
+pub(crate) fn arm_sweep(registry: &Arc<DynamicCellRegistry>, idle_ttl: Duration) {
+    crate::poll_core::global().arm_sweep(registry, idle_ttl, reap_interval(idle_ttl));
+}
+
+/// A sweep came due on a poller: sweep, then arm the next one, until the
+/// relay stops. A host-run Cell's eviction waits for the host's
+/// answer, which a poller must not, so that sweep runs on its own thread, as
+/// a relay's leave does.
+pub(crate) fn sweep_due(registry: Arc<DynamicCellRegistry>, idle_ttl: Duration) {
+    if registry.relay_stopped.load(Ordering::Acquire) {
+        return;
+    }
+    if !registry.host_eviction_due(idle_ttl) {
+        return sweep(&registry, idle_ttl);
+    }
+    let sweeping = Arc::clone(&registry);
+    let spawned = thread::Builder::new()
+        .name("flezha-leave".to_string())
+        .spawn(move || sweep(&sweeping, idle_ttl));
+    if spawned.is_err() {
+        arm_sweep(&registry, idle_ttl);
+    }
+}
+
+fn sweep(registry: &Arc<DynamicCellRegistry>, idle_ttl: Duration) {
+    {
+        let _sweeping = registry.sweeping.lock_recover();
+        if registry.relay_stopped.load(Ordering::Acquire) {
+            return;
+        }
+        registry.reap_sweep(idle_ttl);
+    }
+    if !registry.relay_stopped.load(Ordering::Acquire) {
+        arm_sweep(registry, idle_ttl);
+    }
 }
 
 /// `FLEZHA_REAP_INTERVAL_MS`, else `min(idle_ttl / 4, 30s)`, at least 1 ms.
@@ -294,15 +339,6 @@ fn drop_timers_and_durable_state(slot: &CellSlot) {
     }
 }
 
-fn sleep_responsive(total: Duration, stop: &AtomicBool) {
-    let chunk = total.min(Duration::from_millis(200));
-    let mut slept = Duration::ZERO;
-    while slept < total && !stop.load(Ordering::Acquire) {
-        thread::sleep(chunk);
-        slept += chunk;
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -318,11 +354,17 @@ pub(crate) mod tests {
     use crate::schema;
 
     fn registry(id: &str) -> (Arc<RelayInstance>, Arc<DynamicCellRegistry>) {
+        registry_of(id, "")
+    }
+
+    /// A dynamic host class's instance and registry; `tasklet` is extra
+    /// declaration keys of its tasklet.
+    fn registry_of(id: &str, tasklet: &str) -> (Arc<RelayInstance>, Arc<DynamicCellRegistry>) {
         let id = format!("{id}_{}", std::process::id());
         let json = format!(
             r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,"run":"flow",
                  "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
-                 "tasklets":[{{"name":"trades","mailbox_capacity":16}}]}}"#
+                 "tasklets":[{{"name":"trades","mailbox_capacity":16{tasklet}}}]}}"#
         );
         crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
         let instance = RelayInstance::of_class(&id, &format!("{id}_inst")).expect("registered");
@@ -499,5 +541,44 @@ pub(crate) mod tests {
             1,
             "Cell holders at the answer"
         );
+    }
+
+    /// A due sweep runs off the promoting poller: the host-run Cell's leave
+    /// is answered and the Cell evicted with no thread of the relay's own.
+    #[test]
+    fn a_due_sweep_evicts_an_idle_cell() {
+        let (instance, registry) = registry_of("sweep_promoted", r#","idle_ttl_ms":60000"#);
+        let _host = LeaveAnswerer::start(instance.instance_id.to_string());
+        idle(&registry.get_or_create("a").expect("minted"));
+        let core = crate::poll_core::PollCore::new();
+        core.arm_sweep(&registry, Duration::from_secs(1), Duration::from_secs(60));
+
+        core.promote_due_at(crate::util::wall_now_ms(), u64::MAX >> 1);
+        let evicted = || {
+            registry
+                .counters
+                .cells_evicted_total
+                .load(Ordering::Relaxed)
+        };
+        assert!(crate::test_support::wait_until(
+            Duration::from_secs(5),
+            Duration::from_millis(1),
+            || evicted() == 1
+        ));
+        assert!(!registry.cells.contains_key("a"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_relay_with_an_idle_ttl_runs_no_reaper_thread() {
+        let (_instance, _registry) = registry_of("sweep_no_reaper", r#","idle_ttl_ms":60000"#);
+        let reaper = std::fs::read_dir("/proc/self/task")
+            .expect("the process's threads")
+            .filter_map(Result::ok)
+            .any(|task| {
+                std::fs::read_to_string(task.path().join("comm"))
+                    .is_ok_and(|name| name.trim() == "flezha-reaper")
+            });
+        assert!(!reaper, "a relay with an idle TTL spawned a reaper thread");
     }
 }

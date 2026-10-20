@@ -91,7 +91,7 @@ fn end(inst: &Arc<RelayInstance>, status: &'static str, result: Vec<u8>) {
 
 fn arm(inst: &Arc<RelayInstance>, deadline: Deadline, after: Duration) {
     let due = crate::relay::due_after(after);
-    crate::poll_core::global().arm_instance(Arc::downgrade(inst), inst.seq, deadline, due);
+    crate::poll_core::global().rearm_instance(Arc::downgrade(inst), inst.seq, deadline, None, due);
 }
 
 /// A flow instance's end deadline came due.

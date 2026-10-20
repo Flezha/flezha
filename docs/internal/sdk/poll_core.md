@@ -210,7 +210,7 @@ held across a retry backoff: nothing else could drain that Cell then either,
 and producers just enqueue. The consumer's next free slot serves whoever is
 owed it — a parked thread, or a gated Cell whose holdback is then drained —
 and a bounded fallback wake means a lost signal degrades to a retry rather than
-a hold. Because a gated Cell keeps its round claimed, the dynamic-mode reaper
+a hold. Because a gated Cell keeps its round claimed, the dynamic-mode sweep
 skips it with no check of its own, and a restore or a compaction waits on it
 the way it waits on a retry window.
 
@@ -320,11 +320,33 @@ Shutdown is not delayed either — there is no sleep left to run out.
 ## The deferred-wake list
 
 One ordered list answers "do something with this cell at time T": retry
-backoffs, processing-time timer deadlines
-([`cell_timers.md`](cell_timers.md)) and checkpoint-interval deadline
-closes. It owns **no thread**. Entries are promoted by whichever thread next
-enters or wakes inside `poll`, and the nearest entry shortens the poller wait.
-Recording one notifies blocked pollers so they re-compute that wait.
+backoffs, push re-arms, processing-time timer deadlines
+([`cell_timers.md`](cell_timers.md)), checkpoint-interval deadline closes,
+an instance's deadlines and a dynamic tasklet's idle sweep. It owns **no
+thread**. Entries are promoted by whichever thread next enters or wakes inside
+`poll`, and the nearest entry shortens the poller wait. Recording one notifies
+blocked pollers so they re-compute that wait.
+
+**Two clocks, one list.** The key leads with a `lane`: a processing-time timer
+is due on the wall clock, its `scheduled_at` being an absolute wall time the
+controller re-arms across restarts; every other entry is a span from now, due
+on the monotonic clock, so a wall-clock step neither delays nor advances it.
+The list stays one `BTreeMap` ordered by lane, then due time, with one cached
+earliest due per lane; a pass reads a lane's clock only while that lane holds
+an entry, so an idle pass reads no clock at all.
+
+**An instance deadline is re-armed in one call.** `PollCore::rearm_instance`
+removes the entry armed for the due time it replaces and arms the new one, so a
+re-arm leaves one entry. An entry its owner has since re-decided is still a
+no-op at promotion: the owner's own record of its current due time (a steps
+run's pass sheet, a flow relay's idle watch) is what the promotion is judged by.
+
+**The idle sweep is an entry too.** A dynamic tasklet with an idle TTL arms a
+sweep `FLEZHA_REAP_INTERVAL_MS` out (default `min(ttl / 4, 30 s)`); its
+promotion sweeps the registry and arms the next one until the relay stops. A
+host-run Cell's eviction waits for the host to answer its leave, which a poller
+must not, so a sweep with such a Cell to evict runs on a `flezha-leave` thread
+of its own, as a relay's leave does. A stop waits out a sweep in flight.
 
 **A wake that cannot be delivered stays on the list.** Promotion attempts a
 non-waiting admission; if the target's mailbox is full the entry is re-recorded

@@ -22,8 +22,7 @@ flz_core/src/host/issue.rs::kind 66
 flz_core/src/host/leave.rs::relay_left 58
 flz_core/src/poll_core/assembly.rs::assemble_batch 64
 flz_core/src/poll_core/mod.rs::host_command_within 53
-flz_core/src/poll_core/wake.rs::wake_target 52
-flz_core/src/relay/instance.rs::with_options 71
+flz_core/src/relay/instance.rs::with_options 70
 flz_core_ffi/src/bin/flz-fake-controller.rs::parse 91
 flz_nif/src/driver/mod.rs::handle_command 53
 flz_nif/src/driver/quic.rs::accept_streams 58

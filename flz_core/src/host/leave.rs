@@ -67,7 +67,7 @@ pub fn pending_leave(relay: &str) -> Option<Arc<PendingLeave>> {
 /// holds the Cell's gates and removes its key only after, so a Cell minted
 /// again under the key is never handed work before the host dropped the old
 /// state. A leave no host has taken when the relay stops is withdrawn: the
-/// relay's own leave, sent once its reapers are done, covers the Cell. MUST
+/// relay's own leave, sent once its sweeps are done, covers the Cell. MUST
 /// run under the cell gate.
 pub fn cell_left_locked(slot: &Arc<CellSlot>) {
     let leave = schema::ActivationKind::Leave { whole_relay: false };

@@ -1,16 +1,15 @@
 //! `RelayInstance`: one bound relay of either kind — its Cells by
-//! tasklet and mode, its partition range, its reapers, and for a steps relay its
+//! tasklet and mode, its partition range, its idle sweeps, and for a steps relay its
 //! run — and the partition hash the controller's placement mirrors bit for
 //! bit.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::thread::JoinHandle;
 
 use crate::cell::CellSlot;
 use crate::channel::{BuildCellArgs, TaskletId};
-use crate::dynamic::{spawn_reaper, DynamicCellRegistry};
+use crate::dynamic::DynamicCellRegistry;
 use crate::relay::topology::{CellMode, RelayTopology};
 
 /// Frozen by the cross-language `StableId` spec.
@@ -104,10 +103,9 @@ pub struct RelayInstance {
     pub cell_key_to_idx: Vec<HashMap<&'static str, usize>>,
     /// By `TaskletId`: `Some` for dynamic mode only.
     pub dynamic_registries: Vec<Option<Arc<DynamicCellRegistry>>>,
-    /// Set once the instance stops on this runner: its reapers end, its Cells
+    /// Set once the instance stops on this runner: its sweeps end, its Cells
     /// run nothing more and its parks stop waiting on the controller.
     background_stop: Arc<AtomicBool>,
-    background_handles: Mutex<Vec<JoinHandle<()>>>,
     /// The host prepare crossing's staging; a typed class never touches it.
     pub host_prepare: Mutex<crate::host::HostPrepareState>,
     /// Retry ladders and parks the park owner holds for this instance, each
@@ -189,7 +187,7 @@ impl RelayInstance {
                 dynamic_registries.push(registry);
             }
 
-            let background_handles = spawn_reapers(&topology, &dynamic_registries);
+            arm_sweeps(&topology, &dynamic_registries);
 
             RelayInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
@@ -201,7 +199,6 @@ impl RelayInstance {
                 cell_key_to_idx,
                 dynamic_registries,
                 background_stop,
-                background_handles: Mutex::new(background_handles),
                 keeps_state,
                 seq: INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed),
                 idle: Default::default(),
@@ -290,17 +287,11 @@ impl RelayInstance {
         self.keeps_state && crate::runner::coordinator_installed()
     }
 
-    /// Stop and join the reapers; idempotent.
+    /// Stop the idle sweeps and wait out one in flight; idempotent.
     pub fn shutdown_background_threads(&self) {
         self.signal_background_stop();
-        let handles = std::mem::take(
-            &mut *self
-                .background_handles
-                .lock()
-                .unwrap_or_else(|p| p.into_inner()),
-        );
-        for handle in handles {
-            let _ = handle.join();
+        for registry in self.dynamic_registries.iter().flatten() {
+            registry.sweep_settled();
         }
     }
 
@@ -316,19 +307,14 @@ impl RelayInstance {
     }
 }
 
-/// One reaper per dynamic Tasklet that declares a TTL.
-fn spawn_reapers(
-    topology: &RelayTopology,
-    dynamic_registries: &[Option<Arc<DynamicCellRegistry>>],
-) -> Vec<JoinHandle<()>> {
-    let mut handles: Vec<JoinHandle<()>> = Vec::new();
+/// One idle sweep per dynamic Tasklet that declares a TTL.
+fn arm_sweeps(topology: &RelayTopology, dynamic_registries: &[Option<Arc<DynamicCellRegistry>>]) {
     for (tasklet_id, registry) in dynamic_registries.iter().enumerate() {
         if let (Some(registry), Some(idle_ttl)) = (registry, topology.tasklets[tasklet_id].idle_ttl)
         {
-            handles.push(spawn_reaper(idle_ttl, Arc::clone(registry)));
+            crate::dynamic::arm_sweep(registry, idle_ttl);
         }
     }
-    handles
 }
 
 type TaskletCells = (
