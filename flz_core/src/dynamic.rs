@@ -1,9 +1,9 @@
 //! The dynamic-mode registry: Cells minted on first sight of a key and,
 //! under a TTL, evicted destructively by a sweep the poll core's deferred-wake
-//! list runs. The
-//! invariant: an eviction takes the drain gate and removes the key only while
-//! the mailbox is empty and nothing else holds the Cell, so no item a producer
-//! pushed after the idle check, or pushes later through a Cell it took, is lost.
+//! list runs. The invariant: an eviction takes the drain gate and removes the
+//! key only while the mailbox is empty and nothing else holds the Cell, so no
+//! item a producer pushed after the idle check, or pushes later through a Cell
+//! it took, is lost.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{fence, AtomicBool, AtomicU64, Ordering};

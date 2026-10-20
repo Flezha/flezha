@@ -370,10 +370,17 @@ impl PollCore {
             .record(WakeKey::after(WAKE_RETRY_BACKOFF_MS, tiebreak), wake);
     }
 
+    /// Record `wake` at `key` and wake blocked pollers to re-compute their
+    /// wait, which the new entry may shorten.
+    fn arm(&self, key: WakeKey, wake: Wake) {
+        self.wakes.record(key, wake);
+        self.notify_waiters();
+    }
+
     /// Arm one processing-time timer; re-arming `(cell, scheduled_at)`
     /// replaces the entry.
     pub fn arm_timer(&self, slot: &Arc<CellSlot>, scheduled_at: u64, stream: Arc<FlezhaStream>) {
-        self.wakes.record(
+        self.arm(
             WakeKey::at(
                 scheduled_at,
                 WakeTiebreak::Timer(Arc::clone(&slot.cell_identity)),
@@ -384,13 +391,12 @@ impl PollCore {
                 scheduled_at,
             },
         );
-        self.notify_waiters();
     }
 
     /// Arm a Cell's interval close at `deadline_ms` on the monotonic clock;
     /// re-arming replaces the entry.
     pub fn arm_interval_close(&self, slot: &Arc<CellSlot>, deadline_ms: u64) {
-        self.wakes.record(
+        self.arm(
             WakeKey::at(
                 deadline_ms,
                 WakeTiebreak::Interval(Arc::clone(&slot.cell_identity)),
@@ -399,7 +405,6 @@ impl PollCore {
                 slot: Arc::downgrade(slot),
             },
         );
-        self.notify_waiters();
     }
 
     /// Disarm one timer. Idempotent; no notify, since dropping an entry can
@@ -426,11 +431,10 @@ impl PollCore {
         if let Some(old) = old.filter(|&old| old != due_at_ms) {
             self.disarm_instance(seq, deadline, old);
         }
-        self.wakes.record(
+        self.arm(
             WakeKey::at(due_at_ms, WakeTiebreak::Instance(seq, deadline)),
             Wake::Instance { instance, deadline },
         );
-        self.notify_waiters();
     }
 
     /// Arm `registry`'s next idle sweep, for Cells idle past `idle_ttl`,
@@ -442,14 +446,13 @@ impl PollCore {
         every: Duration,
     ) {
         let tiebreak = WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed));
-        self.wakes.record(
+        self.arm(
             WakeKey::after(every.as_millis() as u64, tiebreak),
             Wake::Sweep {
                 registry: Arc::downgrade(registry),
                 idle_ttl,
             },
         );
-        self.notify_waiters();
     }
 
     /// Disarm one instance deadline armed for `due_at_ms`. Idempotent.
@@ -477,7 +480,7 @@ impl PollCore {
             .collect()
     }
 
-    /// Drop every timer armed for one Cell, as the reaper evicts it.
+    /// Drop every timer armed for one Cell, as an idle sweep evicts it.
     pub fn discard_cell_timers(&self, cell: &Arc<Vec<u8>>) {
         self.wakes.discard_cell(cell);
     }

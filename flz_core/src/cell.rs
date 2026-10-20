@@ -216,7 +216,7 @@ pub struct CellSlot {
     /// cleared by a leave or a restore fold, after which the host rebuilds.
     pub identity_handed: AtomicBool,
     /// `util::monotonic_ms` of the last successful push; the idle clock of
-    /// the dynamic reaper and of an instance's sleep.
+    /// the dynamic idle sweep and of an instance's sleep.
     pub last_activity_ms: AtomicI64,
     /// `Some` iff the class persists changes; eviction or relay removal
     /// deregisters it.
@@ -257,7 +257,7 @@ impl CellSlot {
 
     /// Take the drain gate when nothing is queued: `false` while a round is
     /// scheduled or running (a retry backoff and a push holdback keep it
-    /// held). The dynamic reaper evicts under the gate this leaves held.
+    /// held). The dynamic idle sweep evicts under the gate this leaves held.
     pub(crate) fn claim_drained(self: &Arc<Self>) -> bool {
         if !self.mailbox.claim_inflight() {
             return false;

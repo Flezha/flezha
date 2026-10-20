@@ -62,14 +62,14 @@ pub(crate) fn admit_in_order(
     true
 }
 
-/// What every admission owes: the count, the reaper's activity stamp, and
+/// What every admission owes: the count, the idle sweep's activity stamp, and
 /// the round claim that schedules the cell when nobody is draining it.
 fn note_admitted(slot: &Arc<CellSlot>) {
     slot.mailbox
         .counters()
         .pushes_total
         .fetch_add(1, Ordering::Relaxed);
-    // Activity stamp for the dynamic-mode reaper and an instance's sleep (one
+    // Activity stamp for the dynamic-mode idle sweep and an instance's sleep (one
     // atomic store).
     slot.last_activity_ms
         .store(crate::util::monotonic_ms(), Ordering::Relaxed);
