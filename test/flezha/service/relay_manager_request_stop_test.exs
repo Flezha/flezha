@@ -8,7 +8,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
   (the cell-quota leak fix), and retains a finished steps relay's state.
 
   A minimal stub stands in for the Overwatch GenServer: it answers
-  `:get_overwatch_state` (kind / runner / cell count). The hard stop itself
+  `:get_overwatch_state` and a stop's `{:cause, _}` (kind / runner / cell count). The hard stop itself
   rides `ProcessHub.stop_children` (the hub stop path removes the declared
   entry before the child terminates), stubbed here at the ProcessHub seam.
   """
@@ -108,6 +108,8 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
 
     assert :ok = RelayManager.stop_relay(@namespace, task_id)
 
+    # Named before the hub stop, in the call that read the Cells.
+    assert_received {:cause, :stop}
     assert_receive {:dealloc, :max_relays, 1}, 500
     assert_receive {:dealloc, :max_cells_per_relay, 2}, 500
   end
@@ -212,7 +214,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     stub_hub_stop(test_pid, task_id)
 
     Flezha.Runner.StreamPool
-    |> stub(:flush_channels, fn runner -> send(test_pid, {:flushed, runner}) end)
+    |> stub(:flush_channels, fn runner, _ms -> send(test_pid, {:flushed, runner}) end)
 
     Quotas
     |> stub(:record_deallocation, fn @namespace, kind, n ->
@@ -241,4 +243,9 @@ defmodule StubOverwatch do
   @impl true
   def handle_call(:get_overwatch_state, _from, {state_reply, _notify} = s),
     do: {:reply, state_reply, s}
+
+  def handle_call({:cause, cause}, _from, {state_reply, notify} = s) do
+    send(notify, {:cause, cause})
+    {:reply, state_reply, s}
+  end
 end

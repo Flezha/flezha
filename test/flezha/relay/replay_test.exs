@@ -154,6 +154,22 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     assert_receive ^scanned, 2_000
     refute_received {:adopted, _, _, _}
   end
+
+  # fails when: arriving by HotSwap is read off the transition under way, so a
+  # later rebind or heal, which names its own cause, replays the WAL over the
+  # state the handover already delivered.
+  test "a relay that arrived by HotSwap restores at no later bind or heal" do
+    arrived = %{state("arrived") | arrived_via_hotswap?: true, cause: :rebind}
+    scanned = expect_scan(self())
+
+    assert :ok = Replay.restore_on_bind(arrived, arrived.builder)
+    refute_received ^scanned
+    assert :ok = Replay.restore_on_bind(%{arrived | arrived_via_hotswap?: false}, arrived.builder)
+    assert_received ^scanned
+
+    reject(&Replay.dispatch_restore/3)
+    assert {:noreply, ^arrived} = Overwatch.handle_cast({:kick_restore, "runner-1"}, arrived)
+  end
 end
 
 defmodule FlezhaTest.Relay.RestoreRefusalTest do

@@ -106,12 +106,12 @@ defmodule Flezha.Service.RelayManager do
     # success shape as before, but a wedged relay now yields a logged
     # `{:error, :timeout}` (with the target's mailbox/current-function) instead
     # of an unhandled exit.
-    with_relay_pid(namespace, relay_id, &overwatch_state/1)
+    with_relay_pid(namespace, relay_id, &call_overwatch(&1, :get_overwatch_state))
   end
 
-  @doc false
-  def overwatch_state(pid),
-    do: SafeCall.bounded(pid, :get_overwatch_state, overwatch_call_timeout_ms())
+  @doc "A bounded call to the Overwatch `pid`: `{:ok, reply}` or `{:error, reason}`."
+  def call_overwatch(pid, request),
+    do: SafeCall.bounded(pid, request, overwatch_call_timeout_ms())
 
   @doc """
   Starts a new relay to the runner.
@@ -300,12 +300,11 @@ defmodule Flezha.Service.RelayManager do
   `RelayCompleted`. `preserve_state: true` keeps the files for a rescale to
   move and `:sealed` also seals a steps relay's journal at its latest committed
   iteration; either closes the writers on the node the relay ran on.
-  `reason: :completed` names a completion to the stop's announcement, and
-  `announce: false` a stop that is not one (a rescale's), as for a start.
-  `overwatch:` is the Overwatch a completion was admitted against: a task can
-  complete before the hub writes the row of the start that ran it, and the hub
-  queues a stop behind a start it sent and has not yet registered. The fallback
-  covers a completion handled on the node that started the relay.
+  `cause:` (`:stop`, `:complete`, `:rescale` or `:failed_start`) decides which
+  steps act. `overwatch:` is the Overwatch a completion was admitted against: a
+  task can complete before the hub writes the row of the start that ran it, and
+  the hub queues a stop behind a start it sent and has not yet registered. The
+  fallback covers a completion handled on the node that started the relay.
   """
   @spec stop_relay(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_relay(namespace, relay_id, opts \\ []) do
@@ -744,7 +743,7 @@ defmodule Flezha.Service.RelayManager do
   @doc false
   def ask_overwatch(namespace, relay_id, request) do
     with_relay_pid(namespace, relay_id, fn pid ->
-      case SafeCall.bounded(pid, request, overwatch_call_timeout_ms()) do
+      case call_overwatch(pid, request) do
         {:ok, reply} -> reply
         {:error, _} = unreachable -> unreachable
       end

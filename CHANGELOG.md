@@ -40,6 +40,15 @@
   finished, but before the node stopped, was admitted; it answers `shutting_down` now. A restart
   of the shutdown coordinator no longer reopens admission either.
 
+### Fixed: a relay's teardown is no longer cut at 5 s
+
+- A relay's controller-side teardown ran under the 5 s a supervisor gives a worker by default,
+  so a slower one was killed before it closed the relay's state writers and plugins. It now has
+  13 s (the relay stop's 15 s less 2 s), and its own steps at most 12 s, so a stop still answers
+  and releases the relay's quota. A relay recorded before this change gets the same bound when
+  it is restored. A namespace stop flushes each runner's stream channels before it stops the
+  relays, as a single relay stop does.
+
 ### Fixed: `flz relay info` reads a relay's phase live
 
 - `Phase:` is read from the relay itself, not from the convergence loop's last verdict, so a

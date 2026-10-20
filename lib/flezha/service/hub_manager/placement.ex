@@ -10,6 +10,7 @@ defmodule Flezha.Service.HubManager.Placement do
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
   alias Flezha.Service.RegistryUpdate
   alias Flezha.State.DurabilityTier
   alias ProcessHub.Service.ProcessRegistry
@@ -159,6 +160,7 @@ defmodule Flezha.Service.HubManager.Placement do
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
+    |> update_in([:child_spec], &Init.with_shutdown/1)
     |> put_in([:metadata, :tag], assigned_runner)
     |> stamp_group(factory_id)
   end

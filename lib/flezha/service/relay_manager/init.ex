@@ -1,8 +1,8 @@
 defmodule Flezha.Service.RelayManager.Init do
   @moduledoc """
   Creating the relay under the hub and settling what the start returned —
-  the `:no_response` retry ladder, the claim-loss concession, and the quiet
-  teardown of a child that lost its claim.
+  the `:no_response` retry ladder, the claim-loss concession, and the stop of
+  a start that failed.
   """
 
   require Logger
@@ -23,7 +23,7 @@ defmodule Flezha.Service.RelayManager.Init do
   # Losing the id claim is not a failed start: another path already runs this
   # relay. Conceding is the WHOLE remedy — the winner is never stopped,
   # restarted, or rebound, which is exactly what the generic failure path
-  # (`stop_child_quietly/2`) would have done to it.
+  # (the `:failed_start` stop) would have done to it.
   #
   # A claim refused with no live winner behind it is a different thing — a
   # stale registry row — and stays an error so it is not silently accepted.
@@ -246,7 +246,7 @@ defmodule Flezha.Service.RelayManager.Init do
       restart: :transient
     }
 
-    result = start_declared(namespace, child_spec, start_metadata(relay), relay.id)
+    result = start_declared(namespace, with_shutdown(child_spec), start_metadata(relay), relay.id)
     finalize_init_relay(exist?, namespace, relay, result, announce?)
   end
 
@@ -353,7 +353,7 @@ defmodule Flezha.Service.RelayManager.Init do
             "post-init continue (reason=#{inspect(reason)})"
         )
 
-        _ = stop_child_quietly(namespace, relay.id)
+        _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start, overwatch: pid)
         {:error, start_failure(relay.id, {:relay_exited, reason})}
     end
 
@@ -373,7 +373,7 @@ defmodule Flezha.Service.RelayManager.Init do
          }}
 
       {:error, reason} ->
-        _ = stop_child_quietly(namespace, relay.id)
+        _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start, overwatch: pid)
         {:error, start_failure(relay.id, reason)}
 
       answered ->
@@ -399,7 +399,7 @@ defmodule Flezha.Service.RelayManager.Init do
           "Status: #{inspect(result.status)}"
       )
 
-      _ = stop_child_quietly(namespace, relay.id)
+      _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start)
       {:error, start_failure(relay.id, reason)}
     end
   end
@@ -416,16 +416,15 @@ defmodule Flezha.Service.RelayManager.Init do
   defp start_failure(relay_id, reason), do: {:start_failed, relay_id, reason}
 
   # The registry refused the id: a live instance already holds it. Taking the
-  # failure path on that verdict would call `stop_child_quietly/2` on the id —
-  # killing the winner — which is precisely the start-authority violation the
-  # claim exists to prevent.
+  # failure path on that verdict would stop the id — killing the winner — which
+  # is precisely the start-authority violation the claim exists to prevent.
   def claim_loss?(:already_started), do: true
   def claim_loss?({:already_started, _ids}), do: true
   def claim_loss?({:id_in_use, _id}), do: true
   def claim_loss?(_reason), do: false
 
-  defp stop_child_quietly(namespace, relay_id) do
-    _ = Teardown.hub_stop_children(namespace, [relay_id], 5_000)
-    :ok
-  end
+  @doc "`child_spec` bounded by the shutdown wait its Overwatch's `terminate/2` walk runs under."
+  @spec with_shutdown(map()) :: map()
+  def with_shutdown(child_spec),
+    do: Map.put(child_spec, :shutdown, Durations.get(:overwatch_shutdown_ms))
 end

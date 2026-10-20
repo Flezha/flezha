@@ -1,29 +1,37 @@
 defmodule FlezhaTest.Service.RelayManagerTeardownTest do
   @moduledoc """
-  The `:state_dir` step of a relay stop, driven on its own: what a stop
+  A relay stop's steps: the `:state_dir` step driven on its own (what a stop
   owes the instance's durable writers whether its files are deleted or kept for
-  a rescale to move.
+  a rescale to move), the steps a failed start's stop runs, and the namespace
+  stop's flush.
   """
   # async: false: a shared on-disk root and the node-wide writer registry.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
+  use Mimic
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias FlezhaTest.Helper.NodeTestHelper
 
+  alias Flezha.AuthZ.Quotas
+  alias Flezha.Runner.StreamPool
+  alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Shutdown
   alias Flezha.State.{InputLog, Paths, Supervisor, TaskJournal}
+  alias FlezhaTest.Helper.Telemetry
 
   defp state_dir_step(), do: Enum.filter(Teardown.shutdown_steps(), &(&1.name == :state_dir))
 
-  defp stop(instance, preserve?, node \\ node()) do
+  # `overwatch` only names the node the step reaches.
+  defp stop(instance, preserve?, overwatch \\ self()) do
     target = %{
       namespace: "_system",
       relay_id: instance,
-      node: node,
+      overwatch: overwatch,
       runner_id: nil,
       preserve_state?: preserve?,
+      cause: :stop,
       cell_count: 0
     }
 
@@ -105,7 +113,7 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     :ok = :erpc.call(peer_node, TaskJournal, :append_iter_committed, [instance, 0, 0, []])
     assert [_writer] = :erpc.call(peer_node, Supervisor, :live_writers, [instance])
 
-    stop(instance, true, peer_node)
+    stop(instance, true, Node.spawn(peer_node, fn -> :ok end))
 
     assert wait_until(
              fn -> :erpc.call(peer_node, Supervisor, :live_writers, [instance]) == [] end,
@@ -115,5 +123,69 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     assert :erpc.call(peer_node, File, :exists?, [Paths.journal_path(instance)])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # The hub stop seam: every stop pipes `ProcessHub.stop_children` into
+  # `Future.await`.
+  defp stub_hub_stop(test_pid) do
+    stub(ProcessHub, :stop_children, fn _hub, ids, _opts ->
+      send(test_pid, {:hub_stop, ids})
+      {:stopped, ids}
+    end)
+
+    stub(ProcessHub.Future, :await, fn {:stopped, ids} ->
+      %ProcessHub.StopResult{status: :ok, stopped: Enum.map(ids, &{&1, [node()]}), errors: []}
+    end)
+  end
+
+  # fails when: the stop of a start that failed flushes, releases a quota the
+  # start never took, deletes state the next start owns, or announces a stop.
+  test "a failed start's stop names its cause and runs the hub stop alone" do
+    test_pid = self()
+    instance = "teardown_failed_start_#{System.unique_integer([:positive])}"
+    assert :ok = TaskJournal.append_iter_committed(instance, 0, 0, [])
+    stub_hub_stop(test_pid)
+    stub(Quotas, :record_deallocation, fn _ns, kind, _n -> send(test_pid, {:dealloc, kind}) end)
+    stub(StreamPool, :flush_channels, fn runner, _ms -> send(test_pid, {:flushed, runner}) end)
+    Telemetry.capture([:flezha, :relay, :stopped])
+
+    # A bound relay with Cells: every step it skips would have acted.
+    overwatch =
+      spawn_link(fn ->
+        receive do
+          {:"$gen_call", from, {:cause, cause}} ->
+            send(test_pid, {:told, cause})
+            GenServer.reply(from, %{builder: %{cells: ["a"]}, runner_id: "runner-1"})
+        end
+      end)
+
+    assert :ok =
+             Teardown.stop_relay("_system", instance, cause: :failed_start, overwatch: overwatch)
+
+    assert_received {:told, :failed_start}
+    assert_received {:hub_stop, [^instance]}
+    refute_received {:flushed, _}
+    refute_received {:dealloc, _}
+    refute_received {:telemetry, _, _, _}
+    assert File.exists?(Paths.journal_path(instance))
+  end
+
+  # fails when: a namespace stop takes its relays down with frames still queued
+  # in their runners' stream channels.
+  test "stop_all flushes each runner's stream channels before its one hub call" do
+    test_pid = self()
+    namespace = "teardown_all_#{System.unique_integer([:positive])}"
+    ids = for i <- 1..3, do: "#{namespace}_#{i}"
+    runners = %{Enum.at(ids, 0) => "runner-1", Enum.at(ids, 1) => "runner-1"}
+
+    stub(HubManager, :get_all_relays, fn ^namespace -> Enum.map(ids, &{&1, self()}) end)
+    stub(HubManager, :relay_runner_tag, fn ^namespace, id -> runners[id] end)
+    stub(StreamPool, :flush_channels, fn runner, _ms -> send(test_pid, {:flushed, runner}) end)
+    stub_hub_stop(test_pid)
+
+    assert :ok = Teardown.stop_all(namespace, 5_000)
+
+    assert {:messages, [{:flushed, "runner-1"}, {:hub_stop, ^ids}]} =
+             Process.info(self(), :messages)
   end
 end

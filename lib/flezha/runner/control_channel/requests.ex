@@ -149,7 +149,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     DurableTasks.start(fn ->
       drain_owed_outputs(runner_id, relay_id)
 
-      case RelayManager.stop_relay(namespace, relay_id, reason: :completed, overwatch: overwatch) do
+      case RelayManager.stop_relay(namespace, relay_id, cause: :complete, overwatch: overwatch) do
         :ok ->
           :ok
 

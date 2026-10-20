@@ -5,8 +5,8 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   `RelayManager.start_relay`: a ping that answers returns `{:ok, _}`; a
   ping that fails parks the relay with its reason, declares the park to the
   convergence loop, and surfaces `{:error, {:ping_failed, _}}` through the
-  existing user-action cleanup path (`stop_child_quietly`). The un-park is
-  the loop's `rebind_relay`, driven here through `:rebind`.
+  failed start's stop. The un-park is the loop's `rebind_relay`, driven here
+  through `:rebind`. A process's departure and its shutdown bound close it.
 
   Uses the `:overwatch_ping_fn` Application-env hook the Overwatch consults
   during a startup attempt.
@@ -158,8 +158,8 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
        %{test_pid: test_pid, ets: ets} do
     # Start the relay so the readiness gate passes but the START ping fails,
     # parking it (alive, halt_reason set). Started directly (not via
-    # RelayManager) so the parked-and-alive GenServer is not
-    # stop_child_quietly'd — this is the cold-restart parked state.
+    # RelayManager) so the parked-and-alive GenServer is not stopped as a
+    # failed start — this is the cold-restart parked state.
     Application.put_env(
       :flezha,
       :overwatch_ping_fn,
@@ -543,6 +543,132 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
                inspect(overwatch_state(pid).halt_reason)
 
       assert overwatch_state(pid).runner_id == target
+    end
+  end
+
+  describe "how a process leaves its relay" do
+    # fails when: a cause departs other than its row, a handover stops reading
+    # as a move, or a process no stop named (the hub's reconcile, a namespace
+    # stop) stops reading its declared entry.
+    test "departure/1 answers for every cause, with and without a declared entry" do
+      named = [{true, :stop, :moved}, {false, :move, :moved}]
+
+      stops =
+        for cause <- [:stop, :complete, :rescale, :failed_start], do: {false, cause, :stopped}
+
+      unnamed = [nil, :start, :restart, :arrive, :rebind, :wake, :rewind]
+
+      for declared? <- [true, false] do
+        rows = if declared?, do: [%{id: "departing", factory_id: @factory}], else: []
+        stub(HubManager, :declared_relays, fn "departure-ns" -> rows end)
+
+        scanned =
+          for cause <- unnamed, do: {false, cause, if(declared?, do: :moved, else: :stopped)}
+
+        for {handed_over?, cause, departs} <- named ++ stops ++ scanned do
+          state = %Overwatch{
+            id: "departing",
+            namespace: "departure-ns",
+            handed_over?: handed_over?,
+            cause: cause
+          }
+
+          assert {cause, declared?, Lifecycle.departure(state)} == {cause, declared?, departs}
+        end
+      end
+    end
+
+    # fails when: a stop whose hub stop failed leaves its cause on a relay that
+    # still runs, so a later end the hub drives reads as this stop's.
+    test "a failed hub stop leaves the relay running with no cause" do
+      Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id -> {:ok, :pong} end)
+      id = "hub-stop-refused-#{System.unique_integer([:positive])}"
+
+      assert {:ok, _} =
+               RelayManager.start_relay(@namespace, %Builder{id: id, factory_id: @factory})
+
+      {:ok, pid} = RelayManager.get_relay_pid(@namespace, id)
+
+      stub(ProcessHub, :stop_children, fn
+        _hub, [^id], _opts -> :refused
+        hub, ids, opts -> Mimic.call_original(ProcessHub, :stop_children, [hub, ids, opts])
+      end)
+
+      stub(ProcessHub.Future, :await, fn
+        :refused -> %ProcessHub.StopResult{status: :error, stopped: [], errors: [{id, :refused}]}
+        future -> Mimic.call_original(ProcessHub.Future, :await, [future])
+      end)
+
+      assert {:error, {:stop_failed, ^id, :hub_stop, :refused}} =
+               RelayManager.stop_relay(@namespace, id)
+
+      assert %{cause: nil, phase: :running} = state = overwatch_state(pid)
+      assert Lifecycle.departure(state) == :moved
+    end
+  end
+
+  describe "the Overwatch's shutdown bound" do
+    # Adds `run` to the `:process` walk at `order`, for `relay_id`'s process only.
+    defp hold_process_walk(relay_id, steps) do
+      key = {Flezha.Shutdown, :steps}
+      declared = Flezha.Shutdown.all_steps()
+
+      held =
+        for {order, run} <- steps do
+          %{
+            scope: :process,
+            order: order,
+            name: :"held_#{order}",
+            module: __MODULE__,
+            run: fn
+              {%Overwatch{id: ^relay_id}, _reason}, budget -> run.(budget)
+              _other, _budget -> :ok
+            end
+          }
+        end
+
+      :persistent_term.put(key, Enum.sort_by(held ++ declared, &{&1.scope, &1.order}))
+      on_exit(fn -> :persistent_term.put(key, declared) end)
+    end
+
+    defp start_bound(id) do
+      Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id -> {:ok, :pong} end)
+
+      assert {:ok, _} =
+               RelayManager.start_relay(@namespace, %Builder{id: id, factory_id: @factory})
+    end
+
+    # fails when: the Overwatch's child spec keeps the OTP worker default, so
+    # the supervisor kills a teardown walk at 5 s and its later steps never run.
+    test "a 6 s process step runs to the end of the walk", %{test_pid: test_pid} do
+      id = "slow-walk-#{System.unique_integer([:positive])}"
+
+      hold_process_walk(id, [
+        {1, fn _budget -> Process.sleep(6_000) end},
+        {45, fn _budget -> send(test_pid, {:walk_finished, id}) end}
+      ])
+
+      start_bound(id)
+      assert :ok = RelayManager.stop_relay(@namespace, id)
+      assert_received {:walk_finished, ^id}
+    end
+
+    # fails when: the hub stop waits no longer than the Overwatch's bound, so a
+    # walk that ends inside its own budget still fails the stop and keeps the
+    # relay's quota.
+    test "a walk held to its budget still ends in a stop that releases the quota",
+         %{test_pid: test_pid} do
+      id = "budget-walk-#{System.unique_integer([:positive])}"
+      hold_process_walk(id, [{1, fn budget -> Process.sleep(budget - 500) end}])
+
+      stub(Flezha.AuthZ.Quotas, :record_deallocation, fn namespace, kind, n ->
+        send(test_pid, {:dealloc, namespace, kind})
+        Mimic.call_original(Flezha.AuthZ.Quotas, :record_deallocation, [namespace, kind, n])
+      end)
+
+      start_bound(id)
+      assert :ok = RelayManager.stop_relay(@namespace, id)
+      assert_received {:dealloc, @namespace, :max_relays}
     end
   end
 end

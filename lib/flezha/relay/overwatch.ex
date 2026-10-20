@@ -440,14 +440,16 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_call(:get_runner, _from, %__MODULE__{runner_id: runner} = state) do
-    {:reply, runner, state}
-  end
+  def handle_call(:get_runner, _from, %__MODULE__{runner_id: runner} = state),
+    do: {:reply, runner, state}
 
   @impl true
-  def handle_call(:get_overwatch_state, _from, state) do
-    {:reply, state, state}
-  end
+  def handle_call(:get_overwatch_state, _from, state), do: {:reply, state, state}
+
+  # A stop's cause, named before the hub stops this process; `nil` undoes it.
+  @impl true
+  def handle_call({:cause, cause}, from, %__MODULE__{} = state),
+    do: handle_call(:get_overwatch_state, from, %{state | cause: cause})
 
   # Live read of Cell state, narrowed by `selector` (`%{}` = every Tasklet,
   # the migration/handover shape). Always answered as `{:ok, json, change_seq}`
@@ -508,9 +510,7 @@ defmodule Flezha.Relay.Overwatch do
   # blocking call: the effectively-once tier parks ingestion at zero source
   # credit, which only back-pressures the source if it awaits the reply.
   @impl true
-  def handle_call(:effectively_once?, _from, state) do
-    {:reply, state.effectively_once, state}
-  end
+  def handle_call(:effectively_once?, _from, state), do: {:reply, state.effectively_once, state}
 
   # Blocking ingest for source adapters, which act on "accepted" vs "halted" and
   # nothing finer — the same path as the confirming entry point below, reported

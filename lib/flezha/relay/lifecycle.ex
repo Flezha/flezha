@@ -46,6 +46,8 @@ defmodule Flezha.Relay.Lifecycle do
 
   @behaviour Flezha.Shutdown.Step
 
+  @named_stops [:stop, :complete, :rescale, :failed_start]
+
   # ---------------------------------------------------------------
   # Process API — the lifecycle messages the Overwatch answers to
   # ---------------------------------------------------------------
@@ -697,9 +699,13 @@ defmodule Flezha.Relay.Lifecycle do
     :ok
   end
 
-  defp departure(%Overwatch{handed_over?: true}), do: :moved
+  @doc "How this process leaves its relay; with no stop named, by its declared entry."
+  @spec departure(Overwatch.t()) :: :moved | :stopped
+  def departure(%Overwatch{handed_over?: true}), do: :moved
+  def departure(%Overwatch{cause: :move}), do: :moved
+  def departure(%Overwatch{cause: cause}) when cause in @named_stops, do: :stopped
 
-  defp departure(state) do
+  def departure(state) do
     declared? = Enum.any?(HubManager.declared_relays(state.namespace), &(&1.id == state.id))
     if declared?, do: :moved, else: :stopped
   end

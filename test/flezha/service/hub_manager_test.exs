@@ -19,6 +19,7 @@ defmodule Flezha.Service.HubManagerTest do
 
   use FlezhaTest.Case, fixtures: [:env], async: false
 
+  alias Flezha.Config.Durations
   alias Flezha.Relay.Builder
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
@@ -285,6 +286,23 @@ defmodule Flezha.Service.HubManagerTest do
       # Pure in-memory rewrite should be sub-millisecond; 5 ms is a
       # generous CI ceiling.
       assert median_us < 5_000
+    end
+  end
+
+  describe "alter_child_data/2" do
+    # fails when: a relay spec stored before the Overwatch carried a shutdown
+    # bound restores with the OTP worker default, which kills its teardown at 5 s.
+    test "a restored relay spec without a shutdown bound gets the Overwatch's" do
+      stored = cspec({@namespace, %Builder{relay_builder([]) | factory_id: "store_input"}})
+      refute Map.has_key?(stored, :shutdown)
+
+      %{child_spec: restored} =
+        HubManager.alter_child_data(:ignored_hub_id, %{child_spec: stored, metadata: %{}})
+
+      # Inside the relay stop's hub stop, around the process teardown.
+      assert restored.shutdown == Durations.get(:overwatch_shutdown_ms)
+      assert restored.shutdown > Durations.get(:stop_process_budget_ms)
+      assert restored.shutdown < Durations.get(:stop_release_timeout_ms) - 1_000
     end
   end
 

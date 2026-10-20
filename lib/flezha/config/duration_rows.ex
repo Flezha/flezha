@@ -250,9 +250,10 @@ defmodule Flezha.Config.DurationRows do
     {:shutdown_finalise_call_ms, :ms, 5_000, []},
     {:signal_handler_status_call_ms, :ms, 5_000, []},
     {:stop_release_timeout_ms, :ms, 15_000, []},
-    # A process teardown runs inside the relay stop, keeping 1 s of slack
-    # for the stop itself to answer.
-    {:stop_process_budget_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -1_000}},
+    # Nested 1 s apart: a relay stop's hub stop, after its flush of at most 1 s,
+    # outwaits the Overwatch's shutdown bound, which outwaits its teardown.
+    {:overwatch_shutdown_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -2_000}},
+    {:stop_process_budget_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -3_000}},
 
     # ---- authentication and authorization ----------------------------------
     # How far ahead of an expiry a token is announced as expiring, and how often

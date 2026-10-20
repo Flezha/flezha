@@ -196,7 +196,8 @@ defmodule Flezha.Relay.PartitionGroup do
   end
 
   # A rescale's members are the group it moved, not relays started or
-  # stopped: it starts them, as it stops them, with `announce: false`.
+  # stopped: it starts them with `announce: false`, as it stops them with
+  # `cause: :rescale`.
   defp start_members(namespace, relay, ranges, plugins_fun, start_opts \\ []) do
     with {:ok, started, _skipped} <-
            run_member_starts(
@@ -564,7 +565,7 @@ defmodule Flezha.Relay.PartitionGroup do
   defp stop_members(namespace, members, sealed) do
     Enum.each(members, fn %{id: id} ->
       keep = if id in sealed, do: :sealed, else: true
-      RelayManager.stop_relay(namespace, id, preserve_state: keep, announce: false)
+      RelayManager.stop_relay(namespace, id, preserve_state: keep, cause: :rescale)
     end)
 
     await_ids_released(

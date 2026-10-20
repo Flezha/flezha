@@ -43,9 +43,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
   # No Overwatch is admitted in these tests, so the teardown passes `overwatch: nil`.
   defp stub_stop_relay(test_pid) do
-    stub(RelayManager, :stop_relay, fn @namespace,
-                                       relay_id,
-                                       [reason: :completed, overwatch: nil] ->
+    stub(RelayManager, :stop_relay, fn @namespace, relay_id, [cause: :complete, overwatch: nil] ->
       send(test_pid, {:stop_relay_called, relay_id})
       :ok
     end)

@@ -107,15 +107,15 @@ defmodule Flezha.Runner.StreamPool do
   ahead of it were handled. `:stream_ref_status` is the cheapest question a
   channel already answers.
 
-  The budget is the window `Flezha.Convergence.StallClassifier` declares a
+  The default budget is the window `Flezha.Convergence.StallClassifier` declares a
   driver loop frozen in: a channel silent that long is not about to answer,
   and the whole barrier stays well inside the 30 s window the same classifier
   calls a data-plane stall. A teardown must not outlive the wait it replaced.
   """
 
-  @spec flush_channels(binary()) :: :ok
-  def flush_channels(runner_id),
-    do: call_channels(runner_id, :stream_ref_status, Durations.get(:stream_pool_flush_budget_ms))
+  @spec flush_channels(binary(), non_neg_integer()) :: :ok
+  def flush_channels(runner_id, budget_ms \\ Durations.get(:stream_pool_flush_budget_ms)),
+    do: call_channels(runner_id, :stream_ref_status, budget_ms)
 
   @doc """
   Walk `candidate_names` and bind `stream_ref` to the first channel currently

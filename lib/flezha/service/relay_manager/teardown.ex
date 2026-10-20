@@ -2,9 +2,9 @@ defmodule Flezha.Service.RelayManager.Teardown do
   @moduledoc """
   What a relay stop owes, as the `:relay` steps of the shutdown plan:
   the runner's stream channels flushed, the child stopped through the hub, the
-  state directory reclaimed, and the quota released — each once, in that
-  order. The `:namespace` walk stops every child of a namespace through the
-  same seam. `request_stop/2` and `stop_relay/3` run the stop verbs there.
+  state directory reclaimed, the quota released and the stop announced — each
+  once, in that order, as far as its cause owes them. The `:namespace` walk
+  stops every child of a namespace through the same seam. `request_stop/2` and `stop_relay/3` run the stop verbs there.
   """
 
   alias Flezha.AuthZ.Quotas
@@ -22,20 +22,18 @@ defmodule Flezha.Service.RelayManager.Teardown do
   @behaviour Flezha.Shutdown.Step
 
   @typedoc """
-  The `:relay` walk's target: the relay, the node its Overwatch ran
-  on, the runner it is bound to (or `nil`), whether its state stays on disk (a
-  rescale moving it, `:sealed` for a steps relay survivor), whether controller
-  plugins are told of the stop and why it stops (`:stopped` or `:completed`),
-  and the Cell count its start allocated.
+  The `:relay` walk's target: the relay, its Overwatch (`nil` for a start that
+  never ran one), the runner it is bound to (or `nil`), whether its state stays
+  on disk (a rescale moving it, `:sealed` for a steps relay survivor), why it
+  stops, and the Cell count its start allocated.
   """
   @type target :: %{
           namespace: binary(),
           relay_id: binary(),
-          node: node(),
+          overwatch: pid() | nil,
           runner_id: binary() | nil,
           preserve_state?: boolean() | :sealed,
-          announce: boolean(),
-          reason: :stopped | :completed,
+          cause: :stop | :complete | :rescale | :failed_start,
           cell_count: non_neg_integer()
         }
 
@@ -51,32 +49,35 @@ defmodule Flezha.Service.RelayManager.Teardown do
     ]
   end
 
+  # The steps a stop's cause runs: a rescale is no stop to announce.
+  defp acts?(:failed_start, step), do: step == :hub_stop
+  defp acts?(:rescale, step), do: step != :announce
+  defp acts?(cause, _step) when cause in [:stop, :complete], do: true
+
   # Flush the runner's stream channels before the child is deregistered: a
   # frame already queued there is routed, never counted, so nothing the runner
-  # wrote is lost to the teardown (`fix-steps-teardown-drain`).
+  # wrote is lost to the teardown. Bounded to 1 s, so the hub stop keeps the
+  # rest of the budget for the Overwatch's own shutdown bound.
   defp stream_flush_step(%{runner_id: nil}, _budget), do: :ok
 
-  defp stream_flush_step(%{runner_id: runner_id}, _budget) do
-    _ = StreamPool.flush_channels(runner_id)
+  defp stream_flush_step(%{runner_id: runner_id}, budget) do
+    _ = StreamPool.flush_channels(runner_id, min(budget, 1_000))
     :ok
   catch
     # A runner whose channels are already gone has nothing left to flush.
     _kind, _reason -> :ok
   end
 
-  defp hub_stop_step(%{namespace: namespace, relay_id: relay_id}, budget) do
-    case hub_stop_children(namespace, [relay_id], budget) do
-      :ok ->
-        :ok
+  defp hub_stop_step(%{namespace: namespace, relay_id: relay_id} = target, budget) do
+    with {:error, failure} <- hub_stop_children(namespace, [relay_id], budget) do
+      # Still running, the relay must not end later as stopped by this stop.
+      if target.overwatch, do: RelayManager.call_overwatch(target.overwatch, {:cause, nil})
 
-      {:error, errors} when is_list(errors) ->
-        case List.keyfind(errors, relay_id, 0) do
-          {_cid, reason} -> {:error, reason}
-          nil -> {:error, :stop_failed}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+      case is_list(failure) && List.keyfind(failure, relay_id, 0) do
+        {_cid, reason} -> {:error, reason}
+        nil -> {:error, :stop_failed}
+        false -> {:error, failure}
+      end
     end
   end
 
@@ -84,7 +85,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
   # stop issued from another controller is not.
   defp state_dir_step(target, budget) do
     :erpc.call(
-      target.node,
+      node(target.overwatch),
       __MODULE__,
       :reclaim_state_dir,
       [target.relay_id, target.preserve_state?],
@@ -125,35 +126,40 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   # Once every step before it ran: a deliberate stop or a completion is told to
   # controller plugins.
-  defp announce_step(%{announce: true} = target, _budget) do
+  defp announce_step(target, _budget) do
     :telemetry.execute([:flezha, :relay, :stopped], %{count: 1}, %{
       namespace: target.namespace,
       relay: target.relay_id,
-      reason: target.reason
+      reason: if(target.cause == :complete, do: :completed, else: :stopped)
     })
   end
-
-  defp announce_step(_not_told, _budget), do: :ok
 
   defp relays_step(%{namespace: namespace}, budget), do: stop_all(namespace, budget)
 
   @doc """
-  Stop every relay in `namespace` through the hub, in one call, and
-  reclaim each one's state directory. Quotas are not released: the namespace
-  is going away with its ledger.
+  Stop every relay in `namespace` through the hub, in one call after each
+  runner's stream channels are flushed, and reclaim each one's state directory.
+  Quotas are not released: the namespace is going away with its ledger.
   """
   @spec stop_all(binary(), non_neg_integer()) :: :ok
   def stop_all(namespace, budget) do
-    relay_ids =
-      namespace |> HubManager.get_all_relays() |> Enum.map(fn {id, _pid} -> id end)
+    deadline = System.monotonic_time(:millisecond) + budget
+    relay_ids = namespace |> HubManager.get_all_relays() |> Enum.map(&elem(&1, 0))
 
     if relay_ids != [] do
-      _ = hub_stop_children(namespace, relay_ids, budget)
+      relay_ids
+      |> Enum.map(&HubManager.relay_runner_tag(namespace, &1))
+      |> Enum.uniq()
+      |> Enum.each(&stream_flush_step(%{runner_id: &1}, remaining(deadline)))
+
+      _ = hub_stop_children(namespace, relay_ids, remaining(deadline))
       Enum.each(relay_ids, &delete_relay_state_dir/1)
     end
 
     :ok
   end
+
+  defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   # The ONE seam flezha stops children through: the hub's precommit removes
   # each declared-set entry BEFORE anything terminates (remove-before-terminate),
@@ -201,10 +207,6 @@ defmodule Flezha.Service.RelayManager.Teardown do
   # as relay_class. A finished steps relay keeps its state and
   # completion record for the retention window so the outcome stays
   # inspectable; `Flezha.State.Retention` reclaims it once the window elapses.
-  #
-  # `child_unregistered_hook` deliberately does NOT call this — HotSwap
-  # source-side and redistribution-away preserve files so the
-  # destination (or next host) can pull them via WAL-follows-relay.
   def delete_relay_state_dir(relay_id) do
     # Retained or deleted, the writer processes go with the relay.
     Flezha.State.Supervisor.close_writers(relay_id)
@@ -242,23 +244,26 @@ defmodule Flezha.Service.RelayManager.Teardown do
   @doc "`RelayManager.stop_relay/3` on the hosting node: the `:relay` walk."
   @spec stop_relay(binary(), binary(), keyword()) :: :ok | {:error, term()}
   def stop_relay(namespace, relay_id, opts) do
-    with {:ok, relay_pid} <- stop_pid(namespace, relay_id, Keyword.get(opts, :overwatch)) do
-      # Read before the teardown removes the relay: the flush needs its
-      # runner, the quota step the Cells its start allocated.
-      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid)
+    cause = Keyword.get(opts, :cause, :stop)
+
+    with {:ok, relay_pid} <- stop_pid(namespace, relay_id, cause, Keyword.get(opts, :overwatch)) do
+      # Told why it ends and read in one call: the flush needs its runner, the
+      # quota step the Cells its start allocated.
+      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid, cause)
 
       target = %{
         namespace: namespace,
         relay_id: relay_id,
-        node: node(relay_pid),
+        overwatch: relay_pid,
         runner_id: runner_id,
         preserve_state?: Keyword.get(opts, :preserve_state, false),
-        announce: Keyword.get(opts, :announce, true),
-        reason: Keyword.get(opts, :reason, :stopped),
+        cause: cause,
         cell_count: cell_count
       }
 
-      case Shutdown.run(:relay, target, Shutdown.stop_timeout_ms()) do
+      steps = Enum.filter(Shutdown.steps(:relay), &acts?(cause, &1.name))
+
+      case Shutdown.run(:relay, target, Shutdown.stop_timeout_ms(), steps) do
         {:ok, _report} ->
           :ok
 
@@ -271,16 +276,21 @@ defmodule Flezha.Service.RelayManager.Teardown do
     end
   end
 
-  defp stop_pid(namespace, relay_id, overwatch) do
+  # A failed start's child may never have registered: its start's pid, if any.
+  defp stop_pid(_namespace, _relay_id, :failed_start, overwatch), do: {:ok, overwatch}
+
+  defp stop_pid(namespace, relay_id, _cause, overwatch) do
     case RelayManager.get_relay_pid(namespace, relay_id) do
       {:error, {:relay_not_found, _, _}} when is_pid(overwatch) -> {:ok, overwatch}
       found_or_error -> found_or_error
     end
   end
 
-  defp stop_facts(namespace, relay_id, relay_pid) do
+  defp stop_facts(_namespace, _relay_id, nil, _cause), do: {nil, 0}
+
+  defp stop_facts(namespace, relay_id, relay_pid, cause) do
     {runner_id, relay} =
-      case RelayManager.overwatch_state(relay_pid) do
+      case RelayManager.call_overwatch(relay_pid, {:cause, cause}) do
         {:ok, %{builder: builder} = ow} ->
           {Map.get(ow, :runner_id), builder}
 
@@ -292,9 +302,6 @@ defmodule Flezha.Service.RelayManager.Teardown do
           end
       end
 
-    {normalize_runner(runner_id), Admission.cell_count(relay)}
+    {if(is_binary(runner_id), do: runner_id), Admission.cell_count(relay)}
   end
-
-  defp normalize_runner(runner_id) when is_binary(runner_id), do: runner_id
-  defp normalize_runner(_), do: nil
 end
