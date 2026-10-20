@@ -553,19 +553,14 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, %__MODULE__{state | snapshot: binary}}
   end
 
-  # A relay that arrived via HotSwap handover already received its state
-  # in-band (`alter_handover_state` ships `MigrationDeserialization`); a WAL
-  # replay on top would apply every change a second time. Skip — same guard
-  # as the bind-time restore dispatch.
-  def handle_cast({:kick_restore, _runner_id}, %__MODULE__{arrived_via_hotswap?: true} = state) do
-    {:noreply, state}
-  end
-
   # External callers (the convergence loop's `resync_runner` heal) trigger a fresh
   # per-Cell replay against the bound runner without knowing this process's
-  # internals. Used by `Flezha.State.Recovery.resync_for_overwatch/2`.
+  # internals. Used by `Flezha.State.Recovery.resync_for_overwatch/2`. A relay a
+  # handover carried has no durable restore to replay (`Replay.carrier/1`).
   def handle_cast({:kick_restore, runner_id}, %__MODULE__{} = state) do
-    Replay.dispatch_restore(state, state.builder.opts, runner_id)
+    if :durable in Replay.carrier(state),
+      do: Replay.dispatch_restore(state, state.builder.opts, runner_id)
+
     {:noreply, state}
   end
 

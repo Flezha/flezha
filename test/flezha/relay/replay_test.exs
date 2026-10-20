@@ -170,6 +170,33 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     reject(&Replay.dispatch_restore/3)
     assert {:noreply, ^arrived} = Overwatch.handle_cast({:kick_restore, "runner-1"}, arrived)
   end
+
+  # fails when: the carriers' precedence moves: a handover stops excluding the
+  # durable restore, or a shutdown snapshot stops seeding before the init values.
+  test "the carriers that seed a bind give today's answer in each combination" do
+    snapshot = ~s({"n":1})
+
+    for {hotswap?, stored, init, carrier, seeded} <- [
+          {false, nil, %{"n" => 0}, [:durable, :init], %{"n" => 0}},
+          {false, snapshot, %{"n" => 0}, [:durable, :shutdown_snapshot], %{"n" => 1}},
+          {true, nil, %{"n" => 0}, [:handover, :init], %{"n" => 0}},
+          {true, snapshot, %{"n" => 0}, [:handover, :shutdown_snapshot], %{"n" => 1}},
+          {false, nil, %{}, [:durable, :init], %{"own" => 2}}
+        ] do
+      builder = %Builder{id: "carrier", factory_id: "candles", init_values: %{"own" => 2}}
+
+      state = %{
+        state("carrier")
+        | arrived_via_hotswap?: hotswap?,
+          snapshot: stored,
+          init_values: init,
+          builder: builder
+      }
+
+      assert Replay.carrier(state) == carrier
+      assert Flezha.Relay.Rebind.bind_relay(state).init_values == seeded
+    end
+  end
 end
 
 defmodule FlezhaTest.Relay.RestoreRefusalTest do

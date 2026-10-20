@@ -107,23 +107,29 @@ defmodule Flezha.Relay.Replay do
   # ---------- bind-time restore ----------
 
   @doc """
+  The carriers that seed a bind, highest first: a handover that reached a runner excludes the
+  durable restore of every Cell on disk, which overrides the seed, a graceful stop's final state
+  before the init values.
+  """
+  @spec carrier(Overwatch.t()) :: [:handover | :durable | :shutdown_snapshot | :init]
+  def carrier(%Overwatch{arrived_via_hotswap?: true} = state), do: [:handover | seed(state)]
+  def carrier(%Overwatch{} = state), do: [:durable | seed(state)]
+
+  defp seed(%Overwatch{snapshot: nil}), do: [:init]
+  defp seed(_state), do: [:shutdown_snapshot]
+
+  @doc """
   Walk the on-disk Cell state for this relay and send `RestoreInitState`
   to the SDK for each Cell that has a non-empty payload, awaiting every answer
-  before the bind goes on.
-
-  Skipped when the relay arrived via HotSwap — handover already delivers the
-  state in-band — and when persistence is disabled for this relay class.
+  before the bind goes on, when the durable restore seeds it (`carrier/1`).
   """
   @spec restore_on_bind(Overwatch.t(), map()) :: :ok
-  def restore_on_bind(%Overwatch{arrived_via_hotswap?: true}, _relay),
-    do: :ok
-
   def restore_on_bind(%Overwatch{} = state, relay) do
     # An awaited restore already ran, before the tail was re-forwarded. This
     # one is awaited too, in the bind: run off-process, its `RestoreInitState`
     # could reach the runner after a hand-over the Overwatch absorbs next and
     # an input after that, resetting the runner's state to the WAL's.
-    unless awaited_restore?(state) do
+    if :durable in carrier(state) and not awaited_restore?(state) do
       relay_class = Keyword.get(relay.opts, :relay_class, state.id)
       replay_persisted_cells(relay_class, state.runner_id, owner_pid(state))
     end

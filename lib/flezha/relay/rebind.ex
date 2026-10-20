@@ -10,6 +10,7 @@ defmodule Flezha.Relay.Rebind do
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlUnit
   alias ProcessHub.Service.Migration, as: HubMigration
@@ -24,15 +25,12 @@ defmodule Flezha.Relay.Rebind do
   the builder, so a moved member keeps its mis-route guard.
   """
   @spec bind_relay(Overwatch.t()) :: Builder.t()
-  def bind_relay(%Overwatch{snapshot: nil, init_values: resolved, builder: builder})
-      when resolved == %{},
-      do: builder
-
-  def bind_relay(%Overwatch{snapshot: nil, init_values: resolved, builder: %Builder{} = builder}),
-    do: %Builder{builder | init_values: resolved}
-
-  def bind_relay(%Overwatch{builder: %Builder{} = builder} = state),
-    do: %Builder{builder | init_values: Payloader.json_to_map(state.snapshot)}
+  def bind_relay(%Overwatch{builder: builder, init_values: resolved} = state) do
+    case Replay.carrier(state) do
+      [_, :shutdown_snapshot] -> %{builder | init_values: Payloader.json_to_map(state.snapshot)}
+      [_, :init] -> if resolved == %{}, do: builder, else: %{builder | init_values: resolved}
+    end
+  end
 
   @doc """
   The convergence loop's `{:rebind, target}`, answered as the reply
