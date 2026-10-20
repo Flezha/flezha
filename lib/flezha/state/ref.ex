@@ -1,9 +1,10 @@
 defmodule Flezha.State.Ref do
   @moduledoc """
-  A durable reference kind: what one shippable unit of state is on disk. A kind
-  is the module named after it (`:effects_log` is `Ref.EffectsLog`) plus one row
-  of the table below; `use Flezha.State.Ref` supplies the answers of a kind with
-  nothing, and the kind overrides what it has.
+  A durable reference kind: what one shippable unit of state is on disk, and
+  what its landing from elsewhere writes and seeds. A kind is the module named
+  after it (`:effects_log` is `Ref.EffectsLog`) plus one row of the table below;
+  `use Flezha.State.Ref` supplies the answers of a kind with nothing, and the
+  kind overrides what it has.
   """
 
   @type t ::
@@ -52,6 +53,10 @@ defmodule Flezha.State.Ref do
   @callback lineage(t()) :: %{id: binary(), trail: list()} | nil
   @doc "Whether `ref` has anything durable on disk right now."
   @callback has_local_state?(t()) :: boolean()
+  @doc "`fetch` lands `ref`'s files from elsewhere; `arrival` is `:pulled` or hydration facts."
+  @callback land(t(), :pulled | map(), (-> term())) :: term()
+  @doc "Seed the in-memory input floor a bind reads from `ref`'s landed files."
+  @callback seed_floor(t()) :: term()
 
   defmacro __using__(_opts) do
     quote do
@@ -66,6 +71,8 @@ defmodule Flezha.State.Ref do
       def epoch(_ref), do: 0
       def markers(_ref), do: %{intent: false, done: false}
       def lineage(_ref), do: nil
+      def land(_ref, _arrival, fetch), do: fetch.()
+      def seed_floor(_ref), do: :ok
 
       def has_local_state?(ref), do: Flezha.State.Ref.holds?(payload_files(ref), wal_path(ref))
 
@@ -96,6 +103,8 @@ defmodule Flezha.State.Ref do
   def markers(ref), do: module(ref).markers(ref)
   def lineage(ref), do: module(ref).lineage(ref)
   def has_local_state?(ref), do: module(ref).has_local_state?(ref)
+  def land(ref, arrival, fetch), do: module(ref).land(ref, arrival, fetch)
+  def seed_floor(ref), do: module(ref).seed_floor(ref)
 
   @doc "`{root, names}` keeping only the names under `root` that hold bytes."
   @spec present(binary(), [binary()]) :: {binary(), [binary()]}

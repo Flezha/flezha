@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, Ref, TaskJournal, WalWriter}
+  alias Flezha.State.{DurabilityTier, Paths, Ref}
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
@@ -223,9 +223,10 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     if Ref.has_local_state?(ref) do
       :ok
     else
-      case land(module, opts, manifest) do
+      # Each file overwrites a fixed path, so a retry after a partial landing converges.
+      case Ref.land(ref, facts(manifest), fn -> fetch_and_write(module, opts, manifest) end) do
         :ok ->
-          seed_floor(manifest)
+          Ref.seed_floor(ref)
           emit(:hydrated, ref, manifest)
 
         # A referenced artifact the store does not hold is a CORRUPT LINEAGE, not
@@ -313,15 +314,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end
   end
 
-  # A Cell's small files no record implies land after its data (`Lineage.land/3`);
-  # each overwrites a fixed path, so a retry after a partial landing converges.
-  defp land(module, opts, %Manifest{ref: {:cell, cell_id}} = manifest),
-    do: Lineage.land(cell_id, facts(manifest), fn -> fetch_and_write(module, opts, manifest) end)
-
-  defp land(module, opts, manifest), do: fetch_and_write(module, opts, manifest)
-
-  # A compacted Cell ships a snapshot and no effect record, so the shipped
-  # consumed offset is its folded offset. A controller re-landing its own cut
+  # What a Cell lands with (`Ref.land/3`; other kinds ignore it). A compacted Cell
+  # ships a snapshot and no effect record, so the shipped consumed offset is its
+  # folded offset. A controller re-landing its own cut
   # takes no copy over and mints nothing.
   defp facts(%Manifest{} = manifest) do
     Map.merge(manifest.lineage || %{}, %{
@@ -331,19 +326,6 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
       markers: manifest.markers
     })
   end
-
-  # The in-memory floors a bind reads: the input log's for a Cell, and a
-  # task-journal's consumed input, or the bind would re-deliver every retained
-  # input the instance had consumed.
-  defp seed_floor(%Manifest{ref: {:cell, {class, _, _} = cell_id}}) do
-    with offset when is_integer(offset) and offset >= 0 <-
-           WalWriter.consumed_offset_on_disk(cell_id),
-         do: InputLog.record_consumed(class, cell_id, offset)
-
-    if cell_id == Paths.journal_id(class), do: TaskJournal.release_input(class), else: :ok
-  end
-
-  defp seed_floor(_manifest), do: :ok
 
   defp emit(event, ref, manifest) do
     :telemetry.execute(

@@ -24,7 +24,7 @@ defmodule Flezha.State.WalTransfer do
 
   alias Flezha.Config.Durations
   alias Flezha.State.DurabilityTier.Artifact
-  alias Flezha.State.{Lineage, Paths, Ref}
+  alias Flezha.State.{Paths, Ref}
 
   @chunk_bytes 64 * 1024
 
@@ -161,7 +161,10 @@ defmodule Flezha.State.WalTransfer do
         {:ok, 0}
 
       {:ok, entries} ->
-        land(destination, fn -> pull_all(source_node, ref, entries, timeout, destination) end)
+        # A pull is always a landing of another controller's copy.
+        Ref.land(destination, :pulled, fn ->
+          pull_all(source_node, ref, entries, timeout, destination)
+        end)
 
       {:error, _} = err ->
         emit(:wal_pull_failed, %{ref: ref, reason: elem(err, 1)})
@@ -235,11 +238,6 @@ defmodule Flezha.State.WalTransfer do
   catch
     kind, reason -> {:error, {kind, reason}}
   end
-
-  # A Cell's pull is a landing of another controller's copy.
-  defp land({:cell, cell_id}, pull), do: Lineage.land(cell_id, :pulled, pull)
-
-  defp land(_ref, pull), do: pull.()
 
   defp pull_all(source_node, ref, names, timeout, destination) do
     Enum.reduce_while(names, {:ok, 0}, fn name, {:ok, done} ->
