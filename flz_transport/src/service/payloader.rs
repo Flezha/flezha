@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::str;
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 
 /// Metadata key-value pairs attached to a payload frame.
 pub type PayloadMetadata = HashMap<String, String>;
@@ -16,6 +16,12 @@ pub const HEADER_LEN: usize = PAYLOAD_ID_LEN + 4;
 /// Decode the fixed-width, space-padded payload-id header field.
 pub fn parse_payload_id(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim_end().to_string()
+}
+
+/// A frame header's payload id and payload size.
+pub fn parse_header(header: &[u8]) -> (String, usize) {
+    let size = BigEndian::read_u32(&header[PAYLOAD_ID_LEN..HEADER_LEN]) as usize;
+    (parse_payload_id(&header[..PAYLOAD_ID_LEN]), size)
 }
 
 /// Fixed width of a metadata key's and a metadata value's length prefix.

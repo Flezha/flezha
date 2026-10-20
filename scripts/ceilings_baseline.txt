@@ -15,8 +15,7 @@ flz_core/src/control_unit.rs::read_loop 68
 flz_core/src/coordinator.rs::heartbeat_metadata 59
 flz_core/src/effect.rs::fold 76
 flz_core/src/effect_result.rs::keep 52
-flz_core/src/host/activation.rs::route_edge_outputs 54
-flz_core/src/host/activation.rs::settle_item 68
+flz_core/src/host/activation.rs::settle_item 67
 flz_core/src/host/activation.rs::settle_items 60
 flz_core/src/host/issue.rs::details 167
 flz_core/src/host/issue.rs::kind 67
@@ -63,6 +62,5 @@ sdk/rust/src/relay/dispatcher.rs::dispatch_input 56
 sdk/rust/src/relay/dispatcher.rs::dispatch_item 66
 sdk/rust/src/relay/dispatcher.rs::run_activation 51
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
-sdk/rust/src/tasklet/ctx.rs 813
 xref cycles 4
 xref largest 148

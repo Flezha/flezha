@@ -182,7 +182,7 @@ fn judged(
     };
     effect.timers = committed_timers(&work.item, std::mem::take(&mut effect.timers), false);
     let live = slot.timers.lock_recover();
-    match crate::timer::TimerSession::judge(&facts.timers, &live, &effect.timers) {
+    match facts.timers.judge(&live, &effect.timers) {
         Ok(()) => verdict,
         Err(refusal) => schema::Verdict::NonRetryableError {
             message: refusal.to_error().text(),
@@ -300,23 +300,22 @@ pub(super) fn settle_item(
     // A failed attempt's captured outputs must not ship: it did not complete.
     let outputs = if parked { Vec::new() } else { effect.outputs };
     let (edge_outputs, wire_outputs) = split_outputs(outputs);
-    let consumed_offset = consumed_offset_of(&work.item);
-    let call = call_of(&work.item);
+    // An inter-tasklet value is never a replay member: the downstream
+    // Tasklet receives corrected outputs already in order.
+    let d = &crate::routing::Delivery {
+        stream: &stream,
+        consumed_offset: consumed_offset_of(&work.item),
+        call: call_of(&work.item),
+        replay: false,
+    };
     let dlq = park.map(|(error, tries)| park_entry(slot, host_bytes(&work.item), error, tries));
-    let edges = route_edge_outputs(
-        slot,
-        &stream,
-        consumed_offset,
-        call,
-        edge_outputs,
-        slot.keeps_edges(consumed_offset),
-    );
+    let edges = route_edge_outputs(slot, d, edge_outputs, slot.keeps_edges(d.consumed_offset));
     let effects = InvocationEffects {
         changes: effect.changes,
         timers: timers.clone(),
         outputs: Vec::new(),
         edges,
-        offset: consumed_offset,
+        offset: d.consumed_offset,
         event_time: effect.event_time,
         checkpointed: effect.checkpoint,
         parked: dlq.is_some(),
@@ -341,8 +340,8 @@ pub(super) fn settle_item(
         crate::park::park_tier_off(
             &slot.cell_identity,
             slot.dispatcher.cell_label(),
-            consumed_offset,
-            call,
+            d.consumed_offset,
+            d.call,
             entry,
             &*relay,
         );
@@ -453,16 +452,13 @@ fn settle_steps_item(
     park: Option<(String, u32)>,
 ) {
     let unreadable = matches!(effect.verdict, schema::Verdict::Unreadable { .. });
-    let timers = committed_timers(&work.item, effect.timers, park.is_some());
+    let parked = park.is_some();
+    let timers = committed_timers(&work.item, effect.timers, parked);
     let firing = firing_of(&work.item);
     facts.timers.commit(slot, &timers, firing, stream);
     let mut durable = timers;
     crate::timer::hold_firing_removal(slot, &mut durable, firing);
-    let outputs = if park.is_some() {
-        Vec::new()
-    } else {
-        effect.outputs
-    };
+    let outputs = if parked { Vec::new() } else { effect.outputs };
     let (edge_outputs, wire_outputs) = split_outputs(outputs);
     settle_steps_effects(
         slot,
@@ -632,9 +628,7 @@ pub fn park_entry(
 /// again.
 fn route_edge_outputs(
     slot: &Arc<CellSlot>,
-    stream: &Arc<FlezhaStream>,
-    consumed_offset: Option<u64>,
-    call: Option<&Arc<str>>,
+    d: &crate::routing::Delivery<'_>,
     edge_outputs: Vec<schema::Output>,
     record: bool,
 ) -> Vec<crate::flusher::EdgeRecord> {
@@ -644,14 +638,6 @@ fn route_edge_outputs(
     }
     let Some(instance) = slot.instance.upgrade() else {
         return recorded;
-    };
-    // An inter-tasklet value is never a replay member: the downstream
-    // Tasklet receives corrected outputs already in order.
-    let d = &crate::routing::Delivery {
-        stream,
-        consumed_offset,
-        call,
-        replay: false,
     };
     for output in edge_outputs {
         let schema::OutputTarget::Edge { channel, consumer } = output.target else {
@@ -663,7 +649,7 @@ fn route_edge_outputs(
                 &instance,
                 channel,
                 consumer,
-                consumed_offset,
+                d.consumed_offset,
                 &value,
             ));
         }

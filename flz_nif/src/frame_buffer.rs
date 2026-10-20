@@ -207,7 +207,7 @@ impl FrameBuffer {
         remaining: &mut &[u8],
         frames: &mut Vec<ParsedFrame>,
     ) -> Result<BufferState, FrameError> {
-        let (payload_id, payload_size) = parse_header(&header[..HEADER_SIZE]);
+        let (payload_id, payload_size) = payloader::parse_header(header);
         if payload_size > self.max_frame_bytes {
             return Err(FrameError::TooLarge);
         }
@@ -238,14 +238,6 @@ fn fill(buf: &mut Vec<u8>, want: usize, remaining: &mut &[u8]) -> bool {
     buf.extend_from_slice(&cur[..take]);
     *remaining = &cur[take..];
     buf.len() >= want
-}
-
-/// Parse the fixed-width header into (payload_id, payload_size).
-fn parse_header(header: &[u8]) -> (String, usize) {
-    let payload_id = payloader::parse_payload_id(&header[..payloader::PAYLOAD_ID_LEN]);
-    let payload_size =
-        u32::from_be_bytes([header[32], header[33], header[34], header[35]]) as usize;
-    (payload_id, payload_size)
 }
 
 /// One whole payload through the wire format's own decoder.

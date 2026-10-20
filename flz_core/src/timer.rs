@@ -200,6 +200,31 @@ impl TimerPolicy {
         Err(refusal)
     }
 
+    /// A hosted item's ops judged in order by the rules a session applies at
+    /// call time, against the borrowed live set plus a delta of the keys the
+    /// ops touched, so the set is never copied.
+    pub fn judge(&self, live: &PendingTimers, ops: &[TimerOp]) -> Result<(), TimerRefusal> {
+        let mut delta: HashMap<(TimerKind, u64), bool> = HashMap::new();
+        let mut len = live.len();
+        for op in ops {
+            let key = (op.kind, op.scheduled_at);
+            let pending = delta
+                .get(&key)
+                .copied()
+                .unwrap_or_else(|| live.contains(op.kind, op.scheduled_at));
+            if op.register {
+                self.admit(op.kind, pending, len)?;
+            }
+            match (pending, op.register) {
+                (false, true) => len += 1,
+                (true, false) => len -= 1,
+                _ => {}
+            }
+            delta.insert(key, op.register);
+        }
+        Ok(())
+    }
+
     /// Count one op that changed the set; the firing's removal counts as
     /// fired, once.
     fn count(&self, op: &TimerOp, firing: &mut Option<(TimerKind, u64)>) {
@@ -300,35 +325,6 @@ impl TimerSession {
             self.ops.push(op);
         }
         changed
-    }
-
-    /// A hosted item's ops judged in order by the rules a session applies at
-    /// call time, against the borrowed live set plus a delta of the keys the
-    /// ops touched, so the set is never copied.
-    pub fn judge(
-        policy: &TimerPolicy,
-        live: &PendingTimers,
-        ops: &[TimerOp],
-    ) -> Result<(), TimerRefusal> {
-        let mut delta: HashMap<(TimerKind, u64), bool> = HashMap::new();
-        let mut len = live.len();
-        for op in ops {
-            let key = (op.kind, op.scheduled_at);
-            let pending = delta
-                .get(&key)
-                .copied()
-                .unwrap_or_else(|| live.contains(op.kind, op.scheduled_at));
-            if op.register {
-                policy.admit(op.kind, pending, len)?;
-            }
-            match (pending, op.register) {
-                (false, true) => len += 1,
-                (true, false) => len -= 1,
-                _ => {}
-            }
-            delta.insert(key, op.register);
-        }
-        Ok(())
     }
 
     /// Publish onto the live pending set and answer the ops to make durable
@@ -676,7 +672,7 @@ mod tests {
         assert!(session.into_inner().commit(&mut live).is_empty());
         assert_eq!(live, holding(&[100]));
         let ops = [TimerOp::register(PT, 200)];
-        assert_eq!(TimerSession::judge(&policy, &live, &ops), refusal);
+        assert_eq!(policy.judge(&live, &ops), refusal);
     }
 
     /// Registering a timer the set already holds adds nothing, so the cap
@@ -688,7 +684,7 @@ mod tests {
         let session = policy.session(&live, 0, None);
         assert_eq!(session.borrow_mut().register(PT, 100), Ok(100));
         let ops = [TimerOp::register(PT, 100)];
-        assert_eq!(TimerSession::judge(&policy, &live, &ops), Ok(()));
+        assert_eq!(policy.judge(&live, &ops), Ok(()));
     }
 
     /// An event-time timer needs an event-time clock, whatever room is left.
@@ -706,7 +702,7 @@ mod tests {
             refusal
         );
         let ops = [TimerOp::register(TimerKind::EventTime, 5)];
-        assert_eq!(TimerSession::judge(&policy, &live, &ops), refusal);
+        assert_eq!(policy.judge(&live, &ops), refusal);
     }
 
     fn draw(seed: &mut u64, bound: u64) -> u64 {
@@ -755,7 +751,7 @@ mod tests {
                     Ok(())
                 }
             });
-            let judged = TimerSession::judge(&policy, &live, &ops);
+            let judged = policy.judge(&live, &ops);
             assert_eq!(judged, called, "round {round}: {ops:?} over {live:?}");
             if judged.is_ok() {
                 let mut folded = live.clone();
