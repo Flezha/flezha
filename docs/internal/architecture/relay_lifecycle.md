@@ -23,8 +23,8 @@ callbacks route; the work is in the module that owns the phase:
 
 | Module | Owns |
 |---|---|
-| `Flezha.Relay.Lifecycle` | the first bind (`bind/3`, `complete_init/5`), the halt (`halt/2`), the `:process` walk (`terminate/2`, `shutdown_steps/0`), `departure/1`, `release_lineage/1` |
-| `Flezha.Relay.Rebind` | every later bind, run in a task linked to the Overwatch (`start_bind/3`, `apply_bind_result/2`, `bind_task_exited/2`, `terminate_bind_task/1`), the loop's `{:rebind, target}` (`rebind/2`), a runner's new session (`session_replaced/4`) |
+| `Flezha.Relay.Lifecycle` | the first bind (`bind_continue/3`, `complete_init/5`), the halt (`halt/2`), the `:process` walk (`terminate/2`, `shutdown_steps/0`), `departure/1`, `release_lineage/1` |
+| `Flezha.Relay.Rebind` | every later bind, run in a task linked to the Overwatch (`start_bind/3`, `bind_task_reported/2`, `apply_bind_result/2`, `bind_task_exited/2`, `terminate_bind_task/1`), the loop's `{:rebind, target}` (`rebind/2`), a runner's new session (`session_replaced/4`) |
 | `Flezha.Relay.Suspend` | sleep and wake (`suspend_at/3`, `enter_suspended/2`, `evict_runner/2`, `wake/2`, `wake_deadline/1`, `rehydrate_if_pending/1`, `runner_available/1`), and a steps loop's rewind (`rewind_to/2`) |
 | `Flezha.Relay.Handover` | a live move between controllers: `prepare/1` on the source, `absorb/2` on the destination, `consent/1` |
 | `Flezha.Service.RelayManager.Teardown` | the `:relay` walk of a stop (`stop_relay/3`, `request_stop/2`) and the `:namespace` walk's relay row (`stop_all/2`) |
@@ -41,7 +41,7 @@ older controller without the field. Only the transitions write it:
 | `:running` | `Lifecycle.complete_init/5` through `record_and_replay/3`, at the end of every bind; a task's bind is adopted by `Rebind.apply_bind_result/2` |
 | `:unbound` | `hold_unbound/2` in `Lifecycle.bind/3`, when no runner answered within `overwatch_runner_wait_ms`; also `halt/2` on a relay holding no runner |
 | `:halted` | `Lifecycle.halt/2`, the one place every halt goes through. It keeps `:suspended` for a sleeper and `:unbound` for a relay with no runner (`halted_phase/1`) |
-| `:suspended` | `Suspend.evict_runner/2`, from a park (`suspend_at/3` → `enter_suspended/2`), from boot over a sleep record (`Overwatch.continue_bind/3`), and from a rewind (`rewind_to/2`) |
+| `:suspended` | `Suspend.evict_runner/2`, from a park (`suspend_at/3` → `enter_suspended/2`), from boot over a sleep record (`Lifecycle.bind_continue/3`), and from a rewind (`rewind_to/2`) |
 
 `halt_reason` is set by `halt/2` and `hold_unbound/2` and cleared by the bind
 (`complete_init/5`). `bind_task` is `%{pid, then, from}` while a task binds: `from` is the phase

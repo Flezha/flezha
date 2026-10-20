@@ -126,13 +126,24 @@ defmodule Flezha.Relay.Rebind do
   end
 
   @doc """
+  The bind task's report, folded back by `apply_bind_result/2`; the outputs
+  that arrived while it bound are delivered after it.
+  """
+  @spec bind_task_reported(Overwatch.t(), tuple()) :: Overwatch.t()
+  def bind_task_reported(%Overwatch{} = state, result) do
+    # The task reports a copy of this state taken before the outputs it held.
+    %Overwatch{} = adopted = apply_bind_result(state, result)
+    release_outputs(%Overwatch{adopted | held_outputs: state.held_outputs})
+  end
+
+  @doc """
   The bind task ended before it reported: its bind failed with `reason`. A
   task that reported is no longer in flight, so its exit reaches here only
-  when it died first.
+  when it died first. The outputs held meanwhile are delivered after it.
   """
   @spec bind_task_exited(Overwatch.t(), term()) :: Overwatch.t()
   def bind_task_exited(%Overwatch{} = state, reason),
-    do: apply_bind_result(state, {:halt, state, {:bind_task_exit, reason}})
+    do: state |> apply_bind_result({:halt, state, {:bind_task_exit, reason}}) |> release_outputs()
 
   @doc """
   Fold a bind task's result back into the state.
@@ -176,4 +187,17 @@ defmodule Flezha.Relay.Rebind do
 
   defp carried(%Overwatch{bind_task: %{then: then}}), do: then
   defp carried(%Overwatch{}), do: nil
+
+  # Deliver what arrived while a bind task was binding, in arrival order, on the
+  # Overwatch's own output path; a bind spawned meanwhile holds them again.
+  defp release_outputs(%Overwatch{held_outputs: []} = state), do: state
+
+  defp release_outputs(%Overwatch{held_outputs: held} = state) do
+    held
+    |> Enum.reverse()
+    |> Enum.reduce(%Overwatch{state | held_outputs: []}, fn frame, acc ->
+      {:noreply, acc} = Overwatch.handle_cast(frame, acc)
+      acc
+    end)
+  end
 end

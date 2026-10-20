@@ -623,8 +623,8 @@ writer under the session fence alone.
 The `runner_id` in a relay-binding record (replayed into `Flezha.Relay.Overwatch.init/1`
 from ProcessHub's durable registry at boot) names the runner the Relay was bound to before
 this controller process started. On every cold start
-`handle_continue({:bind_runner, stale_runner_id, relay}, _)` runs `Lifecycle.bind/3`, which
-re-resolves a live runner via `RelayManager.assign_runner/3`; the persisted value feeds only
+`handle_continue({:bind_runner, stale_runner_id, relay}, _)` runs `Lifecycle.bind_continue/3`,
+whose bind re-resolves a live runner via `RelayManager.assign_runner/3`; the persisted value feeds only
 the `rebound from stale runner X to live Y` log line. `AddRelay`, `:ping_runner` and
 `start_relay_sdk` target the re-resolved runner, and the steps-retry governor re-resolves on
 every attempt. The source of truth for the live binding is ProcessHub's registry.

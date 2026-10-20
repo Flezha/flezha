@@ -16,6 +16,7 @@ defmodule Flezha.Relay.Plugins do
   holds only what carries logic of its own.
   """
 
+  alias Flezha.Convergence.Facts
   alias Flezha.Process.DurableTasks
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
@@ -309,6 +310,29 @@ defmodule Flezha.Relay.Plugins do
     end
   end
 
+  @doc "Answer a plugin verb sent to the Overwatch (`Overwatch.plugin_subscribe/4` and siblings)."
+  @spec answer(tuple(), Overwatch.t()) :: {:reply, term(), Overwatch.t()}
+  def answer({:plugin_unsubscribe, plugin_id}, %Overwatch{} = state),
+    do: {:reply, :ok, %{state | extensions: Table.unsubscribe(state.extensions, plugin_id)}}
+
+  def answer({:plugin_subscribe, plugin_id, %Plugin{} = binding, entry}, state),
+    do: reply(subscribe(state, plugin_id, binding, entry), :ok)
+
+  def answer({:plugin_update, plugin_id, %Plugin{} = binding, mode, entry}, state),
+    do: reply(update(state, plugin_id, binding, mode, entry), :ok)
+
+  def answer({:plugin_heal, :start_plugin, plugin_id, %Plugin{} = plugin}, state),
+    do: reply(subscribe(state, plugin_id, plugin), {:phase, plugin_id})
+
+  def answer({:plugin_heal, _restart, plugin_id, %Plugin{} = plugin}, state),
+    do: reply(restart(state, plugin_id, plugin), {:phase, plugin_id})
+
+  defp reply({:ok, state}, {:phase, plugin_id}),
+    do: {:reply, {:ok, Table.phase(state.extensions, plugin_id)}, state}
+
+  defp reply({:ok, state}, answer), do: {:reply, answer, state}
+  defp reply({:error, reason, state}, _answer), do: {:reply, {:error, reason}, state}
+
   # Bring up, then answer for the ONE plugin the caller asked about. A subscribe
   # that succeeded while `activate/1` failed leaves a plugin holding no upstream
   # resources; reporting `{:ok, _}` for it makes the convergence loop's
@@ -435,5 +459,28 @@ defmodule Flezha.Relay.Plugins do
     })
 
     :ok
+  end
+
+  @doc """
+  A monitored plugin process went down. A crashed subscriber is recorded by the
+  table and declared here: the table is a data structure and decides nothing,
+  and the restart is the loop's.
+  """
+  @spec down(Overwatch.t(), reference(), pid(), term()) :: Overwatch.t()
+  def down(%Overwatch{} = state, ref, pid, reason) do
+    case Table.handle_down(state.extensions, ref, pid, reason) do
+      {:ok, table} ->
+        for plugin_id <-
+              Map.keys(Table.phase_reasons(table, :down)) --
+                Map.keys(Table.phase_reasons(state.extensions, :down)) do
+          Facts.declare({:plugin_down, {state.namespace, state.id, plugin_id}, %{reason: reason}})
+        end
+
+        %{state | extensions: table}
+
+      :ignore ->
+        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
+        state
+    end
   end
 end

@@ -271,8 +271,6 @@ defmodule Flezha.Shutdown.Coordinator do
     end
   end
 
-  def handle_info(:phase_timeout, state), do: {:noreply, state}
-
   def handle_info(_msg, state), do: {:noreply, state}
 
   # ---------- Phase helpers ----------

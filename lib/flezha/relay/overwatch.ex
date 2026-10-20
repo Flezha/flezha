@@ -6,7 +6,7 @@ defmodule Flezha.Relay.Overwatch do
   runner. Everything it does is routing: a callback decides which phase a
   message belongs to and hands the state to the module that owns that phase —
   `Lifecycle`, `Rebind`, `Suspend`, `Ingest`, `Replay`, `Handover`, `Plugins`,
-  `ClassRegistry`, `State.Commands`.
+  `ClassRegistry`.
 
   Invariant: this process is the single owner of its relay's input. Every
   `:io_in` — cast, call, confirming, replayed or seeded — runs `Ingest.ingest/4`
@@ -16,7 +16,6 @@ defmodule Flezha.Relay.Overwatch do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.Convergence.Facts
   alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Handover
@@ -32,9 +31,7 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
   alias Flezha.SDK.SafeCall
-  alias Flezha.Service.HubManager
   alias Flezha.State.Outbox
-  alias Flezha.State.Paths
   alias Flezha.Transport.LivenessCounters
 
   # Reply-frame metadata key carrying the `change_seq` a single selected Cell
@@ -248,16 +245,13 @@ defmodule Flezha.Relay.Overwatch do
     after
       ms = System.monotonic_time(:millisecond) - started
 
-      if ms >= task_warn_ms() do
+      if ms >= Durations.get(:overwatch_task_warn_ms) do
         Logger.warning("[Overwatch] task_slow task=#{task} relay=#{relay_id} duration_ms=#{ms}")
       else
         Logger.debug("[Overwatch] task_end task=#{task} relay=#{relay_id} duration_ms=#{ms}")
       end
     end
   end
-
-  defp task_warn_ms,
-    do: Durations.get(:overwatch_task_warn_ms)
 
   # ---------------------------------------------------------------
   # Start-up
@@ -281,8 +275,6 @@ defmodule Flezha.Relay.Overwatch do
       factory_id: relay.factory_id,
       init_values: relay.init_values,
       runner_id: stale_runner_id,
-      channel: nil,
-      snapshot: nil,
       default_input_type: Keyword.get(relay.opts, :default_input_type, "2"),
       extensions: Host.relay_table(__extensions_catalog__(), relay.opts),
       builder: relay,
@@ -296,80 +288,8 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_continue({:bind_runner, stale_runner_id, relay}, %__MODULE__{} = state) do
-    # Claim the class's durable-state namespace BEFORE any path below
-    # (journal probe, restore, WAL open) resolves: writes must land under
-    # this relay's namespace, and a class owned by another namespace
-    # must never be silently read or overwritten.
-    with :ok <- one_state_key(state),
-         :ok <- Paths.claim_namespace(state.id, state.namespace) do
-      continue_bind(stale_runner_id, relay, state)
-    else
-      {:error, {:namespace_conflict, _class, owner}} ->
-        Logger.error(
-          "[overwatch] refusing to bind #{state.id} in namespace #{state.namespace}: " <>
-            "its durable state belongs to namespace #{owner}"
-        )
-
-        {:stop, {:shutdown, {:namespace_conflict, state.id, owner}}, state}
-
-      {:error, {:split_state_key, class}} ->
-        Logger.error(
-          "[overwatch] refusing to bind steps #{state.id}: its state key is its " <>
-            "instance id, not #{inspect(class)}"
-        )
-
-        {:stop, {:shutdown, {:split_state_key, state.id, class}}, state}
-    end
-  end
-
-  # A steps relay's journal, Cells and input log are all keyed by its instance id,
-  # so an `:relay_class` naming anything else would split them: it is
-  # refused, not ignored.
-  defp one_state_key(%__MODULE__{builder: %{run: :steps}} = state) do
-    case relay_class(state) do
-      id when id == state.id -> :ok
-      class -> {:error, {:split_state_key, class}}
-    end
-  end
-
-  defp one_state_key(%__MODULE__{}), do: :ok
-
-  defp continue_bind(stale_runner_id, relay, %__MODULE__{} = state) do
-    class = relay_class(state)
-    # A move brings the source's journal, input log and Cells over before
-    # anything below reads them.
-    relay =
-      Replay.adopt_moved_state(state, relay, HubManager.get_pid(state.namespace, state.id))
-
-    state = %__MODULE__{state | builder: relay}
-
-    state = %__MODULE__{
-      state
-      | durable_steps: Suspend.durable_steps?(state, relay),
-        sleeps: ClassRegistry.sleeps?(class)
-    }
-
-    # Sleeping instances are rediscovered from durable state alone (the park
-    # record and the input log), so a controller redeploy neither binds them to
-    # a runner nor loses their sleep (`durable-suspension`). An
-    # instance with undelivered input is not asleep any more: it binds and
-    # consumes it. The floor is seeded first, since the log answers that
-    # question against it.
-    :ok = Replay.seed_floor(state)
-
-    if Suspend.suspended_on_disk?(class) do
-      {:noreply, Suspend.enter_suspended(state, Suspend.sleep_record(class)), :hibernate}
-    else
-      Lifecycle.bind(state, stale_runner_id, relay)
-    end
-    |> seed_input(relay)
-  end
-
-  # The input a start carries, taken in the bind continue or held for the
-  # start's own `:registry_runner_set` call (`Ingest.seed_or_hold/2`).
-  defp seed_input(result, relay),
-    do: put_elem(result, 1, Ingest.seed_or_hold(elem(result, 1), relay))
+  def handle_continue({:bind_runner, stale_runner_id, relay}, %__MODULE__{} = state),
+    do: Lifecycle.bind_continue(state, stale_runner_id, relay)
 
   @impl true
   def terminate(reason, state), do: Lifecycle.terminate(state, reason)
@@ -406,42 +326,17 @@ defmodule Flezha.Relay.Overwatch do
   def handle_call({:registry_runner_set, _}, _from, %__MODULE__{halt_reason: reason} = state),
     do: {:reply, {:error, reason}, %__MODULE__{state | cause: :start}}
 
+  # The plugin verbs: literal heads, so no other call pays a guard for them.
   @impl true
-  def handle_call({:plugin_subscribe, plugin_id, %Plugin{} = binding, entry}, _from, state) do
-    case Plugins.subscribe(state, plugin_id, binding, entry) do
-      {:ok, state} -> {:reply, :ok, state}
-      {:error, reason, state} -> {:reply, {:error, reason}, state}
-    end
-  end
+  def handle_call({:plugin_subscribe, _, _, _} = verb, _from, state),
+    do: Plugins.answer(verb, state)
 
-  @impl true
-  def handle_call({:plugin_unsubscribe, plugin_id}, _from, %__MODULE__{} = state),
-    do: {:reply, :ok, %{state | extensions: Table.unsubscribe(state.extensions, plugin_id)}}
+  def handle_call({:plugin_unsubscribe, _} = verb, _from, state), do: Plugins.answer(verb, state)
 
-  @impl true
-  def handle_call({:plugin_update, plugin_id, %Plugin{} = binding, mode, entry}, _from, state) do
-    case Plugins.update(state, plugin_id, binding, mode, entry) do
-      {:ok, state} -> {:reply, :ok, state}
-      {:error, reason, state} -> {:reply, {:error, reason}, state}
-    end
-  end
+  def handle_call({:plugin_update, _, _, _, _} = verb, _from, state),
+    do: Plugins.answer(verb, state)
 
-  @impl true
-  def handle_call({:plugin_heal, primitive, plugin_id, %Plugin{} = plugin}, _from, state) do
-    healed =
-      if primitive == :start_plugin,
-        do: Plugins.subscribe(state, plugin_id, plugin),
-        else: Plugins.restart(state, plugin_id, plugin)
-
-    case healed do
-      {:ok, state} -> {:reply, {:ok, Table.phase(state.extensions, plugin_id)}, state}
-      {:error, reason, state} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call(:get_runner, _from, %__MODULE__{runner_id: runner} = state),
-    do: {:reply, runner, state}
+  def handle_call({:plugin_heal, _, _, _} = verb, _from, state), do: Plugins.answer(verb, state)
 
   @impl true
   def handle_call(:get_overwatch_state, _from, state), do: {:reply, state, state}
@@ -497,29 +392,21 @@ defmodule Flezha.Relay.Overwatch do
   # route points at `self()`.
   @impl true
   def handle_call(:publish_binding, _from, %__MODULE__{runner_id: runner_id} = state)
-      when is_binary(runner_id) do
-    {:reply, :ok, Lifecycle.publish_binding(state, nil)}
-  end
+      when is_binary(runner_id),
+      do: {:reply, :ok, Lifecycle.publish_binding(state, nil)}
 
   def handle_call(:publish_binding, _from, state), do: {:reply, {:error, :unbound}, state}
 
   @impl true
   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
 
-  # Source adapters ask once (memoized) whether their ingest must be a
-  # blocking call: the effectively-once tier parks ingestion at zero source
-  # credit, which only back-pressures the source if it awaits the reply.
-  @impl true
-  def handle_call(:effectively_once?, _from, state), do: {:reply, state.effectively_once, state}
-
   # Blocking ingest for source adapters, which act on "accepted" vs "halted" and
   # nothing finer — the same path as the confirming entry point below, reported
   # coarsely.
   @impl true
   def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
-      when reason != nil do
-    {:reply, {:error, :startup_failed}, state}
-  end
+      when reason != nil,
+      do: {:reply, {:error, :startup_failed}, state}
 
   # Confirming ingest (`relay-to-relay-messaging`): the same single
   # pre-delivery path as the `{:io_in, _, _}` cast, answering what happened so a
@@ -527,9 +414,8 @@ defmodule Flezha.Relay.Overwatch do
   # fire-and-forget shape, including its silent drop for a halted relay.
   @impl true
   def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
-      when reason != nil do
-    {:reply, {:error, :not_ready}, state}
-  end
+      when reason != nil,
+      do: {:reply, {:error, :not_ready}, state}
 
   # Both blocking entry points: the reply is owed until the journal answers, so
   # a source parked at zero credit is parked on its own call, never on this
@@ -700,9 +586,8 @@ defmodule Flezha.Relay.Overwatch do
   # from — the same reason the ingress cast is dropped while halted.
   @impl true
   def handle_info({:stream_bound, _channel}, %__MODULE__{halt_reason: reason} = state)
-      when reason != nil do
-    {:noreply, state}
-  end
+      when reason != nil,
+      do: {:noreply, state}
 
   # The relay's data stream bound. Anything its durable logs still hold above
   # the Cells' consumed offsets was issued onto a stream that could not carry
@@ -765,11 +650,8 @@ defmodule Flezha.Relay.Overwatch do
   # The in-flight bind task posts its result via a plain `send/2` before it
   # exits, so this clause runs before its `:EXIT` and clears the slot.
   @impl true
-  def handle_info({:bind_task_result, _task_pid, result}, %__MODULE__{bind_task: %{}} = state) do
-    # The task reports a copy of this state taken before the outputs it held.
-    %__MODULE__{} = adopted = Rebind.apply_bind_result(state, result)
-    {:noreply, release_outputs(%__MODULE__{adopted | held_outputs: state.held_outputs})}
-  end
+  def handle_info({:bind_task_result, _task_pid, result}, %__MODULE__{bind_task: %{}} = state),
+    do: {:noreply, Rebind.bind_task_reported(state, result)}
 
   # Late delivery: the task was terminated by a teardown, or a second
   # bind already replaced `state.bind_task`. Drop.
@@ -778,7 +660,7 @@ defmodule Flezha.Relay.Overwatch do
   # The bind task died before it reported: a failed bind.
   @impl true
   def handle_info({:EXIT, pid, reason}, %__MODULE__{bind_task: %{pid: pid}} = state),
-    do: {:noreply, state |> Rebind.bind_task_exited(reason) |> release_outputs()}
+    do: {:noreply, Rebind.bind_task_exited(state, reason)}
 
   # A monitored input log that exits with an append in flight reports it as a
   # `:DOWN` the request collection recognises; every other `:DOWN` is a plugin's.
@@ -786,7 +668,7 @@ defmodule Flezha.Relay.Overwatch do
   def handle_info({:DOWN, ref, :process, pid, reason} = msg, %__MODULE__{} = state) do
     case Ingest.journal_reply(state, msg) do
       {:ok, state} -> {:noreply, state}
-      :ignore -> {:noreply, plugin_down(state, ref, pid, reason)}
+      :ignore -> {:noreply, Plugins.down(state, ref, pid, reason)}
     end
   end
 
@@ -856,38 +738,6 @@ defmodule Flezha.Relay.Overwatch do
   @spec confirm_hold(map() | nil) :: :ok
   def confirm_hold(nil), do: :ok
   def confirm_hold(metadata), do: Outbox.confirm_delivery(metadata)
-
-  # Deliver what arrived while a bind task was binding, in arrival order;
-  # a bind spawned meanwhile holds them again.
-  defp release_outputs(%__MODULE__{held_outputs: []} = state), do: state
-
-  defp release_outputs(%__MODULE__{held_outputs: held} = state) do
-    held
-    |> Enum.reverse()
-    |> Enum.reduce(%__MODULE__{state | held_outputs: []}, fn frame, acc ->
-      {:noreply, acc} = handle_cast(frame, acc)
-      acc
-    end)
-  end
-
-  # A crashed subscriber is recorded by the table and declared here: the table
-  # is a data structure and decides nothing, and the restart is the loop's.
-  defp plugin_down(%__MODULE__{} = state, ref, pid, reason) do
-    case Table.handle_down(state.extensions, ref, pid, reason) do
-      {:ok, table} ->
-        for plugin_id <-
-              Map.keys(Table.phase_reasons(table, :down)) --
-                Map.keys(Table.phase_reasons(state.extensions, :down)) do
-          Facts.declare({:plugin_down, {state.namespace, state.id, plugin_id}, %{reason: reason}})
-        end
-
-        %{state | extensions: table}
-
-      :ignore ->
-        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
-        state
-    end
-  end
 
   # ---------------------------------------------------------------
   # Live runner read

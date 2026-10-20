@@ -539,9 +539,8 @@ defmodule Flezha.Runner.FleetManager do
           {:namespace_not_found, state.runner_namespaces}
 
         _ ->
-          # The `:namespace` walk: the relays, the runners, the plugin
-          # registrations and the hub, in that order, with the namespace read
-          # as quiesced for its duration.
+          # The `:namespace` walk: the relays, the runners and the hub, in
+          # that order, with the namespace read as quiesced for its duration.
           target = %{
             namespace: namespace,
             runner_ids: Roster.get_runner_ids(state, namespace, :active)

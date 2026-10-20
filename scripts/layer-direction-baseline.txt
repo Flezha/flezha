@@ -26,9 +26,9 @@ lib/flezha/relay/lifecycle.ex -> Flezha.Service.RelayManager
 lib/flezha/relay/lifecycle.ex -> Flezha.Shutdown.Step
 lib/flezha/relay/lifecycle.ex -> Flezha.State.Commands
 lib/flezha/relay/lifecycle.ex -> Flezha.State.DurabilityTier
+lib/flezha/relay/lifecycle.ex -> Flezha.State.Paths
 lib/flezha/relay/lifecycle.ex -> Flezha.State.PersistenceResolver
 lib/flezha/relay/lifecycle.ex -> Flezha.State.Restore
-lib/flezha/relay/overwatch.ex -> Flezha.Convergence.Facts
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.IO
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Init
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Msg
@@ -37,9 +37,8 @@ lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Terminate
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Tick
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Table
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Host
-lib/flezha/relay/overwatch.ex -> Flezha.Service.HubManager
 lib/flezha/relay/overwatch.ex -> Flezha.State.Outbox
-lib/flezha/relay/overwatch.ex -> Flezha.State.Paths
+lib/flezha/relay/plugins.ex -> Flezha.Convergence.Facts
 lib/flezha/relay/plugins.ex -> Flezha.Plugin.Extension
 lib/flezha/relay/plugins.ex -> Flezha.Plugin.Extension.Ctx
 lib/flezha/relay/plugins.ex -> Flezha.Plugin.Extension.Table

@@ -356,8 +356,7 @@ defmodule Flezha.Convergence.Loop do
 
   # The divergence this tick will act on: diffed over the recovery-ready
   # relays only — a namespace mid-replay is skipped, so no heal runs
-  # against a half-restored registry — then streak-gated and stripped of the
-  # plugins an enable already has in flight.
+  # against a half-restored registry — then misbound relays streak-gated.
   defp plan_delta(%State{} = state, intent, reality) do
     ready = RecoveryGate.ready_namespaces(intent)
     heal_relays = Enum.filter(intent.relays, &MapSet.member?(ready, &1.namespace))

@@ -24,9 +24,6 @@ defmodule Flezha.Shutdown do
   @table Flezha.Shutdown.State
   @steps_key {__MODULE__, :steps}
 
-  # The one budget a relay stop has, and the source the process teardown
-  # derives its own from.
-
   @type scope :: Flezha.Shutdown.Step.scope()
   @type report :: %{ran: [atom()], skipped: [atom()], errors: [{atom(), term()}], results: map()}
 

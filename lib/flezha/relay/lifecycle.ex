@@ -39,6 +39,7 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Shutdown
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
+  alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Restore
 
@@ -52,12 +53,88 @@ defmodule Flezha.Relay.Lifecycle do
   # Process API — the lifecycle messages the Overwatch answers to
   # ---------------------------------------------------------------
 
-  @doc """
-  Resolve a live runner for the relay's factory and bring it up on that
-  runner. Returns the `handle_continue/2` reply the bind continue answers with.
-  """
-  @spec bind(Overwatch.t(), binary() | nil, map()) :: {:noreply, Overwatch.t()}
-  def bind(%Overwatch{} = state, stale_runner_id, relay) do
+  @doc "The Overwatch's bind continue: claim the class's state, then sleep or bind."
+  @spec bind_continue(Overwatch.t(), binary() | nil, map()) ::
+          {:noreply, Overwatch.t()}
+          | {:noreply, Overwatch.t(), :hibernate}
+          | {:stop, term(), Overwatch.t()}
+  def bind_continue(%Overwatch{} = state, stale_runner_id, relay) do
+    # Claim the class's durable-state namespace BEFORE any path below
+    # (journal probe, restore, WAL open) resolves: writes must land under
+    # this relay's namespace, and a class owned by another namespace
+    # must never be silently read or overwritten.
+    with :ok <- one_state_key(state),
+         :ok <- Paths.claim_namespace(state.id, state.namespace) do
+      continue_bind(stale_runner_id, relay, state)
+    else
+      {:error, {:namespace_conflict, _class, owner}} ->
+        Logger.error(
+          "[overwatch] refusing to bind #{state.id} in namespace #{state.namespace}: " <>
+            "its durable state belongs to namespace #{owner}"
+        )
+
+        {:stop, {:shutdown, {:namespace_conflict, state.id, owner}}, state}
+
+      {:error, {:split_state_key, class}} ->
+        Logger.error(
+          "[overwatch] refusing to bind steps #{state.id}: its state key is its " <>
+            "instance id, not #{inspect(class)}"
+        )
+
+        {:stop, {:shutdown, {:split_state_key, state.id, class}}, state}
+    end
+  end
+
+  # A steps relay's journal, Cells and input log are all keyed by its instance id,
+  # so an `:relay_class` naming anything else would split them: it is
+  # refused, not ignored.
+  defp one_state_key(%Overwatch{builder: %{run: :steps}} = state) do
+    case Overwatch.relay_class(state) do
+      id when id == state.id -> :ok
+      class -> {:error, {:split_state_key, class}}
+    end
+  end
+
+  defp one_state_key(%Overwatch{}), do: :ok
+
+  defp continue_bind(stale_runner_id, relay, %Overwatch{} = state) do
+    class = Overwatch.relay_class(state)
+    # A move brings the source's journal, input log and Cells over before
+    # anything below reads them.
+    relay =
+      Replay.adopt_moved_state(state, relay, HubManager.get_pid(state.namespace, state.id))
+
+    state = %Overwatch{state | builder: relay}
+
+    state = %Overwatch{
+      state
+      | durable_steps: Suspend.durable_steps?(state, relay),
+        sleeps: ClassRegistry.sleeps?(class)
+    }
+
+    # Sleeping instances are rediscovered from durable state alone (the park
+    # record and the input log), so a controller redeploy neither binds them to
+    # a runner nor loses their sleep (`durable-suspension`). An
+    # instance with undelivered input is not asleep any more: it binds and
+    # consumes it. The floor is seeded first, since the log answers that
+    # question against it.
+    :ok = Replay.seed_floor(state)
+
+    if Suspend.suspended_on_disk?(class) do
+      {:noreply, Suspend.enter_suspended(state, Suspend.sleep_record(class)), :hibernate}
+    else
+      bind(state, stale_runner_id, relay)
+    end
+    |> seed_input(relay)
+  end
+
+  # The input a start carries, taken in the bind continue or held for the
+  # start's own `:registry_runner_set` call (`Ingest.seed_or_hold/2`).
+  defp seed_input(result, relay),
+    do: put_elem(result, 1, Ingest.seed_or_hold(elem(result, 1), relay))
+
+  # Resolve a live runner for the relay's factory and bring it up on that runner.
+  defp bind(%Overwatch{} = state, stale_runner_id, relay) do
     # Wait for an active runner in this namespace advertising
     # `relay.factory_id`. The DETS-baked runner_id is usually stale
     # after a restart (Identificator.unique_id/1 generates a fresh id
