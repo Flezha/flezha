@@ -268,11 +268,10 @@ A plain (unpartitioned) start of an id that names an existing group's base SHALL
 
 A steps class whose loop mode is `once` or `chained` SHALL NOT run partitioned: its one
 message reaches one member, and the other members would wait for a message that never comes.
-Only a `per_input` steps relay, one pass per message, is a group. Because the loop mode is a class
-declaration the topology carries and the controller never sees at start, the authoritative
-refusal SHALL live in the SDK at the `AddRelay` boundary: when `partition_count >= 2` names a
-steps class whose loop mode is not `per_input`, the SDK SHALL refuse the `AddRelay` with an
-error named `topology.partitions_without_per_input_loop` that names the class, its loop mode and `each
+Only a `per_input` steps relay, one pass per message, is a group. The authoritative refusal SHALL
+live in the runner's core at the `AddRelay` boundary: when `partition_count >= 2` names a steps
+class whose loop mode is not `per_input`, the core SHALL refuse the `AddRelay` with an error named
+`topology.partitions_without_per_input_loop` that names the class, its loop mode and `each
 per_input` as the remedy, and the controller SHALL treat that refusal as a member start failure
 (group rollback, error surfaced to the caller). Additionally, a steps class's loop mode `each`
 (`once` | `per_input` | `chained`) SHALL be read from the class's one factory announcement (the
@@ -280,17 +279,18 @@ per_input` as the remedy, and the controller SHALL treat that refusal as a membe
 factory as an attribute of its record, as `run` is; `AddRelayResponse.metadata` SHALL NOT carry
 `each` or `on_failure`. A bind records the class's established `each` against the factory, so
 a later partitioned start of a `once` or `chained` class that has bound once is refused at the
-controller before any member starts, with the same sentence. The keyless refusal applies to a steps relay unchanged: a
-`per_input` steps relay whose entry-fed tasklet declares neither `key_by` nor cell keys SHALL be
-refused with `topology.partitions_without_keyed_tasklet`.
+controller before any member starts, with the same sentence; the controller SHALL decide it through
+its one loop-shape predicate over the established `each`. The keyless refusal applies to a steps
+relay unchanged: a `per_input` steps relay whose entry-fed tasklet declares neither `key_by` nor
+cell keys SHALL be refused with `topology.partitions_without_keyed_tasklet`.
 
 #### Scenario: First partitioned start of a once steps relay fails at bind, loudly
 
 - **WHEN** `--partitions 3` is used with a steps class whose loop mode is `once` and that has
   never bound
 - **THEN** the first member's `AddRelay` is refused with `topology.partitions_without_per_input_loop`, any
-  already-started members are stopped, and the CLI receives the SDK's error naming the class,
-  `once` and `each per_input`
+  already-started members are stopped, and the CLI receives the runner core's error naming the
+  class, `once` and `each per_input`
 
 #### Scenario: Repeat partitioned start of a known chained steps relay fails immediately
 

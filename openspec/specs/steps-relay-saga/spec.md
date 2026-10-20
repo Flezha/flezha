@@ -102,3 +102,24 @@ hook rather than losing its undo output.
 - **WHEN** a respawned instance resumes a partially-complete compensation pass
 - **THEN** which hooks run SHALL be decided by the per-cell intent/done markers exactly as before this change
 
+### Requirement: A compensation entry the controller does not acknowledge SHALL leave its Cell unmarked and fail the run
+
+A `compensated` entry the controller refuses SHALL be sent again under the same reference id,
+as one whose acknowledgement timed out is, within the same count of three sends, and a late
+acknowledgement SHALL continue the undo. A Cell's compensation-done marker SHALL be written only
+after the `compensated` entry naming its undo record is acknowledged. When the sends run out, the
+Cell's done marker SHALL NOT be written, the remaining undo steps SHALL still run, and the run
+SHALL end with status `error` naming the tasklet whose compensation was not journaled and the
+controller's answer, whatever end the undo was planned to reach. A resume of such a run SHALL
+re-run that Cell's (idempotent) hook, since no marker says it ran.
+
+#### Scenario: A refused compensation entry is sent again
+
+- **WHEN** the controller refuses the first `compensated` entry of a saga's undo and acknowledges the second send
+- **THEN** both sends SHALL carry the same reference id, the Cell's done marker SHALL be written after the acknowledgement, and the run SHALL end as the undo planned
+
+#### Scenario: An unjournaled compensation fails the run and keeps the hook re-runnable
+
+- **WHEN** the controller refuses or never acknowledges all three sends of a `compensated` entry for tasklet `b`'s Cell while `a` is also to be undone
+- **THEN** `b`'s Cell SHALL have no done marker, `a`'s compensation SHALL still run and be marked, and the run SHALL end `error` with an error naming `b`
+

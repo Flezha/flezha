@@ -148,3 +148,41 @@ an endless input) or a mailbox's capacity.
 - **WHEN** the repository, its submodules and `openspec/specs/` are searched for `steps` and `flow` outside `openspec/changes/archive/`, `CHANGELOG.md` and the dev notes
 - **THEN** every match SHALL be one of the input-data or mailbox senses recorded in the dev note, and no match SHALL name a relay, class, run, kind, refusal code, wire literal or spec directory
 
+### Requirement: `max_duration_ms` SHALL count from the run's first bind
+
+A class's `max_duration_ms` SHALL bound one run of an instance, counted from that run's first
+successful bind, for both runs. The controller SHALL record, once per relay, the wall time the
+window ends (the first bind's wall time plus the class's `max_duration_ms`), in state every controller of the cluster reads and a move keeps; the record SHALL end with
+the run (a stop removes it), so a later start of the same id opens a new window. With every bind
+of that run the controller SHALL send the window still left, computed on its own wall clock as it
+sends the bind, in `AddRelay.max_duration_remaining_ms`. The runner SHALL arm the stop that far out
+on its monotonic clock and SHALL NOT read its own wall clock for it; a remaining window of zero
+SHALL end the run at once as an elapsed one does. A sleep and wake, a move to another runner or
+controller, a runner restart or a controller restart SHALL NOT restart the window. An `AddRelay`
+without the field SHALL arm the class's full window.
+
+#### Scenario: A sleep does not restart the window
+
+- **WHEN** a flow class with `max_duration_ms` 4 000 and `sleep_after` 1 s goes idle, sleeps, and is woken by an input 2 s after its first bind
+- **THEN** it SHALL end `cancelled` about 4 s after its first bind, not 4 s after the wake
+
+#### Scenario: A rebind past the window ends the run
+
+- **WHEN** a steps run with `max_duration_ms` 1 000 is rebound 3 s after its first bind because its runner restarted
+- **THEN** the rebound run SHALL be stopped at once and end `cancelled`
+
+#### Scenario: A runner clock ahead of the controller's does not end the run
+
+- **WHEN** a relay with `max_duration_ms` 60 000 binds on a runner whose wall clock is two minutes ahead of the controller's
+- **THEN** the run SHALL be stopped about 60 s after its first bind, not at bind
+
+#### Scenario: A move to another controller keeps the window
+
+- **WHEN** a relay with `max_duration_ms` 4 000 is moved 2 s after its first bind and its new bind is sent by another controller of the cluster
+- **THEN** it SHALL end `cancelled` about 4 s after its first bind
+
+#### Scenario: A new start of the same id opens a new window
+
+- **WHEN** a relay with `max_duration_ms` is stopped and later started again under the same id
+- **THEN** the second run's window SHALL count from the second run's first bind
+

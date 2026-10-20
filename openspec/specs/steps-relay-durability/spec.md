@@ -70,3 +70,24 @@ On terminal teardown (status `ok | error | cancelled`), a durable steps relay's 
 - **WHEN** a finished steps relay's `finished_at` plus the retention window is in the past
 - **THEN** the retention sweeper SHALL delete its retained state and completion record
 
+### Requirement: A restore gate that times out SHALL fail the run
+
+A resumed steps run SHALL NOT start a pass while any restore its bind announced
+(`resume_cell_count` Cell restores and `effect_result_count` effect results) has not landed. When
+the restore gate's bound (30 s) passes first, the run SHALL end with status `error` and an error
+naming how many of the announced restores landed; it SHALL run no tasklet and no compensation,
+since neither may read Cells whose state never arrived. The controller SHALL treat it as every
+run error: no automatic re-run, the outcome recorded, the instance's state, journal and input log
+retained. A stop that arrives while the gate is closed SHALL end the run with status
+`cancelled`, SHALL NOT open the gate, and SHALL run no tasklet and no compensation.
+
+#### Scenario: A lost restore ends the run instead of running partially restored
+
+- **WHEN** a durable steps run is rebound with `resume_cell_count` 2 and only one restore lands within the gate's bound
+- **THEN** the run SHALL end `error` naming 1 of 2 restores, no tasklet SHALL have run in that bind, and the message the controller holds for the instance SHALL remain in its input log
+
+#### Scenario: A stop before the restores land cancels without opening the gate
+
+- **WHEN** a resumed steps run is stopped (externally, or by a `max_duration` already spent at bind) while one of its two announced restores has not landed
+- **THEN** the run SHALL end `cancelled`, no tasklet and no compensation hook SHALL have run in that bind, and its journal and state SHALL be retained
+

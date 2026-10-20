@@ -157,9 +157,8 @@ core without surfacing to Java, except that a relay leaving the runner
 and an evicted Cell SHALL reach Java as a `Leave` activation, on which
 Java drops the instances it holds for them. Class capability declarations
 (`effectively_once`, `ack_granularity`, `correction_window_ms`,
-`beyond_window_policy`, `compensable_tasks`, `leaf_tasks`,
-`compact_after_bytes`) SHALL ride the declaration the Java layer registers;
-the core SHALL populate `AddRelayResponse.metadata` from it — a class
+`beyond_window_policy`, `compensable_tasks`, `compact_after_bytes`) SHALL ride the declaration
+the Java layer registers; the core SHALL populate `AddRelayResponse.metadata` from it — a class
 declaring nothing yields an empty map, byte-identical to today.
 
 #### Scenario: AddRelay spawns a Java-hosted relay instance
@@ -582,7 +581,7 @@ A rewind SHALL NOT replay inputs: the controller truncates the inbox at each ite
 
 The Java SDK SHALL implement the `steps-branching` capability. `StepsSpec` SHALL model the task graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `StepsSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
 
-The SDK SHALL declare the tree's leaf tasks to the controller via the `leaf_tasks` key of `AddRelayResponse.metadata`. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
+The relay's completion SHALL be the engine's, reported by `RelayCompleted`; no leaf set SHALL be declared to the controller. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
 
 #### Scenario: A branching chain runs its branches and joins
 

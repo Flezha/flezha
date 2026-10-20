@@ -231,19 +231,20 @@ handoff SHALL carry the previous iteration's terminal batch, which re-seeds a
 handoff-chained loop. The existing frame-size guard SHALL apply unchanged to
 each journaled entry.
 
-The SDK SHALL declare its leaf tasklets in the `AddRelay` response
-metadata, and the controller SHALL derive relay completion (every leaf
-tasklet committed in the in-flight iteration) from the journal alone.
+Whether a run is done SHALL be the engine's answer alone, reported by its `RelayCompleted` and
+recorded by the controller as the run's outcome; the controller SHALL NOT derive completion from
+the journal, and the journal report SHALL show the recorded outcome, or that the run is still
+running.
 
 #### Scenario: Each branch re-seeds from its own parent
 
 - **WHEN** tasklet A with children B and C commits, and the instance later resumes with only B committed
 - **THEN** C SHALL be seeded from A's journaled handoff, and B SHALL NOT re-run
 
-#### Scenario: Controller derives DONE from the journal
+#### Scenario: The journal report shows a finished loop as finished
 
-- **WHEN** the journal holds `task_committed` entries covering every declared leaf tasklet of the in-flight iteration
-- **THEN** the controller SHALL report the relay complete from the journal alone
+- **WHEN** a `per_input` loop commits two iterations and a tasklet's `complete` ends it in the second
+- **THEN** `flz state journal` SHALL show the outcome `ok` for the instance, and before the completion it SHALL show the instance as running
 
 ### Requirement: The iteration entry type is active and the journal records no park
 

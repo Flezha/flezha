@@ -381,10 +381,17 @@ calling thread immediately. A retryable failure's backoff SHALL be expressed as 
 wake: the failed head and unprocessed tail ride the existing per-cell
 holdback, the cell's exclusivity gates stay held across the window exactly as
 they are across an in-line backoff, and the release-then-reclaim runs when the
-entry comes due. An instance's deadlines SHALL be entries on the same list, keyed by instance
-and deadline kind so re-arming replaces: the idle deadline (the class's `sleep_after`) of any
+entry comes due. An instance's deadlines SHALL be entries on the same list, keyed by instance,
+deadline kind and due time: the idle deadline (the class's `sleep_after`) of any
 instance whose class sleeps, and a steps relay's `max_duration`, commit-ack
-re-send and restore-gate cap. A promoted deadline SHALL decide over what the instance holds
+re-send and restore-gate cap. Re-arming an instance deadline SHALL go through one re-arm call that
+removes the entry it replaces; an entry its owner has since re-decided SHALL be a no-op at
+promotion, judged by the owner's own record of its current due time. A processing-time timer's
+entry SHALL be due on the wall clock, its scheduled time being an absolute wall time; every other
+entry (a retry, a push re-arm, an interval close, an instance deadline, a sweep) SHALL be due on
+the monotonic clock, so a step of the wall clock neither delays nor advances it. The idle-TTL
+sweep of a relay's dynamic Cells SHALL be an entry on this list, re-armed after each sweep, and
+no thread SHALL exist per relay to run it. A promoted deadline SHALL decide over what the instance holds
 (the pass sheet under its lock for a steps relay, the cells' mailboxes, holdbacks, buffers and
 timers for either kind) and act without waiting; a deadline that no longer applies SHALL be a
 no-op, and an idle deadline that finds the instance busy or its cells active more recently than
@@ -444,6 +451,21 @@ service the list.
 
 - **WHEN** ten thousand inputs are admitted into a class that sleeps
 - **THEN** no deferred-wake entry SHALL be recorded or replaced on their account; only the cells' activity stamps move
+
+#### Scenario: Re-arming a deadline leaves one entry
+
+- **WHEN** a flow relay's completion re-checks its Cells five times before they are idle, re-arming its `Complete` deadline each time
+- **THEN** the list SHALL hold one `Complete` entry for that instance after each re-arm, and a disarm naming the deadline and its due time SHALL leave none
+
+#### Scenario: A wall-clock step does not move a retry
+
+- **WHEN** a Cell's retry is armed 500 ms out and the wall clock is then set back one hour
+- **THEN** the retry SHALL come due about 500 ms after it was armed, while a processing-time timer scheduled for a wall time SHALL come due when the wall clock reaches it
+
+#### Scenario: The idle-TTL sweep needs no thread
+
+- **WHEN** a relay whose tasklet declares an idle TTL is bound
+- **THEN** no `flezha-reaper` thread SHALL exist, and a dynamic Cell idle past the TTL SHALL be evicted when the sweep entry is promoted: on the promoting poller, or, for a host-run Cell whose leave waits for the host, on a short-lived `flezha-leave` thread
 
 ### Requirement: The core caps jobs underway and signals starvation
 

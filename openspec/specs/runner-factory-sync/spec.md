@@ -288,3 +288,21 @@ no longer be served.
 - **WHEN** a started PHP runner unregisters an idle factory B and an activation for B then reaches it
 - **THEN** the runner SHALL refuse the activation as an unregistered class rather than run it
 
+### Requirement: The controller SHALL read a steps class's loop shape from the announced `each` alone
+
+The controller SHALL decide whether a steps class reads one input only and whether it may run
+as a partition group from the `each` its factory announcement already carries, through one
+predicate over that established attribute. The announcement SHALL carry no second field that
+restates what `each` says, and no controller code other than that predicate SHALL name the `once`
+or `chained` loop shapes.
+
+#### Scenario: A once class reads one input
+
+- **WHEN** a runner announces a steps class whose `each` is `once`
+- **THEN** its `FactoryDecl` SHALL carry `each` `once` and no separate partitioning field, and the controller's one-input rule SHALL hold for its instances, decided from the established `each`
+
+#### Scenario: The partition refusal and the one-input rule agree
+
+- **WHEN** the controller's one predicate answers that a class reads one input
+- **THEN** a partitioned start of that class SHALL be refused with `topology.partitions_without_per_input_loop`, and the one-input rule SHALL hold for its instances, both from that one answer
+

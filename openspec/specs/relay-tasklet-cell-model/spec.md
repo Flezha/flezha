@@ -623,27 +623,27 @@ Concurrent producers pushing inputs for the same brand-new key SHALL all observe
 - **THEN** the runtime SHALL allocate exactly one `CellSlot` for `"user-99"` and all N inputs SHALL land on its single mailbox in some serial order
 
 ### Requirement: Per-Tasklet idle-TTL eviction is opt-in (no eviction by default)
-`Tasklet::cell_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Tasklet's dynamic Cells SHALL NOT be evicted: they live for the lifetime of the Relay (as static Cells do) and no reaper thread SHALL be spawned for the Tasklet.
+`Tasklet::cell_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Tasklet's dynamic Cells SHALL NOT be evicted: they live for the lifetime of the Relay (as static Cells do) and no idle sweep SHALL be armed for the Tasklet.
 
-When `cell_idle_ttl()` returns `Some(ttl)`, the SDK SHALL run one reaper thread for the Tasklet that periodically evicts Cells whose time since last input push exceeds `ttl`. The reaper SHALL acquire the Cell's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the reaper SHALL skip the Cell and try again on the next sweep. Eviction SHALL increment the per-Tasklet `cells_evicted_total` counter.
+When `cell_idle_ttl()` returns `Some(ttl)`, the SDK SHALL arm one idle sweep for the Tasklet as an entry on the poll core's deferred-wake list, re-armed after each sweep and run by the poller that promotes it, that periodically evicts Cells whose time since last input push exceeds `ttl`; no thread SHALL exist per Tasklet to run it. A sweep with a host-run Cell to evict waits for the host to answer the Cell's leave, so that sweep SHALL run on a short-lived thread of its own rather than on the poller. The sweep SHALL acquire the Cell's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the sweep SHALL skip the Cell and try again on the next sweep. Eviction SHALL increment the per-Tasklet `cells_evicted_total` counter.
 
-The reaper SHALL sweep on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
+The sweep SHALL come due on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
 
 #### Scenario: No eviction by default
 - **WHEN** a dynamic-mode Tasklet does not override `cell_idle_ttl()` (it returns `None`)
-- **THEN** no reaper thread SHALL be spawned and its Cells SHALL never be evicted by idle TTL
+- **THEN** no idle sweep SHALL be armed and its Cells SHALL never be evicted by idle TTL
 
 #### Scenario: Idle cell is evicted after TTL elapses
 - **WHEN** a Tasklet sets `cell_idle_ttl() = Some(ttl)` and a Cell has had no input push for longer than `ttl` and is not currently running
-- **THEN** the next reaper sweep SHALL acquire its inflight CAS, evict it from the registry, and increment `cells_evicted_total`
+- **THEN** the next sweep SHALL acquire its inflight CAS, evict it from the registry, and increment `cells_evicted_total`
 
 #### Scenario: Active cell is not evicted mid-run
-- **WHEN** a Cell's `Tasklet::run` is in flight (its inflight CAS is held) when the reaper sweeps
-- **THEN** the reaper SHALL skip this Cell for this sweep without evicting; eviction SHALL be reattempted on the next sweep
+- **WHEN** a Cell's `Tasklet::run` is in flight (its inflight CAS is held) when the sweep runs
+- **THEN** the sweep SHALL skip this Cell without evicting; eviction SHALL be reattempted on the next sweep
 
 #### Scenario: Recently active cell is preserved
 - **WHEN** a Cell received an input push within the past `ttl` interval
-- **THEN** the reaper SHALL NOT evict it on this sweep
+- **THEN** the sweep SHALL NOT evict it
 
 ### Requirement: Eviction is destructive; recreate is a cold start
 Eviction of a dynamic-mode Cell SHALL be destructive. When a Cell is evicted AND persistence is enabled for the Relay class, the SDK SHALL ship a `delete_cell_state{cell_id}` frame to the controller so its on-disk WAL/snapshot/outbox files are removed. The frame SHALL carry the durable guarantee class, so an eviction that falls inside a reconnect window holds the delete for the next bound stream rather than losing it, and a rebind replays it in write order behind that Cell's own records. The SDK SHALL NOT block the reaper on a response, and the controller writes none.
