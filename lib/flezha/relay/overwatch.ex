@@ -744,13 +744,14 @@ defmodule Flezha.Relay.Overwatch do
   def handle_info({:call_timeout, id}, %__MODULE__{} = state),
     do: {:noreply, Ingest.timeout(timer_fired(state, {:call, id}), id)}
 
-  # The rows went with a handover: the arriving process answers them now.
+  # The move started: the rows went with the handover, and the arriving
+  # process answers them now.
   @impl true
   def handle_info(:calls_handed_over, %__MODULE__{} = state) do
     keys = Map.keys(state.calls.rows) ++ Map.keys(state.calls.out)
     state = Enum.reduce(keys, state, &cancel_timer(&2, {:call, &1}))
 
-    {:noreply, %{state | calls: Calls.depart(state.calls), handed_over?: true}}
+    {:noreply, %{state | calls: Calls.depart(state.calls), handed_over?: true, cause: :move}}
   end
 
   @impl true

@@ -22,6 +22,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.Lifecycle
+  alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
@@ -483,6 +484,49 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert %{owner: owner, claim: 2} = shipped = Stub.stored_manifest(k2)
       assert owner == this_writer()
       assert Manifest.shipped_through(shipped) == 5
+    end
+
+    # fails when: the adoption is withdrawn only by the old Overwatch's teardown,
+    # so in a HotSwap move, where the old process lives until the new one has
+    # registered, a backstop tick on the old node bids a reference it never
+    # shipped above the claim the new node already landed, and the remote cut
+    # goes back to the old node's older files.
+    test "a node the relay is moving from never bids above the new node's claim", ctx do
+      k1 = {:cell, ctx.cell_id}
+      k2_id = {ctx.class, "task", "k2"}
+      k2 = {:cell, k2_id}
+
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+      assert %{claim: 1} = Stub.stored_manifest(k1)
+      TestHelpers.write_wal(k2_id, 0..3)
+
+      # The move starts: the old Overwatch hands its state over and lives on.
+      _ = Overwatch.prepare_handover_state(OverwatchHost.state(ctx.class))
+      assert_received :calls_handed_over
+
+      # The new node binds and ships while the old Overwatch is still alive.
+      peer = start_peer_node(ctx.peer_base)
+
+      with_root(ctx.peer_base, fn ->
+        TestHelpers.write_wal(ctx.cell_id, 0..3)
+        TestHelpers.write_wal(k2_id, 0..3)
+        TestHelpers.append_wal(k2_id, 4..5, "peer")
+        GenServer.cast(peer, {:adopt, ctx.class})
+        assert :ok = GenServer.call(peer, :sweep_now)
+      end)
+
+      assert %{owner: @peer_writer, claim: 1} = Stub.stored_manifest(k2)
+
+      # The old node's backstop tick in the gap, before its lineage step runs.
+      :ok = Shipper.sweep_now()
+      shipped = Stub.stored_manifest(k2)
+      assert %{owner: @peer_writer, claim: 1} = shipped
+      assert Manifest.shipped_through(shipped) == 5
+
+      relay_leaves_here(ctx.class, :moved)
     end
 
     # fails when: a relay stopped here is released before its last ships land,

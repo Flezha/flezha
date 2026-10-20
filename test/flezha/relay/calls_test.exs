@@ -577,7 +577,8 @@ defmodule FlezhaTest.Relay.CallsTest do
       handover = :sys.get_state(source) |> Handover.prepare()
       assert_received :calls_handed_over
       send(source, :calls_handed_over)
-      assert :sys.get_state(source).calls.rows == %{}, "the source owes the moved callers nothing"
+      assert %{calls: %{rows: rows}, cause: :move} = :sys.get_state(source)
+      assert rows == %{}, "the source owes the moved callers nothing"
 
       {:ok, target} = start_supervised({Host, {:absorb, bare(inst), handover}}, id: :target)
 

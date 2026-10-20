@@ -682,9 +682,16 @@ defmodule Flezha.Relay.Lifecycle do
   end
 
   # After the writers' final flush, so the last turns of a relay stopped here
-  # still ship under the adoption that entitles them: the class stops running
-  # on this node, the counterpart of the adoption a bind records.
-  defp lineage_step({state, _reason}, _budget),
+  # still ship under the adoption that entitles them.
+  defp lineage_step({state, _reason}, _budget), do: release_lineage(state)
+
+  @doc """
+  The relay's class stops running on this node, the counterpart of the adoption
+  a bind records, as `departure/1` reads it: at a move's start and again, a
+  no-op then, as its Overwatch ends.
+  """
+  @spec release_lineage(Overwatch.t()) :: :ok
+  def release_lineage(%Overwatch{} = state),
     do: DurabilityTier.release_relay(Overwatch.relay_class(state), departure(state))
 
   # A deliberate stop removed the relay's declared entry before it

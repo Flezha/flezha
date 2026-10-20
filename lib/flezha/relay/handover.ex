@@ -34,7 +34,9 @@ defmodule Flezha.Relay.Handover do
   otherwise, and then the disk is the only surviving state.
 
   The waiting callers leave with the payload: this process drops its rows
-  (`:calls_handed_over`), so its terminate owes them nothing.
+  (`:calls_handed_over`), so its terminate owes them nothing. The move starts
+  here, so the lineage is released here too: this process lives on until the
+  new one registers, and a bid from this node in that gap could only fence it.
   """
   @spec prepare(Overwatch.t()) :: {map(), binary() | nil}
   def prepare(%Overwatch{} = state) do
@@ -52,6 +54,7 @@ defmodule Flezha.Relay.Handover do
       calls: Calls.export(state.calls)
     }
 
+    Lifecycle.release_lineage(%Overwatch{state | cause: :move})
     send(self(), :calls_handed_over)
     {handover, serialize_data}
   end
