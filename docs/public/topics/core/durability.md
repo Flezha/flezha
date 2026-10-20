@@ -362,9 +362,15 @@ a compaction, a workflow step, a park or a drop) plus a backstop timer,
 `FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, 30 s. The manifest is written last, so a
 half-finished upload is invisible to recovery. A controller that starts on an
 empty disk fetches the copy and carries on from it. When a relay moves back
-to a controller that kept an older copy, the newer copy (by owner epoch, then
-highest sequence number; a tie goes to the incoming one) replaces it whole; a
-replacement that does not land whole leaves the local copy as it was. On a
+to a controller that kept an older copy, the copies are compared by lineage
+first: an incoming copy that continued the kept one, or is unrelated to it,
+replaces it whatever its length, and one the kept copy continued replaces it
+only once it moved past the point the kept copy took over from. Copies of the
+same lineage are compared by owner epoch, then highest sequence number (a tie
+goes to the incoming one). The replacement is whole; one that does not land
+whole leaves the local copy as it was. A controller a relay left ships none of
+its turns until the relay binds there again, and never takes back a lineage
+another controller continued. On a
 controller that held nothing, that means the relay binds empty while the node it
 moved from keeps its copy; while that controller still holds nothing of the
 relay, each bind asks for the copy again before the runner starts. A node that

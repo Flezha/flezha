@@ -25,6 +25,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     Stub.install()
     on_exit(&Stub.uninstall/0)
     start_supervised!(Shipper)
+    # The test process is the relay's Overwatch: its bind adopted it here.
+    Shipper.adopt(rc)
     :ok = Shipper.sweep_now()
     :ok = ClassRegistry.put_remote(rc, true)
     :ok
@@ -424,7 +426,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
     )
 
-    # Another controller took the Cell's lineage, and this one never adopted it.
+    # Another controller took the Cell's lineage, and the relay left this one.
+    Shipper.release(ctx.rc, :moved)
     ref = {:cell, ctx.cell_id}
     peer = %{Manifest.new(ref) | owner: "peer", claim: 1}
     :ok = Stub.put_if(Manifest.key(ref), Manifest.encode(peer), {:claim, 1}, [])

@@ -2,8 +2,8 @@ defmodule Flezha.State.Adoption do
   @moduledoc """
   An arriving relay's durable state replaced by the newest copy there is:
   the copy on the node it moves from, or else the cut another controller
-  shipped to the durability backend, compared by the writer epoch and top seq
-  each reference carries (`Artifact.copy_supersedes?/2`).
+  shipped to the durability backend, compared by lineage, then by the writer
+  epoch and top seq each reference carries (`Artifact.copy_supersedes?/4`).
 
   A local copy the newer one replaces, an empty one on a node that held
   nothing, is set aside with one rename (`Paths.set_aside/1`), so the pull
@@ -38,9 +38,10 @@ defmodule Flezha.State.Adoption do
   def adopt_newest(relay_class, source, owner \\ self()) do
     :ok = recover(relay_class)
 
-    with theirs when theirs != %{} <- newest(relay_class, source),
+    with {theirs, their_lineage} when theirs != %{} <- newest(relay_class, source),
          ours = Artifact.freshness_of(relay_class),
-         true <- Artifact.copy_supersedes?(theirs, ours),
+         mine = Artifact.lineage_of(relay_class),
+         true <- Artifact.copy_supersedes?(theirs, ours, their_lineage, mine),
          :unbound <- bound_here(relay_class, owner) do
       # Closed before the rename (a stopped relay's or a restarted runner's
       # writers) and after the fetch (one a late frame opened meanwhile).
@@ -70,8 +71,16 @@ defmodule Flezha.State.Adoption do
     end
   end
 
-  defp newest(relay_class, nil), do: DurabilityTier.shipped_freshness(relay_class)
-  defp newest(relay_class, source), do: WalTransfer.freshness(source, relay_class)
+  # One backend read answers both; a source is asked for its lineage only once
+  # its copy is known, so an unreachable one costs one timeout.
+  defp newest(relay_class, nil), do: DurabilityTier.shipped(relay_class)
+
+  defp newest(relay_class, source) do
+    case WalTransfer.freshness(source, relay_class) do
+      none when none == %{} -> {none, %{}}
+      theirs -> {theirs, WalTransfer.lineage(source, relay_class)}
+    end
+  end
 
   defp fetch(relay_class, nil), do: DurabilityTier.hydrate_relay(relay_class)
   defp fetch(relay_class, source), do: WalTransfer.pull_relay(source, relay_class)

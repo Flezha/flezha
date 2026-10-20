@@ -13,7 +13,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   left exactly as it is, so a partially-restored node can never lose a record
   that a stale remote copy would have overwritten. A newer cut another
   controller shipped replaces a local copy only by `Flezha.State.Adoption`
-  setting that copy aside first (`shipped_freshness/3` says how new it is).
+  setting that copy aside first (`shipped/3` says how new it is).
 
   Once the files land, the ordinary restore path runs unchanged — there is no
   second restore implementation.
@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal}
+  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal, WriterRegistry}
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
@@ -66,22 +66,25 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   defp scope(:own), do: &Enum.filter(&1, fn m -> m.owner == DurabilityTier.writer_id() end)
 
   @doc """
-  How new the shipped cut of `relay_class`'s Cells, task-journal and input log
-  is, as `%{ref => Manifest.freshness/1}`; `%{}` when this controller shipped
-  every one of them and still holds a copy of the class.
+  The shipped cuts of `relay_class`'s Cells, task-journal and input log: how
+  new each is (`Manifest.freshness/1`), `%{}` when this controller shipped every
+  one and still holds a copy of the class, and the lineage each names.
   """
-  @spec shipped_freshness(module(), keyword(), binary()) :: %{Paths.durable_ref() => term()}
-  def shipped_freshness(module, opts, relay_class) do
+  @spec shipped(module(), keyword(), binary()) :: {%{Paths.durable_ref() => term()}, map()}
+  def shipped(module, opts, relay_class) do
     log_key = Manifest.key({:input_log, relay_class})
 
     manifests =
       manifests(module, opts, Manifest.prefix(:cell, [relay_class])) ++
         manifests(module, opts, log_key, &(&1 == log_key))
 
-    if Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())) and
-         Paths.durable_refs(relay_class) != [],
-       do: %{},
-       else: Map.new(manifests, &{&1.ref, Manifest.freshness(&1)})
+    freshness =
+      if Enum.all?(manifests, &(&1.owner == DurabilityTier.writer_id())) and
+           Paths.durable_refs(relay_class) != [],
+         do: %{},
+         else: Map.new(manifests, &{&1.ref, Manifest.freshness(&1)})
+
+    {freshness, Map.new(manifests, &{&1.ref, &1.lineage})}
   end
 
   @doc """
@@ -220,9 +223,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     if Artifact.has_local_state?(ref) do
       :ok
     else
-      case fetch_and_write(module, opts, manifest) do
+      case land(module, opts, manifest) do
         :ok ->
-          seed_local_facts(manifest)
+          seed_floor(manifest)
           emit(:hydrated, ref, manifest)
 
         # A referenced artifact the store does not hold is a CORRUPT LINEAGE, not
@@ -310,66 +313,43 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end
   end
 
-  # Fetching the data is only half a restore. A Cell is also described by
-  # small local files that no record implies — its consumed offset, its WAL-owner
-  # epoch, its saga markers — and a Cell that comes back without them looks
-  # correct and behaves wrongly. Every write here is an overwrite of a fixed
-  # path, so a retry after a partial hydration converges.
-  defp seed_local_facts(%Manifest{ref: {:cell, {class, _, _} = cell_id}} = manifest) do
-    seed_consumed_offset(class, cell_id, manifest)
-    seed_epoch(cell_id, manifest)
-    seed_markers(cell_id, manifest)
-    seed_journal_floor(cell_id)
+  # A Cell is also described by small files no record implies (its lineage
+  # record, its saga markers), written after its data under the Cell's file
+  # lock, so a writer opens only on a whole landing. Each is an overwrite of a
+  # fixed path, so a retry after a partial landing converges.
+  defp land(module, opts, %Manifest{ref: {:cell, cell_id}} = manifest) do
+    WriterRegistry.with_files(cell_id, fn ->
+      with :ok <- fetch_and_write(module, opts, manifest),
+           :ok <- Lineage.arrived(cell_id, facts(manifest)),
+           do: seed_markers(cell_id, manifest)
+    end)
   end
 
-  defp seed_local_facts(_manifest), do: :ok
+  defp land(module, opts, manifest), do: fetch_and_write(module, opts, manifest)
 
-  # Normally rebuilt from the effect records in the WAL tail — but a compacted
-  # Cell ships a snapshot and no effect record, so the position its cut is
-  # consistent with would be lost. Seeding it is what lets post-hydration replay
-  # resume at the shipped cut instead of at the start of the retained input log.
-  defp seed_consumed_offset(class, cell_id, manifest) do
-    case Map.get(manifest.source_offsets, :consumed_offset) do
-      offset when is_integer(offset) and offset >= 0 ->
-        InputLog.record_consumed(class, cell_id, offset)
-
-      _ ->
-        :ok
-    end
+  # A compacted Cell ships a snapshot and no effect record, so the shipped
+  # consumed offset is its folded offset. A controller re-landing its own cut
+  # takes no copy over and mints nothing.
+  defp facts(%Manifest{} = manifest) do
+    Map.merge(manifest.lineage || %{}, %{
+      epoch: manifest.epoch,
+      folded_offset: Map.get(manifest.source_offsets, :consumed_offset, -1),
+      landed: manifest.owner != DurabilityTier.writer_id()
+    })
   end
 
-  # A task-journal's consumed input is its instance's floor in the input log, an
-  # in-memory row the bind asks the log for: seeded from the journal just
-  # written, as a Cell's consumed offset is from its manifest, or the bind would
-  # re-deliver every retained input the instance had consumed.
-  defp seed_journal_floor({instance_id, _, _} = cell_id) do
-    if cell_id == Paths.journal_id(instance_id),
-      do: TaskJournal.release_input(instance_id),
-      else: :ok
+  # The in-memory floors a bind reads: the input log's for a Cell, and a
+  # task-journal's consumed input, or the bind would re-deliver every retained
+  # input the instance had consumed.
+  defp seed_floor(%Manifest{ref: {:cell, {class, _, _} = cell_id}} = manifest) do
+    with offset when is_integer(offset) and offset >= 0 <-
+           Map.get(manifest.source_offsets, :consumed_offset),
+         do: InputLog.record_consumed(class, cell_id, offset)
+
+    if cell_id == Paths.journal_id(class), do: TaskJournal.release_input(class), else: :ok
   end
 
-  # The epoch lives in the Cell's dedup and lineage files, neither an artifact,
-  # so without this the recovered Cell reads epoch 0, its next manifest write
-  # is refused as stale against the epoch it shipped under, and it fences itself
-  # off permanently. It survives one disk loss and is silently unprotected
-  # against the next.
-  #
-  # The seq fields are deliberately neutral rather than restored.
-  # `last_persisted_seq` is ignored at writer open (the WAL scan is
-  # authoritative), and `outbox_flushed_seq` gates the boot re-drive with
-  # `seq > cursor` — a cursor restored ahead of the restored WAL would silently
-  # drop those effect records and never dispatch their outputs. `-1` re-drives
-  # everything, which the sinks' dedup absorbs: the cursor may lag, never lead.
-  defp seed_epoch(cell_id, %Manifest{epoch: epoch}) do
-    _ =
-      Lineage.put_dedup(cell_id, %{
-        last_persisted_seq: 0,
-        outbox_flushed_seq: -1,
-        epoch: epoch
-      })
-
-    :ok
-  end
+  defp seed_floor(_manifest), do: :ok
 
   defp seed_markers(cell_id, %Manifest{markers: markers}) do
     for {kind, true} <- Map.to_list(markers || %{}) do

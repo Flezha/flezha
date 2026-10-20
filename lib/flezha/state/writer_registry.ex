@@ -39,10 +39,43 @@ defmodule Flezha.State.WriterRegistry do
     ])
   end
 
-  @doc "Every registered writer id — Cell writers and input logs alike."
+  @doc "Every registered writer id — Cell writers and input logs alike, no file lock."
   @spec registered_ids() :: [tuple()]
   def registered_ids() do
-    Elixir.Registry.select(@registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    lock? = {:==, {:element, 1, :"$1"}, :cell_files}
+    Elixir.Registry.select(@registry, [{{:"$1", :_, :_}, [{:not, lock?}], [:"$1"]}])
+  end
+
+  @doc """
+  Run `fun` in a task holding `cell_id`'s file lock: the writer of the Cell's
+  files while it has no running writer (a landing). A booting writer waits for
+  the holder to end (`await_files/1`); a holder never waits on a writer.
+  """
+  @spec with_files(tuple(), (-> result)) :: result when result: term()
+  def with_files(cell_id, fun) do
+    Task.await(Task.async(fn -> hold_files(cell_id, fun) end), :infinity)
+  end
+
+  defp hold_files(cell_id, fun) do
+    case Elixir.Registry.register(@registry, {:cell_files, cell_id}, nil) do
+      {:ok, _owner} ->
+        fun.()
+
+      {:error, {:already_registered, _holder}} ->
+        :ok = await_files(cell_id)
+        hold_files(cell_id, fun)
+    end
+  end
+
+  @doc "Return once no process holds `cell_id`'s file lock."
+  @spec await_files(tuple()) :: :ok
+  def await_files(cell_id) do
+    with {:ok, holder} <- lookup({:cell_files, cell_id}) do
+      monitor = Process.monitor(holder)
+      receive do: ({:DOWN, ^monitor, _, _, _} -> :ok)
+    end
+
+    :ok
   end
 
   @doc "Every registered Cell writer as `{cell_id, pid}`, without the input logs."

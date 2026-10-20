@@ -24,7 +24,7 @@ defmodule Flezha.State.WalTransfer do
 
   alias Flezha.Config.Durations
   alias Flezha.State.DurabilityTier.Artifact
-  alias Flezha.State.Paths
+  alias Flezha.State.{Lineage, Paths, WriterRegistry}
 
   @chunk_bytes 64 * 1024
 
@@ -125,6 +125,17 @@ defmodule Flezha.State.WalTransfer do
     end
   end
 
+  @doc "`source_node`'s `Artifact.lineage_of/1`, `%{}` when it cannot answer (a build without it)."
+  @spec lineage(node(), binary()) :: %{ref() => map() | nil}
+  def lineage(source_node, relay_class) do
+    timeout = Durations.get(:wal_transfer_call_ms)
+
+    case call(source_node, Artifact, :lineage_of, [relay_class], timeout) do
+      {:ok, theirs} -> theirs
+      {:error, _older_or_unreachable} -> %{}
+    end
+  end
+
   @doc """
   Pull every file of `ref` from `source_node` into this node's state tree.
   `{:ok, 0}` means the source held nothing — a cold start is correct.
@@ -150,7 +161,7 @@ defmodule Flezha.State.WalTransfer do
         {:ok, 0}
 
       {:ok, entries} ->
-        pull_all(source_node, ref, entries, timeout, destination)
+        land(destination, fn -> pull_all(source_node, ref, entries, timeout, destination) end)
 
       {:error, _} = err ->
         emit(:wal_pull_failed, %{ref: ref, reason: elem(err, 1)})
@@ -224,6 +235,18 @@ defmodule Flezha.State.WalTransfer do
   catch
     kind, reason -> {:error, {kind, reason}}
   end
+
+  # A Cell's pull is a landing of another controller's copy: under the Cell's
+  # file lock, its lineage record marked landed once every file is in.
+  defp land({:cell, cell_id}, pull) do
+    WriterRegistry.with_files(cell_id, fn ->
+      with {:ok, _files} = pulled <- pull.(),
+           :ok <- Lineage.arrived(cell_id, :pulled),
+           do: pulled
+    end)
+  end
+
+  defp land(_ref, pull), do: pull.()
 
   defp pull_all(source_node, ref, names, timeout, destination) do
     Enum.reduce_while(names, {:ok, 0}, fn name, {:ok, done} ->

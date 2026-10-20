@@ -95,8 +95,11 @@ ordinary replay. The pull carries every durable file of the instance, one refere
 each Cell's file set (`{:cell, cell_id}`), a steps relay's journal under its reserved identity, and
 the instance's input log (`{:input_log, class}`), because a journal without its log would seed
 the floor in an empty offset space. `Flezha.State.Adoption` runs it once, as the relay arrives
-and before any of its writers opens, and only when the source's copy is newer than this node's
-(`Artifact.freshness/1`: the WAL-owner epoch, then the highest seq; a tie goes to the source).
+and before any of its writers opens, and only when the source's copy supersedes this node's
+(`Artifact.copy_supersedes?/4`: by lineage first, a copy continuing ours or unrelated to it
+winning whatever its length and one ours continues only past our fork; within one lineage the
+WAL-owner epoch, then the highest seq, a tie going to the source). The pull marks each Cell's
+lineage record landed under the Cell's file lock, so its next writer mints a new lineage id.
 A local copy it replaces, an empty one on a node that held nothing, is first renamed aside whole,
 so the pull lands as on a node that holds nothing; once every reference has landed, what only the old copy held (a reference the source
 lacks, a class-level sidecar) is copied back and the old copy is removed, and otherwise the old

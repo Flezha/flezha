@@ -205,10 +205,14 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
 - **Lineage record** — the per-cell `<key>.lineage` file (`Flezha.State.Lineage`), the home of
   the cell's epoch and folded offset, installed with a directory fsync before the dedup file
-  carries a new copy of either. Where the two files disagree, the higher epoch wins.
+  carries a new copy of either. Where the two files disagree, the higher epoch wins. It also
+  holds the cell's **lineage id**, minted at the first record after the cell's files landed from
+  another controller (or while it has none), and the trail of ids it continues; copies of one
+  cell are compared by lineage before epoch and length, and the manifest entry carries both.
 - **Output identity** — the replay-stable stamps on a keyed output: `flz.cell`, `flz.seq`,
   `flz.key`, and `flz.epoch` for a Cell that records effects (the tier, a durable steps relay). `flz.` is reserved; a user emit carrying one is rejected.
-- **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
+- **Epoch** — the counter in the outbox identity, apart from the lineage id (a takeover mints
+  a new lineage id and keeps the epoch). An accident (crash retry, takeover,
   re-drive, `flz dlq replay`) **keeps** it so the output plugin swallows the repeat; a deliberate correction
   (late-input correction, `flz relay replay`) **bumps** it so the new output passes
   dedup and overwrites by natural key. A steps relay rewind bumps only the journal epoch; its re-run's

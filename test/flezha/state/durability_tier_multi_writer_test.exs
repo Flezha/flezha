@@ -28,7 +28,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   alias Flezha.Shutdown
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{Adoption, Paths, TestHelpers, WalWriter}
+  alias Flezha.State.{Adoption, Lineage, Paths, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.{NodeTestHelper, OverwatchHost}
 
@@ -106,6 +106,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     TestHelpers.write_wal(ctx.cell_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
+    Shipper.adopt(ctx.class)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
@@ -166,6 +167,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     TestHelpers.write_wal(ctx.cell_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
+    Shipper.adopt(ctx.class)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
@@ -193,6 +195,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     TestHelpers.write_wal(ctx.cell_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
+    Shipper.adopt(ctx.class)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
@@ -285,6 +288,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     TestHelpers.write_wal(ctx.cell_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
+    Shipper.adopt(ctx.class)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
@@ -322,7 +326,6 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
       :ok = Shipper.sweep_now()
-      assert :ok = Shipper.ship_now(ref)
       assert Stub.stored_manifest(ref).owner == this_writer()
 
       peer = peer_adopts_and_ships(ctx, ref)
@@ -349,7 +352,6 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
       :ok = Shipper.sweep_now()
-      assert :ok = Shipper.ship_now(ref)
 
       peer_adopts_and_ships(ctx, ref)
 
@@ -365,14 +367,16 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
       :ok = Shipper.sweep_now()
-      assert :ok = Shipper.ship_now(ref)
       assert %{owner: owner, claim: 1} = Stub.stored_manifest(ref)
 
       # A restart loses the manifest cache but keeps the writer id, so the next
-      # ship re-reads the entry and finds itself already the owner.
+      # ship, once the relay binds here again, re-reads the entry and finds
+      # itself already the owner.
       :ok = stop_supervised(Shipper)
       {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
       TestHelpers.append_wal(ctx.cell_id, 4..5)
       assert :ok = Shipper.ship_now(ref)
 
@@ -538,7 +542,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       FlezhaTest.Case.install([:state_tree])
       write_through_writer(ctx.cell_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
-      assert :ok = Shipper.ship_now(ref)
+      :ok = Shipper.sweep_now()
       write_through_writer(ctx.cell_id, 4..7)
 
       peer = start_peer_node(ctx.peer_base)
@@ -572,23 +576,94 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       assert %{claim: 1} = Stub.stored_manifest(ref)
 
       relay_leaves_here(ctx.class, :moved)
-      Shipper.adopt(ctx.class)
-      _ = :sys.get_state(Shipper)
-
-      peer = start_peer_node(ctx.peer_base)
-
-      with_root(ctx.peer_base, fn ->
-        assert :ok = DurabilityTier.hydrate_relay(ctx.class)
-        write_through_writer(ctx.cell_id, [4])
-        GenServer.cast(peer, {:adopt, ctx.class})
-        assert :ok = GenServer.call(peer, :sweep_now)
-      end)
-
+      peer_takes_turns(ctx, [4])
       assert %{owner: @peer_writer, claim: claim} = Stub.stored_manifest(ref)
 
       write_through_writer(ctx.cell_id, 4..6)
+      Shipper.adopt(ctx.class)
       :ok = Shipper.sweep_now()
       assert %{owner: @peer_writer, claim: ^claim} = Stub.stored_manifest(ref)
+      assert %{superseded_by: @peer_writer, pending_since_ms: nil} = status_of(ref)
+    end
+
+    # fails when: the node a relay left extends the entry it owns with the
+    # turns it kept, before the node the relay moved to claims it.
+    test "a node the relay left does not extend its entry with the turns it kept", ctx do
+      ref = {:cell, ctx.cell_id}
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+
+      relay_leaves_here(ctx.class, :moved)
+      TestHelpers.append_wal(ctx.cell_id, 4..6)
+      :ok = Shipper.sweep_now()
+
+      assert Manifest.shipped_through(Stub.stored_manifest(ref)) == 3
+      assert %{pending_since_ms: nil, superseded_by: nil} = status_of(ref)
+    end
+
+    # fails when: a restarted node ships a relay it has not bound again, or
+    # counts the reference as owed and latches an RPO alarm for it.
+    test "after a restart a reference waits, not owed, until its bind adopts", ctx do
+      ref = {:cell, ctx.cell_id}
+      TestHelpers.write_wal(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+
+      :ok = stop_supervised(Shipper)
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
+      {:ok, _} = start_supervised(Shipper)
+      :ok = Shipper.sweep_now()
+      assert Manifest.shipped_through(Stub.stored_manifest(ref)) == 3
+      assert %{pending_since_ms: nil} = status_of(ref)
+      assert DurabilityTier.breaches() == []
+
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+      assert Manifest.shipped_through(Stub.stored_manifest(ref)) == 5
+    end
+
+    # fails when: a ship continuing the entry's lineage keeps the entry's
+    # ranges above the fork, so the continuation's records past it never ship.
+    test "a continuation drops the entry's turns above its fork", ctx do
+      ref = {:cell, ctx.cell_id}
+      FlezhaTest.Case.install([:state_tree])
+      write_through_writer(ctx.cell_id, 0..3)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+
+      peer = start_peer_node(ctx.peer_base)
+      with_root(ctx.peer_base, fn -> assert :ok = DurabilityTier.hydrate_relay(ctx.class) end)
+      write_through_writer(ctx.cell_id, 4..5)
+      :ok = Shipper.sweep_now()
+      assert Manifest.shipped_through(Stub.stored_manifest(ref)) == 5
+
+      continued = peer_takes_turns(ctx, 4..7, peer)
+      TestHelpers.wipe_cell(ctx.cell_id)
+      assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == continued
+    end
+
+    # fails when: an owner whose lineage the entry does not know ships onto
+    # the entry's ranges, so a hydration splices two unrelated histories.
+    test "an unrelated lineage re-ships its copy whole", ctx do
+      ref = {:cell, ctx.cell_id}
+      FlezhaTest.Case.install([:state_tree])
+      peer_takes_turns(ctx, 0..2)
+      write_through_writer(ctx.cell_id, 0..5)
+      local = File.read!(Paths.wal_path(ctx.cell_id))
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+      assert %{owner: owner} = Stub.stored_manifest(ref)
+      assert owner == this_writer()
+
+      TestHelpers.wipe_cell(ctx.cell_id)
+      assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == local
     end
 
     # fails when: a relay stopped here is released before its last ships land,
@@ -651,11 +726,9 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     end
 
     test "CONTROL: a local copy newer than the remote one is kept", ctx do
-      ref = {:cell, ctx.cell_id}
-
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
-      assert :ok = Shipper.ship_now(ref)
+      :ok = Shipper.sweep_now()
       TestHelpers.append_wal(ctx.cell_id, 4..7)
       local = File.read!(Paths.wal_path(ctx.cell_id))
 
@@ -666,14 +739,52 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     # fails when: a controller's own shipped cut reads as nothing to adopt, so
     # a controller that lost its disk binds the relay empty.
     test "a controller that lost its disk adopts its own shipped cut", ctx do
-      ref = {:cell, ctx.cell_id}
       TestHelpers.write_wal(ctx.cell_id, 0..3)
       shipped = File.read!(Paths.wal_path(ctx.cell_id))
       {:ok, _} = start_supervised(Shipper)
-      assert :ok = Shipper.ship_now(ref)
+      :ok = Shipper.sweep_now()
       File.rm_rf!(Paths.class_dir(ctx.class))
 
       assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert File.read!(Paths.wal_path(ctx.cell_id)) == shipped
+    end
+
+    # fails when: re-landing this controller's own cut marks it landed, so the
+    # first record after each bind mints a lineage no other node continues.
+    test "a relay re-landing its own cut at each bind mints nothing", ctx do
+      ref = {:cell, ctx.cell_id}
+      FlezhaTest.Case.install([:state_tree])
+      write_through_writer(ctx.cell_id, 0..1)
+      {:ok, _} = start_supervised(Shipper)
+      Shipper.adopt(ctx.class)
+      :ok = Shipper.sweep_now()
+      assert %{id: id} = Artifact.lineage(ref)
+
+      for seqs <- [2..3, 4..5] do
+        File.rm_rf!(Paths.class_dir(ctx.class))
+        assert :ok = Adoption.adopt_newest(ctx.class, nil)
+        write_through_writer(ctx.cell_id, seqs)
+        :ok = Shipper.sweep_now()
+      end
+
+      assert Artifact.lineage(ref) == %{id: id, trail: []}
+      assert %{lineage: %{id: ^id}} = shipped = Stub.stored_manifest(ref)
+      assert Manifest.shipped_through(shipped) == 5
+    end
+
+    # fails when: a landing that stopped after its data and before its lineage
+    # record reads as a lineage of its own, or the next adoption keeps it.
+    test "a landing cut short before its lineage record is replaced by the next", ctx do
+      ref = {:cell, ctx.cell_id}
+      FlezhaTest.Case.install([:state_tree])
+      shipped = peer_takes_turns(ctx, 0..3)
+      File.mkdir_p!(Path.dirname(Paths.wal_path(ctx.cell_id)))
+      File.write!(Paths.wal_path(ctx.cell_id), shipped)
+      assert Artifact.lineage(ref) == nil
+
+      assert :ok = Adoption.adopt_newest(ctx.class, nil)
+      assert %{lineage: %{id: id}} = Stub.stored_manifest(ref)
+      assert %{id: ^id, landed: true, epoch: 0} = Lineage.read(ctx.cell_id).record
       assert File.read!(Paths.wal_path(ctx.cell_id)) == shipped
     end
 
@@ -686,7 +797,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       shipped = File.read!(Paths.wal_path(ctx.cell_id))
       TestHelpers.write_wal({ctx.class, "task", "k2"}, 0..1)
       {:ok, _} = start_supervised(Shipper)
-      assert :ok = Shipper.ship_now(ref)
+      :ok = Shipper.sweep_now()
       Enum.each(Paths.durable_files(ref), &File.rm/1)
       relay = %Flezha.Relay.Builder{id: ctx.class, factory_id: "f"}
 
@@ -790,6 +901,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     TestHelpers.write_wal(ctx.cell_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
+    Shipper.adopt(ctx.class)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
@@ -869,12 +981,28 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     peer
   end
 
+  # The peer hydrates whatever is shipped when it holds nothing, takes `seqs`
+  # through a writer (a new lineage id) and ships them. Returns the peer's WAL.
+  defp peer_takes_turns(ctx, seqs, peer \\ nil) do
+    peer = peer || start_peer_node(ctx.peer_base)
+
+    with_root(ctx.peer_base, fn ->
+      unless File.exists?(Paths.wal_path(ctx.cell_id)),
+        do: assert(:ok = DurabilityTier.hydrate_relay(ctx.class))
+
+      write_through_writer(ctx.cell_id, seqs, "peer")
+      GenServer.cast(peer, {:adopt, ctx.class})
+      assert :ok = GenServer.call(peer, :sweep_now)
+      File.read!(Paths.wal_path(ctx.cell_id))
+    end)
+  end
+
   # The relay moves away and back: this node shipped 0..3 and kept the files,
   # the peer adopted it, took turns 4..5 and shipped them. Returns the peer's WAL.
   defp ship_stale_here_newer_on_peer(ctx, ref) do
     TestHelpers.write_wal(ctx.cell_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
-    assert :ok = Shipper.ship_now(ref)
+    :ok = Shipper.sweep_now()
 
     peer = start_peer_node(ctx.peer_base)
 
@@ -898,17 +1026,21 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   # Records taken through a writer, as a relay's turns are: the writer is where
   # a Cell's dedup and lineage files are written.
-  defp write_through_writer(cell_id, seqs) do
+  defp write_through_writer(cell_id, seqs, tag \\ "turn") do
     {:ok, srv} = Flezha.State.Supervisor.find_or_start(cell_id)
     header = TestHelpers.stub_header()
-    for n <- seqs, do: :ok = WalWriter.append(srv, n, header, "turn-" <> Integer.to_string(n))
+    for n <- seqs, do: :ok = WalWriter.append(srv, n, header, "#{tag}-#{n}")
     TestHelpers.close_and_await(srv, cell_id)
   end
 
+  # The peer's state root and writer id, so a hydration there reads an entry
+  # this node wrote as another controller's.
   defp with_root(root, fun) do
     own_root = Application.get_env(:flezha, :state_root)
     Application.put_env(:flezha, :state_root, root)
+    Application.put_env(:flezha, :durability_writer_id, @peer_writer)
     result = fun.()
+    Application.delete_env(:flezha, :durability_writer_id)
     Application.put_env(:flezha, :state_root, own_root)
     result
   end

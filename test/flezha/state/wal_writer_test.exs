@@ -12,6 +12,7 @@ defmodule Flezha.State.WalWriterTest do
   import ExUnit.CaptureLog
 
   alias Flezha.State.{Lineage, Metrics, Paths, RecordFrame, SeqIndex, Supervisor, TestHelpers}
+  alias Flezha.State.WriterRegistry
   alias Flezha.State.WalWriter
   alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter.State, as: WriterState
@@ -340,6 +341,31 @@ defmodule Flezha.State.WalWriterTest do
 
       assert File.read!(Paths.outbox_dedup_path(pid)) == dedup
       assert File.read(Paths.lineage_path(pid)) == lineage
+    end
+
+    # fails when: a writer opens a Cell's files while a landing still writes
+    # them, so it scans a half-landed WAL and loads no lineage record.
+    test "a writer started while a landing holds the Cell's files opens after it",
+         %{cell_id: pid} do
+      test_pid = self()
+
+      spawn_link(fn ->
+        WriterRegistry.with_files(pid, fn ->
+          send(test_pid, {:holding, self()})
+          receive do: (:release -> :ok)
+        end)
+      end)
+
+      assert_receive {:holding, holder}
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      waiting = {:current_function, {WriterRegistry, :await_files, 1}}
+      assert wait_until(fn -> Process.info(srv, :current_function) == waiting end, 2_000)
+      refute File.exists?(Paths.wal_path(pid))
+
+      send(holder, :release)
+      _ = :sys.get_state(srv)
+      assert File.exists?(Paths.wal_path(pid))
+      TestHelpers.close_and_await(srv, pid)
     end
 
     test "a rewind refuses rather than cutting at a corrupt record below its boundary",

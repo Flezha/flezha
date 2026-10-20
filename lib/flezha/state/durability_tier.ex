@@ -112,8 +112,8 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   `state_key`'s relay no longer runs on this node, so the adoption is withdrawn:
-  the node may extend a lineage it still holds, and takes none over until the
-  relay binds here again (`adopt_relay/1`).
+  until the relay binds here again (`adopt_relay/1`) the node ships none of its
+  turns (an extend waits, not owed) and takes no lineage over.
 
   A relay that `:moved` is released at once: its new node pulled the files, and
   a bid from here could only fence it. One `:stopped` here first ships every
@@ -525,12 +525,12 @@ defmodule Flezha.State.DurabilityTier do
     :ok
   end
 
-  @doc "`Hydrator.shipped_freshness/3` against the configured backend; `%{}` when the tier is off."
-  @spec shipped_freshness(binary()) :: %{Paths.durable_ref() => term()}
-  def shipped_freshness(relay_class) do
+  @doc "`Hydrator.shipped/3` against the configured backend; two `%{}` when the tier is off."
+  @spec shipped(binary()) :: {%{Paths.durable_ref() => term()}, map()}
+  def shipped(relay_class) do
     case BackendConfig.resolve() do
-      {module, opts} -> Hydrator.shipped_freshness(module, opts, relay_class)
-      :none -> %{}
+      {module, opts} -> Hydrator.shipped(module, opts, relay_class)
+      :none -> {%{}, %{}}
     end
   end
 

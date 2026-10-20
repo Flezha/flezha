@@ -17,7 +17,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   side, disjoint and ordered, so hydration concatenates them verbatim.
   """
 
-  alias Flezha.State.Paths
+  alias Flezha.State.{Lineage, Paths}
 
   @magic "FLZM"
   @version 1
@@ -28,7 +28,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   # `owner`/`claim` are here, not merely alongside: a takeover changes no data,
   # so without them `same_cut?/2` would report "nothing to write" and the new
   # owner's claim would never land.
-  @cut_keys [:epoch, :snapshots, :ranges, :file, :source_offsets, :markers, :owner, :claim]
+  @cut_keys ~w(epoch snapshots ranges file source_offsets markers owner claim lineage)a
 
   @type ref ::
           {:cell, Paths.cell_id()}
@@ -58,6 +58,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
           markers: markers(),
           owner: nil | binary(),
           claim: non_neg_integer(),
+          lineage: nil | %{id: binary(), trail: [{binary(), integer()}]},
           shipped_at_ms: integer()
         }
 
@@ -71,6 +72,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
             markers: %{intent: false, done: false},
             owner: nil,
             claim: 0,
+            lineage: nil,
             shipped_at_ms: 0
 
   @spec new(ref()) :: t()
@@ -134,6 +136,20 @@ defmodule Flezha.State.DurabilityTier.Manifest do
       | snapshots: Enum.reject(manifest.snapshots, &(&1.seq > seq)),
         ranges: Enum.reject(manifest.ranges, &(&1.to > seq))
     }
+  end
+
+  @doc """
+  The entry a copy of `lineage` ships onto: cut above the fork when that copy
+  continues the entry's lineage, emptied (the copy re-ships whole) when the
+  entry's lineage is no ancestor of it, as it is otherwise.
+  """
+  @spec rebase(t(), map() | nil) :: t()
+  def rebase(%__MODULE__{} = manifest, lineage) do
+    case Lineage.relation(manifest.lineage, lineage) do
+      {:ancestor, fork} -> prune_above(manifest, fork)
+      :other -> prune_above(manifest, -1)
+      _same_or_descendant -> manifest
+    end
   end
 
   @doc """

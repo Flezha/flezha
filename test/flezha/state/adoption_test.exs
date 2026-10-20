@@ -8,16 +8,18 @@ defmodule FlezhaTest.State.AdoptionTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
 
-  alias Flezha.State.{Adoption, Paths, TestHelpers}
+  alias Flezha.State.{Adoption, Lineage, Paths, TestHelpers}
   alias Flezha.State.DurabilityTier.Artifact
 
   setup do
     class = "aside_#{System.unique_integer([:positive])}"
     cell_id = {class, "task", "k"}
     TestHelpers.write_wal(cell_id, 0..3, "old")
+    :ok = Lineage.put(cell_id, %{Lineage.mint(Lineage.read(cell_id).record, -1) | epoch: 0})
     old = File.read!(Paths.wal_path(cell_id))
+    lineage = File.read!(Paths.lineage_path(cell_id))
     File.rename!(Paths.class_dir(class), Paths.set_aside_dir(class))
-    %{class: class, cell_id: cell_id, old: old}
+    %{class: class, cell_id: cell_id, old: old, lineage: lineage}
   end
 
   # fails when: a set-aside copy reads as a relay class, so the retention
@@ -35,6 +37,7 @@ defmodule FlezhaTest.State.AdoptionTest do
     assert :ok = Adoption.adopt_newest(ctx.class, nil)
 
     assert File.read!(Paths.wal_path(ctx.cell_id)) == ctx.old
+    assert File.read!(Paths.lineage_path(ctx.cell_id)) == ctx.lineage
     refute File.exists?(Paths.wal_path({ctx.class, "task", "partial"}))
     refute File.exists?(Paths.set_aside_dir(ctx.class))
   end
@@ -86,4 +89,89 @@ defmodule FlezhaTest.State.AdoptionTest do
     refute File.exists?(Paths.set_aside_dir(ctx.class))
     assert Paths.landed_kept(ctx.class) == :none
   end
+
+  describe "comparing two copies of one relay" do
+    @ref {:cell, {"cls", "task", "k"}}
+
+    # fails when: a copy with no lineage, or the same one, is compared by
+    # anything but its epoch and length.
+    test "with no lineage, or the same one, the newer copy wins and a tie goes to it" do
+      for {theirs, ours} <- [
+            {%{}, %{}},
+            {lineage("a"), %{@ref => nil}},
+            {lineage("a"), lineage("a")}
+          ] do
+        assert supersedes?({0, 5}, {0, 3}, theirs, ours)
+        assert supersedes?({0, 3}, {0, 3}, theirs, ours)
+        refute supersedes?({0, 3}, {0, 5}, theirs, ours)
+      end
+    end
+
+    # fails when: a longer copy the relay abandoned keeps its turns over the
+    # copy that continued it.
+    test "a copy that continues ours wins whatever its length" do
+      assert supersedes?({0, 4}, {0, 7}, lineage("b", [{"a", 3}]), lineage("a"))
+    end
+
+    # fails when: a copy ours continues replaces ours though it took nothing
+    # past the seq we forked from.
+    test "a copy ours continues wins only once it moved past our fork" do
+      ours = lineage("b", [{"a", 3}])
+      refute supersedes?({0, 3}, {0, 5}, lineage("a"), ours)
+      assert supersedes?({0, 4}, {0, 5}, lineage("a"), ours)
+    end
+
+    test "a copy of an unrelated lineage wins whatever its length" do
+      assert supersedes?({0, 2}, {0, 9}, lineage("x"), lineage("a"))
+    end
+
+    # fails when: the backend's id two takeovers back is not found in our
+    # trail, so its shorter copy replaces the one that continued it.
+    test "after two takeovers whose claims never landed the local copy is kept" do
+      refute supersedes?({0, 3}, {0, 6}, lineage("a"), lineage("c", [{"b", 5}, {"a", 3}]))
+    end
+
+    test "a hydration that took no record keeps the source's id, so the longer copy wins" do
+      refute supersedes?({0, 3}, {0, 7}, lineage("a"), lineage("a"))
+      assert supersedes?({0, 7}, {0, 3}, lineage("a"), lineage("a"))
+    end
+
+    # fails when: a peer without lineage records is not compared as before, or
+    # this build's freshness stops being the 2-tuple an older build reads.
+    test "a peer of an older build compares as before, both ways" do
+      assert supersedes?({0, 5}, {0, 3}, %{}, lineage("a"))
+      refute supersedes?({0, 3}, {0, 5}, %{}, lineage("a"))
+
+      class = "mixed_#{System.unique_integer([:positive])}"
+      TestHelpers.write_wal({class, "task", "k"}, 0..3)
+      ours = Artifact.freshness_of(class)
+
+      assert copy_supersedes_before_lineage?(
+               ours,
+               Map.new(ours, fn {ref, _} -> {ref, {0, 2}} end)
+             )
+
+      refute copy_supersedes_before_lineage?(
+               Map.new(ours, fn {ref, _} -> {ref, {0, 2}} end),
+               ours
+             )
+    end
+  end
+
+  defp lineage(id, trail \\ []), do: %{@ref => %{id: id, trail: trail}}
+
+  defp supersedes?(theirs, ours, their_lineage, our_lineage),
+    do: Artifact.copy_supersedes?(%{@ref => theirs}, %{@ref => ours}, their_lineage, our_lineage)
+
+  # `Artifact.copy_supersedes?/2` as a build without lineage records has it.
+  defp copy_supersedes_before_lineage?(theirs, ours) do
+    shared = Map.take(ours, Map.keys(theirs))
+
+    theirs != %{} and Enum.all?(Map.values(theirs), &match?({_, _}, &1)) and
+      (ours == %{} or shared != %{}) and
+      Enum.all?(shared, fn {ref, mine} -> at_least?(Map.fetch!(theirs, ref), mine) end)
+  end
+
+  defp at_least?({_, _} = theirs, {_, _} = ours), do: theirs >= ours
+  defp at_least?(_theirs, _ours), do: false
 end

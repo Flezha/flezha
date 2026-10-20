@@ -23,7 +23,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.DurabilityTier
+  alias Flezha.State.{DurabilityTier, Lineage}
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
@@ -171,18 +171,14 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   def handle_cast({:enqueue, ref}, state), do: {:noreply, push(state, ref)}
 
   def handle_cast({:end_wait, ref}, state) do
-    if status_of(ref).superseded_by, do: update_status(ref, &%{&1 | pending_since_ms: nil})
+    if status_of(ref).superseded_by, do: not_owed(ref)
     {:noreply, state}
   end
 
-  # This node now runs `state_key`'s relay, so it is entitled to take over
-  # that lineage remotely. Without this gate a node that merely still has the
-  # files — every source of a migration, since the copy is never deleted —
-  # would bid its way back in on its next sweep and fence the real owner.
-  #
-  # The cached entries go too: one this node wrote before the relay ran
-  # elsewhere still names it owner, and would make it extend a claim another
-  # writer has since moved past.
+  # This node now runs `state_key`'s relay (`entitled?/2`): every reference
+  # ships, an extend that waited included. The cached entries go too: one this
+  # node wrote before the relay ran elsewhere still names it owner, and would
+  # make it extend a claim another writer has since moved past.
   def handle_cast({:adopt, state_key}, state) do
     refs = DurabilityTier.refs_of_state_key(state_key)
     Enum.each(refs, &clear_supersession/1)
@@ -336,6 +332,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     {result, state} =
       case entitled?(state, ref) do
         {:no, holder} -> {{:error, {:superseded, holder}}, supersede(state, ref, holder)}
+        :wait -> {{:error, :not_adopted}, tap(state, fn _ -> not_owed(ref) end)}
         :yes -> ship_and_record(state, ref)
       end
 
@@ -386,28 +383,29 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # A writer extends its own lineage always, and takes one over only while this
-  # node runs the relay: adopted at its bind, released when it leaves.
-  #
-  # An unclaimed lineage needs no adoption: two nodes first-shipping it both bid
-  # `{:claim, 1}` against a stored 0, and the strict compare-and-set already
-  # resolves that to one winner. Adoption exists for the other case — a node
-  # that LOST a lineage and still holds the files, which every migration
-  # produces, since the source copy is never deleted. Without the gate its next
-  # backstop sweep would bid the lineage back and fence the real owner.
+  # A relay's turns ship only while this node runs it (adopted at its bind,
+  # released when it leaves): one that LOST it still holds the files, since a
+  # migration keeps the source copy, and would extend its entry with abandoned
+  # turns or bid it back over the real owner, or over an entry that continues
+  # its own lineage. Until a bind adopts, an extend waits, not owed. Two first
+  # ships both bid `{:claim, 1}` and the strict compare-and-set picks one.
   defp entitled?(state, ref) do
-    manifest = manifest_for(state, ref)
+    entry = manifest_for(state, ref)
+    adopted? = MapSet.member?(state.adopted, Artifact.state_key(ref))
 
     # `guard_for/2` is the one place the owner comparison is made, so the
     # decision to ship and the guard the write carries can never disagree.
-    case Manifest.guard_for(manifest, state.writer) do
-      {:extend, _} -> :yes
-      {:claim, _} when manifest.owner == nil -> :yes
-      {:claim, _} -> if adopted?(state, ref), do: :yes, else: {:no, manifest.owner}
+    case Manifest.guard_for(entry, state.writer) do
+      {:extend, _} when adopted? -> :yes
+      {:extend, _} -> if Artifact.whole_payload?(ref), do: :yes, else: :wait
+      {:claim, _} when entry.owner == nil -> :yes
+      {:claim, _} when adopted? -> if continued?(entry, ref), do: {:no, entry.owner}, else: :yes
+      {:claim, _} -> {:no, entry.owner}
     end
   end
 
-  defp adopted?(state, ref), do: MapSet.member?(state.adopted, Artifact.state_key(ref))
+  defp continued?(entry, ref),
+    do: Lineage.relation(entry.lineage, Artifact.lineage(ref)) == :descendant
 
   defp do_ship(state, ref) do
     if Artifact.whole_payload?(ref) do
@@ -467,10 +465,9 @@ defmodule Flezha.State.DurabilityTier.Shipper do
       :nothing_to_ship
     else
       epoch = Artifact.epoch(ref)
-      manifest = manifest_for(state, ref)
+      local = %{epoch: epoch, markers: Artifact.markers(ref), lineage: Artifact.lineage(ref)}
+      manifest = state |> manifest_for(ref) |> Manifest.rebase(local.lineage)
       local_top = Artifact.top_seq(snapshots, bounds)
-
-      local = %{epoch: epoch, markers: Artifact.markers(ref)}
 
       with {:ok, shipped} <- ship_snapshots(state, ref, manifest, snapshots, local_top),
            {:ok, shipped, records} <- ship_records(state, ref, shipped, bounds, epoch) do
@@ -757,6 +754,8 @@ defmodule Flezha.State.DurabilityTier.Shipper do
       }
     end)
   end
+
+  defp not_owed(ref), do: update_status(ref, &%{&1 | pending_since_ms: nil})
 
   defp clear_supersession(ref) do
     update_status(ref, &%{&1 | superseded_by: nil})

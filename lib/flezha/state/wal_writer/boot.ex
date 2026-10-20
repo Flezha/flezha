@@ -22,7 +22,8 @@ defmodule Flezha.State.WalWriter.Boot do
     RecordFrame,
     SeqIndex,
     Snapshot,
-    TaskJournal
+    TaskJournal,
+    WriterRegistry
   }
 
   alias Flezha.State.WalWriter.{Admission, Epoch, RemoteGate, Settlement, State}
@@ -87,6 +88,7 @@ defmodule Flezha.State.WalWriter.Boot do
   and appends queue in this writer's mailbox rather than the channel's.
   """
   def open(state) do
+    :ok = WriterRegistry.await_files(state.cell_id)
     unit = commit_unit(state.cell_id)
     state = %{state | commit_unit: unit, remote: RemoteGate.new(state.cell_id, unit)}
     File.mkdir_p!(Path.dirname(state.wal_path))

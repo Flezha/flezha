@@ -14,7 +14,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Relay.{Builder, Overwatch, Replay}
-  alias Flezha.State.{Adoption, FsyncBatcher, InputLog, Paths, Supervisor, TaskJournal}
+  alias Flezha.State.{Adoption, FsyncBatcher, InputLog, Lineage, Paths, Supervisor, TaskJournal}
   alias Flezha.State.TestHelpers
   alias Flezha.State.{WalTransfer, WalWriter}
   alias FlezhaTest.Helper.NodeTestHelper
@@ -162,6 +162,7 @@ defmodule FlezhaTest.State.WalTransferTest do
   test "a same-id move from a peer pulls the cell and removes the peer's copy" do
     cell_id = seed_cell("sameid")
     source_bytes = File.read!(Paths.wal_path(cell_id))
+    %{id: id, landed: false} = Lineage.read(cell_id).record
 
     {peer_pid, peer_node} =
       NodeTestHelper.start_peer_node(:waltransfer4, state_root: Paths.state_root())
@@ -173,6 +174,8 @@ defmodule FlezhaTest.State.WalTransferTest do
     assert files > 0
     assert File.read!(Paths.wal_path(cell_id)) == source_bytes
     assert :erpc.call(peer_node, WalTransfer, :manifest, [{:cell, cell_id}]) == []
+    # Another controller's copy: the Cell's next writer mints over it.
+    assert %{id: ^id, landed: true} = Lineage.read(cell_id).record
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -221,6 +224,9 @@ defmodule FlezhaTest.State.WalTransferTest do
     assert log =~ "could not be asked for its copy"
     assert log =~ "the local copy is bound unchecked"
     assert File.read!(Paths.wal_path(cell_id)) == local
+    # A node that cannot answer for its lineage (unreachable, or a build
+    # without lineage records) is compared as before.
+    assert WalTransfer.lineage(:"nobody@127.0.0.1", class) == %{}
   end
 
   describe "a relay moving back to a node that kept a copy" do

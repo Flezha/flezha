@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: a returning controller's longer copy yields to the history its relay continued
+
+- A Cell's lineage file and its remote manifest entry carry a lineage id, minted at the Cell's
+  first record after its files land from another controller. When a relay returns to a
+  controller that kept turns past the copy another controller continued, the continued copy
+  replaces the longer one; before, the longer copy was kept and the continuation lost.
+- A controller a relay left cannot claim its lineage back once another controller continued
+  it, and ships none of the relay's turns until the relay binds there again. After a restart
+  such a reference waits for its bind and is not counted against the RPO target.
+
 ### Changed: a Cell keeps its epoch in a lineage file
 
 - Each Cell gains a `<cell_key>.lineage` file beside its `.outbox.dedup` file. It holds the

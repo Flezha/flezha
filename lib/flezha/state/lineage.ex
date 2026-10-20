@@ -57,6 +57,45 @@ defmodule Flezha.State.Lineage do
     Paths.atomic_install(Paths.lineage_path(cell_id), &:file.write(&1, bytes), :lineage)
   end
 
+  @doc """
+  A Cell's files landed from elsewhere: a pull's record is marked landed; a
+  hydration's `facts` are installed, then a dedup file whose cursors `{0, -1}`
+  re-drive every effect record (a cursor may lag, never lead).
+  """
+  @spec arrived(Paths.cell_id(), :pulled | map()) :: :ok | {:error, term()}
+  def arrived(cell_id, :pulled) do
+    case record(cell_id) do
+      %{epoch: nil} -> :ok
+      record -> put(cell_id, %{record | landed: true})
+    end
+  end
+
+  def arrived(cell_id, facts) do
+    %{epoch: epoch, folded_offset: folded} = record = Map.merge(@none, facts)
+    progress = %{last_persisted_seq: 0, outbox_flushed_seq: -1, epoch: epoch}
+
+    with :ok <- put(cell_id, record),
+         do: put_dedup(cell_id, Map.put(progress, :folded_offset, folded))
+  end
+
+  @doc """
+  How lineage `theirs` stands to `ours` (each `%{id, trail}` or `nil`): `:same`
+  when no id tells them apart, `:descendant` when theirs continues ours,
+  `{:ancestor, fork}` when ours continues theirs from seq `fork`, else `:other`.
+  """
+  @spec relation(map() | nil, map() | nil) ::
+          :same | :descendant | {:ancestor, integer()} | :other
+  def relation(%{id: theirs, trail: their_trail}, %{id: ours, trail: our_trail})
+      when is_binary(theirs) and is_binary(ours) and theirs != ours do
+    case {List.keymember?(their_trail, ours, 0), List.keyfind(our_trail, theirs, 0)} do
+      {true, _} -> :descendant
+      {false, {_, fork}} -> {:ancestor, fork}
+      {false, nil} -> :other
+    end
+  end
+
+  def relation(_theirs, _ours), do: :same
+
   @doc "`record` under a new id, its old one pushed on the trail at `fork_seq` (16 kept)."
   @spec mint(stored(), integer()) :: stored()
   def mint(%{id: id, trail: trail} = record, fork_seq) do

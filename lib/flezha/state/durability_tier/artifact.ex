@@ -243,26 +243,44 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def freshness_of(relay_class),
     do: Map.new(Paths.durable_refs(relay_class), &{&1, freshness(&1)})
 
+  @doc "`ref`'s lineage (`%{id, trail}`), `nil` for none: only a Cell's writer mints one."
+  @spec lineage(ref()) :: %{id: binary(), trail: list()} | nil
+  def lineage({:cell, cell_id}) do
+    %{record: record} = Lineage.read(cell_id)
+    if record.id, do: Map.take(record, [:id, :trail])
+  end
+
+  def lineage(_ref), do: nil
+
+  @doc "`lineage/1` of every durable reference `relay_class` holds on this node."
+  @spec lineage_of(binary()) :: %{ref() => map() | nil}
+  def lineage_of(relay_class), do: Map.new(Paths.durable_refs(relay_class), &{&1, lineage(&1)})
+
   @doc """
   Whether one relay's copy marked `theirs` replaces the local copy marked
-  `ours` (both `%{ref => marker}`): each of its markers can be read, it shares
-  a lineage with ours unless ours is empty, and on every shared reference it is
-  at least as new. A tie goes to it: it is the copy the relay's current
-  owner wrote, and two histories of equal length differ only in who wrote them.
-  A reference only ours holds does not count against it: the adoption keeps
-  it (`Flezha.State.Adoption`).
+  `ours` (both `%{ref => marker}`, lineages `%{ref => lineage/1}`): each of its
+  markers can be read, it shares a reference with ours unless ours is empty,
+  and on every shared one it continues ours, is unrelated, moved past the fork
+  ours continues it from, or, of one lineage, is at least as new (a tie goes to
+  the copy the relay's current owner wrote). A reference only ours holds does
+  not count against it: the adoption keeps it (`Flezha.State.Adoption`).
   """
-  @spec copy_supersedes?(%{ref() => term()}, %{ref() => term()}) :: boolean()
-  def copy_supersedes?(theirs, ours) do
+  @spec copy_supersedes?(%{ref() => term()}, %{ref() => term()}, map(), map()) :: boolean()
+  def copy_supersedes?(theirs, ours, their_lineage \\ %{}, our_lineage \\ %{}) do
     shared = Map.take(ours, Map.keys(theirs))
 
     theirs != %{} and Enum.all?(Map.values(theirs), &match?({_, _}, &1)) and
       (ours == %{} or shared != %{}) and
-      Enum.all?(shared, fn {ref, mine} -> at_least?(Map.fetch!(theirs, ref), mine) end)
+      Enum.all?(shared, fn {ref, mine} ->
+        relation = Lineage.relation(their_lineage[ref], our_lineage[ref])
+        supersedes?(relation, Map.fetch!(theirs, ref), mine)
+      end)
   end
 
-  defp at_least?({_, _} = theirs, {_, _} = ours), do: theirs >= ours
-  defp at_least?(_theirs, _ours), do: false
+  defp supersedes?(_relation, _theirs, :unreadable), do: false
+  defp supersedes?(:same, theirs, ours), do: theirs >= ours
+  defp supersedes?({:ancestor, fork}, {_epoch, top}, _ours), do: top > fork
+  defp supersedes?(_descendant_or_other, _theirs, _ours), do: true
 
   @doc "The highest seq a snapshot set and WAL bounds cover, `-1` for neither."
   @spec top_seq([{non_neg_integer(), binary()}], {non_neg_integer(), non_neg_integer()} | :empty) ::

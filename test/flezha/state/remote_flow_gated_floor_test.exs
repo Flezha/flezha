@@ -16,6 +16,8 @@ defmodule Flezha.State.RemoteFlowGatedFloorTest do
     on_exit(&Stub.uninstall/0)
     on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
     start_supervised!(Shipper)
+    # The test process is the relay's Overwatch: its bind adopted it here.
+    Shipper.adopt(rc)
     :ok = Shipper.sweep_now()
     :ok = ClassRegistry.put_remote(rc, true)
     :ok

@@ -188,7 +188,7 @@ defmodule Flezha.State.DurabilityTierTest do
     setup ctx do
       Stub.install()
       TestHelpers.write_wal(ctx.cell_id, 0..4)
-      start_shipper()
+      start_shipper(ctx.class)
       ctx
     end
 
@@ -322,7 +322,7 @@ defmodule Flezha.State.DurabilityTierTest do
     setup ctx do
       Stub.install()
       TestHelpers.write_wal(ctx.cell_id, 0..5)
-      start_shipper()
+      start_shipper(ctx.class)
       ctx
     end
 
@@ -374,7 +374,7 @@ defmodule Flezha.State.DurabilityTierTest do
       # A runner restart realigned this Cell, which is the ordinary case: the
       # epoch is bumped by `WalWriter.realign_epoch/4`, not only by a rewind.
       set_epoch(ctx.cell_id, 2)
-      start_shipper()
+      start_shipper(ctx.class)
       ctx
     end
 
@@ -403,6 +403,32 @@ defmodule Flezha.State.DurabilityTierTest do
       # records from the boot re-drive (`seq > cursor`) and never dispatch their
       # outputs. `-1` re-drives everything, which sink dedup absorbs.
       assert Lineage.progress(ctx.cell_id).outbox_flushed_seq == -1
+
+      # A landing that stopped between its lineage record and its dedup file
+      # re-drives everything too, at the lineage record's epoch.
+      File.rm!(Paths.outbox_dedup_path(ctx.cell_id))
+      assert %{epoch: 2, outbox_flushed_seq: -1} = Lineage.progress(ctx.cell_id)
+    end
+
+    # fails when: a hydration whose fetch failed writes the Cell's lineage
+    # record or folded offset, so a Cell with no data reads as landed.
+    test "a hydration that fails to fetch writes no lineage record", ctx do
+      ref = {:cell, ctx.cell_id}
+      assert :ok = Shipper.ship_now(ref)
+      [%{blob: blob}] = Stub.stored_manifest(ref).ranges
+      Stub.delete(blob, [])
+
+      for land <- [
+            fn -> DurabilityTier.hydrate_relay(ctx.class, :own) end,
+            fn -> DurabilityTier.hydrate_cells(ctx.class, "task", ["k1"]) end
+          ] do
+        TestHelpers.wipe_cell(ctx.cell_id)
+        log = AuthTestHelper.capture_log_at(:error, fn -> assert :ok = land.() end)
+
+        assert log =~ "which the backend does not hold"
+        refute File.exists?(Paths.lineage_path(ctx.cell_id))
+        refute File.exists?(Paths.outbox_dedup_path(ctx.cell_id))
+      end
     end
 
     test "the saga compensation markers survive a recovery", ctx do
@@ -447,7 +473,7 @@ defmodule Flezha.State.DurabilityTierTest do
     setup ctx do
       Stub.install()
       TestHelpers.write_wal(ctx.cell_id, 0..3)
-      start_shipper()
+      start_shipper(ctx.class)
       ctx
     end
 
@@ -603,7 +629,7 @@ defmodule Flezha.State.DurabilityTierTest do
   describe "the registry cspec" do
     setup ctx do
       Stub.install()
-      start_shipper()
+      start_shipper(ctx.class)
       ctx
     end
 
@@ -670,7 +696,7 @@ defmodule Flezha.State.DurabilityTierTest do
       auth = AuthTestHelper.setup_auth_stores(prefix: "flz_dur_authz")
       store = start_supervised!({Dlq.Store, name: :"dlq_#{System.unique_integer([:positive])}"})
 
-      start_shipper()
+      start_shipper(ctx.class)
       Map.merge(ctx, %{dlq_dir: dlq_dir, auth_dir: auth.auth_dir, dlq: store})
     end
 
@@ -791,7 +817,7 @@ defmodule Flezha.State.DurabilityTierTest do
   describe "a relay whose instance id and class differ" do
     setup ctx do
       Stub.install()
-      start_shipper()
+      start_shipper(ctx.class)
 
       instance = "inst_" <> Integer.to_string(System.unique_integer([:positive]))
       ClassRegistry.put_state_keys(instance, ctx.class)
@@ -826,9 +852,11 @@ defmodule Flezha.State.DurabilityTierTest do
   # ---------- helpers ----------
 
   # `sweep_now/0` is a barrier: it sweeps and drains, so the boot sweep the
-  # shipper runs on start cannot land in the middle of a case.
-  defp start_shipper() do
+  # shipper runs on start cannot land in the middle of a case. The relay runs
+  # here, as its bind says (`DurabilityTier.adopt_relay/1`), so its turns ship.
+  defp start_shipper(class) do
     {:ok, _pid} = start_supervised(Shipper)
+    Shipper.adopt(class)
     :ok = Shipper.sweep_now()
   end
 
