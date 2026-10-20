@@ -29,7 +29,8 @@ flowchart LR
   must contain a dot. `FLEZHA_INITIAL_NODES` lists the nodes each controller tries to connect
   to; on Kubernetes, `FLEZHA_CLUSTER_DISCOVERY=k8s_pod_discovery` finds them instead.
 - **Sharing.** The relays are spread over the controllers. When a controller joins, it
-  takes a share: some relays move to it as it joins.
+  takes a share: some relays move to it as it joins, only relays of factories its own runners
+  serve.
 - **Leaving.** A controller that is stopped hands its relays to the others before it
   exits. The graceful-shutdown timeout bounds that (`FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`,
   60000 by default), and the orchestrator must give the process longer than that before it

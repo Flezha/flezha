@@ -190,7 +190,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:healthz_bind` | string | `0.0.0.0` |
 | `:healthz_enabled` | bool | `false` |
 | `:healthz_port` | int | `9569` |
-| `:hub_runner_assign_wait_ms` | ms | `2000` |
 | `:initial_nodes` | list of atom | `""` |
 | `:input_log_hold_window_ms` | ms | `0` |
 | `:input_silence_timeout_ms` | ms | `0` |

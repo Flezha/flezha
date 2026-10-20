@@ -65,8 +65,7 @@ defmodule Flezha.Service.RelayManager.Placement do
 
   Every attempt is capped at the smaller of #{Durations.get(:runner_poll_call_ms)} ms
   and what is left of `timeout_ms`, floored at #{Durations.get(:runner_min_call_ms)} ms,
-  so a blocked `FleetManager` can overrun the deadline by at most that floor no
-  matter how many callers share one budget.
+  so a blocked `FleetManager` can overrun the deadline by at most that floor.
   """
   @spec await_runner(
           String.t(),
@@ -77,9 +76,8 @@ defmodule Flezha.Service.RelayManager.Placement do
         ) :: {:ok, binary()} | {:error, :timeout | :unavailable}
   def await_runner(namespace, factory_id, relay_id, timeout_ms, ready_fun \\ fn _ -> true end)
 
-  # An exhausted budget must cost nothing: blocking here is what walks a large
-  # batch past `cross_node_request_timeout`. `:timeout`, not `:unavailable` —
-  # the fleet was never asked.
+  # An exhausted budget costs nothing. `:timeout`, not `:unavailable`: the
+  # fleet was never asked.
   def await_runner(_namespace, _factory_id, _relay_id, timeout_ms, _ready_fun)
       when timeout_ms <= 0,
       do: {:error, :timeout}

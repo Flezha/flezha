@@ -9,10 +9,11 @@ defmodule Flezha.Convergence.Probe do
   its own controller's loop places it.
   """
 
-  alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.GroupedHashing
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Probe.Judge
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Identificator
   alias Flezha.Parallel
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Relay.Overwatch
@@ -237,11 +238,13 @@ defmodule Flezha.Convergence.Probe do
   end
 
   # For every observed `{namespace, factory}` pair: this node's runners
-  # advertising the factory, and the OTHER nodes whose fleets do. The facts
-  # that tell a doomed local rebind — the hub is already moving the relay
-  # to a controller that can run it — from one worth planning. A failed local
-  # read is `:unknown`, never `[]`, so the Diff never stops planning for an
-  # relay on the strength of a read that failed.
+  # advertising the factory, and the OTHER nodes the hub places it on, the ones
+  # serving its group. The facts that tell a doomed local rebind — the hub is
+  # already moving the relay to a controller that can run it — from one worth
+  # planning. A peer that advertises the factory without serving it is no such
+  # controller, and a hub that cannot be read names none. A failed local read
+  # is `:unknown`, never `[]`, so the Diff never stops planning for a relay on
+  # the strength of a read that failed.
   defp placement(relays) do
     relays
     |> Enum.flat_map(fn {{ns, _rid}, observed} ->
@@ -255,7 +258,8 @@ defmodule Flezha.Convergence.Probe do
       {{ns, factory},
        %{
          local: local_factory_runners(ns, factory),
-         remote_nodes: List.delete(Directory.factory_nodes(ns, factory), node())
+         remote_nodes:
+           List.delete(GroupedHashing.group_nodes(Identificator.hub(ns), factory), node())
        }}
     end)
   end

@@ -61,8 +61,7 @@ defmodule Flezha.Relay.Lifecycle do
     # Wait for an active runner in this namespace advertising
     # `relay.factory_id`. The DETS-baked runner_id is usually stale
     # after a restart (Identificator.unique_id/1 generates a fresh id
-    # per connect), so we re-resolve via RelayManager.await_runner/5
-    # — the same bounded lookup HubManager.alter_child_data/2 performs.
+    # per connect), so we re-resolve via RelayManager.await_runner/5.
     case Overwatch.with_task_span(:await_runner, relay.id, fn ->
            RelayManager.await_runner(
              state.namespace,

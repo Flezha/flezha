@@ -566,6 +566,29 @@ defmodule Flezha.Convergence.DiffTest do
                {gave_up, "e_named", :compaction_gave_up}
              ]
     end
+
+    # fails when: a row that names no runner beside a bound relay is not a stale
+    # tag, so a start's late registry write that erased the bind's tag is never
+    # re-published. An unbound relay's empty row is not one.
+    test "a bound relay whose row names no runner is a stale tag" do
+      intent = %Intent{
+        relays: [
+          %{namespace: :ns, relay_id: "bound", factory_id: nil, plugins: []},
+          %{namespace: :ns, relay_id: "unbound", factory_id: nil, plugins: []}
+        ]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e1"])},
+        relays: %{
+          {:ns, "bound"} => %{bound_runner: "e1", registry_tag: nil, pid: self()},
+          {:ns, "unbound"} => %{bound_runner: nil, registry_tag: nil, pid: self()}
+        },
+        stalled_relays: MapSet.new()
+      }
+
+      assert diff(intent, reality).stale_tags == [{{:ns, "bound"}, nil, "e1"}]
+    end
   end
 
   describe "Planner.plan/3" do

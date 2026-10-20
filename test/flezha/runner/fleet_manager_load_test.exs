@@ -13,7 +13,6 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Load
-  alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers, as: StateTestHelpers
   alias FlezhaTest.Helper.FleetStateHelper
@@ -38,23 +37,6 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
   defp counts(runner_ids, assigned) do
     tally = Enum.frequencies(assigned)
     Map.new(runner_ids, &{&1, Map.get(tally, &1, 0)})
-  end
-
-  # The recovery batch's own placement call, with the child data shape
-  # `StartChildrenRequest` hands the hook. Returns the runner the hook wrote
-  # onto the row.
-  defp place_in_batch(ns, relay_id) do
-    child_data = %{
-      child_spec: %{
-        id: relay_id,
-        start:
-          {HubRegistryTestHelper.StubChild, :start_link,
-           [{ns, %{id: relay_id, factory_id: @factory}}]}
-      },
-      metadata: %{}
-    }
-
-    HubManager.alter_child_data(:ignored_hub_id, child_data).metadata.tag
   end
 
   describe "the spread across a namespace's runners" do
@@ -82,7 +64,8 @@ defmodule FlezhaTest.Runner.FleetManagerLoadTest do
       ns = namespace()
       runners = seed(ns, for(i <- 1..4, do: "batch_runner_#{i}"))
 
-      assigned = for i <- 1..8, do: place_in_batch(ns, "batch_op_#{i}")
+      # The relays bind together: each resolves its runner before any row names one.
+      assigned = for i <- 1..8, do: FleetManager.resolve_runner(ns, @factory, "batch_op_#{i}")
 
       assert counts(runners, assigned) == Map.new(runners, &{&1, 2})
     end

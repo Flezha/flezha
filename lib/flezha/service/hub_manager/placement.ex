@@ -1,15 +1,13 @@
 defmodule Flezha.Service.HubManager.Placement do
   @moduledoc """
-  Where a child is placed and what it is told: the child spec and start args,
-  what an unplaceable runner degrades to, and the runner-assignment wait.
+  Where a child is placed and what it is told: the child spec and start args
+  the hub's alter hook rewrites, and the runner tag on its row.
   """
 
-  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager.Rows
-  alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Init
   alias Flezha.Service.RegistryUpdate
   alias Flezha.State.DurabilityTier
@@ -129,40 +127,15 @@ defmodule Flezha.Service.HubManager.Placement do
     child_data
   end
 
+  # The recorded runner is kept, whatever it is: the Overwatch's own bind
+  # resolves the runner (`Lifecycle.bind/3` ignores this one), and the
+  # convergence loop re-publishes a row whose tag differs from the binding.
   defp place_child(child_data, %{start: {m, f, _args}}, {namespace, recorded_runner, relay}) do
-    relay_id = Map.get(relay, :id)
-    factory_id = Map.get(relay, :factory_id)
-
-    # Recovery replay races the `FleetManager.runner_connect/3` that triggered
-    # it: the connecting runner is not placeable until that handler returns, so
-    # the first `nil` here is not final.
-    assigned_runner =
-      case RelayManager.await_runner(
-             namespace,
-             factory_id,
-             relay_id,
-             batch_runner_wait_ms(),
-             &RelayManager.runner_registered?/1
-           ) do
-        {:ok, runner_id} ->
-          runner_id
-
-        {:error, reason} ->
-          unplaceable_runner(recorded_runner, namespace, factory_id, relay_id, reason)
-      end
-
-    Logger.info(
-      "[hub_manager] alter_child_data relay=#{inspect(relay_id)} " <>
-        "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_runner)}"
-    )
-
-    new_args = [{namespace, assigned_runner, relay}]
-
     child_data
-    |> put_in([:child_spec, :start], {m, f, new_args})
+    |> put_in([:child_spec, :start], {m, f, [{namespace, recorded_runner, relay}]})
     |> update_in([:child_spec], &Init.with_shutdown/1)
-    |> put_in([:metadata, :tag], assigned_runner)
-    |> stamp_group(factory_id)
+    |> put_in([:metadata, :tag], recorded_runner)
+    |> stamp_group(Map.get(relay, :factory_id))
   end
 
   # The hub places a relay among the controllers serving its factory, and
@@ -174,58 +147,5 @@ defmodule Flezha.Service.HubManager.Placement do
 
   defp stamp_group(child_data, factory_id) do
     update_in(child_data[:metadata], &Map.put_new(&1, :group, factory_id))
-  end
-
-  # Keep whatever the cspec recorded — a runner id, or nothing, which is what a
-  # declaration holds, since the declared entry commits before this hook rewrites
-  # anything. Either way the start proceeds.
-  #
-  # What that buys is small and worth stating plainly. The Overwatch starts, its
-  # own bind re-resolves the runner (`Lifecycle.bind/3` ignores the recorded one
-  # entirely), finds none, and holds the relay alive with no binding. The
-  # convergence loop binds it when a runner advertising its factory connects. The
-  # recorded-runner shape degrades exactly like this — the two shapes are not
-  # distinguished here — and it is deliberately preferred to raising, which kills
-  # the whole start request before `update_registry`, strands every row in the
-  # batch, and, because the hook runs in the hub's shared `WorkerQueue` under a
-  # linking `Task.async_stream`, takes that worker down with every start queued
-  # behind it — without starting the relay either.
-  #
-  # The caller still learns, though not from here. A named factory with no runner
-  # is refused by `Admission.resolve_factory/2` before the hub is asked — its
-  # catch-all clause means that covers a binary factory id only — and a runner
-  # that goes away after that check reaches the caller through
-  # `Init.bind_started/4`, whose bounded `:registry_runner_set` call meets the
-  # stopping Overwatch and answers an error.
-  defp unplaceable_runner(recorded_runner, namespace, _factory_id, relay_id, reason) do
-    Logger.warning(
-      "[hub_manager] no placeable runner for #{relay_id} in #{namespace} (#{reason}); " <>
-        "starting with recorded_runner=#{inspect(recorded_runner)}, pending rebind"
-    )
-
-    recorded_runner
-  end
-
-  @batch_runner_wait_key :flezha_alter_child_data_deadline
-
-  # One start request alters every child in sequence and runs `update_registry`
-  # only after the last one, so the wait is shared across the batch: a per-child
-  # budget would multiply past `cross_node_request_timeout` and the request
-  # would be killed with its registry update undone.
-  #
-  # The process IS the request: `StartChildrenRequest.start_children/3` is the
-  # sole dispatch site, under `WorkerQueue`'s `Task.async_stream`, which gives a
-  # fresh unpooled process per request that dies with it. That is what scopes
-  # the deadline — no wall-clock guard, which could only ever hand a second
-  # request the first one's spent budget.
-  defp batch_runner_wait_ms do
-    now = System.monotonic_time(:millisecond)
-
-    deadline =
-      Process.get(@batch_runner_wait_key) ||
-        now + Durations.get(:hub_runner_assign_wait_ms)
-
-    Process.put(@batch_runner_wait_key, deadline)
-    max(deadline - now, 0)
   end
 end

@@ -42,7 +42,7 @@ defmodule Flezha.Convergence.Diff do
           not_started_plugins: [{relay_ref(), binary(), map()}],
           extra_plugins: [{relay_ref(), binary(), pid()}],
           unhealthy_plugins: [{relay_ref(), binary(), map(), term()}],
-          stale_tags: [{relay_ref(), binary(), binary()}],
+          stale_tags: [{relay_ref(), binary() | nil, binary()}],
           data_plane_wedge: wedge(),
           data_plane_layer: atom() | nil,
           draining: boolean()
@@ -256,7 +256,7 @@ defmodule Flezha.Convergence.Diff do
   defp normalize_runner(_), do: nil
 
   # A relay needing a binding whose factory no LOCAL runner advertises
-  # while another node's fleet does is WAITING, not diverging. The hub places an
+  # while another node serves its group is WAITING, not diverging. The hub places a
   # relay among the controllers serving its factory, so this state lasts
   # only while this controller's withdrawal grace runs or the hub's own move is
   # in flight; a bind planned against it could only fail and advance a key. The
@@ -299,13 +299,12 @@ defmodule Flezha.Convergence.Diff do
         do: {cell_id, Map.get(bound, relay_id, runner_id), kind}
   end
 
-  # A durable row naming a runner other than the one the relay is bound to:
-  # a start's late registry write clobbered a rebind's tag. Both sides known,
-  # both binaries, and they differ.
+  # A durable row naming another runner than the one the relay is bound to,
+  # or none: a start's late registry write clobbered the bind's tag.
   defp stale_tags(declared, observed) do
     for %{namespace: ns, relay_id: rid} <- declared,
         %{bound_runner: bound, registry_tag: tag} <- [Map.get(observed, {ns, rid})],
-        is_binary(bound) and is_binary(tag) and bound != tag,
+        is_binary(bound) and bound != tag,
         do: {{ns, rid}, tag, bound}
   end
 

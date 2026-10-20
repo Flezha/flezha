@@ -201,10 +201,10 @@ defmodule Flezha.Runner.FleetManager do
   `nil` factory widens it to every active runner — and one of them is chosen by
   steps-load rendezvous hashing (`Load.select/3`). The choice is counted
   against the runner before this returns, which is what a recovery batch needs:
-  its members are placed under one `Task.async_stream` and none of their rows is
-  written until the last of them has been placed, so a count that only advanced
-  when the registry did would be identical for every member and the batch would
-  spread exactly as the plain hash spread it.
+  its relays bind together and none of their rows names a runner until its bind
+  has published one, so a count that only advanced when the registry did would
+  be identical for every member and the batch would spread exactly as the plain
+  hash spread it.
   """
   @spec resolve_runner(String.t(), binary() | nil, binary(), timeout()) :: binary() | nil
   def resolve_runner(

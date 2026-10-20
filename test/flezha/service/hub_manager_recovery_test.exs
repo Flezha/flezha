@@ -37,7 +37,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias Flezha.Service.PluginManager
   alias Flezha.State.DurabilityTier.DeclaredManifest
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.DeclaredChildren
@@ -46,9 +45,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
   @namespace "recovery_test_ns"
   # Every boot in this file pays the grace before the first reconcile round
-  # runs, so any test timing that round must subtract it. Upstream's floor for
-  # the grace is 50 ms — it is a one-shot delay, unlike the interval, whose
-  # floor stays at 1 s.
+  # runs. Upstream's floor for the grace is 50 ms — it is a one-shot delay,
+  # unlike the interval, whose floor stays at 1 s.
   @reconcile_grace_ms 50
   # The runner id baked into the durable cspec by the boot that registered it.
   @recorded_runner "recorded_runner_from_previous_boot"
@@ -80,10 +78,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # `(unplaced)` — bound to the previous boot's dead pid, invisible to the
   # convergence reconciler, producing no data until the user re-declares it.
   test "recovery replay rebinds a persisted relay even when no runner is placeable" do
-    # Zero budget removes every timing dependency: the hook gets exactly one
-    # lookup, which cannot succeed because no runner is ever seeded.
-    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
-
     hub_id = Identificator.hub(@namespace)
     relay_id = "replay_no_runner_op"
 
@@ -98,19 +92,12 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert registry_tag(ProcessRegistry.dump(hub_id), relay_id) == @recorded_runner
   end
 
-  # fails when: one relay whose factory no runner advertises drags the whole
-  # replay batch past `cross_node_request_timeout`, so WorkerQueue kills the
-  # request and every row in it — placeable or not — keeps its dead pid.
-  test "unplaceable relays do not strand the rest of the replay batch" do
-    # 800ms × 3 unplaceable children takes 2.4s if the wait is per-child;
-    # shared, the whole batch waits 800ms once.
-    budget = 800
-    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, budget))
-
+  # fails when: the alter hook resolves a runner for each row of a replay
+  # batch, so the batch waits on the rows no runner serves and a large one walks
+  # past `cross_node_request_timeout`: WorkerQueue kills the request and every
+  # row in it keeps its dead pid. The Overwatch's bind is the one resolution.
+  test "a replay batch with unplaceable rows starts every row" do
     hub_id = Identificator.hub(@namespace)
-    # `start_children/3` folds the batch in registry-dump key order, so the `a_`
-    # / `z_` prefixes pin which child is reached with budget left and which is
-    # reached after it is spent. Both must end up on a live pid.
     placeable = "a_batch_placeable_op"
     unplaceable = for i <- 1..3, do: "z_batch_unplaceable_task_#{i}"
 
@@ -120,25 +107,18 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       [{placeable, "market"}] ++
         Enum.map(unplaceable, &{&1, "factory_no_runner_serves"})
 
-    elapsed = replay_hub(hub_id, rows)
+    replay_hub(hub_id, rows)
 
     for {relay_id, _factory} <- rows do
       assert await_bound_node(hub_id, relay_id, 15_000) == node(),
              "#{relay_id} kept its dead pid — the start request was killed before update_registry"
     end
 
-    # The reconcile round that does the placement only starts once the grace
-    # elapses, so the grace is boot latency, not batch waiting.
-    waited = elapsed - @reconcile_grace_ms
-
-    assert waited < budget * 2,
-           "the batch spent #{waited} ms waiting — the deadline is per-child, not shared, " <>
-             "so N unplaceable children scale past cross_node_request_timeout"
-
+    # Every row keeps the runner it recorded, a placeable one too: the hook
+    # resolves none, and `StubChild` stands in for the bind that would.
     dump = ProcessRegistry.dump(hub_id)
-    assert registry_tag(dump, placeable) == @seeded_runner
 
-    for relay_id <- unplaceable do
+    for {relay_id, _factory} <- rows do
       assert registry_tag(dump, relay_id) == @recorded_runner
     end
   end
@@ -166,14 +146,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert declared_start_arg(relay_id) ==
              {@namespace, %{id: relay_id, factory_id: "market"}}
 
-    # The runner's session goes but the fleet still advertises `market`, so this
-    # controller still serves the factory's group and the hub still places the
-    # replay here — while the lookup the hook makes cannot succeed, because a
-    # runner with no control unit registration is not one placement hands out.
-    # Zero budget removes every timing dependency from that lookup.
-    FleetStateHelper.seed(@namespace, %{"unregistered_runner" => ["market"]})
-    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
-
     {bound_node, log} =
       ExUnit.CaptureLog.with_log(fn ->
         restart_hub(hub_id)
@@ -186,7 +158,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert bound_node == node(),
            "the replay never placed #{relay_id} — the alter hook took the start request with it"
 
-    # The tag is what the hook wrote: nothing owns the relay. A real
+    # The tag is what the hook wrote, the recorded none. A real
     # Overwatch would then be held unbound until the convergence loop binds it;
     # `StubChild` stands still instead, which is what keeps this test about the
     # hook and the batch.
@@ -353,10 +325,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
            "await_runner gave up after one attempt instead of polling the budget"
   end
 
-  # fails when: children reached after the shared batch budget is spent still
-  # block on the FleetManager call, so batch cost grows with N and a large replay
-  # walks past cross_node_request_timeout — WorkerQueue kills the request and
-  # every row in it keeps its dead pid.
+  # fails when: a spent budget still blocks on the FleetManager call, so a bind
+  # given none waits on a blocked fleet instead of answering at once.
   test "an exhausted budget costs nothing while FleetManager is blocked" do
     :sys.suspend(FleetManager)
     on_exit(fn -> :sys.resume(FleetManager) end)
@@ -372,7 +342,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     elapsed = System.monotonic_time(:millisecond) - started_at
 
     assert elapsed < 100,
-           "5 zero-budget lookups took #{elapsed} ms — each still blocks, so the batch bound is not real"
+           "5 zero-budget lookups took #{elapsed} ms — each still blocks on the fleet"
   end
 
   # fails when: the per-attempt call timeout is not clamped to what is left of
@@ -447,7 +417,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # dist_sup's restart intensity and loses its whole supervision tree.
   @tag timeout: 120_000
   test "a runnerless namespace holding more relays than the restart intensity keeps them all" do
-    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
 
     hub_id = Identificator.hub(@namespace)
@@ -508,7 +477,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     # fails when: losing the runtime registry loses intent — the declared set
     # must survive row loss and the reconcile must restore from it.
     test "a cold start restores the declared set after registry-row loss" do
-      on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
       hub_id = Identificator.hub(@namespace)
       relay_id = "declared_cold_start_op"
 
@@ -534,7 +502,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     # absent from the declared set and stay absent across any later boot,
     # however long the gap (there is no TTL left to expire).
     test "a deliberate stop removes the declared entry and no later boot resurrects it" do
-      on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
       hub_id = Identificator.hub(@namespace)
       relay_id = "declared_stop_op"
 
@@ -559,8 +526,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     # fails when: the declared set has no off-cluster copy — losing every
     # cluster disk must still restore intent through the durability tier.
     test "total disk loss restores the declared set from the durability tier" do
-      on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
-
       tier_dir =
         Path.join([System.tmp_dir!(), "flezha_tier_#{System.unique_integer([:positive])}"])
 
@@ -624,8 +589,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   end
 
   # The warm restart itself: keep the registry, come back up. Every boot
-  # reconciles now, so nothing has to be armed between the two. Returns the
-  # milliseconds it took, for the tests that assert on placement latency.
+  # reconciles now, so nothing has to be armed between the two.
   # `drop_declared: true` removes the declared list and its seeded marker
   # between the stop and the start, so the boot re-seeds from registry rows —
   # the pre-declared-list upgrade shape injected rows rely on.
@@ -634,10 +598,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     if Keyword.get(opts, :drop_declared, false), do: drop_declared_list()
 
-    started_at = System.monotonic_time(:millisecond)
     {:ok, _} = HubManager.start_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
-    System.monotonic_time(:millisecond) - started_at
   end
 
   # Must run only while the hub is down: the declared store holds the file

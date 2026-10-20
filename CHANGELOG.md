@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed: a relay binds its runner once
+
+- **BREAKING:** the application env `:hub_runner_assign_wait_ms` is removed. A hub start no
+  longer waits for a runner; the relay's own bind finds one.
+- A relay whose only other controller advertises its factory without serving it is reported
+  and retried under backoff instead of waiting for a move that never comes.
+
 ### Fixed: concurrent starts stay within a namespace's quotas
 
 - Two relay starts that ran at once in one namespace could both pass the `max_relays` or
