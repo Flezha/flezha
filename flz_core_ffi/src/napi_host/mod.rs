@@ -622,6 +622,7 @@ mod tests {
             kind,
             change_seq: 0,
             factory: "f".to_string(),
+            cell_identity: None,
         }
     }
 

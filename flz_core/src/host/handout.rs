@@ -8,7 +8,7 @@ use super::decl::HostClock;
 use super::prepare::PrepareCrossing;
 use crate::cell::{CellItem, CellSlot};
 use crate::poll_core::{EngineActivation, EnginePayload, ItemAttempt};
-use crate::schema;
+use crate::schema::{self, ActivationKind};
 
 /// The schema form of a handed-out activation. `now` is stamped here — the
 /// host never reads ambient time for `ctx.now()`.
@@ -19,17 +19,11 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             change_seq,
             kind,
             ..
-        } => schema::Activation {
-            token: act.token,
-            target: cell_ref_of(slot),
-            kind: kind.clone(),
-            change_seq: *change_seq,
-            factory: slot.topology.factory_id.to_string(),
-        },
+        } => on_cell(act.token, slot, kind.clone(), *change_seq),
         EnginePayload::Prepare(crossing) => schema::Activation {
             token: act.token,
             target: prepare_target(crossing),
-            kind: schema::ActivationKind::KeyRequest(schema::KeyRequest {
+            kind: ActivationKind::KeyRequest(schema::KeyRequest {
                 channel: crossing.channel,
                 payloads: crossing.entries.iter().map(|e| e.bytes.clone()).collect(),
                 want_keys: crossing.want_keys,
@@ -37,28 +31,55 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             }),
             change_seq: 0,
             factory: crossing.instance.topology.factory_id.to_string(),
+            cell_identity: None,
         },
         EnginePayload::Work {
             slot,
             items,
             change_seq,
-        } => schema::Activation {
-            token: act.token,
-            target: cell_ref_of(slot),
-            kind: schema::ActivationKind::Work(work_items_to_schema(slot, items)),
-            change_seq: *change_seq,
-            factory: slot.topology.factory_id.to_string(),
-        },
+        } => on_cell(
+            act.token,
+            slot,
+            ActivationKind::Work(work_items_to_schema(slot, items)),
+            *change_seq,
+        ),
         EnginePayload::Leave {
             target, factory, ..
         } => schema::Activation {
             token: act.token,
             target: target.clone(),
-            kind: schema::ActivationKind::Leave { whole_relay: true },
+            kind: ActivationKind::Leave { whole_relay: true },
             change_seq: 0,
             factory: factory.to_string(),
+            cell_identity: None,
         },
     }
+}
+
+/// An activation addressed to a live Cell.
+fn on_cell(token: u64, slot: &CellSlot, kind: ActivationKind, seq: u64) -> schema::Activation {
+    schema::Activation {
+        token,
+        target: cell_ref_of(slot),
+        cell_identity: identity_once(slot, &kind),
+        kind,
+        change_seq: seq,
+        factory: slot.topology.factory_id.to_string(),
+    }
+}
+
+/// The identity once per host Cell: a leave or a restore fold drops the
+/// host's Cell. One Cell's handouts are serialized by its gates.
+fn identity_once(slot: &CellSlot, kind: &ActivationKind) -> Option<Vec<u8>> {
+    if let ActivationKind::Leave { .. } | ActivationKind::RestoreFold(_) = kind {
+        slot.identity_handed.store(false, Ordering::Relaxed);
+        return None;
+    }
+    if slot.identity_handed.load(Ordering::Relaxed) {
+        return None;
+    }
+    slot.identity_handed.store(true, Ordering::Relaxed);
+    Some(slot.cell_identity.to_vec())
 }
 
 /// A prepare crossing is addressed to the channel's first consumer.

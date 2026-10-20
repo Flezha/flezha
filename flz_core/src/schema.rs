@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Negotiated at context creation; a mismatch refuses to start.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 pub use crate::channel::{ChannelId, TaskletId};
 
@@ -20,6 +20,9 @@ pub struct Activation {
     pub change_seq: u64,
     /// The declared class, by which a host resolves its own typed class.
     pub factory: String,
+    /// The Cell's wire identity, on its first activation since the host last
+    /// dropped or rebuilt it; the host keeps it for `ctx.stable_id()`.
+    pub cell_identity: Option<Vec<u8>>,
 }
 
 /// The cell an activation is addressed to; `cell_key` is `None` only for
@@ -329,6 +332,7 @@ mod tests {
             ]),
             change_seq: 3,
             factory: "f".into(),
+            cell_identity: Some(b"id".to_vec()),
         };
         let decoded = decode_activation(&encode_activation(&a)).unwrap();
         assert_eq!(a, decoded);

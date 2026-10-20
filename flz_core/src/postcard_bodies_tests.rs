@@ -49,6 +49,7 @@ fn work_activation() -> Activation {
         ]),
         change_seq: 9,
         factory: "f".into(),
+        cell_identity: Some(b"id".to_vec()),
     }
 }
 
@@ -64,6 +65,7 @@ fn command(kind: ActivationKind) -> Activation {
         kind,
         change_seq: 0,
         factory: "f".into(),
+        cell_identity: None,
     }
 }
 

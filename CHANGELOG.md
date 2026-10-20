@@ -29,6 +29,19 @@
 - The shutdown drain no longer counts plugin homes among the relays it reports as locally
   hosted or still local.
 
+### Changed: a Cell's identity comes from the core
+
+- **BREAKING:** the activation carries the Cell's identity bytes on its first activation since
+  the host last dropped or rebuilt the Cell, and the activation schema is version 6. Node's
+  exported `ACTIVATION_SCHEMA_VERSION`, Python's and Ruby's read 6; a runner built against 5
+  is refused when its context is created.
+- The Python, Ruby, PHP, Node, Java and Elixir SDKs keep those bytes with the Cell and derive
+  `ctx.stable_id()` from them; Ruby's `Flezha::Identity.cell_identity`, PHP's `Identity::cell`
+  and Java's `CellId` are removed. A test harness names its Cell's identity itself, so its ids
+  differ from a runner's.
+- Under PHP's Swoole executor, where each thread keeps its own Cells, a stable id asked on a
+  thread that never held the Cell's first activation is refused.
+
 ### Fixed: a Cell restored before its stream keeps its timers
 
 - A Cell restored before the runner's secondary stream was connected kept its processing-time

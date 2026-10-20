@@ -53,7 +53,7 @@ lib/flezha/state/paths.ex 829
 lib/flezha/state/task_journal.ex 1008
 lib/flezha/state/wal_writer/epoch.ex::do_rewind 53
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
-sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 53
+sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 52
 sdk/elixir/native/flz_core_beam/src/threads.rs::poll_for 51
 sdk/node/src/definition.ts::defineTasklet 66
 sdk/node/src/dispatch.ts::answer 54

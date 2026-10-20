@@ -137,11 +137,16 @@ Two notes owed to whoever writes the next SDK:
 ## Activation / ActivationResult
 
 The boundary contract lives in `flz_core::schema` and is postcard-encoded;
-field order IS the wire contract and `SCHEMA_VERSION` (currently 5) gates it.
+field order IS the wire contract and `SCHEMA_VERSION` (currently 6) gates it.
 Every kind is pinned as bytes in `test/fixtures/postcard_bodies.txt`, which
 the core's tests encode and each shim must reproduce byte-identically.
 
 An **Activation** targets one cell (a relay-wide `Leave`, one relay) and carries one `ActivationKind`:
+
+It also carries `cell_identity`, the Cell's wire identity bytes, on the first
+activation for that Cell since the host last dropped or rebuilt it (its `Leave`
+or `RestoreFold`), and on no other: the host keeps them with the Cell and
+derives `ctx.stable_id()` from them, and never builds the layout itself.
 
 | Kind                                                                 | What the host does |
 | -------------------------------------------------------------------- | ------------------ |

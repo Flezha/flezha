@@ -23,16 +23,17 @@
 # encodes are spelled in `flz_core/src/postcard_bodies_tests.rs`.
 #
 # Command activations are all token 1 addressed to relay `o`, tasklet 0, no
-# key, change seq 0, factory `f`, so each starts `01016f0000` and ends `000166`.
+# key, change seq 0, factory `f` and no identity, so each starts `01016f0000` and
+# ends `00016600`. The work activation carries the identity `id`.
 
-activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070100d00f090166
-activation|restore_fold|01016f00000101010f000201010001020101000166
-activation|snapshot_request|01016f000002000166
-activation|live_state_read|01016f000003000166
-activation|apply_state|01016f000004027b7d000166
-activation|key_request|01016f000005020101700100000166
-activation|compensate_run|01016f00000601010a000166
-activation|leave|01016f00000701000166
+activation|work|2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070100d00f09016601026964
+activation|restore_fold|01016f00000101010f00020101000102010100016600
+activation|snapshot_request|01016f00000200016600
+activation|live_state_read|01016f00000300016600
+activation|apply_state|01016f000004027b7d00016600
+activation|key_request|01016f00000502010170010000016600
+activation|compensate_run|01016f00000601010a00016600
+activation|leave|01016f0000070100016600
 result|work|2a0001000101010101036f757401026b32000001020107e8070101d00f00010000
 result|completing|2a0001000101010101036f757401026b32000001020107e8070101d00f0001000104646f6e65
 effect|outputs_edges_timer_register|0101aa01036f7574016b010161016202010201e72400fbd095ffbc31010198f2010101020101e7240109

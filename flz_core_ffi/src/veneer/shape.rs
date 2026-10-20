@@ -47,6 +47,7 @@ pub const TASKLET: Key = Key::flat("tasklet");
 pub const CELL_KEY: Key = Key::of("cell_key", "cellKey");
 pub const CHANGE_SEQ: Key = Key::of("change_seq", "changeSeq");
 pub const FACTORY: Key = Key::flat("factory");
+pub const CELL_IDENTITY: Key = Key::of("cell_identity", "cellIdentity");
 pub const KIND: Key = Key::flat("kind");
 pub const ITEMS: Key = Key::flat("items");
 pub const SNAPSHOT: Key = Key::flat("snapshot");
@@ -105,6 +106,7 @@ pub mod record {
         CELL_KEY,
         CHANGE_SEQ,
         FACTORY,
+        CELL_IDENTITY,
         KIND,
         ITEMS,
         SNAPSHOT,
@@ -298,6 +300,10 @@ pub fn activation<S: Sink>(s: &S, act: schema::Activation) -> Result<S::Value, S
     s.set(&mut out, CHANGE_SEQ, change_seq)?;
     let factory = s.text(act.factory)?;
     s.set(&mut out, FACTORY, factory)?;
+    if let Some(identity) = act.cell_identity {
+        let identity = s.bytes(identity)?;
+        s.set(&mut out, CELL_IDENTITY, identity)?;
+    }
     kind_out(s, &mut out, act.kind)?;
     s.finish_map(out)
 }

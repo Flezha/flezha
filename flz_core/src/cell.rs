@@ -212,6 +212,9 @@ pub struct CellSlot {
     /// Wire identity `(relay instance, tasklet, cell_key)` per
     /// `flusher::encode_cell_identity`; the controller routes on it.
     pub cell_identity: Arc<Vec<u8>>,
+    /// The host holds `cell_identity`: set when an activation hands it out,
+    /// cleared by a leave or a restore fold, after which the host rebuilds.
+    pub identity_handed: AtomicBool,
     /// `util::monotonic_ms` of the last successful push; the idle clock of
     /// the dynamic reaper and of an instance's sleep.
     pub last_activity_ms: AtomicI64,
@@ -565,6 +568,7 @@ pub fn assemble_slot(
         replay_open: AtomicBool::new(false),
         replay_depth: AtomicU64::new(0),
         cell_identity: parts.cell_identity,
+        identity_handed: AtomicBool::new(false),
         last_activity_ms: AtomicI64::new(crate::util::monotonic_ms()),
         flusher_entry_id,
         timers: Mutex::new(crate::timer::PendingTimers::default()),

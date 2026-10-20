@@ -109,6 +109,50 @@ fn an_evicted_cell_and_a_stopped_relay_each_tell_the_host_they_left() {
     );
 }
 
+/// The identity crosses once per host Cell: on its first activation, on the
+/// first after its leave, and on no other.
+#[test]
+fn the_identity_crosses_once_per_host_cell() {
+    let _env = crate::runner::env_test_guard();
+    let id = format!("host_leave_identity_{}", std::process::id());
+    let node = crate::runner::RunnerNode::new("test-ns".to_string());
+    let slot = leaving_relay(&node, &id, "leave-12", None)
+        .get_or_create("k1")
+        .expect("the Cell is minted");
+    let core = crate::poll_core::global();
+    let mut offset = 0;
+    let mut handout = || {
+        offset += 1;
+        let (work, effect) = work_and_effect(offset, &[]);
+        assert!(slot.mailbox.try_push(work.item).is_ok());
+        assert!(slot.mailbox.claim_inflight());
+        let act = core.try_assemble(&slot).expect("the work is handed out");
+        let identity = crate::host::to_schema(&act).cell_identity;
+        let (token, outcome) = (act.token, schema::ActivationOutcome::Work(vec![effect]));
+        let result = schema::ActivationResult { token, outcome };
+        crate::host::apply_result(core, act, result).expect("answered");
+        identity
+    };
+    let bytes = Some(slot.cell_identity.to_vec());
+    assert_eq!(
+        [handout(), handout(), handout()],
+        [bytes.clone(), None, None]
+    );
+
+    assert!(slot.claim_drained(), "the Cell is idle");
+    let leaving = Arc::clone(&slot);
+    let left = std::thread::spawn(move || {
+        crate::host::cell_left_locked(&leaving);
+        leaving.release_drained();
+    });
+    assert_eq!(answer_leave(take_leave("leave-12")).cell_identity, None);
+    left.join().expect("the leave is answered");
+
+    assert_eq!([handout(), handout()], [bytes, None]);
+    assert!(node.stop_relay("leave-12"));
+    next_leave("leave-12");
+}
+
 #[test]
 fn an_evicted_cells_key_names_it_until_the_host_answers_its_leave() {
     let _env = crate::runner::env_test_guard();
