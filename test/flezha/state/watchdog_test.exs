@@ -21,6 +21,7 @@ defmodule Flezha.State.WatchdogTest do
 
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Suspend
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
@@ -343,10 +344,10 @@ defmodule Flezha.State.WatchdogTest do
     steps = "StepsWatch" <> uniq()
     asleep = "SleepingWatch" <> uniq()
     ClassRegistry.put(steps, :steps)
-    :ok = ClassRegistry.put_parked(asleep, %{wake_deadline_ms: nil})
+    :ok = Suspend.put_sleep(asleep, %{wake_deadline_ms: nil})
 
     on_exit(fn ->
-      ClassRegistry.put_parked(asleep, nil)
+      Suspend.put_sleep(asleep, nil)
       ClassRegistry.delete(steps)
       ClassRegistry.delete(asleep)
     end)

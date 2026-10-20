@@ -46,10 +46,9 @@ lib/flezha/plugin/provider_behaviour.ex 807
 lib/flezha/relay/calls.ex 842
 lib/flezha/relay/handover.ex::absorb 65
 lib/flezha/relay/lifecycle.ex::complete_init 65
-lib/flezha/relay/overwatch.ex 973
+lib/flezha/relay/overwatch.ex 944
 lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/service/plugin_manager.ex 879
-lib/flezha/service/relay_manager.ex 838
 lib/flezha/state/durability_tier/shipper.ex 812
 lib/flezha/state/input_log.ex 1225
 lib/flezha/state/paths.ex 829
@@ -76,4 +75,4 @@ sdk/rust/src/relay/dispatcher.rs::run_activation 51
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
 sdk/rust/src/tasklet/ctx.rs 813
 xref cycles 4
-xref largest 147
+xref largest 148

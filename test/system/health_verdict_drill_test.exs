@@ -33,7 +33,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
 
   alias Flezha.Convergence.{Loop, Snapshot, Verdict}
   alias Flezha.Healthz.Server, as: Healthz
-  alias Flezha.Relay.Migration
+  alias Flezha.Relay.Suspend
   alias Flezha.Plugin
   alias Flezha.Service.{Cli, RelayManager, PluginManager}
   alias FlezhaTest.Fixtures.RelayFixture
@@ -205,7 +205,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   # it a fault and `/healthz` stays healthy.
   defp row_suspended(ctx) do
     id = start_relay(ctx, "suspended")
-    :ok = Migration.suspend(ctx.namespace, id, 0, %{wake_deadline_ms: nil}, nil)
+    :ok = Suspend.suspend(ctx.namespace, id, 0, %{wake_deadline_ms: nil}, nil)
     assert_surfaces(ctx, id, :suspended, "healthy")
   end
 

@@ -75,7 +75,7 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
       builder: %Flezha.Relay.Builder{id: instance, factory_id: "f", opts: []}
     }
 
-    steps = Enum.filter(Flezha.Relay.Migration.shutdown_steps(), &(&1.name == :writers))
+    steps = Enum.filter(Flezha.Relay.Lifecycle.shutdown_steps(), &(&1.name == :writers))
     assert {:ok, _report} = Shutdown.run(:process, {state, :shutdown}, 5_000, steps)
 
     assert closed?(instance)

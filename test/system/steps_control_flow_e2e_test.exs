@@ -28,6 +28,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Suspend
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Wire
   alias Flezha.Service.Cli
@@ -96,7 +97,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       assert_released(relay_id)
 
       assert NodeTestHelper.wait_until(
-               fn -> ClassRegistry.parked(relay_id) != nil end,
+               fn -> Suspend.sleep_record(relay_id) != nil end,
                20_000
              ),
              "the idle loop never parked at its committed boundary"
@@ -371,7 +372,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       last = entries |> Enum.filter(&(&1.type == :iter_committed)) |> List.last()
       assert last.payload.completion == "3"
 
-      assert ClassRegistry.parked(relay_id) == nil,
+      assert Suspend.sleep_record(relay_id) == nil,
              "the completed loop parked after its last turn"
     end
   end

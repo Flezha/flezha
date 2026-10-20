@@ -9,6 +9,7 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Suspend
   alias Flezha.State.Paths
 
   setup do
@@ -65,20 +66,20 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
   end
 
   test "a park record survives a table wipe and is gone once cleared", %{class: class} do
-    assert ClassRegistry.parked(class) == nil
+    assert Suspend.sleep_record(class) == nil
 
-    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: 1_700_000})
+    :ok = Suspend.put_sleep(class, %{wake_deadline_ms: 1_700_000})
     :ets.delete_all_objects(:flezha_relay_class_registry)
 
-    assert ClassRegistry.parked(class) == %{wake_deadline_ms: 1_700_000}
+    assert Suspend.sleep_record(class) == %{wake_deadline_ms: 1_700_000}
 
-    :ok = ClassRegistry.put_parked(class, %{wake_deadline_ms: nil})
+    :ok = Suspend.put_sleep(class, %{wake_deadline_ms: nil})
     :ok = ClassRegistry.delete(class)
-    assert ClassRegistry.parked(class) == %{wake_deadline_ms: nil}
+    assert Suspend.sleep_record(class) == %{wake_deadline_ms: nil}
 
-    :ok = ClassRegistry.put_parked(class, nil)
+    :ok = Suspend.put_sleep(class, nil)
     :ets.delete_all_objects(:flezha_relay_class_registry)
-    assert ClassRegistry.parked(class) == nil
+    assert Suspend.sleep_record(class) == nil
   end
 
   test "an :flow put writes no sidecar; a :steps put does", %{class: class} do

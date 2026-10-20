@@ -21,7 +21,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Relay.Migration
+  alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Replay
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
@@ -730,7 +730,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     declared = if departure == :moved, do: [%{id: class, factory_id: "chat"}], else: []
     Mimic.stub(HubManager, :declared_relays, fn _namespace -> declared end)
     overwatch = OverwatchHost.state(class)
-    steps = Enum.filter(Migration.shutdown_steps(), &(&1.name == :lineage))
+    steps = Enum.filter(Lifecycle.shutdown_steps(), &(&1.name == :lineage))
     assert {:ok, _report} = Shutdown.run(:process, {overwatch, :shutdown}, 5_000, steps)
   end
 

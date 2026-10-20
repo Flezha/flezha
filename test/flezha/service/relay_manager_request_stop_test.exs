@@ -33,7 +33,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
 
   defp start_stub(state_reply), do: StubOverwatch.start_link(state_reply, self())
 
-  # The hub stop seam: `do_stop_relay` pipes `ProcessHub.stop_children`
+  # The hub stop seam: `Teardown.stop_relay` pipes `ProcessHub.stop_children`
   # into `Future.await`; stub both ends and signal the test.
   defp stub_hub_stop(test_pid, task_id) do
     ProcessHub

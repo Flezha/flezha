@@ -298,8 +298,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
     {Flezha.Relay.Lifecycle, :publish_binding,
      [
        "lib/flezha/relay/lifecycle.ex",
-       "lib/flezha/relay/migration.ex",
-       "lib/flezha/relay/overwatch.ex"
+       "lib/flezha/relay/overwatch.ex",
+       "lib/flezha/relay/rebind.ex"
      ]},
     {Flezha.Runner.ControlUnit, {:disconnect, :terminal}, []},
     {Flezha.Service.HubManager, :drain_hub,
@@ -368,8 +368,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
   end
 
   @stop_entry_points [
-    {"lib/flezha/relay/migration.ex", :process},
-    {"lib/flezha/service/relay_manager.ex", :relay},
+    {"lib/flezha/relay/lifecycle.ex", :process},
+    {"lib/flezha/service/relay_manager/teardown.ex", :relay},
     {"lib/flezha/runner/fleet_manager.ex", :namespace},
     {"lib/flezha/shutdown/coordinator.ex", :node}
   ]
@@ -398,7 +398,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   # installer and loader delete only their own expansions of package archives.
   @teardown_allowed %{
     {Flezha.Plugin.Extension.Table, :teardown_all} => [
-      "lib/flezha/relay/migration.ex",
+      "lib/flezha/relay/lifecycle.ex",
       "lib/flezha/relay/handover.ex",
       "lib/flezha/plugin/shared.ex"
     ],
@@ -430,7 +430,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
   describe "the rebind executor" do
     # An Overwatch stand-in: replies the full struct — as the heal's snapshot
-    # and consent reads require — with a scriptable `{:runner_migrate, _}` reply.
+    # and consent reads require — with a scriptable `{:rebind, _}` reply.
     defmodule FakeOverwatch do
       use GenServer
 
@@ -443,20 +443,20 @@ defmodule Flezha.Convergence.RemedySeamTest do
       def handle_call(:get_overwatch_state, _from, {ow, _migrate} = state),
         do: {:reply, ow, state}
 
-      def handle_call({:runner_migrate, _target}, _from, {_ow, :confirm} = state),
+      def handle_call({:rebind, _target}, _from, {_ow, :confirm} = state),
         do: {:reply, :ok, state}
 
-      def handle_call({:runner_migrate, target}, _from, {_ow, {:confirm, test_pid}} = state) do
-        send(test_pid, {:runner_migrate, target})
+      def handle_call({:rebind, target}, _from, {_ow, {:confirm, test_pid}} = state) do
+        send(test_pid, {:rebind, target})
         {:reply, :ok, state}
       end
 
       # The Overwatch's refusal while its previous bind still runs.
-      def handle_call({:runner_migrate, _target}, _from, {_ow, :refuse} = state),
+      def handle_call({:rebind, _target}, _from, {_ow, :refuse} = state),
         do: {:reply, {:error, :busy}, state}
 
       # Never replies: the caller's bounded call must time out (~2 s).
-      def handle_call({:runner_migrate, _target}, _from, {_ow, :hang} = state),
+      def handle_call({:rebind, _target}, _from, {_ow, :hang} = state),
         do: {:noreply, state}
     end
 
@@ -478,7 +478,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       inject(id, factory: "market", migrate: {:confirm, self()})
 
       assert Heal.execute(rebind(id)) == :ok
-      assert_received {:runner_migrate, @live_runner}
+      assert_received {:rebind, @live_runner}
     end
 
     test "a timed-out, refused or unplaceable migrate leaves the registry binding unchanged" do

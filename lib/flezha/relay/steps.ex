@@ -22,8 +22,8 @@ defmodule Flezha.Service.Steps do
   use Flezha.AuthZ.Verb
 
   alias Flezha.Config
-  alias Flezha.Relay.Migration
   alias Flezha.Relay.PartitionGroup
+  alias Flezha.Relay.Suspend
   alias Flezha.Service.CallerContext
   alias Flezha.Service.RelayManager
   alias Flezha.Service.Steps.Journal
@@ -321,7 +321,7 @@ defmodule Flezha.Service.Steps do
            Flezha.AuthZ.Namespace.or_default(namespace),
            relay_class
          ) do
-      {:ok, pid} -> Migration.rewind(pid, to_iter)
+      {:ok, pid} -> Suspend.rewind(pid, to_iter)
       _other -> {:error, {:relay_not_running, relay_class}}
     end
   end

@@ -108,10 +108,10 @@ and whose inbox stays empty past its class's `sleep_after` (announced as `sleep_
 in the shared core, so every host SDK agrees) at a committed
 boundary, with every Cell drained, asks to sleep without a completion and ships `IterPark`,
 naming the last message it parked to the dead-letter queue unread. The controller writes the
-instance's park record (`ClassRegistry.put_parked/2`, an ETS entry and a durable sidecar in the
+instance's park record (`Suspend.put_sleep/2`, an ETS entry and a durable sidecar in the
 class directory, never a journal entry) and reports that offset into the input log's watermark,
 releasing the message as an iteration commit releases its input, **before** the Overwatch the
-ownership record names evicts the instance (`Migration.suspend/5`, `RemRelay`, runner tag
+ownership record names evicts the instance (`Suspend.suspend/5`, `RemRelay`, runner tag
 `nil`); a park whose record fails leaves the instance bound and logged. The Overwatch and the registry entry stay, and the
 Overwatch **hibernates** (`:hibernate` on both suspension entries, releasing its bind-time heap).
 A flow relay that sleeps takes the same path at iteration `0`
@@ -127,7 +127,7 @@ many items it is owed; while any is still owed its park deadline is 60 s instead
 idle, so a tail forwarded under load never meets an instance that already parked. An instance with
 undelivered input is never left suspended (`rehydrate_if_pending/1` runs at every park and at
 boot, and asks the log's tail rather than reading its records), and a park that lands while an
-un-park is still binding wins (`parked_in_flight` discards the task's stale bound state; the
+rebind is still binding wins (`parked_in_flight` discards the task's stale bound state; the
 pending tail wakes it again). A steps relay's journal, Cells and input log share one key, its
 instance id, so a bind whose `:relay_class` names anything else is refused.
 
@@ -139,7 +139,7 @@ Cells re-arm their timers and the due one opens a pass. A racing message and the
 collapse into one rehydration, and an elapsed deadline counts as pending work beside
 undelivered input, so a wake that found no runner is retried on the next convergence tick and a
 controller that boots past it rehydrates at once. At boot an instance with a park record and nothing undelivered
-(`Migration.suspended_on_disk?/1`) enters suspended without binding; undelivered input outranks
+(`Suspend.suspended_on_disk?/1`) enters suspended without binding; undelivered input outranks
 the park. The bind that wakes it clears the record before the runner is told to start the
 instance, so a park landing after the start keeps its own record. Inspect with
 `flz state journal <relay/instance>` (entries tagged with their iteration, `iter_committed`
@@ -215,7 +215,7 @@ opened, a commit the controller refuses, a stop and `max_duration`.
 flz relay rewind <instance> --to-iteration N
 ```
 
-`Migration.rewind_to/2` runs, in order:
+`Suspend.rewind_to/2` runs, in order:
 
 1. **The guard**, before anything durable changes. `N` must be a committed iteration (the refusal
    names the committed range), and every tasklet above `N` that wrote plugin output must be in

@@ -5,7 +5,7 @@ defmodule Flezha.Relay.Overwatch do
   It holds the relay's state, its plugin extension table and its route to a
   runner. Everything it does is routing: a callback decides which phase a
   message belongs to and hands the state to the module that owns that phase —
-  `Lifecycle`, `Migration`, `Ingest`, `Replay`, `Handover`, `Plugins`,
+  `Lifecycle`, `Rebind`, `Suspend`, `Ingest`, `Replay`, `Handover`, `Plugins`,
   `ClassRegistry`, `State.Commands`.
 
   Invariant: this process is the single owner of its relay's input. Every
@@ -22,9 +22,10 @@ defmodule Flezha.Relay.Overwatch do
   alias Flezha.Relay.Handover
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
-  alias Flezha.Relay.Migration
   alias Flezha.Relay.Plugins
+  alias Flezha.Relay.Rebind
   alias Flezha.Relay.Replay
+  alias Flezha.Relay.Suspend
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
@@ -86,11 +87,10 @@ defmodule Flezha.Relay.Overwatch do
     # stall can be localised to "WS plugin stopped feeding" vs "relay stopped
     # forwarding to the channel".
     liveness_ref: nil,
-    # A bind onto another runner (an un-park, a wake, a `:runner_migrate`, a
-    # restarted runner) runs in a task linked to this process so it never
-    # blocks the Overwatch and never outlives it; this field carries the
-    # in-flight task's pid and what the bind carries. `nil` when no migrate
-    # is in flight.
+    # A bind onto another runner (a rebind, a wake, a restarted runner) runs
+    # in a task linked to this process so it never blocks the Overwatch and
+    # never outlives it; this field carries the in-flight task's pid and what
+    # the bind carries. `nil` when no migrate is in flight.
     migrate_task: nil,
     # Outputs that arrived while a migrate task was binding, newest first,
     # delivered once its binding is adopted.
@@ -344,7 +344,7 @@ defmodule Flezha.Relay.Overwatch do
 
     state = %__MODULE__{
       state
-      | durable_steps: Migration.durable_steps?(state, relay),
+      | durable_steps: Suspend.durable_steps?(state, relay),
         sleeps: ClassRegistry.sleeps?(class)
     }
 
@@ -355,10 +355,9 @@ defmodule Flezha.Relay.Overwatch do
     # consumes it. The floor is seeded first, since the log answers that
     # question against it.
     :ok = Replay.seed_floor(state)
-    park = ClassRegistry.parked(class)
 
-    if Migration.suspended_on_disk?(class) do
-      {:noreply, Migration.enter_suspended(state, park), :hibernate}
+    if Suspend.suspended_on_disk?(class) do
+      {:noreply, Suspend.enter_suspended(state, Suspend.sleep_record(class)), :hibernate}
     else
       Lifecycle.bind(state, stale_runner_id, relay)
     end
@@ -371,7 +370,7 @@ defmodule Flezha.Relay.Overwatch do
     do: put_elem(result, 1, Ingest.seed_or_hold(elem(result, 1), relay))
 
   @impl true
-  def terminate(reason, state), do: Migration.terminate(state, reason)
+  def terminate(reason, state), do: Lifecycle.terminate(state, reason)
 
   # ---------------------------------------------------------------
   # ProcessHub migration callbacks
@@ -484,20 +483,11 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state),
-    do: Migration.runner_migrate(state, new_runner_id)
+  def handle_call({:rebind, new_runner_id}, _from, %__MODULE__{} = state),
+    do: Rebind.rebind(state, new_runner_id)
 
-  # A stop of a sleeping steps relay: woken onto a runner with the stop carried,
-  # so it ends as it would stopped awake. `{:error, :awake}` when it is not
-  # asleep, and the caller stops it as an awake one.
   @impl true
-  def handle_call({:wake, then: :stop}, _from, %__MODULE__{suspended: true} = state) do
-    {reply, state} = Migration.wake(state, :stop)
-    {:reply, reply, state}
-  end
-
-  def handle_call({:wake, then: :stop}, _from, %__MODULE__{} = state),
-    do: {:reply, {:error, :awake}, state}
+  def handle_call({:wake, then: :stop}, _from, state), do: Suspend.wake_to_stop(state)
 
   # The convergence loop's `publish_binding`: re-write the durable row and the
   # runner's route from the binding this process holds. Must run here — the
@@ -573,12 +563,8 @@ defmodule Flezha.Relay.Overwatch do
   end
 
   @impl true
-  def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state) do
-    case Migration.rewind_to(state, to_iter) do
-      {:ok, state} -> {:reply, :ok, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
+  def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state),
+    do: Suspend.rewind_to(state, to_iter)
 
   # ---------------------------------------------------------------
   # handle_cast
@@ -665,10 +651,10 @@ defmodule Flezha.Relay.Overwatch do
   # megabytes of garbage on its heap until the next wake (2.5 MiB → 5 KiB per
   # sleeper measured).
   def handle_cast({:suspend, iter, park}, %__MODULE__{} = state),
-    do: {:noreply, Migration.suspend_at(state, iter, park), :hibernate}
+    do: {:noreply, Suspend.suspend_at(state, iter, park), :hibernate}
 
   # A runner of its factory connected: a sleeper owing work wakes.
-  def handle_cast(:rehydrate_if_pending, state), do: Migration.runner_available(state)
+  def handle_cast(:rehydrate_if_pending, state), do: Suspend.runner_available(state)
 
   # Replaces `state.snapshot` with the SDK's final state on graceful shutdown.
   # A handover ships it and the next running migrate seeds from it, until a
@@ -702,7 +688,7 @@ defmodule Flezha.Relay.Overwatch do
         {:session_replaced, old_session, new_session, continuity},
         %__MODULE__{} = state
       ),
-      do: {:noreply, Migration.session_replaced(state, old_session, new_session, continuity)}
+      do: {:noreply, Rebind.session_replaced(state, old_session, new_session, continuity)}
 
   # ---------------------------------------------------------------
   # handle_info
@@ -744,7 +730,7 @@ defmodule Flezha.Relay.Overwatch do
     # transaction runs to completion inside this handler, so a request arriving
     # during it simply waits in the mailbox and debounces into the next one.
     state = if target, do: Replay.run_correction(state, cell_id, target), else: state
-    if state.corrections == %{}, do: Migration.signal_migration_ready(state)
+    if state.corrections == %{}, do: Rebind.signal_migration_ready(state)
     {:noreply, state}
   end
 
@@ -771,24 +757,9 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, %{state | extensions: Table.fire_timer(state.extensions, name, plugin_id)}}
   end
 
-  # The recorded wake deadline elapsed (`durable-suspension`): it is
-  # the earliest timer the instance's Cells held when it parked, so the
-  # rehydrate alone wakes it: the restored Cells re-arm the timer and its
-  # firing opens the pass. Nothing is appended. A racing message collapses
-  # into the same rehydration, which is a no-op on a rehydrating instance.
-  # With no runner to wake on, the deadline is retried a convergence tick
-  # later, since no input will arrive to wake it.
   @impl true
-  def handle_info(:wake_deadline, %__MODULE__{} = state) do
-    case Migration.wake(timer_fired(state, :wake), nil) do
-      {:ok, state} ->
-        {:noreply, state}
-
-      {{:error, :no_runner}, state} ->
-        retry_at = System.system_time(:millisecond) + Durations.get(:convergence_tick_ms)
-        {:noreply, Lifecycle.arm_wake_timer(state, retry_at)}
-    end
-  end
+  def handle_info(:wake_deadline, %__MODULE__{} = state),
+    do: Suspend.wake_deadline(timer_fired(state, :wake))
 
   # The in-flight bind task posts its result via a plain `send/2` before it
   # exits, so this clause runs before its `:EXIT` and clears the slot.
@@ -798,7 +769,7 @@ defmodule Flezha.Relay.Overwatch do
         %__MODULE__{migrate_task: %{}} = state
       ) do
     # The task reports a copy of this state taken before the outputs it held.
-    %__MODULE__{} = adopted = Migration.apply_migrate_result(state, result)
+    %__MODULE__{} = adopted = Rebind.apply_migrate_result(state, result)
     {:noreply, release_outputs(%__MODULE__{adopted | held_outputs: state.held_outputs})}
   end
 
@@ -809,7 +780,7 @@ defmodule Flezha.Relay.Overwatch do
   # The bind task died before it reported: a failed bind.
   @impl true
   def handle_info({:EXIT, pid, reason}, %__MODULE__{migrate_task: %{pid: pid}} = state),
-    do: {:noreply, state |> Migration.bind_task_exited(reason) |> release_outputs()}
+    do: {:noreply, state |> Rebind.bind_task_exited(reason) |> release_outputs()}
 
   # A monitored input log that exits with an append in flight reports it as a
   # `:DOWN` the request collection recognises; every other `:DOWN` is a plugin's.

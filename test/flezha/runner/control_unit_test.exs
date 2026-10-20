@@ -157,7 +157,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
 
   alias Flezha.Identificator
   alias Flezha.Relay.Builder
-  alias Flezha.Relay.Migration
+  alias Flezha.Relay.Rebind
   alias Flezha.Partition
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
@@ -255,7 +255,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
       }
     }
 
-    migrated = Migration.bind_relay(state)
+    migrated = Rebind.bind_relay(state)
 
     # The run travels with the migrate: a steps instance re-added as a
     # flow class is refused by the runner and never heals.

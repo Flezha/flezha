@@ -216,7 +216,7 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         # The migrate the loop's `rebind_relay` drives: the full bind, run
         # off the Overwatch, whose binding flips once the target has started it.
         {:ok, pid} = RelayManager.get_relay_pid(ctx.namespace, relay_id)
-        assert :ok = GenServer.call(pid, {:runner_migrate, target}, 60_000)
+        assert :ok = GenServer.call(pid, {:rebind, target}, 60_000)
 
         assert NodeTestHelper.wait_until(
                  fn ->

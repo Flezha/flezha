@@ -198,7 +198,7 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
     assert_receive {:probe, :called}, 500
 
     try do
-      GenServer.call(pid, {:runner_migrate, current_id})
+      GenServer.call(pid, {:rebind, current_id})
     catch
       :exit, _ -> :ok
     end

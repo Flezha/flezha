@@ -65,7 +65,7 @@ defmodule Flezha.Convergence.Heal do
   # observation named. An op carrying a declared reason resets on that
   # reason's evidence instead (`Flezha.Convergence.Facts`).
   @table [
-    %{name: :rebind_relay, executor: "Overwatch {:runner_migrate, target}", evidence: :ok},
+    %{name: :rebind_relay, executor: "Overwatch {:rebind, target}", evidence: :ok},
     %{
       name: :resync_runner,
       executor: "State.Recovery.resync_for_overwatch/2 | resync/2",
@@ -250,7 +250,7 @@ defmodule Flezha.Convergence.Heal do
          false <- skip_rebind?(namespace, factory, prev, op),
          {:ok, target} <- placed(RelayManager.assign_runner(namespace, factory, relay_id)),
          {:ok, :ok} <-
-           SafeCall.bounded(pid, {:runner_migrate, target}, Durations.get(:migrate_timeout_ms)) do
+           SafeCall.bounded(pid, {:rebind, target}, Durations.get(:migrate_timeout_ms)) do
       emit_reconnected(namespace, relay_id, prev, target)
       :ok
     else
@@ -267,7 +267,7 @@ defmodule Flezha.Convergence.Heal do
       :unplaced ->
         :unmet
 
-      # The previous rebind's bind is still running: `runner_migrate` answers
+      # The previous rebind's bind is still running: `rebind` answers
       # before its bind lands, so the next tick plans the same rebind. Every
       # step of that bind is a bounded call and a failed one halts the relay,
       # so a bind that never lands comes back as a `:halted` rebind.

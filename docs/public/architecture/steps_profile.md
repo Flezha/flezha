@@ -358,7 +358,7 @@ bind that wakes it. At boot, an instance with a park record and no waiting input
 without binding; waiting input, or a deadline already passed, wakes it. A sleeping instance holds
 no pass in flight, so it is ready to move to another runner at once. Stopping a sleeping steps
 relay wakes it with the stop, so it ends `cancelled` as it would awake. The code is
-`Flezha.Relay.Migration`.
+`Flezha.Relay.Suspend`.
 
 ## Rewind
 

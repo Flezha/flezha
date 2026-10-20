@@ -34,7 +34,7 @@ defmodule Flezha.Api.RpcSurfaceTest do
       assert {:moved, [Flezha.Identificator | _]} =
                verdict({Flezha.Service.Identificator, :hub, 1, "ui:1560"})
 
-      assert {:moved, [Flezha.Relay.Migration | _]} =
+      assert {:moved, [Flezha.Relay.Suspend | _]} =
                verdict({Flezha.Relay.Lifecycle, :rewind, 2, "ui:990"})
     end
 

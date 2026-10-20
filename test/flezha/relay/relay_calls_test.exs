@@ -25,7 +25,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
     ]
 
   alias Flezha.Error
-  alias Flezha.Relay.{Calls, Migration, Overwatch}
+  alias Flezha.Relay.{Calls, Lifecycle, Overwatch}
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{InputLog, Outbox, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
@@ -426,7 +426,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
         {:ok, _outside, calls} =
           Calls.admit(calls, Overwatch.callee(state), from, %{"channel" => "in"}, 5_000)
 
-        :ok = Migration.terminate(%{state | calls: calls}, :shutdown)
+        :ok = Lifecycle.terminate(%{state | calls: calls}, :shutdown)
 
         {_pid, ref} = from
         assert_receive {^ref, {:error, %Error{code: "call.callee_ended"}}}

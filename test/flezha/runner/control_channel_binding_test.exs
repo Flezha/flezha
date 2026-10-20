@@ -18,7 +18,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Relay.{ClassRegistry, Overwatch}
+  alias Flezha.Relay.{ClassRegistry, Overwatch, Suspend}
   alias Flezha.Runner.{ControlChannel, ControlUnit, StreamChannel}
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Service.HubManager
@@ -152,7 +152,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
     # No ownership record names the instance here, so the park is bounded by
     # the namespace its durable state belongs to.
-    assert ClassRegistry.put_parked(foreign, %{wake_deadline_ms: nil, consumed_offset: nil}, @ns) ==
+    assert Suspend.put_sleep(foreign, %{wake_deadline_ms: nil, consumed_offset: nil}, @ns) ==
              {:error, {:namespace_conflict, foreign, "team-other"}}
 
     write_frame(
@@ -327,7 +327,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
   defp journaled?(instance_id), do: match?({:ok, [_ | _]}, TaskJournal.read(instance_id))
 
-  defp parked?(instance_id), do: ClassRegistry.parked(instance_id) != nil
+  defp parked?(instance_id), do: Suspend.sleep_record(instance_id) != nil
 
   defp start_channel(runner_id) do
     test_pid = self()

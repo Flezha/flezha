@@ -12,7 +12,7 @@ defmodule FlezhaTest.Relay.CallsTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Error
-  alias Flezha.Relay.{Builder, Calls, ClassRegistry, Handover, Migration, Overwatch, Plugins}
+  alias Flezha.Relay.{Builder, Calls, ClassRegistry, Handover, Lifecycle, Overwatch, Plugins}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{Completion, InputLog, TestHelpers, WriterRegistry}
@@ -331,7 +331,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       caller = call(host, "hello")
       token = called_token(inst)
 
-      # An un-park's bind in flight holds the instance's output.
+      # A rebind's bind in flight holds the instance's output.
       binding = %{ref: make_ref(), pid: self()}
       :sys.replace_state(host, &%{&1 | init_error: :sdk_start_failed, migrate_task: binding})
       GenServer.cast(host, {:io_out, "hello", %{"flz.reply_to" => token, "channel" => "out"}})
@@ -604,7 +604,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       :ok = Completion.write(inst, %{namespace: "default", status: "error"})
 
       ExUnit.CaptureLog.capture_log(fn ->
-        Migration.terminate(bare(inst, calls: calls), :normal)
+        Lifecycle.terminate(bare(inst, calls: calls), :normal)
       end)
 
       for ref <- [r1, r2] do

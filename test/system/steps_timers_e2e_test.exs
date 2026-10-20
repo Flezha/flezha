@@ -25,7 +25,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
 
   import FlezhaTest.Helper.StepsResumeHarness
 
-  alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Suspend
   alias Flezha.Runner.FleetManager
   alias Flezha.State.Completion
   alias FlezhaTest.Helper.NodeTestHelper
@@ -73,7 +73,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 10_000),
              "the idle instance with a pending timer never slept"
 
-      assert %{wake_deadline_ms: ^at} = ClassRegistry.parked(id)
+      assert %{wake_deadline_ms: ^at} = Suspend.sleep_record(id)
       assert collected(collector) == ["tock:armed:#{at}"]
 
       assert await_sink(collector, ["tock:armed:#{at}", "tock:fired:#{at}"]),

@@ -29,6 +29,7 @@ defmodule Flezha.State.Watchdog do
   alias Flezha.Config.Backoff
   alias Flezha.Convergence.{Facts, Snapshot}
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Suspend
 
   alias Flezha.State.{
     Commands,
@@ -376,7 +377,7 @@ defmodule Flezha.State.Watchdog do
         # A sleeping instance receives no Change by design, and a
         # checkpoint-ack one makes nothing durable for a whole interval
         # between checkpoints: neither silence is a dead feed.
-        if not ClassRegistry.ack_checkpoint?(rc) and is_nil(ClassRegistry.parked(rc)) do
+        if not ClassRegistry.ack_checkpoint?(rc) and is_nil(Suspend.sleep_record(rc)) do
           silent? = input_silent?(list, now, timeout)
           latched? = MapSet.member?(acc.input_silence, rc)
 

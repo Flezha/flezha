@@ -279,7 +279,7 @@ defmodule Flezha.Convergence.Planner do
       end)
 
     # A halted relay binds via the same rebind primitive on the
-    # `{:halted, id}` ladder: it resolves a runner and sends `:runner_migrate`,
+    # `{:halted, id}` ladder: it resolves a runner and sends `:rebind`,
     # which rebinds it; the outcome is only visible later, when the probe sees
     # it bound.
     unhalt =

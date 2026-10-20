@@ -21,10 +21,10 @@ defmodule Flezha.Relay.Ingest do
   alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
-  alias Flezha.Relay.Migration
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
   alias Flezha.Relay.Replay
+  alias Flezha.Relay.Suspend
   alias Flezha.Process.CallDelivery
   alias Flezha.Process.Timer
   alias Flezha.State.InputLog
@@ -484,7 +484,7 @@ defmodule Flezha.Relay.Ingest do
         {:pending, state}
 
       {_filtered, state} ->
-        {told(reply_to, filtered_asleep(reply_to)), Migration.rehydrate(state)}
+        {told(reply_to, filtered_asleep(reply_to)), Suspend.rehydrate(state)}
     end
   end
 
@@ -617,7 +617,7 @@ defmodule Flezha.Relay.Ingest do
        when payload != :refused do
     state
     |> owe(reply_to, told(reply_to, {:ok, :suspended}))
-    |> Migration.rehydrate()
+    |> Suspend.rehydrate()
   end
 
   defp settle(%Overwatch{} = state, reply_to, payload),

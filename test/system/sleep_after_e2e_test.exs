@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
 
   import FlezhaTest.Helper.StepsResumeHarness
 
-  alias Flezha.Relay.{ClassRegistry, Replay}
+  alias Flezha.Relay.{ClassRegistry, Replay, Suspend}
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Service.RelayManager
   alias Flezha.State.InputLog
@@ -62,7 +62,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 20_000),
              "the idle stream never slept"
 
-      assert ClassRegistry.parked(id) != nil
+      assert Suspend.sleep_record(id) != nil
       refute suspended?(namespace, sibling), "a stream that does not declare sleeping stays bound"
 
       kill_overwatch(namespace, id)
@@ -190,9 +190,9 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       assert [%{"generation" => 1}] = DlqStore.list(id)
 
       {:ok, pid} = RelayManager.get_relay_pid(namespace, id)
-      GenServer.call(pid, {:runner_migrate, runner_id}, 30_000)
+      GenServer.call(pid, {:rebind, runner_id}, 30_000)
 
-      assert NodeTestHelper.wait_until(fn -> ClassRegistry.parked(id) == nil end, 10_000),
+      assert NodeTestHelper.wait_until(fn -> Suspend.sleep_record(id) == nil end, 10_000),
              "the wake did not clear the park record"
 
       forget_floor_rows(id)

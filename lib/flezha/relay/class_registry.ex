@@ -1,14 +1,15 @@
 defmodule Flezha.Relay.ClassRegistry do
   @moduledoc """
   Resolves a `relay_class` to how it runs (`:flow` or `:steps`), its
-  declarations and its park record, for paths that carry only the class string.
+  declarations and the storage of its sleep record (`Flezha.Relay.Suspend`), for
+  paths that carry only the class string.
 
   `Retention`, `Watchdog`, `StreamChannel` and the persistence resolver are
   keyed purely by `relay_class`; this registry answers them with what the
-  class declared (its persistence switch, its sleep setting, its tier) and
-  whether its instance is asleep. `journals?/1` is the one question the
-  controller asks of how a class runs: whether an instance keeps a task
-  journal, which a class that runs in steps does.
+  class declared (its persistence switch, its sleep setting, its tier).
+  `journals?/1` is the one question the controller asks of how a class runs:
+  whether an instance keeps a task journal, which a class that runs in steps
+  does.
 
   Every read resolves in three steps: the in-memory ETS table (written at bind,
   evicted at teardown), a durable per-class sidecar under `Paths.class_dir/1`
@@ -36,7 +37,6 @@ defmodule Flezha.Relay.ClassRegistry do
   @remote_sidecar "remote"
   @persistence_off_sidecar "persistence_off"
   @sleep_sidecar "sleep_after_ms"
-  @parked_sidecar "parked"
   @established [:sdk_lang, :run, :each, :on_failure]
 
   # Every per-class SDK declaration, keyed `{relay_class, key}` in the ETS
@@ -120,12 +120,6 @@ defmodule Flezha.Relay.ClassRegistry do
 
   @typedoc "How a steps class repeats; a flow class declares none."
   @type each :: :once | :per_input | :chained
-
-  @typedoc """
-  An instance asleep: the durable wake deadline it parked with. What it
-  consumed lives in its own records, never here.
-  """
-  @type park :: %{wake_deadline_ms: non_neg_integer() | nil}
 
   @doc """
   Resolve a class's settings and SDK-side declarations from the `AddRelay`
@@ -262,41 +256,30 @@ defmodule Flezha.Relay.ClassRegistry do
   def sleeps?(relay_class) when is_binary(relay_class),
     do: sleep_after_ms(relay_class) != nil
 
-  @doc """
-  Record that `relay_class`'s instance is asleep, or clear it with `nil`.
-  Written durably before the instance is evicted, so a controller restart
-  rediscovers the sleep, and a write that did not land is answered as an error
-  so the caller leaves the instance bound; cleared by the bind that wakes it,
-  before the runner is told to start the instance.
-  """
-  @spec put_parked(binary(), park() | nil) :: :ok | {:error, term()}
-  def put_parked(relay_class, nil) when is_binary(relay_class),
-    do: put_declaration(relay_class, :parked, @parked_sidecar, nil)
+  # A record whose codec its owner keeps (`Flezha.Relay.Suspend`'s sleep
+  # record), or `nil` to clear it. The sidecar lands before the ETS entry, so a
+  # write that did not land is an error; a `namespace` not owning the class's
+  # durable state is refused.
+  @doc false
+  @spec put_record(binary(), {atom(), binary()}, {term(), iodata()} | nil, binary() | nil) ::
+          :ok | {:error, term()}
+  def put_record(relay_class, {key, sidecar}, nil, nil) when is_binary(relay_class),
+    do: put_declaration(relay_class, key, sidecar, nil)
 
-  def put_parked(relay_class, park) when is_binary(relay_class) do
-    with :ok <- install_sidecar(relay_class, @parked_sidecar, encode_declaration(park)) do
+  def put_record(relay_class, {key, sidecar}, {value, encoded}, nil)
+      when is_binary(relay_class) do
+    with :ok <- install_sidecar(relay_class, sidecar, encoded) do
       ensure_table()
-      :ets.insert(@table, {{relay_class, :parked}, park})
+      :ets.insert(@table, {{relay_class, key}, value})
       :ok
     end
   end
 
-  @doc """
-  `put_parked/2` on behalf of `namespace`, refused when another namespace owns
-  the instance's durable state.
-  """
-  @spec put_parked(binary(), park(), binary()) :: :ok | {:error, term()}
-  def put_parked(relay_class, park, namespace) do
+  def put_record(relay_class, where, record, namespace) do
     case Paths.namespace_of_class(relay_class) do
-      owner when owner in [namespace, "_system"] -> put_parked(relay_class, park)
+      owner when owner in [namespace, "_system"] -> put_record(relay_class, where, record, nil)
       owner -> {:error, {:namespace_conflict, relay_class, owner}}
     end
-  end
-
-  @doc "The park record of `relay_class`'s sleeping instance, `nil` when awake."
-  @spec parked(binary()) :: park() | nil
-  def parked(relay_class) when is_binary(relay_class) do
-    declaration(relay_class, :parked, @parked_sidecar, &parse_park/1)
   end
 
   @typedoc """
@@ -706,7 +689,8 @@ defmodule Flezha.Relay.ClassRegistry do
   # ETS → durable sidecar → `nil` (undeclared). `decode` turns the sidecar's text
   # back into the declared value; an empty tasklet set decodes to `[]`, which is
   # meaningful ("a tree, none of it selected") and is NOT undeclared.
-  defp declaration(relay_class, key, sidecar, decode) do
+  @doc false
+  def declaration(relay_class, key, sidecar, decode) do
     case ets_lookup({relay_class, key}) do
       {:ok, value} ->
         value
@@ -722,18 +706,6 @@ defmodule Flezha.Relay.ClassRegistry do
   defp encode_declaration(true), do: "true"
   defp encode_declaration(tasks) when is_list(tasks), do: Enum.join(tasks, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
-
-  defp encode_declaration(%{wake_deadline_ms: deadline}), do: "#{deadline || "-"}"
-
-  # A record written before the park stopped carrying an offset has one more
-  # field, which is not read.
-  defp parse_park(text) do
-    [deadline | _offset] = String.split(text, ",")
-    %{wake_deadline_ms: parse_optional(deadline)}
-  end
-
-  defp parse_optional("-"), do: nil
-  defp parse_optional(digits), do: String.to_integer(digits)
 
   defp ets_lookup(relay_class) do
     case :ets.whereis(@table) do

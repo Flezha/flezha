@@ -6,7 +6,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   ping that fails parks the relay with its reason, declares the park to the
   convergence loop, and surfaces `{:error, {:ping_failed, _}}` through the
   existing user-action cleanup path (`stop_child_quietly`). The un-park is
-  the loop's `rebind_relay`, driven here through `:runner_migrate`.
+  the loop's `rebind_relay`, driven here through `:rebind`.
 
   Uses the `:overwatch_ping_fn` Application-env hook the Overwatch consults
   during a startup attempt.
@@ -154,7 +154,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
                    2_000
   end
 
-  test "6.4 a halted relay rebinds via runner_migrate: pings, starts, clears init_error, activates plugins",
+  test "6.4 a halted relay rebinds: pings, starts, clears init_error, activates plugins",
        %{test_pid: test_pid, ets: ets} do
     # Start the relay so the readiness gate passes but the START ping fails,
     # parking it (alive, init_error set). Started directly (not via
@@ -194,15 +194,15 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
     refute_received :activated
 
-    # A healthy runner is now reachable — un-park via runner_migrate.
+    # A healthy runner is now reachable — rebind.
     Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:ok, :pong} end)
     runner_id = RelayManager.assign_runner(@namespace, @factory, "unpark_relay")
     assert is_binary(runner_id)
 
-    assert :ok = GenServer.call(pid, {:runner_migrate, runner_id})
+    assert :ok = GenServer.call(pid, {:rebind, runner_id})
 
     # init_error cleared and the plugin activated (resumes producing).
-    # `:runner_migrate` is async (the bind runs in a
+    # `:rebind` is async (the bind runs in a
     # `Task.Supervisor.async_nolink` task), so we poll the state instead of
     # asserting immediately.
     assert_receive :activated, 5_000
@@ -273,6 +273,70 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     assert delta_mib < 50,
            "process memory delta exceeded 50 MiB: #{delta_mib} MiB " <>
              "(baseline=#{baseline}, final=#{final})"
+  end
+
+  test "stop_relay returns :ok within 1s while a parked-unpark migrate task is in flight",
+       %{test_pid: test_pid, ets: ets} do
+    # The async migrate path lives on the parked-unpark branch — that's
+    # where the whole bind runs. Boot a parked relay (start ping fails
+    # after the readiness gate) and then trigger a rebind with a ping that
+    # blocks for several seconds.
+    Application.put_env(
+      :flezha,
+      :overwatch_ping_fn,
+      gate_then(ets, fn _, _ -> {:error, :timeout} end)
+    )
+
+    relay = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
+
+    {:ok, overwatch_pid} =
+      Overwatch.start_link({@namespace, "stale_ce", relay})
+
+    on_exit(fn ->
+      if Process.alive?(overwatch_pid) do
+        try do
+          GenServer.stop(overwatch_pid, :normal, 1_000)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+
+    # Wait for the relay to park.
+    assert NodeTestHelper.wait_until(
+             fn ->
+               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
+             end,
+             2_000,
+             25
+           )
+
+    # Replace ping with one that blocks until released, so the rebind's bind
+    # task is in flight for as long as the test needs.
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _runner_id ->
+      send(test_pid, {:ping_started, self()})
+      NodeTestHelper.park()
+      {:ok, :pong}
+    end)
+
+    # Fire the rebind. The Overwatch must return `:ok`
+    # immediately (the retry task is spawned out-of-band).
+    :ok = GenServer.call(overwatch_pid, {:rebind, "fake_new_runner"}, 1_000)
+
+    assert_receive {:ping_started, _}, 500
+
+    # Now tear the relay down the way the hub stop path does (a
+    # supervisor :shutdown exit). terminate/2 MUST return within 1 s even
+    # though the migrate task is blocked inside the ping — it kills the
+    # task instead of waiting on it. Trap: the Overwatch is linked to this
+    # test, and a :shutdown stop propagates over the link.
+    Process.flag(:trap_exit, true)
+    started = System.monotonic_time(:millisecond)
+    assert :ok = GenServer.stop(overwatch_pid, :shutdown, 1_500)
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    assert elapsed < 1_000,
+           "teardown returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
   end
 
   describe "a park is reported, not only logged" do
@@ -401,7 +465,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       }
 
       assert {:reply, :ok, %Overwatch{migrate_task: %{pid: task}}} =
-               Overwatch.handle_call({:runner_migrate, "late_runner"}, {self(), make_ref()}, held)
+               Overwatch.handle_call({:rebind, "late_runner"}, {self(), make_ref()}, held)
 
       # The migrate task runs `complete_init`, the full init, which pings the
       # runner.
@@ -447,10 +511,10 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       :sys.replace_state(FleetManager, fn _ -> fleet end)
 
       # What the loop plans for an unbound relay, driven the way `Heal`
-      # drives it: resolve a target, then `{:runner_migrate, target}`.
+      # drives it: resolve a target, then `{:rebind, target}`.
       target = RelayManager.assign_runner(@namespace, @factory, id)
       assert is_binary(target)
-      assert :ok = GenServer.call(pid, {:runner_migrate, target})
+      assert :ok = GenServer.call(pid, {:rebind, target})
 
       assert NodeTestHelper.wait_until(
                fn -> is_nil(overwatch_state(pid).init_error) end,

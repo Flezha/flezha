@@ -4,13 +4,17 @@ defmodule Flezha.Service.RelayManager.Teardown do
   the runner's stream channels flushed, the child stopped through the hub, the
   state directory reclaimed, and the quota released — each once, in that
   order. The `:namespace` walk stops every child of a namespace through the
-  same seam.
+  same seam. `request_stop/2` and `stop_relay/3` run the stop verbs there.
   """
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Identificator
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Admission
+  alias Flezha.Shutdown
   alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
@@ -207,4 +211,90 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
     if Completion.exists?(relay_id), do: :ok, else: Paths.delete_class_dir(relay_id)
   end
+
+  @doc "`RelayManager.request_stop/3` on the hosting node."
+  @spec request_stop(binary(), binary()) :: :ok | {:ok, :cooperative} | {:error, term()}
+  def request_stop(namespace, relay_id), do: request_stop(namespace, relay_id, true)
+
+  defp request_stop(namespace, relay_id, wake?) do
+    case RelayManager.get_overwatch_state(namespace, relay_id) do
+      {:ok, %{builder: %{run: :steps}, suspended: true}} when wake? ->
+        case RelayManager.ask_overwatch(namespace, relay_id, {:wake, then: :stop}) do
+          :ok -> {:ok, :cooperative}
+          # Woken meanwhile: stopped as an awake one, once.
+          {:error, :awake} -> request_stop(namespace, relay_id, false)
+          {:error, _no_runner} -> RelayManager.stop_relay(namespace, relay_id)
+        end
+
+      {:ok, %{builder: %{run: :steps}, runner_id: runner_id}}
+      when is_binary(runner_id) ->
+        case ControlUnit.steps_stop(runner_id, relay_id) do
+          :ok -> {:ok, :cooperative}
+          # No control unit to cooperate with — fall back to the hard teardown.
+          {:error, _} -> RelayManager.stop_relay(namespace, relay_id)
+        end
+
+      _ ->
+        RelayManager.stop_relay(namespace, relay_id)
+    end
+  end
+
+  @doc "`RelayManager.stop_relay/3` on the hosting node: the `:relay` walk."
+  @spec stop_relay(binary(), binary(), keyword()) :: :ok | {:error, term()}
+  def stop_relay(namespace, relay_id, opts) do
+    with {:ok, relay_pid} <- stop_pid(namespace, relay_id, Keyword.get(opts, :overwatch)) do
+      # Read before the teardown removes the relay: the flush needs its
+      # runner, the quota step the Cells its start allocated.
+      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid)
+
+      target = %{
+        namespace: namespace,
+        relay_id: relay_id,
+        node: node(relay_pid),
+        runner_id: runner_id,
+        preserve_state?: Keyword.get(opts, :preserve_state, false),
+        announce: Keyword.get(opts, :announce, true),
+        reason: Keyword.get(opts, :reason, :stopped),
+        cell_count: cell_count
+      }
+
+      case Shutdown.run(:relay, target, Shutdown.stop_timeout_ms()) do
+        {:ok, _report} ->
+          :ok
+
+        {:partial, %{errors: [{step, reason} | _]}} ->
+          {:error, {:stop_failed, relay_id, step, reason}}
+
+        {:partial, %{skipped: skipped}} ->
+          {:error, {:stop_timeout, relay_id, skipped}}
+      end
+    end
+  end
+
+  defp stop_pid(namespace, relay_id, overwatch) do
+    case RelayManager.get_relay_pid(namespace, relay_id) do
+      {:error, {:relay_not_found, _, _}} when is_pid(overwatch) -> {:ok, overwatch}
+      found_or_error -> found_or_error
+    end
+  end
+
+  defp stop_facts(namespace, relay_id, relay_pid) do
+    {runner_id, relay} =
+      case RelayManager.overwatch_state(relay_pid) do
+        {:ok, %{builder: builder} = ow} ->
+          {Map.get(ow, :runner_id), builder}
+
+        # Unreadable: the row its start wrote, which the Cell allocation counted.
+        _unreadable ->
+          case HubManager.relay_spec(namespace, relay_id) do
+            {:ok, relay, %{runner: runner_id}} -> {runner_id, relay}
+            {:error, _} -> {nil, %{}}
+          end
+      end
+
+    {normalize_runner(runner_id), Admission.cell_count(relay)}
+  end
+
+  defp normalize_runner(runner_id) when is_binary(runner_id), do: runner_id
+  defp normalize_runner(_), do: nil
 end

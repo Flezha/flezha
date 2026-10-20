@@ -6,12 +6,11 @@ defmodule Flezha.Relay.Lifecycle do
   reason, and the halt is declared to the convergence loop, which drives the
   rebind on its own table. Bind and the SDK start are one module because they
   are one cycle: a bind cancels the wake timer a suspension left behind and
-  re-forwards its input log's tail, and the bind task every move runs re-enters
-  `complete_init/5`.
+  re-forwards its input log's tail, and the bind task every move runs
+  (`Flezha.Relay.Rebind`) re-enters `complete_init/5`. The process's end is
+  here too: `terminate/2` walks the `:process` steps of the shutdown plan.
 
-  Everything that takes a relay OFF its runner — suspend, rehydrate,
-  rewind, terminate, migrate — is `Flezha.Relay.Migration`, a sibling above
-  this module in the call graph.
+  A relay asleep, waking or rewinding is `Flezha.Relay.Suspend`.
 
   Invariant: every function runs in the `Overwatch` process and takes its state,
   returning the next state or a GenServer reply tuple.
@@ -21,11 +20,15 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.Identificator
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Relay.Calls
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
+  alias Flezha.Relay.Rebind
   alias Flezha.Relay.Replay
-  alias Flezha.Process.Timer
+  alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
@@ -33,12 +36,15 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias Flezha.Shutdown
   alias Flezha.State.Commands
   alias Flezha.State.DurabilityTier
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Restore
 
   require Logger
+
+  @behaviour Flezha.Shutdown.Step
 
   # ---------------------------------------------------------------
   # Process API — the lifecycle messages the Overwatch answers to
@@ -142,11 +148,11 @@ defmodule Flezha.Relay.Lifecycle do
   # Bring the relay up on `runner_id`: prepare plugins, resolve init state,
   # make the one SDK start attempt, apply the class's declarations, restore
   # durable state, re-forward whatever the input log still owes, and activate
-  # plugins. Both ways in — a fresh bind and an un-park — funnel through here,
+  # plugins. Both ways in — a fresh bind and a rebind — funnel through here,
   # which is what keeps them one path.
   #
   # `owner` is the Overwatch process itself. It is passed explicitly because the
-  # un-park path runs this inside a task (so a slow start never blocks the
+  # rebind path runs this inside a task (so a slow start never blocks the
   # Overwatch), and `self()` there is the TASK — registering it as the
   # relay's Overwatch would point the journal's outbox flush at a process that
   # exits moments later, silently dropping the output.
@@ -177,7 +183,7 @@ defmodule Flezha.Relay.Lifecycle do
          :ok <- Replay.seed_steps_outboxes(state),
          # A park landing after the runner starts the instance writes a record
          # that stays; a failed start leaves none for a boot to take for a sleep.
-         :ok <- ClassRegistry.put_parked(Overwatch.relay_class(state), nil),
+         :ok <- Suspend.put_sleep(Overwatch.relay_class(state), nil),
          {:ok, add_relay_raw, state} <- start_once(state, relay, owner, placement),
          # The class's SDK-side declarations ride the AddRelay response;
          # resolve them BEFORE plugin activation so source adapters pick the
@@ -289,17 +295,8 @@ defmodule Flezha.Relay.Lifecycle do
 
     _ = Replay.restore_on_bind(state, relay)
 
-    {:ok, cancel_wake_timer(%{state | suspended: false})}
+    {:ok, Suspend.cancel_wake_timer(%{state | suspended: false})}
   end
-
-  @doc """
-  The class stops running on this node, the counterpart of the adoption a bind
-  records (`DurabilityTier.release_relay/2`).
-  """
-  @spec release_lineage(binary(), :moved | :stopped) :: :ok
-  defdelegate release_lineage(relay_class, departure),
-    to: DurabilityTier,
-    as: :release_relay
 
   # A refused restore is not a cold start: the durable state never reached the
   # runner, so the relay halts rather than folding new inputs onto empty
@@ -343,7 +340,7 @@ defmodule Flezha.Relay.Lifecycle do
   Every bind runs this before the runner is told to start the relay: a
   fast chain's first output can reach the stream channel before the publish
   seeds its route, and the channel judges that miss by the record. `owner` is
-  the Overwatch process, named because an un-park binds inside a task.
+  the Overwatch process, named because a rebind binds inside a task.
   """
   @spec bind_to_runner(Overwatch.t(), binary(), binary(), pid()) :: Overwatch.t()
   def bind_to_runner(%Overwatch{} = state, relay_id, runner_id, owner \\ self()) do
@@ -497,7 +494,7 @@ defmodule Flezha.Relay.Lifecycle do
   #
   # Plugins remain in `:prepared` so no upstream I/O fires while halted. A halt
   # is an outcome, not a remedy: it is declared to the convergence loop, which
-  # drives the rebind (`runner_migrate`) on the `{:halted, id}` ladder of its
+  # drives the rebind (`rebind`) on the `{:halted, id}` ladder of its
   # own table and cuts the runner's channel first when the reason says the
   # transport is dead.
   #
@@ -566,26 +563,6 @@ defmodule Flezha.Relay.Lifecycle do
     end
   end
 
-  # ---------------------------------------------------------------
-  # Suspension (`durable-suspension`)
-  # ---------------------------------------------------------------
-
-  # The durable timer: a park record's wake deadline, re-armed from the record
-  # on every boot, so it survives a controller redeploy. Armed here on
-  # the Overwatch's behalf, under the `:wake` key that module declares.
-  @spec arm_wake_timer(Overwatch.t(), non_neg_integer() | nil) :: Overwatch.t()
-  def arm_wake_timer(%Overwatch{} = state, nil), do: state
-
-  def arm_wake_timer(%Overwatch{} = state, deadline_ms) do
-    delay = max(deadline_ms - System.system_time(:millisecond), 0)
-    %Overwatch{state | timers: Timer.arm(state.timers, :wake, delay, :wake_deadline)}
-  end
-
-  # Cancel the recorded wake timer, if one is armed.
-  @spec cancel_wake_timer(Overwatch.t()) :: Overwatch.t()
-  def cancel_wake_timer(%Overwatch{} = state),
-    do: %Overwatch{state | timers: Timer.cancel(state.timers, :wake)}
-
   defp start_relay_sdk(runner_id, relay) do
     Overwatch.with_task_span(:start_relay, relay.id, fn ->
       GenServer.call(
@@ -606,5 +583,118 @@ defmodule Flezha.Relay.Lifecycle do
     channel_index = rem(relay_int, count)
 
     StreamPool.stream_ids(runner_id, :primary) |> Enum.at(channel_index)
+  end
+
+  @doc """
+  Process teardown — the `:process` walk of the shutdown plan, deliberate stops
+  included: the hub stop path terminates the Overwatch through its supervisor,
+  so everything a stop owes runs here, as the steps this module declares.
+  Evicts the in-memory class entry and, after the final flush, this node's
+  adoption of the class's remote lineage; the durable sidecar stays for the
+  process-less retention sweep over any retained finished-job state.
+  """
+  @spec terminate(Overwatch.t(), term()) :: :ok
+  def terminate(%Overwatch{} = state, reason) do
+    _ = Shutdown.run(:process, {state, reason}, Shutdown.process_budget_ms())
+
+    Logger.info(
+      "Terminating relay #{state.id} in namespace #{state.namespace}: #{inspect(reason)}"
+    )
+
+    :ok
+  end
+
+  # The `:process` steps, in order: the in-flight bind task FIRST (left
+  # running, it would bind a runner for a relay that is being torn down),
+  # the class entry, the runner's copy of the relay, and the plugin table
+  # ONCE — the on-terminate hooks of a bound relay, then every subscriber
+  # and its registration, bound or not, so a prepared provider's pid never
+  # outlives its host.
+  @impl Flezha.Shutdown.Step
+  def shutdown_steps do
+    [
+      %{scope: :process, order: 5, name: :calls, run: &calls_step/2},
+      %{scope: :process, order: 10, name: :migrate_task, run: &migrate_task_step/2},
+      %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
+      %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
+      %{scope: :process, order: 35, name: :writers, run: &writers_step/2},
+      %{scope: :process, order: 37, name: :lineage, run: &lineage_step/2},
+      %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
+    ]
+  end
+
+  # Every caller still waiting learns at once that no answer will come: the
+  # steps run's terminal status when it ended as one, `stopped` otherwise.
+  # An ended run never reads its undelivered input, so the relays that
+  # called into it are answered too. A stopped one keeps its input for a start:
+  # when it journals its input, the relays' calls are in that log and are
+  # answered when it runs again, or by their callers' deadlines.
+  defp calls_step({state, _reason}, _budget) do
+    callee = Overwatch.callee(state)
+
+    case RelayManager.completion(Overwatch.relay_class(state)) do
+      {:ok, %{status: status}} ->
+        Calls.end_all(state.calls, callee, status, Ingest.undelivered_calls(state))
+
+      _no_terminal_record ->
+        calls = if Replay.floor_reporter(state), do: Calls.outside(state.calls), else: state.calls
+        Calls.end_all(calls, callee, "stopped")
+    end
+
+    :ok
+  end
+
+  defp migrate_task_step({state, _reason}, _budget) do
+    _ = Rebind.terminate_migrate_task(state)
+    :ok
+  end
+
+  defp class_registry_step({state, _reason}, _budget) do
+    _ = ClassRegistry.delete(Overwatch.relay_class(state))
+    :ok
+  end
+
+  # The runner has been told to drop the relay, so it is no longer bound
+  # here: its writers close, flushed, and its files stay. A relay that
+  # moved away leaves nothing open for its return to find (`Flezha.State.Adoption`).
+  defp writers_step({state, _reason}, _budget),
+    do: RelayManager.close_writers(Overwatch.relay_class(state))
+
+  defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
+
+  # A runner whose control unit has already gone holds nothing of this
+  # relay left to release, so there is nothing to tell it — and the walk
+  # must go on to the plugin table rather than halt with the subscribers'
+  # owned pids still alive.
+  defp control_unit_step({state, _reason}, _budget) do
+    case ControlUnit.stop_relay_async(state.runner_id, state.id) do
+      {:error, :no_control_unit} -> :ok
+      other -> other
+    end
+  end
+
+  # After the writers' final flush, so the last turns of a relay stopped here
+  # still ship under the adoption that entitles them: the class stops running
+  # on this node, the counterpart of the adoption a bind records.
+  defp lineage_step({state, _reason}, _budget),
+    do: DurabilityTier.release_relay(Overwatch.relay_class(state), departure(state))
+
+  # A deliberate stop removed the relay's declared entry before it
+  # terminated: a shared plugin it was the last one on stops at once. A move or
+  # a restart leaves the entry (a move also hands over, which counts without
+  # one: auto-restore off declares nothing), and the plugin waits out its idle
+  # stop.
+  defp plugin_table_step({state, reason}, _budget) do
+    unless is_nil(state.runner_id), do: Plugins.fire_on_terminate(state, reason)
+    idle_or_now = if departure(state) == :moved, do: :idle, else: :now
+    _ = Table.teardown_all(state.extensions, idle_or_now)
+    :ok
+  end
+
+  defp departure(%Overwatch{handed_over?: true}), do: :moved
+
+  defp departure(state) do
+    declared? = Enum.any?(HubManager.declared_relays(state.namespace), &(&1.id == state.id))
+    if declared?, do: :moved, else: :stopped
   end
 end

@@ -15,7 +15,6 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Partition
   alias Flezha.Plugin.Host
-  alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
@@ -110,7 +109,8 @@ defmodule Flezha.Service.RelayManager do
     with_relay_pid(namespace, relay_id, &overwatch_state/1)
   end
 
-  defp overwatch_state(pid),
+  @doc false
+  def overwatch_state(pid),
     do: SafeCall.bounded(pid, :get_overwatch_state, overwatch_call_timeout_ms())
 
   @doc """
@@ -288,35 +288,9 @@ defmodule Flezha.Service.RelayManager do
     # side effects (ControlUnit lookup, plugin disable, state-dir delete,
     # quota release) are node-local and must run on the hosting node.
     on_hub_member(namespace, relay_id, opts, :request_stop, fn ->
-      do_request_stop(namespace, relay_id)
+      Teardown.request_stop(namespace, relay_id)
     end)
   end
-
-  defp do_request_stop(namespace, relay_id, wake? \\ true) do
-    case get_overwatch_state(namespace, relay_id) do
-      {:ok, %{builder: %{run: :steps}, suspended: true}} when wake? ->
-        case wake_to_stop(namespace, relay_id) do
-          :ok -> {:ok, :cooperative}
-          # Woken meanwhile: stopped as an awake one, once.
-          {:error, :awake} -> do_request_stop(namespace, relay_id, false)
-          {:error, _no_runner} -> stop_relay(namespace, relay_id)
-        end
-
-      {:ok, %{builder: %{run: :steps}, runner_id: runner_id}}
-      when is_binary(runner_id) ->
-        case ControlUnit.steps_stop(runner_id, relay_id) do
-          :ok -> {:ok, :cooperative}
-          # No control unit to cooperate with — fall back to the hard teardown.
-          {:error, _} -> stop_relay(namespace, relay_id)
-        end
-
-      _ ->
-        stop_relay(namespace, relay_id)
-    end
-  end
-
-  defp wake_to_stop(namespace, relay_id),
-    do: ask_overwatch(namespace, relay_id, {:wake, then: :stop})
 
   @doc """
   Hard teardown: the `:relay` walk of the shutdown plan — flush the runner's
@@ -336,66 +310,9 @@ defmodule Flezha.Service.RelayManager do
   @spec stop_relay(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_relay(namespace, relay_id, opts \\ []) do
     on_hub_member(namespace, relay_id, opts, :stop_relay, fn ->
-      do_stop_relay(namespace, relay_id, opts)
+      Teardown.stop_relay(namespace, relay_id, opts)
     end)
   end
-
-  defp do_stop_relay(namespace, relay_id, opts) do
-    with {:ok, relay_pid} <- stop_pid(namespace, relay_id, Keyword.get(opts, :overwatch)) do
-      # Read before the teardown removes the relay: the flush needs its
-      # runner, the quota step the Cells its start allocated.
-      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid)
-
-      target = %{
-        namespace: namespace,
-        relay_id: relay_id,
-        node: node(relay_pid),
-        runner_id: runner_id,
-        preserve_state?: Keyword.get(opts, :preserve_state, false),
-        announce: Keyword.get(opts, :announce, true),
-        reason: Keyword.get(opts, :reason, :stopped),
-        cell_count: cell_count
-      }
-
-      case Shutdown.run(:relay, target, Shutdown.stop_timeout_ms()) do
-        {:ok, _report} ->
-          :ok
-
-        {:partial, %{errors: [{step, reason} | _]}} ->
-          {:error, {:stop_failed, relay_id, step, reason}}
-
-        {:partial, %{skipped: skipped}} ->
-          {:error, {:stop_timeout, relay_id, skipped}}
-      end
-    end
-  end
-
-  defp stop_pid(namespace, relay_id, overwatch) do
-    case get_relay_pid(namespace, relay_id) do
-      {:error, {:relay_not_found, _, _}} when is_pid(overwatch) -> {:ok, overwatch}
-      found_or_error -> found_or_error
-    end
-  end
-
-  defp stop_facts(namespace, relay_id, relay_pid) do
-    {runner_id, relay} =
-      case overwatch_state(relay_pid) do
-        {:ok, %{builder: builder} = ow} ->
-          {Map.get(ow, :runner_id), builder}
-
-        # Unreadable: the row its start wrote, which the Cell allocation counted.
-        _unreadable ->
-          case HubManager.relay_spec(namespace, relay_id) do
-            {:ok, relay, %{runner: runner_id}} -> {runner_id, relay}
-            {:error, _} -> {nil, %{}}
-          end
-      end
-
-    {normalize_runner(runner_id), Admission.cell_count(relay)}
-  end
-
-  defp normalize_runner(runner_id) when is_binary(runner_id), do: runner_id
-  defp normalize_runner(_), do: nil
 
   @doc """
   Stop every relay in `namespace` through the hub and reclaim their state
@@ -824,7 +741,8 @@ defmodule Flezha.Service.RelayManager do
 
   # The relay Overwatch's own reply, or `{:error, reason}` when it is not
   # found or does not answer in time.
-  defp ask_overwatch(namespace, relay_id, request) do
+  @doc false
+  def ask_overwatch(namespace, relay_id, request) do
     with_relay_pid(namespace, relay_id, fn pid ->
       case SafeCall.bounded(pid, request, overwatch_call_timeout_ms()) do
         {:ok, reply} -> reply

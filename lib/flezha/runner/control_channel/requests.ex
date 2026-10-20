@@ -22,7 +22,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   alias Flezha.Config.Durations
   alias Flezha.Process.DurableTasks
-  alias Flezha.Relay.Migration
+  alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Factories
@@ -55,7 +55,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     %{relay_id: relay_id, serialized_state: serialized_state} = notif
 
     with {:ok, bound} <- Records.admit_to(state, relay_id, :runner_shutdown_notification) do
-      case Migration.overwatch(state.namespace, relay_id, bound) do
+      case Suspend.overwatch(state.namespace, relay_id, bound) do
         {:ok, pid} when is_pid(pid) ->
           GenServer.cast(pid, {:apply_external_snapshot, serialized_state})
 
@@ -251,7 +251,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       # the log whether input is still owed: a message the run parked unread
       # is consumed, not owed, and the journal keeps that across a restart.
       with :ok <- TaskJournal.release_unread(relay_id, consumed_offset),
-           do: Migration.suspend(namespace, relay_id, iter, park, bound)
+           do: Suspend.suspend(namespace, relay_id, iter, park, bound)
     end)
   end
 

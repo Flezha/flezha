@@ -1,4 +1,4 @@
-defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
+defmodule FlezhaTest.Relay.SuspendTest do
   @moduledoc """
   `durable-suspension` lifecycle on the Overwatch: park (evict from the
   runner, keep the registry entry), rehydrate on a new input or the durable
@@ -19,7 +19,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
 
   alias Flezha.Identificator
   alias Flezha.Process.Timer
-  alias Flezha.Relay.{Builder, ClassRegistry, Overwatch}
+  alias Flezha.Relay.{Builder, ClassRegistry, Overwatch, Suspend}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{InputLog, TaskJournal, TestHelpers, WalWriter}
   alias FlezhaTest.OutboxCase
@@ -28,7 +28,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
   setup :set_mimic_global_until_exit
 
   setup do
-    # The rehydrate drives the real (un-park) bind task, which has no runner to
+    # The rehydrate drives the real (rebind) bind task, which has no runner to
     # reach in a unit test: bound its wait so the assertions about the state
     # machine do not pay the production window.
     on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 50))
@@ -57,7 +57,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     struct!(base, overrides)
   end
 
-  # fails when: an un-parked instance rebinds onto a runner but publishes neither
+  # fails when: a rebound instance binds onto a runner but publishes neither
   # the registry tag nor the runner's route to its pid, so every frame it produces
   # hits `stream_channel.ex`'s `[] -> :ok` drop while it still reads as healthy.
   test "un-parking publishes the registry tag and the runner route" do
@@ -85,7 +85,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     assert_receive {:route_published, "ex_woken", ^test_pid}
   end
 
-  # fails when: an un-park that binds a runner keeps a snapshot stored before it,
+  # fails when: a rebind that binds a runner keeps a snapshot stored before it,
   # so a handover after that runner dies hard ships the older state and skips
   # the pull of every change the runner made.
   test "un-parking onto a runner drops the snapshot stored before it" do
@@ -313,10 +313,10 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
 
     {:noreply, asleep, :hibernate} = Overwatch.handle_cast({:suspend, 3, park(nil)}, state(inst))
     assert asleep.suspended
-    assert ClassRegistry.parked(inst) == park(nil)
+    assert Suspend.sleep_record(inst) == park(nil)
     assert_received :evicted
 
-    stub(ClassRegistry, :put_parked, fn _, _ -> {:error, :eio} end)
+    stub(ClassRegistry, :put_record, fn _, _, _, _ -> {:error, :eio} end)
     other = instance_id()
 
     ExUnit.CaptureLog.capture_log(fn ->
@@ -343,20 +343,20 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
       Overwatch.handle_info({:migrate_task_result, self(), {:bound, recovered}}, parked)
 
     assert after_bind.suspended, "the stale bound state is not adopted"
-    assert ClassRegistry.parked(inst) == park()
+    assert Suspend.sleep_record(inst) == park()
   end
 
   test "whether an instance sleeps is read from its park record and its log, for either kind" do
     for kind <- [:flow, :steps] do
       inst = instance_id()
-      refute Flezha.Relay.Migration.suspended_on_disk?(inst)
+      refute Suspend.suspended_on_disk?(inst)
 
-      :ok = ClassRegistry.put_parked(inst, park())
-      assert Flezha.Relay.Migration.suspended_on_disk?(inst), "#{kind} asleep"
+      :ok = Suspend.put_sleep(inst, park())
+      assert Suspend.suspended_on_disk?(inst), "#{kind} asleep"
 
       # Input that arrived while it slept outranks the record: it binds.
       {:ok, 0} = InputLog.append(inst, "arrived", %{})
-      refute Flezha.Relay.Migration.suspended_on_disk?(inst), "#{kind} owes input"
+      refute Suspend.suspended_on_disk?(inst), "#{kind} owes input"
     end
   end
 
@@ -364,11 +364,11 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     inst = instance_id()
     now = System.system_time(:millisecond)
 
-    :ok = ClassRegistry.put_parked(inst, park(now + 60_000))
-    assert Flezha.Relay.Migration.suspended_on_disk?(inst), "its timer is not due yet"
+    :ok = Suspend.put_sleep(inst, park(now + 60_000))
+    assert Suspend.suspended_on_disk?(inst), "its timer is not due yet"
 
-    :ok = ClassRegistry.put_parked(inst, park(now - 1))
-    refute Flezha.Relay.Migration.suspended_on_disk?(inst), "its timer is due: it binds"
+    :ok = Suspend.put_sleep(inst, park(now - 1))
+    refute Suspend.suspended_on_disk?(inst), "its timer is due: it binds"
   end
 
   # A restart lost the Cell rows; a sleeper boots no Cell writer, so its
@@ -378,7 +378,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     builder = %Builder{id: inst, factory_id: "counter", run: :flow, opts: []}
     for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
     :ok = ClassRegistry.put_sleep_after(inst, 2_000)
-    :ok = ClassRegistry.put_parked(inst, park())
+    :ok = Suspend.put_sleep(inst, park())
 
     cell_id = {inst, "counter_tasklet", "a"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell_id)
@@ -472,15 +472,15 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
   test "a stop of a sleeping steps relay wakes it with the stop, and the bind sends it" do
     inst = instance_id()
     stub(Flezha.Service.RelayManager, :assign_runner, fn _, _, _ -> "ex_2" end)
-    :ok = ClassRegistry.put_parked(inst, park())
+    :ok = Suspend.put_sleep(inst, park())
     asleep = state(inst, suspended: true, runner_id: nil, channel: nil)
 
     {:reply, :ok, waking} = Overwatch.handle_call({:wake, then: :stop}, self(), asleep)
     assert waking.migrate_task.then == :stop
     :ok = await_migrate_task(waking)
-    assert ClassRegistry.parked(inst) == nil, "the bind cleared the record before the start"
+    assert Suspend.sleep_record(inst) == nil, "the bind cleared the record before the start"
 
-    # The un-park reports its binding: the stop follows it to that runner.
+    # The rebind reports its binding: the stop follows it to that runner.
     test_pid = self()
     stub(Flezha.Service.HubManager, :relay_set_runner, fn _, _, _ -> :ok end)
     stub(Flezha.Runner.StreamPool, :put_route, fn _, _, _ -> :ok end)
@@ -528,7 +528,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     {:ok, 0} = InputLog.append(inst, "turn-0", %{})
     :ok = TaskJournal.append_task_committed(inst, 0, 0, [], [])
     :ok = TaskJournal.append_iter_committed(inst, 0, 0, [])
-    :ok = ClassRegistry.put_parked(inst, park(System.system_time(:millisecond) + 60_000))
+    :ok = Suspend.put_sleep(inst, park(System.system_time(:millisecond) + 60_000))
 
     fresh = %Overwatch{
       id: inst,
@@ -563,14 +563,14 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     inst = instance_id()
     {:ok, 0} = InputLog.append(inst, "turn-0", %{})
     :ok = TaskJournal.append_iter_committed(inst, 0, 0, [])
-    :ok = ClassRegistry.put_parked(inst, park())
+    :ok = Suspend.put_sleep(inst, park())
     :ok = TaskJournal.release_input(inst)
     {:ok, log} = Flezha.State.Supervisor.lookup({inst, :input_log})
 
     :erlang.trace(log, true, [:receive])
-    assert Flezha.Relay.Migration.suspended_on_disk?(inst)
+    assert Suspend.suspended_on_disk?(inst)
     {:ok, 1} = InputLog.append(inst, "turn-1", %{})
-    refute Flezha.Relay.Migration.suspended_on_disk?(inst)
+    refute Suspend.suspended_on_disk?(inst)
     :erlang.trace(log, false, [:receive])
 
     assert_received {:trace, ^log, :receive, {:"$gen_call", _, :last_offset}}
@@ -638,7 +638,7 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
     # A rewind is a rebind, not a park: the instance comes straight back up and
     # no park record was written.
     assert state.migrate_task != nil
-    assert ClassRegistry.parked(inst) == nil
+    assert Suspend.sleep_record(inst) == nil
 
     # Undo-and-continue: the rebind's seed leaves the floor where the commits put
     # it, so the unwound iterations' inputs are not owed again.
@@ -807,353 +807,6 @@ defmodule FlezhaTest.Relay.OverwatchSuspensionTest do
 
       {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "task", "gone"}}, busy)
       refute_received {:migration_ready, ^inst}
-    end
-  end
-end
-
-defmodule FlezhaTest.Relay.OverwatchAsyncMigrateTest do
-  @moduledoc """
-  Phase-3 (convergence-self-healing §3.3-3.5) async
-  `:runner_migrate` task contract. Exercises the
-  `stop_relay-during-in-flight-migrate` invariant: the bounded retry
-  loop now runs in a `Task.Supervisor.async_nolink/3` task, so the
-  Overwatch's `:stop_relay` call returns within its normal handle_call
-  window even mid-retry.
-  """
-
-  # async: false: writes Application env; the live controller and its fleet; the primary Logger.
-
-  use FlezhaTest.Case, fixtures: [:env], async: false
-
-  alias Flezha.Relay.Builder
-  alias Flezha.Relay.ClassRegistry
-  alias Flezha.Relay.Migration
-  alias Flezha.Relay.Overwatch
-  alias Flezha.Plugin.Extension.Table
-  alias Flezha.Service.RelayManager
-  alias FlezhaTest.Helper.NodeTestHelper
-
-  @namespace "default"
-  @factory "store_input"
-
-  setup do
-    test_pid = self()
-    ets = :ets.new(:overwatch_async_migrate_test, [:public, :set])
-
-    on_exit(fn -> RelayManager.stop_all_relays(@namespace) end)
-
-    {:ok, test_pid: test_pid, ets: ets}
-  end
-
-  # `await_active_runner` pings once to confirm the runner is reachable
-  # before the one start attempt. To reach the PARKED state these tests
-  # need, the readiness gate (first ping) must pass while the START pings
-  # fail — otherwise the relay is held unbound instead of parked.
-  defp park_after_gate(ets) do
-    fn _runner_id ->
-      case :ets.update_counter(ets, :calls, {2, 1}, {:calls, 0}) do
-        1 -> {:ok, :pong}
-        _ -> {:error, :timeout}
-      end
-    end
-  end
-
-  test "stop_relay returns :ok within 1s while a parked-unpark migrate task is in flight",
-       %{test_pid: test_pid, ets: ets} do
-    # The async migrate path lives on the parked-unpark branch — that's
-    # where the whole bind runs. Boot a parked relay (start ping fails
-    # after the readiness gate) and then trigger un-park with a ping that
-    # blocks for several seconds.
-    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
-
-    relay = %Builder{id: "stop_during_migrate", factory_id: @factory, opts: []}
-
-    {:ok, overwatch_pid} =
-      Overwatch.start_link({@namespace, "stale_ce", relay})
-
-    on_exit(fn ->
-      if Process.alive?(overwatch_pid) do
-        try do
-          GenServer.stop(overwatch_pid, :normal, 1_000)
-        catch
-          :exit, _ -> :ok
-        end
-      end
-    end)
-
-    # Wait for the relay to park.
-    assert NodeTestHelper.wait_until(
-             fn ->
-               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
-             end,
-             2_000,
-             25
-           )
-
-    # Replace ping with one that blocks until released, so the un-park retry
-    # task is in flight for as long as the test needs.
-    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
-
-    # Fire the un-park migrate. The Overwatch must return `:ok`
-    # immediately (the retry task is spawned out-of-band).
-    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "fake_new_runner"}, 1_000)
-
-    assert_receive {:ping_started, _}, 500
-
-    # Now tear the relay down the way the hub stop path does (a
-    # supervisor :shutdown exit). terminate/2 MUST return within 1 s even
-    # though the migrate task is blocked inside the ping — it kills the
-    # task instead of waiting on it. Trap: the Overwatch is linked to this
-    # test, and a :shutdown stop propagates over the link.
-    Process.flag(:trap_exit, true)
-    started = System.monotonic_time(:millisecond)
-    assert :ok = GenServer.stop(overwatch_pid, :shutdown, 1_500)
-    elapsed = System.monotonic_time(:millisecond) - started
-
-    assert elapsed < 1_000,
-           "teardown returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
-  end
-
-  # A bind belongs to its Overwatch: killed, it takes the bind with it, so a
-  # restarted Overwatch's own bind is the only one that completes.
-  test "a killed Overwatch leaves no bind running", %{test_pid: test_pid, ets: ets} do
-    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
-    relay = %Builder{id: "killed_during_migrate", factory_id: @factory, opts: []}
-    {:ok, overwatch_pid} = Overwatch.start_link({@namespace, "stale_ce", relay})
-    Process.unlink(overwatch_pid)
-
-    assert NodeTestHelper.wait_until(
-             fn ->
-               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
-             end,
-             2_000,
-             25
-           )
-
-    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
-    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "fake_new_runner"}, 1_000)
-    assert_receive {:ping_started, bind_task}, 500
-
-    task_ref = Process.monitor(bind_task)
-    Process.exit(overwatch_pid, :kill)
-    assert_receive {:DOWN, ^task_ref, :process, ^bind_task, :killed}, 1_000
-  end
-
-  test "starting a second parked-unpark migrate while one is in flight returns :busy",
-       %{test_pid: test_pid, ets: ets} do
-    Application.put_env(:flezha, :overwatch_ping_fn, park_after_gate(ets))
-
-    relay = %Builder{id: "busy_migrate_test", factory_id: @factory, opts: []}
-
-    {:ok, overwatch_pid} =
-      Overwatch.start_link({@namespace, "stale_ce", relay})
-
-    on_exit(fn ->
-      if Process.alive?(overwatch_pid) do
-        try do
-          GenServer.stop(overwatch_pid, :normal, 1_000)
-        catch
-          :exit, _ -> :ok
-        end
-      end
-    end)
-
-    assert NodeTestHelper.wait_until(
-             fn ->
-               GenServer.call(overwatch_pid, :get_overwatch_state).init_error != nil
-             end,
-             2_000,
-             25
-           )
-
-    # First un-park migrate: a ping that blocks until released.
-    Application.put_env(:flezha, :overwatch_ping_fn, blocking_ping(test_pid))
-
-    :ok = GenServer.call(overwatch_pid, {:runner_migrate, "first"}, 1_000)
-    assert_receive {:ping_started, pinger}, 500
-
-    # Second migrate must be rejected as :busy.
-    assert {:error, :busy} =
-             GenServer.call(overwatch_pid, {:runner_migrate, "second"}, 1_000)
-
-    send(pinger, :unpark)
-  end
-
-  # fails when: a running migrate starts the relay with only its init
-  # values, so a durable instance whose runner died starts again from nothing
-  # (no journal, no restore gate, no input tail) instead of resuming; or the
-  # bind places it on a runner other than the one the move chose.
-  test "a running migrate is the full bind on its target, run in the migrate task" do
-    test_pid = self()
-
-    Application.put_env(:flezha, :overwatch_ping_fn, fn runner_id ->
-      send(test_pid, {:pinged, runner_id})
-      {:error, :no_control_unit}
-    end)
-
-    state = running_state()
-    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
-    on_exit(fn -> ClassRegistry.delete(state.id) end)
-
-    assert {:reply, :ok, %Overwatch{migrate_task: %{pid: task}} = moving} =
-             Overwatch.handle_call({:runner_migrate, "runner_b"}, {self(), make_ref()}, state)
-
-    assert moving.runner_id == "runner_a", "the binding moves only once the bind lands"
-
-    assert_receive {:migrate_task_result, ^task,
-                    {:halt, _parked, {:ping_failed, :no_control_unit}}},
-                   2_000
-
-    assert_received {:pinged, "runner_b"}
-  end
-
-  # fails when: an instance moved while running holds its output until the
-  # bind reports, so a run that completes first is torn down holding it.
-  test "only a woken or un-parked bind holds the instance's output" do
-    frame = {:io_out, "out", %{}}
-    binding = %{running_state() | migrate_task: %{ref: make_ref(), pid: self()}}
-
-    assert {:noreply, %{held_outputs: [^frame]}} =
-             Overwatch.handle_cast(frame, %{binding | suspended: true})
-
-    assert {:noreply, %{held_outputs: [^frame]}} =
-             Overwatch.handle_cast(frame, %{binding | init_error: :timeout})
-
-    assert {:noreply, %{held_outputs: []}} = Overwatch.handle_cast(frame, binding)
-  end
-
-  # fails when: a move stops seeding the runner from the final state a
-  # graceful stop shipped, or drops the partition identity and kind the
-  # builder carries.
-  test "a move seeds the bind from a stored snapshot, else from the builder" do
-    state = running_state()
-    assert Migration.bind_relay(state) == state.builder
-
-    seeded = %{state | snapshot: ~s({"store_input_tasklet":{"text_inputs":["s"]}})}
-
-    assert Migration.bind_relay(seeded) == %Builder{
-             state.builder
-             | init_values: %{"store_input_tasklet" => %{"text_inputs" => ["s"]}}
-           }
-  end
-
-  # fails when: a runner process that restarted with its stable identity only
-  # has the binding re-pointed at it, so it never runs the relay again; or a
-  # reconnect of the process that still runs it is bound afresh.
-  test "a restarted runner is bound afresh, a reconnected one only re-pointed" do
-    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
-
-    state = running_state()
-    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
-    on_exit(fn -> ClassRegistry.delete(state.id) end)
-
-    ExUnit.CaptureLog.capture_log(fn ->
-      reconnected = Migration.session_replaced(state, "runner_a", "runner_b", :reconnected)
-      assert reconnected.runner_id == "runner_b"
-      assert reconnected.migrate_task == nil
-    end)
-
-    restarted = Migration.session_replaced(state, "runner_a", "runner_b", :restarted)
-    assert %{pid: task} = restarted.migrate_task
-    assert_receive {:migrate_task_result, ^task, {:halt, _, {:ping_failed, _}}}, 2_000
-
-    assert Migration.session_replaced(state, "runner_x", "runner_b", :restarted) == state
-    assert Migration.session_replaced(restarted, "runner_a", "runner_c", :restarted) == restarted
-  end
-
-  # fails when: a handover away from a runner that is gone stops shipping the
-  # final state that runner handed over, before any other runner took over.
-  test "a handover away from a gone runner ships the snapshot no runner has taken over" do
-    state = %{running_state() | snapshot: "final_state_of_runner_a"}
-
-    assert {%{id: _}, "final_state_of_runner_a"} =
-             Overwatch.prepare_handover_state(state)
-  end
-
-  # fails when: a snapshot read is kept on the Overwatch, so a handover after
-  # the runner dies hard ships that read and skips the pull of every change the
-  # runner made after it.
-  test "a snapshot read is not kept for a later handover" do
-    runner_id = "runner_read_#{System.unique_integer([:positive])}"
-    state = %{running_state() | runner_id: runner_id}
-
-    answer_control_unit_once(runner_id, fn {:send_control, {:cell_state, _}, _metadata} ->
-      {:ok, "read_earlier"}
-    end)
-
-    assert {:reply, {:ok, "read_earlier"}, read} =
-             Overwatch.handle_call(:create_snapshot, {self(), make_ref()}, state)
-
-    # The runner is gone now, so the handover has nothing of its own to ship.
-    assert {%{id: _}, nil} = Overwatch.prepare_handover_state(read)
-  end
-
-  # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
-  # handover that carried nothing. The flag suppresses the per-Cell WAL
-  # restore at bind time AND the explicit `kick_restore` repair, so a migration
-  # away from a DEAD runner — where the state source is gone and the handover is
-  # empty by construction — starts fresh and can never be replayed back.
-  test "an empty handover does not suppress the WAL restore" do
-    handover = %{
-      id: "handover_guard",
-      namespace: @namespace,
-      factory_id: @factory,
-      init_values: %{},
-      plugins: []
-    }
-
-    state = running_state()
-
-    # The struct has no reachable control unit, so the deserialization dispatch
-    # logs an error it is designed to tolerate; the flag is the assertion.
-    ExUnit.CaptureLog.capture_log(fn ->
-      refute Overwatch.alter_handover_state(state, {handover, nil}).arrived_via_hotswap?
-      refute Overwatch.alter_handover_state(state, {handover, <<>>}).arrived_via_hotswap?
-      assert Overwatch.alter_handover_state(state, {handover, "sdk-state"}).arrived_via_hotswap?
-    end)
-  end
-
-  defp running_state() do
-    id = "migrate_bind_guard"
-
-    %Overwatch{
-      id: id,
-      namespace: @namespace,
-      runner_id: "runner_a",
-      factory_id: @factory,
-      channel: :chan_a,
-      builder: %Builder{id: id, factory_id: @factory, opts: []},
-      extensions: Table.new(Overwatch.__extensions_catalog__())
-    }
-  end
-
-  # Stands in for `runner_id`'s control unit for one call and is then gone, as
-  # a runner is once it dies. `answer` runs inside the stand-in and turns the
-  # request into the reply.
-  defp answer_control_unit_once(runner_id, answer) do
-    test_pid = self()
-    {:via, Registry, {registry, key}} = Flezha.Identificator.control_unit(runner_id)
-
-    spawn_link(fn ->
-      {:ok, _} = Registry.register(registry, key, nil)
-      send(test_pid, :control_unit_registered)
-
-      receive do
-        {:"$gen_call", from, request} -> GenServer.reply(from, answer.(request))
-      end
-    end)
-
-    assert_receive :control_unit_registered, 5_000
-  end
-
-  # A ping that blocks inside the migrate task until the test releases it (or
-  # the task is killed) — the "several seconds into the backoff schedule"
-  # scenario, without the seconds.
-  defp blocking_ping(test_pid) do
-    fn _runner_id ->
-      send(test_pid, {:ping_started, self()})
-      NodeTestHelper.park()
-      {:ok, :pong}
     end
   end
 end

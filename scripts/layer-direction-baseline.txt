@@ -20,17 +20,14 @@ lib/flezha/relay/handover.ex -> Flezha.State.WalWriter
 lib/flezha/relay/handover.ex -> Flezha.State.WriterRegistry
 lib/flezha/relay/ingest.ex -> Flezha.State.InputLog
 lib/flezha/relay/lifecycle.ex -> Flezha.Convergence.Facts
+lib/flezha/relay/lifecycle.ex -> Flezha.Plugin.Extension.Table
 lib/flezha/relay/lifecycle.ex -> Flezha.Service.HubManager
 lib/flezha/relay/lifecycle.ex -> Flezha.Service.RelayManager
+lib/flezha/relay/lifecycle.ex -> Flezha.Shutdown.Step
 lib/flezha/relay/lifecycle.ex -> Flezha.State.Commands
 lib/flezha/relay/lifecycle.ex -> Flezha.State.DurabilityTier
 lib/flezha/relay/lifecycle.ex -> Flezha.State.PersistenceResolver
 lib/flezha/relay/lifecycle.ex -> Flezha.State.Restore
-lib/flezha/relay/migration.ex -> Flezha.Plugin.Extension.Table
-lib/flezha/relay/migration.ex -> Flezha.Service.HubManager
-lib/flezha/relay/migration.ex -> Flezha.Service.RelayManager
-lib/flezha/relay/migration.ex -> Flezha.Shutdown.Step
-lib/flezha/relay/migration.ex -> Flezha.State.TaskJournal
 lib/flezha/relay/overwatch.ex -> Flezha.Convergence.Facts
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.IO
 lib/flezha/relay/overwatch.ex -> Flezha.Plugin.Extension.Ctx.Init
@@ -65,6 +62,9 @@ lib/flezha/relay/replay.ex -> Flezha.State.Restore
 lib/flezha/relay/replay.ex -> Flezha.State.Supervisor
 lib/flezha/relay/replay.ex -> Flezha.State.Adoption
 lib/flezha/relay/replay.ex -> Flezha.State.WalWriter
+lib/flezha/relay/suspend.ex -> Flezha.Service.HubManager
+lib/flezha/relay/suspend.ex -> Flezha.Service.RelayManager
+lib/flezha/relay/suspend.ex -> Flezha.State.TaskJournal
 lib/flezha/relay/validator.ex -> Flezha.Service.HubManager
 lib/flezha/plugin.ex -> (no directory owns it)
 lib/flezha/plugin/provider/monitored_io_forward.ex -> Flezha.Service.PluginManager
@@ -76,7 +76,7 @@ lib/flezha/runner/admission/quota.ex -> Flezha.AuthZ.Quotas
 lib/flezha/runner/admission/quota.ex -> Flezha.AuthZ.Verb
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.DurabilityTier
 lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
-lib/flezha/runner/control_channel/requests.ex -> Flezha.Relay.Migration
+lib/flezha/runner/control_channel/requests.ex -> Flezha.Relay.Suspend
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.Admin
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.RelayManager
 lib/flezha/runner/control_channel/requests.ex -> Flezha.State.Completion
