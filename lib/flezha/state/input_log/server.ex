@@ -5,6 +5,7 @@ defmodule Flezha.State.InputLog.Server do
 
   require Logger
 
+  alias Flezha.Config
   alias Flezha.Process.Cspec
   alias Flezha.State.{CreditLedger, Frame, FsyncBatcher, InputLog, Paths, PersistenceResolver}
   alias Flezha.State.{RecordFrame, SeqIndex, Supervisor}
@@ -104,7 +105,7 @@ defmodule Flezha.State.InputLog.Server do
 
     # Same deferred-IO pattern as WalWriter: register instantly, open on
     # continue so a concurrent find_or_start never blocks on disk.
-    window = source_window_bytes()
+    window = Config.get(:source_credit_window_bytes)
 
     state = %__MODULE__{
       relay_class: relay_class,
@@ -570,14 +571,6 @@ defmodule Flezha.State.InputLog.Server do
             state
         end
     end
-  end
-
-  defp source_window_bytes() do
-    Application.get_env(
-      :flezha,
-      :source_credit_window_bytes,
-      PersistenceResolver.wal_high_watermark_bytes()
-    )
   end
 
   defp via(relay_class) do

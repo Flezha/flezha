@@ -459,17 +459,6 @@ defmodule FlezhaTest.Relay.OverwatchResumeCountTest do
 
     assert Replay.resume_cell_count("optout_class") == 0
   end
-
-  # The class's own `durable` is the only switch: a leftover config map naming
-  # an effectively-once class cannot turn its restore off.
-  test "a :relay_persistence entry leaves an effectively-once class's Cells restorable" do
-    :ok = ClassRegistry.put_effectively_once("eo_class", true)
-    on_exit(fn -> ClassRegistry.delete("eo_class") end)
-    Application.put_env(:flezha, :relay_persistence, %{"eo_class" => false})
-    seed_cell("eo_class", "task", "k1")
-
-    assert Replay.resume_cell_count("eo_class") == 1
-  end
 end
 
 defmodule FlezhaTest.Relay.OverwatchPluginSubscribeTest do

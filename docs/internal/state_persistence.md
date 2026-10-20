@@ -352,9 +352,9 @@ The `Watchdog` sweep triggers compaction on size or age (`flz state rotate` manu
 the writer's in-memory accounting, sharing the in-flight `compactions` map as the re-enqueue
 guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age`:
 
-- **Size** — un-snapshotted bytes past `PersistenceResolver.compact_after_bytes/2`: a user
-  `:compact_after_bytes => %{class => bytes}` map, else the SDK's declared `compact_after_bytes()`
-  (persisted as a class sidecar), else `:default_compact_after_bytes` (8 MiB).
+- **Size** — un-snapshotted bytes past `PersistenceResolver.compact_after_bytes/2`: the SDK's
+  declared `compact_after_bytes()` (persisted as a class sidecar), else
+  `:default_compact_after_bytes` (8 MiB).
 - **Age** — the oldest un-snapshotted record is older than
   `PersistenceResolver.compact_after_age_ms/1` (`:compact_after_age_ms`, default 300 000 ms, `0`
   disables). A declared correction window raises this floor to at least itself, because
@@ -414,8 +414,8 @@ Runner→controller flow control on the state stream is credit-based: park, neve
 first `cell_state_change` of a stream attach the `StreamChannel` offers
 `CreditWindowInit{stream_id, window_bytes}` over the control channel
 (`:credit_flow_control_enabled` / `FLEZHA_CREDIT_FLOW_CONTROL=false` is the off switch). The
-window is `PersistenceResolver.credit_window_bytes/2` (per-class map, default
-`:wal_high_watermark_bytes`, capped by the namespace's `max_mailbox_bytes_total` quota), the low
+window is `PersistenceResolver.credit_window_bytes/2` (`:wal_high_watermark_bytes`, capped by
+the namespace's `max_mailbox_bytes_total` quota), the low
 watermark `:credit_low_watermark_bytes` (default half the window, kept by the controller and never
 sent), the `stream_id` an opaque
 session minted per attach. The SDK answers `CreditWindowAck`; from then on:
@@ -675,8 +675,11 @@ every attempt. The source of truth for the live binding is ProcessHub's registry
 
 ## Configuration knobs
 
-All under `:flezha`. Per-class maps are `%{<RelayClass> => value}` and resolve user map →
-instance metadata → SDK declaration → global default.
+All under `:flezha`, one layer per setting: a per-relay value resolves instance metadata → SDK
+declaration → global row, and no configuration map overrides it per class. The one
+`%{<RelayClass> => hours}` store is `:time_travel_retention_hours`, which `flz state retention`
+writes. The boot refuses a key no row reads and a value its row's type refuses
+(`Flezha.Config.Environment.check!/1`).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -687,20 +690,20 @@ instance metadata → SDK declaration → global default.
 | `:wal_hard_watermark_bytes` | `high * 4` | Hard un-fsynced-bytes bound; past it `append_async` sheds. |
 | `:wal_pending_msg_cap` | `5_000` | Hard mailbox-depth bound; past it `append_async` sheds. |
 | `:credit_flow_control_enabled` | `true` (`FLEZHA_CREDIT_FLOW_CONTROL`) | `false` skips the `CreditWindowInit` offer. |
-| `:credit_window_bytes` | `%{}` (default `wal_high_watermark_bytes`, capped by `max_mailbox_bytes_total`) | Per-class state-stream window. |
 | `:credit_low_watermark_bytes` | `window / 2` | Grant trigger. |
 | `:outbox_inflight_max` | `1_000` | Effect records inside the plugin chain unconfirmed, per Cell of either kind, before the flush waits. |
 | `:outbox_resettle_ms` | `60_000` | Re-dispatch an entry whose chain run never reported back, or whose relay call or answer its delivery still holds. |
 | `:sdk_commit_ack_ms` | `30_000` (`FLEZHA_STEPS_ACK_TIMEOUT_MS`) | The commit worker's deadline for the effect records a steps relay barrier names to become durable; past it the barrier fails with `record_not_durable`. The runner's barrier re-send reads the same variable. |
 | `:record_log_cut_after_bytes` | `64 * 1024` | Released bytes before the journal or an input log rewrites to cut its prefix. |
-| `:default_compact_after_bytes` | `8 * 1024 * 1024` (`FLEZHA_COMPACT_AFTER_BYTES`) | Size trigger; `:compact_after_bytes` map overrides per class. |
+| `:default_compact_after_bytes` | `8 * 1024 * 1024` (`FLEZHA_COMPACT_AFTER_BYTES`) | Size trigger for a class that declares none. |
 | `:compact_after_age_ms` | `300_000` (`FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`) | Age trigger; `0` disables; raised to a declared correction window. |
 | `:compaction_timeout_ms` | `30_000` | `CompactCell` → snapshot bound; `0` disables. |
 | `:output_watchdog_interval_ms` | `10_000` (`FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS`) | Watchdog sweep; `0` disables. |
-| `:output_stall_timeout_ms` / `:default_output_stall_timeout_ms` | `%{}` / `60_000` | Output-staleness window; `0` disables. |
+| `:default_output_stall_timeout_ms` | `60_000` | Output-staleness window; `0` disables. |
 | `:time_travel_retention_check_interval_ms` | `60_000` (`FLEZHA_RETENTION_CHECK_INTERVAL_MS`) | Retention tick. |
 | `:time_travel_retention_hours` / `:default_time_travel_retention_hours` | `%{}` / `6` | Snapshot history kept; `0` keeps only the latest. |
-| `:relay_completed_retention_hours` / `:default_relay_completed_retention_hours` | `%{}` / `72` (`FLEZHA_STEPS_RETENTION_HOURS`) | Finished steps relay data kept before the sweeper reclaims it. |
+| `:default_relay_completed_retention_hours` | `72` (`FLEZHA_STEPS_RETENTION_HOURS`) | Finished steps relay data kept before the sweeper reclaims it; `flz relay list` keeps the same window. |
+| `:source_credit_window_bytes` | `wal_high_watermark_bytes` | Bytes a source's input log admits before its writers wait. |
 | `:input_log_hold_window_ms` | `0` (`FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`) | Floor on how long a consumed input stays in `input.log`; a declared correction window raises it. |
 
 ## Smoke check (manual)

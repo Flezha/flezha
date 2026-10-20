@@ -14,6 +14,11 @@ quantity's multiple of another from drifting; a site reads
 retry is a row of `lib/flezha/config/backoff.ex`, announced on
 `[:flezha, :backoff, :wait]`.
 
+**The boot refuses a key it cannot read.** A `:flezha` key that is no row's key
+and no group's root stops the boot naming it and the nearest row, and a value
+its row's type refuses stops it naming the key, the type and the value. Each
+setting has one layer: there is no per-class map over a class's own value.
+
 ## Transport and TLS
 
 - `:transports`: Derived from `:transport`, so `[:uds]` when nothing is set.
@@ -31,12 +36,13 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 - `:state_root`: Default: `FLEZHA_STATE_DIR`, else `"app_data/state"`, expanded to an absolute path on read (derived; set per run in `:test`).
 - `:compaction_timeout_ms`: `0` disables the compaction-timeout sweep.
 - `:record_log_cut_after_bytes`: `0` rewrites at every release.
-- `:time_travel_retention_hours` / `:relay_completed_retention_hours` / `:compact_after_bytes` / `:compact_after_age_ms` / `:output_stall_timeout_ms` / `:credit_window_bytes`: Per-class user overrides, `%{"RelayClass" => value}`, winning over the SDK declaration and the instance metadata. Whether a class keeps its work (`durable`) is the class's own and has no override. Default: `%{}`.
+- `:time_travel_retention_hours`: The `%{"RelayClass" => hours}` store `flz state retention` writes, read ahead of `:default_time_travel_retention_hours`. Default: `%{}`.
+- `:source_credit_window_bytes`: The bytes a source's input log admits before its writers wait. Default: the high watermark (derived).
 - `:wal_high_watermark_bytes`: The one Cell-scale payload bound.
 - `:wal_low_watermark_bytes`: Default: half the high watermark (derived).
 - `:wal_hard_watermark_bytes`: Default: 4 × the high watermark (derived).
-- `:credit_low_watermark_bytes`: Default: half the credit window (derived).
-- `:durability_tier[:ship_interval_ms]` / `:durability_tier[:rpo_target_ms]` / `:durability_tier[:gc_interval_ms]` / `:durability_tier[:gc_grace_ms]` / `:durability_tier[:gc_abandoned_after_ms]`: A non-positive value falls back to the default.
+- `:credit_low_watermark_bytes`: Default: half the credit window, which is the high watermark (derived).
+- `:durability_tier[:ship_interval_ms]` / `:durability_tier[:rpo_target_ms]` / `:durability_tier[:gc_interval_ms]` / `:durability_tier[:gc_grace_ms]` / `:durability_tier[:gc_abandoned_after_ms]`: `0` is refused at boot.
 - `:durability_tier[:backend_opts]`: Filled from the `FLEZHA_DURABILITY_PG_*`, `FLEZHA_DURABILITY_S3_*` and `FLEZHA_DURABILITY_PATH` variables.
 
 ## Runner and relay lifecycle
@@ -58,7 +64,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 - `:control_liveness_window_ms` / `:control_liveness_interval_ms`: Default: `45_000` / `15_000`.
 - `:io_stream_liveness_interval_ms` / `:io_stream_liveness_threshold_ms`: Default: `10_000` / `30_000`.
 - `:convergence_unmet_intent_grace_ms`: How long a `failed` or `unbound` relay reads `recovering` on `/healthz`, in `flz relay list` and `info`, in `flz cluster status` and in the admin `relay_rows` verb before any of them shows its own word.
-- `:convergence_cell_stall_ms`: How long a handout may be out before the per-relay classifier calls that Cell stalled; a non-positive value leaves the default in place. Default: `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`).
+- `:convergence_cell_stall_ms`: How long a handout may be out before the per-relay classifier calls that Cell stalled; `0` is refused at boot. Default: `300_000` (the classifier's own default, `lib/flezha/convergence/stall_classifier.ex`).
 - `:healthz_port` / `:healthz_bind`: Default: `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback).
 - `:input_silence_timeout_ms`: How long a flow relay that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous; `FLEZHA_INPUT_SILENCE_TIMEOUT_MS` sets it from the environment. Default: `0` (off).
 
@@ -129,7 +135,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:cluster_update_interval` | ms | `5000` |
 | `:commit_stall_fn` | term | unset |
 | `:compact_after_age_ms` | ms | `300000` |
-| `:compact_after_bytes` | term | `%{}` |
 | `:compaction_timeout_ms` | ms | `30000` |
 | `:concurrent_channel_count` | positive_int | derived at boot |
 | `:control_liveness_interval_ms` | ms | `15000` |
@@ -146,7 +151,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:correction_debounce_ms` | ms | `200` |
 | `:credit_flow_control_enabled` | bool | `true` |
 | `:credit_low_watermark_bytes` | int | unset |
-| `:credit_window_bytes` | term | `%{}` |
 | `:default_compact_after_bytes` | int | `8388608` |
 | `:default_output_stall_timeout_ms` | ms | `60000` |
 | `:default_relay_completed_retention_hours` | int | `72` |
@@ -192,6 +196,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:healthz_bind` | string | `0.0.0.0` |
 | `:healthz_enabled` | bool | `false` |
 | `:healthz_port` | int | `9569` |
+| `:hub_start_child_ms` | ms | `15000` |
 | `:initial_nodes` | list of atom | `""` |
 | `:input_log_hold_window_ms` | ms | `0` |
 | `:input_silence_timeout_ms` | ms | `0` |
@@ -236,7 +241,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:observability_export[:prometheus_port]` | int | `9568` |
 | `:outbox_inflight_max` | positive_int | `1000` |
 | `:outbox_resettle_ms` | ms | `60000` |
-| `:output_stall_timeout_ms` | term | `%{}` |
 | `:output_watchdog_interval_ms` | ms | `10000` |
 | `:overwatch_call_timeout_ms` | ms | `5000` |
 | `:overwatch_ping_enabled` | bool | `true` |
@@ -269,7 +273,6 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:reconnect_interval` | ms | `1000` |
 | `:reconnect_max_backoff_ms` | ms | `30000` |
 | `:record_log_cut_after_bytes` | int | `65536` |
-| `:relay_completed_retention_hours` | term | `%{}` |
 | `:restore_await_timeout_ms` | ms | `15000` |
 | `:run_token` | string | unset |
 | `:runner_removal_grace_ms` | ms | `30000` |
@@ -283,6 +286,7 @@ retry is a row of `lib/flezha/config/backoff.ex`, announced on
 | `:server_key_path` | path | `app_data/certs/server.key` |
 | `:socket_dir_group` | string | unset |
 | `:socket_files_path` | path | derived per run |
+| `:source_credit_window_bytes` | int | derived |
 | `:state_resync_fun` | term | unset |
 | `:state_root` | path | `app_data/state` |
 | `:static_nodes` | list of atom | `""` |

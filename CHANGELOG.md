@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed: one layer per setting, and the boot refuses a key it cannot read
+
+- **BREAKING:** the per-class maps `:compact_after_bytes`, `:output_stall_timeout_ms` (the map;
+  the setting is `:default_output_stall_timeout_ms`), `:credit_window_bytes` and
+  `:relay_completed_retention_hours` are removed. A relay takes its class's declared value, then
+  its start's metadata, then the global row; the credit window is `:wal_high_watermark_bytes`.
+- **BREAKING:** a `:flezha` key no setting reads now stops the boot naming it and the nearest
+  setting, and a value its setting's type refuses stops it naming the key, the type and the
+  value. A durability tier interval or the cell stall threshold set to `0` is refused rather
+  than replaced by its default.
+- `FLEZHA_COOKIE_FILE`, `FLEZHA_GIT_MIRROR` and `:source_credit_window_bytes` are documented
+  settings, and `flz relay list` keeps a finished relay for exactly the window the retention
+  sweep keeps it.
+- `flz` reads `FLEZHA_TOKEN`, `FLEZHA_APP_DATA_ROOT` and `FLEZHA_AUTHZ_DIR` by the shared rule: a
+  value with surrounding spaces is trimmed.
+
 ### Changed: one sink registration, one listener shell, one memory reading
 
 - **BREAKING:** `FLEZHA_MEMORY_REPORT_INTERVAL_MS` (`:memory_report_interval_ms`) and the

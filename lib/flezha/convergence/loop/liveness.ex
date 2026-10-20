@@ -9,7 +9,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
   the classifier must never cost the tick its heals or its publish.
   """
 
-  alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Loop.State
   alias Flezha.Convergence.StallClassifier
   alias Flezha.Transport.{LivenessCounters, Native}
@@ -66,12 +66,7 @@ defmodule Flezha.Convergence.Loop.Liveness do
 
   # The classifier's own defaults, with the one knob a user whose
   # Tasklets legitimately run long has to raise.
-  defp classifier_opts() do
-    case Config.get(:convergence_cell_stall_ms) do
-      ms when is_integer(ms) and ms > 0 -> %{cell_stall_ms: ms}
-      _ -> %{}
-    end
-  end
+  defp classifier_opts(), do: %{cell_stall_ms: Durations.get(:convergence_cell_stall_ms)}
 
   defp build_liveness_snapshot() do
     control_drivers =

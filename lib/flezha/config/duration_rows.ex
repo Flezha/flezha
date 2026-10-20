@@ -120,7 +120,7 @@ defmodule Flezha.Config.DurationRows do
     # have.
     {:hub_declared_mutate_ms, :ms, 5_000, []},
     {:hub_declared_mutate_rpc_ms, :ms, nil, derived: {:headroom, :hub_declared_mutate_ms, 500}},
-    {:hub_start_child_ms, :ms, 15_000, []},
+    {:hub_start_child_ms, :ms, 15_000, key: true},
     {:migrate_timeout_ms, :ms, 2_000, []},
     {:migration_consent_timeout_ms, :ms, 5_000,
      key: {:migration_consent, :consent_timeout_ms}, env: "FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS"},
@@ -161,7 +161,7 @@ defmodule Flezha.Config.DurationRows do
 
     # ---- convergence -------------------------------------------------------
     {:convergence_cell_stall_ms, :ms, 300_000,
-     key: true, env: "FLEZHA_CONVERGENCE_CELL_STALL_MS"},
+     key: true, env: "FLEZHA_CONVERGENCE_CELL_STALL_MS", min: 1},
     {:convergence_output_stall_grace_ms, :ms, 60_000,
      key: true, env: "FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS"},
     {:convergence_tick_ms, :ms, 5_000, key: true, env: "FLEZHA_CONVERGENCE_TICK_MS"},
@@ -262,17 +262,18 @@ defmodule Flezha.Config.DurationRows do
     # ---- durability tier ---------------------------------------------------
     {:durability_gc_abandoned_after_ms, :ms, 604_800_000,
      key: {:durability_tier, :gc_abandoned_after_ms},
-     env: "FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS"},
+     env: "FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS",
+     min: 1},
     {:durability_gc_grace_ms, :ms, 3_600_000,
-     key: {:durability_tier, :gc_grace_ms}, env: "FLEZHA_DURABILITY_GC_GRACE_MS"},
+     key: {:durability_tier, :gc_grace_ms}, env: "FLEZHA_DURABILITY_GC_GRACE_MS", min: 1},
     {:durability_gc_interval_ms, :ms, 3_600_000,
-     key: {:durability_tier, :gc_interval_ms}, env: "FLEZHA_DURABILITY_GC_INTERVAL_MS"},
+     key: {:durability_tier, :gc_interval_ms}, env: "FLEZHA_DURABILITY_GC_INTERVAL_MS", min: 1},
     {:durability_pg_query_ms, :ms, 30_000, []},
     {:durability_rpo_target_ms, :ms, 120_000,
-     key: {:durability_tier, :rpo_target_ms}, env: "FLEZHA_DURABILITY_RPO_TARGET_MS"},
+     key: {:durability_tier, :rpo_target_ms}, env: "FLEZHA_DURABILITY_RPO_TARGET_MS", min: 1},
     {:durability_ship_call_ms, :ms, nil, derived: {:headroom, :sdk_commit_ack_ms, -5_000}},
     {:durability_ship_interval_ms, :ms, 30_000,
-     key: {:durability_tier, :ship_interval_ms}, env: "FLEZHA_DURABILITY_SHIP_INTERVAL_MS"},
+     key: {:durability_tier, :ship_interval_ms}, env: "FLEZHA_DURABILITY_SHIP_INTERVAL_MS", min: 1},
 
     # ---- shutdown ----------------------------------------------------------
     {:drain_budget_slack_ms, :ms, 1_000, []},

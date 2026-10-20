@@ -1489,8 +1489,8 @@ it never declared.
 snapshot_seq, snapshot_bytes_size }` ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)).
 
 Issued when the Cell's un-snapshotted WAL exceeds its compaction trigger
-(`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridable per class through
-`AddRelayResponse.compact_after_bytes` and per user), when its oldest
+(`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridden per class through
+`AddRelayResponse.compact_after_bytes`), when its oldest
 un-snapshotted record is older than `FLEZHA_COMPACT_AFTER_AGE_MS` (default
 300000; `0` disables), or on `flz state rotate`. The runner drains the
 Cell's pending changes, clones `State` under the Cell's sticky CAS,
@@ -1519,10 +1519,10 @@ controller then returns credit as `CreditGrant { stream_id, bytes }`
 ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)). Field 3 of `CreditWindowInit` is reserved:
 the low watermark grants are batched on is the controller's own.
 
-Offered on the **first** `cell_state_change` frame of a stream attach, so
-the window resolves per Relay from that frame's class
-(`:credit_window_bytes`, default `:wal_high_watermark_bytes`;
-`:credit_low_watermark_bytes`, default half the window). The runner arms the
+Offered on the **first** `cell_state_change` frame of a stream attach, with
+the window `:wal_high_watermark_bytes` (capped by the namespace's mailbox
+quota while authorization is enforced; `:credit_low_watermark_bytes`, default
+half the window). The runner arms the
 window and returns `CreditWindowAck` echoing `stream_id` as `raw_data`; on
 that ack the controller marks the session credit-speaking, stops sending
 `CellMailboxStatus` and enforces the per-stream byte ledger. An SDK that

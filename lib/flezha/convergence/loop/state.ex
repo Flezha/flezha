@@ -73,8 +73,4 @@ defmodule Flezha.Convergence.Loop.State do
   @doc "Tick interval when neither an option nor app config sets one."
   @spec default_tick_ms() :: pos_integer()
   def default_tick_ms, do: Durations.get(:convergence_tick_ms)
-
-  @doc "Fact grace when neither an option nor app config sets one."
-  @spec default_output_stall_grace_ms() :: pos_integer()
-  def default_output_stall_grace_ms, do: Durations.get(:convergence_output_stall_grace_ms)
 end

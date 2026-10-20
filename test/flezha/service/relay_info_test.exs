@@ -27,6 +27,8 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
   alias Flezha.State.PersistenceResolver
+  alias Flezha.State.Retention
+  alias Flezha.State.TestHelpers
 
   @namespace "relay-info-test"
 
@@ -374,7 +376,7 @@ defmodule FlezhaTest.Service.RelayInfoTest do
 
   test "a finished relay outside the retention window is not surfaced" do
     stub(RelayManager, :get_relay_ids, fn _ns -> {:ok, []} end)
-    Application.put_env(:flezha, :relay_completed_retention_hours, %{"done-old" => 0})
+    Application.put_env(:flezha, :default_relay_completed_retention_hours, 0)
 
     :ok =
       Completion.write("done-old", %{
@@ -391,5 +393,40 @@ defmodule FlezhaTest.Service.RelayInfoTest do
 
     %{"relays" => procs} = Jason.decode!(out)
     assert Enum.find(procs, &(&1["id"] == "done-old")) == nil
+  end
+
+  test "the listing keeps exactly the finished relays the retention sweep keeps" do
+    # fails when: the listing and the sweep judge one finished relay against
+    # two windows, so a relay is listed with an `expires_at` already reclaimed.
+    stub(RelayManager, :get_relay_ids, fn _ns -> {:ok, []} end)
+    TestHelpers.start_state_tree([Retention])
+    Application.put_env(:flezha, :default_relay_completed_retention_hours, 1)
+    now = System.system_time(:second)
+
+    for {id, age} <- [{"done-kept", 60}, {"done-gone", 7_200}] do
+      :ok =
+        Completion.write(id, %{
+          namespace: @namespace,
+          run: "steps",
+          status: "ok",
+          error: "",
+          result: "",
+          finished_at: now - age
+        })
+    end
+
+    out =
+      capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), output: "json") end)
+
+    listed =
+      for %{"phase" => "finished"} = proc <- Jason.decode!(out)["relays"],
+          into: %{},
+          do: {proc["id"], proc["expires_at"]}
+
+    assert listed == %{"done-kept" => now - 60 + 3_600}
+
+    :ok = Retention.sweep_now()
+    assert Completion.exists?("done-kept")
+    refute Completion.exists?("done-gone")
   end
 end

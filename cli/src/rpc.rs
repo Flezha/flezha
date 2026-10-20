@@ -505,7 +505,7 @@ pub(crate) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
 /// `FLEZHA_RESET_PROBE_OVERRIDE` short-circuits it to `up` or `down` for both
 /// callers' tests.
 pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
-    if let Ok(v) = env::var("FLEZHA_RESET_PROBE_OVERRIDE") {
+    if let Some(v) = flz_transport::env::env_raw("FLEZHA_RESET_PROBE_OVERRIDE") {
         match v.as_str() {
             "up" => return true,
             "down" => return false,

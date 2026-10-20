@@ -292,7 +292,7 @@ kubectl cp -n flezha flezha-daemonset-XXXXX:/var/log/flezha/flezha.log ./control
 
 Logs are configured via environment variables:
 - `FLEZHA_LOG_PATH`: `/var/log/flezha/flezha.log` (file path)
-- `FLEZHA_LOG_LEVEL`: `info` (default, can be: debug, info, warning, error)
+- `FLEZHA_LOG_LEVEL`: `info` (default, can be: debug, info, warn, error)
 
 The controller logs to both stdout (for `kubectl logs`) and file (for persistence).
 

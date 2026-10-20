@@ -138,11 +138,15 @@ defmodule Flezha.Service.Relay.Info do
     end)
   end
 
-  defp retained_record(namespace, relay_id, now) do
-    case Completion.read(relay_id) do
+  # A finished relay's class dir is named for its id, and the window is the
+  # class's, the one `Retention` sweeps by.
+  defp retained_record(namespace, relay_class, now) do
+    case Completion.read(relay_class) do
       {:ok, %{namespace: ^namespace, finished_at: finished_at} = record}
       when is_integer(finished_at) ->
-        expires_at = finished_at + PersistenceResolver.completed_retention_hours(relay_id) * 3600
+        expires_at =
+          finished_at + PersistenceResolver.completed_retention_hours(relay_class) * 3600
+
         if expires_at >= now, do: Map.put(record, :expires_at, expires_at)
 
       _ ->

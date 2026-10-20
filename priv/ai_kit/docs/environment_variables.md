@@ -318,13 +318,16 @@ Read by the build, the image or the shell wrappers rather than the controller.
 |---|---|---|
 | `FLEZHA_APP_DATA_ROOT` | path | `app_data` |
 | `FLEZHA_CONTAINER_USER` | string | unset |
+| `FLEZHA_COOKIE_FILE` | path | unset |
 | `FLEZHA_DIST_TLS_OPTFILE` | path | unset |
+| `FLEZHA_GIT_MIRROR` | path | unset |
 | `FLEZHA_IMAGE` | string | unset |
 | `FLEZHA_NODE_HOST` | string | `127.0.0.1` |
 | `FLEZHA_NODE_NAME` | string | `flezha` |
 | `FLEZHA_REBUILD_IMAGE` | bool | `false` |
 | `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | int | `60` |
 | `FLEZHA_SHUTDOWN_TOKEN_FILE` | path | unset |
+| `FLEZHA_STATE_DIR` | path | `app_data/state` |
 | `FLEZHA_TESTNET_WS_PORT` | int | `4500` |
 | `FLEZHA_UI_PATH` | path | unset |
 <!-- config-keys:end -->

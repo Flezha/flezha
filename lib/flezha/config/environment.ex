@@ -5,9 +5,10 @@ defmodule Flezha.Config.Environment do
   One job, two entry points: `parse/2` reads one variable's text by its row's
   rule, and `runtime_config/2` reads a whole environment — every variable turned
   into the application-env key its row names, every per-run resource derived
-  from the one run token, every environment's own default applied. A scalar
-  type parses by the Elixir SDK's own reader, `Flezha.SDK.Knob.parse/2`, which is
-  what makes a runner and a boot answer one text the same way.
+  from the one run token, every environment's own default applied. `check!/1`
+  then holds the application environment the boot ended with to the table. A
+  scalar type parses by the Elixir SDK's own reader, `Flezha.SDK.Knob.parse/2`,
+  which is what makes a runner and a boot answer one text the same way.
 
   The parse rule is the same one every runtime repeats;
   `test/fixtures/knob_parse_cases.txt` is it written down, and each runtime's
@@ -55,6 +56,104 @@ defmodule Flezha.Config.Environment do
     |> Enum.filter(& &1.key)
     |> Enum.reduce([], &write(&1, &2, chosen(&1, env_map, config_env, derived)))
   end
+
+  # Keys OTP or Mix put in an application's environment themselves.
+  @runtime_keys [:included_applications]
+
+  @doc """
+  Refuse a `:flezha` application environment the table cannot read, once at
+  boot after `runtime_config/2` has filled it: a key that is no row's key and
+  no compound group's root, named with the nearest row, and a value its row's
+  type refuses, named with the key, the type and the value. A misspelt or
+  retired key otherwise configures nothing and says nothing.
+  """
+  @spec check!(keyword()) :: :ok
+  def check!(env \\ Application.get_all_env(:flezha)) do
+    case unknown_keys(env) ++ mistyped(env) do
+      [] ->
+        :ok
+
+      found ->
+        raise ArgumentError, "the :flezha configuration refuses:\n  " <> Enum.join(found, "\n  ")
+    end
+  end
+
+  defp unknown_keys(env) do
+    known = known_roots()
+
+    for {key, _value} <- env, key not in known do
+      "#{inspect(key)} is no setting; the nearest is #{nearest(key)}"
+    end
+  end
+
+  defp known_roots() do
+    roots = for {_name, %{key: key}} <- Keys.rows(), key, do: root(key)
+    Enum.uniq(roots ++ @runtime_keys)
+  end
+
+  defp root(key) when is_tuple(key), do: elem(key, 0)
+  defp root(key), do: key
+
+  # Judged on the row's name, which says what it sets, a name holding the key
+  # whole first (a retired map's global row); answered with the key a
+  # configuration file writes.
+  defp nearest(key) do
+    key = to_string(key)
+
+    row =
+      Keys.rows()
+      |> Map.values()
+      |> Enum.filter(& &1.key)
+      |> Enum.max_by(fn %{name: name} ->
+        name = to_string(name)
+        {String.contains?(name, key), String.jaro_distance(name, key)}
+      end)
+
+    if row.key == row.name,
+      do: inspect(row.key),
+      else: "#{inspect(row.key)} (row #{inspect(row.name)})"
+  end
+
+  defp mistyped(env) do
+    for {_name, %{key: key} = row} <- Keys.rows(),
+        key,
+        {:ok, value} <- [at(env, key)],
+        not typed?(row, value) do
+      "#{inspect(key)} is #{inspect(value)}, not a #{inspect(row.type)}" <> at_least(row)
+    end
+  end
+
+  defp at_least(%{min: nil}), do: ""
+  defp at_least(%{min: min}), do: " of at least #{min}"
+
+  defp at(env, key) when is_atom(key), do: Keyword.fetch(env, key)
+
+  defp at(env, key) when is_tuple(key) do
+    Enum.reduce_while(Tuple.to_list(key), {:ok, env}, fn part, {:ok, level} ->
+      with true <- Keyword.keyword?(level),
+           {:ok, _} = found <- Keyword.fetch(level, part),
+           do: {:cont, found},
+           else: (_ -> {:halt, :error})
+    end)
+  end
+
+  # Unset is a value of every type; a `:keep_raw` row answers for its own text.
+  defp typed?(_row, nil), do: true
+  defp typed?(%{on_bad_value: :keep_raw}, value) when is_binary(value), do: true
+  defp typed?(row, value), do: of_type?(row.type, value) and (row.min == nil or value >= row.min)
+
+  defp of_type?(type, v) when type in [:ms, {:custom, :days_to_seconds}],
+    do: is_integer(v) and v >= 0
+
+  defp of_type?(:int, v), do: is_integer(v)
+  defp of_type?(:positive_int, v), do: is_integer(v) and v > 0
+  defp of_type?(:bool, v), do: is_boolean(v)
+  defp of_type?(type, v) when type in [:string, :path, :address], do: is_binary(v)
+  defp of_type?(:atom, v), do: is_atom(v)
+  defp of_type?(:term, _v), do: true
+  defp of_type?({:enum, members}, v), do: v in members
+  defp of_type?({:list, inner}, v), do: is_list(v) and Enum.all?(v, &of_type?(inner, &1))
+  defp of_type?({:custom, :pem_files}, v), do: is_list(v) and Enum.all?(v, &is_binary/1)
 
   defp write(row, config, {:ok, value}), do: nest(config, row.key, value)
 

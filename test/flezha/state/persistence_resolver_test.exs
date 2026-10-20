@@ -41,13 +41,13 @@ defmodule Flezha.State.PersistenceResolverTest do
       assert PersistenceResolver.compact_after_bytes("sdk_bytes_class") == 4 * 1024 * 1024
     end
 
-    test "a user override wins over the SDK-declared value" do
+    test "the SDK-declared value wins over the global row" do
       ClassRegistry.put_compact_after_bytes("ovr_bytes_class", 4 * 1024 * 1024)
-      Application.put_env(:flezha, :compact_after_bytes, %{"ovr_bytes_class" => 1024})
+      Application.put_env(:flezha, :default_compact_after_bytes, 1024)
 
       on_exit(fn -> ClassRegistry.delete("ovr_bytes_class") end)
 
-      assert PersistenceResolver.compact_after_bytes("ovr_bytes_class") == 1024
+      assert PersistenceResolver.compact_after_bytes("ovr_bytes_class") == 4 * 1024 * 1024
     end
 
     test "an undeclared class falls back to the global default" do
@@ -79,11 +79,6 @@ defmodule Flezha.State.PersistenceResolverTest do
       Application.put_env(:flezha, :compact_after_age_ms, 0)
       assert PersistenceResolver.compact_after_age_ms() == 0
     end
-
-    test "an invalid value falls back to the default" do
-      Application.put_env(:flezha, :compact_after_age_ms, -5)
-      assert PersistenceResolver.compact_after_age_ms() == 300_000
-    end
   end
 
   describe "completed_retention_hours/2" do
@@ -94,12 +89,6 @@ defmodule Flezha.State.PersistenceResolverTest do
     test "honours the global default override" do
       Application.put_env(:flezha, :default_relay_completed_retention_hours, 5)
       assert PersistenceResolver.completed_retention_hours("c") == 5
-    end
-
-    test "honours a per-class user override; other classes fall back to default" do
-      Application.put_env(:flezha, :relay_completed_retention_hours, %{"c" => 1})
-      assert PersistenceResolver.completed_retention_hours("c") == 1
-      assert PersistenceResolver.completed_retention_hours("d") == 72
     end
 
     test "honours an instance-metadata override" do

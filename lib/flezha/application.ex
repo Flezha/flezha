@@ -6,6 +6,7 @@ defmodule Flezha.Application do
   alias Flezha.Boot.StatePathMigrator
   alias Flezha.Boot.StateRootLock
   alias Flezha.Config
+  alias Flezha.Config.Environment
   alias Flezha.Process.DurableTasks
   alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
@@ -17,6 +18,8 @@ defmodule Flezha.Application do
 
   @impl true
   def start(_type, _args) do
+    :ok = Environment.check!()
+
     # The legacy `:backends` Logger config is deprecated in newer Elixir.
     # We register the file backend at runtime via `:logger_backends`,
     # which silently no-ops if the dep isn't loaded so consumers that

@@ -114,8 +114,9 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   end
 
   describe "negotiation (1.2)" do
-    test "ack marks the session credit-speaking and the window resolves per class", ctx do
-      Application.put_env(:flezha, :credit_window_bytes, %{ctx.class => 4_096})
+    test "ack marks the session credit-speaking and the window is the WAL soft watermark",
+         ctx do
+      Application.put_env(:flezha, :wal_high_watermark_bytes, 4_096)
 
       init = establish_credit(ctx)
       assert init.window_bytes == 4_096
@@ -215,7 +216,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     end
 
     test "a conformant sender staying inside the window never sheds", ctx do
-      Application.put_env(:flezha, :credit_window_bytes, %{ctx.class => 2_048})
+      Application.put_env(:flezha, :wal_high_watermark_bytes, 2_048)
       establish_credit(ctx)
 
       writer = writer_pid({ctx.class, "op1", "k1"})
@@ -250,7 +251,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   describe "overrun is a counted anomaly (2.5)" do
     test "a frame past the exhausted ledger is shed, counted, and its gap declared for repair",
          ctx do
-      Application.put_env(:flezha, :credit_window_bytes, %{ctx.class => 200})
+      Application.put_env(:flezha, :wal_high_watermark_bytes, 200)
       become_loop()
 
       anomaly =

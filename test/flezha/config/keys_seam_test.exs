@@ -2,10 +2,10 @@ defmodule Flezha.Config.KeysSeamTest do
   @moduledoc """
   A knob is one row of one table, and a bypass is impossible.
 
-  Five clauses: nothing reads a knob outside the seam; every row is complete
-  and every name in the tree is a row; a default is written down once; every
-  runtime that reads a name is declared to; and every runtime's own suite is
-  held to the one parse rule.
+  Six clauses: nothing reads a knob outside the seam; every row is complete
+  and every name in the tree is a row; a row nothing reads does not exist; a
+  default is written down once; every runtime that reads a name is declared
+  to; and every runtime's own suite is held to the one parse rule.
   """
   use ExUnit.Case, async: true
 
@@ -26,7 +26,8 @@ defmodule Flezha.Config.KeysSeamTest do
   # one. `System.get_env(value)` where the value is data a user wrote into
   # a setting — a password variable's name — is not a knob and no row can
   # declare it, so the shape lets a lowercase argument through.
-  @elixir_read ~r/System\.get_env\("FLEZHA_|System\.get_env\(@|Application\.(get_env|fetch_env!?)\(:flezha/
+  # `\\s*` spans a line break, so a read wrapped over several lines is one read.
+  @elixir_read ~r/System\.get_env\(\s*("FLEZHA_|@)|Application\.(get_env|fetch_env!?)\(\s*:flezha/
   @rust_read ~r/env::var(_os)?\(("FLEZHA_|[A-Z][A-Z0-9_]*\))/
 
   # A regex attribute or literal is re-imported every time it is evaluated, so
@@ -35,16 +36,34 @@ defmodule Flezha.Config.KeysSeamTest do
 
   @rust_roots ~w(flz_core/src flz_transport/src flz_nif/src flz_core_ffi/src sdk/rust/src)
 
-  # Where each runtime's source lives, for the declaration clause.
+  # Where each runtime's source lives, for the declaration and unread clauses.
+  # A test app is a harness, not its SDK, and is not one of them.
   @runtime_roots %{
     elixir_sdk: ["sdk/elixir/lib"],
     rust: @rust_roots,
-    java: ["sdk/java/flezha-sdk-runtime/src/main"],
+    java: Path.wildcard("sdk/java/*/src/main") -- ["sdk/java/test_app/src/main"],
     node: ["sdk/node/src"],
     python: ["sdk/python/src"],
     ruby: ["sdk/ruby/lib"],
-    php: ["sdk/php/src"]
+    php: ["sdk/php/src"],
+    cli: ["cli/src"],
+    shell: ["rel"]
   }
+
+  # `rel/` is one place the shell runtime reads; a container's entrypoint and
+  # its compose files are others, so a shell row may be named outside it.
+  @partial_roots [:shell]
+
+  # The runtimes that link the shared core, so a name the crates read is read
+  # in their process too.
+  @core_hosts [:elixir_sdk, :java, :node, :python, :ruby, :php, :cli]
+
+  # The CLI names variables in its help and its messages, so a CLI read is a
+  # name written as a whole literal.
+  @cli_read ~r/"(FLEZHA_[A-Z0-9_]+)"/
+
+  # What a deployment sets, held to the table like what a runtime reads.
+  @deployment ["kubernetes"]
 
   # The published reference: each page and the groups of rows it carries.
   @reference %{
@@ -67,9 +86,9 @@ defmodule Flezha.Config.KeysSeamTest do
       elixir_read = @elixir_read
 
       offences =
-        for {path, line, number} <- lines(elixir_sources()),
+        for path <- elixir_sources(),
             path not in @seam,
-            Regex.match?(elixir_read, line),
+            {number, line} <- matched_lines(path, elixir_read),
             do: offence(path, number, line)
 
       assert offences == []
@@ -122,11 +141,13 @@ defmodule Flezha.Config.KeysSeamTest do
       assert MapSet.difference(written, declared) |> MapSet.to_list() == []
     end
 
-    test "every variable named in the controller, its crates and its SDKs is a row" do
+    test "every variable named in the controller, its crates, its SDKs and a deployment is a row" do
       env_name = @env_name
+      deployment = SourceWalk.files(@deployment, [".yaml", ".sh", ".md"])
 
       undeclared =
-        for {path, line, number} <- lines(elixir_sources() ++ rust_sources() ++ sdk_sources()),
+        for {path, line, number} <-
+              lines(elixir_sources() ++ rust_sources() ++ sdk_sources() ++ deployment),
             [var] <- Regex.scan(env_name, line),
             is_nil(Keys.by_env(var)),
             uniq: true,
@@ -155,6 +176,23 @@ defmodule Flezha.Config.KeysSeamTest do
             not MapSet.member?(parents, name),
             not grouped?(row.key, groups),
             do: name
+
+      assert unread == []
+    end
+
+    test "every row a runtime is declared to read is named in that runtime's source" do
+      core = named(:rust)
+
+      unread =
+        for {runtime, _roots} <- @runtime_roots,
+            runtime not in @partial_roots,
+            named = named(runtime),
+            {name, row} <- Keys.rows(),
+            runtime in row.runtimes,
+            row.env,
+            not MapSet.member?(named, row.env),
+            not (runtime in @core_hosts and MapSet.member?(core, row.env)),
+            do: "#{runtime} is declared to read #{name} (#{row.env}) and never names it"
 
       assert unread == []
     end
@@ -224,18 +262,14 @@ defmodule Flezha.Config.KeysSeamTest do
   end
 
   describe "every runtime that reads a name is declared to" do
-    test "a name read in an SDK's own source is a row that names that SDK" do
-      env_name = @env_name
-
+    test "a name read in a runtime's own source is a row that names that runtime" do
       undeclared =
-        for {runtime, roots} <- @runtime_roots,
-            {path, line, _number} <- lines(sources(roots)),
-            [var] <- Regex.scan(env_name, line),
+        for {runtime, _roots} <- @runtime_roots,
+            var <- named(runtime),
             row = Keys.by_env(var),
             row != nil,
             runtime not in row.runtimes,
-            uniq: true,
-            do: "#{path}: #{var} is read by #{runtime}, which its row does not name"
+            do: "#{var} is read by #{runtime}, which its row does not name"
 
       assert undeclared == []
     end
@@ -256,13 +290,40 @@ defmodule Flezha.Config.KeysSeamTest do
 
   defp elixir_sources(), do: SourceWalk.files(["lib", "config"], [".ex", ".exs"])
 
-  defp rust_sources(), do: sources(@rust_roots)
+  # The CLI is a crate too: it reads through `flz_transport::env` like the rest.
+  defp rust_sources(), do: sources(@rust_roots ++ ["cli/src"])
 
   defp sdk_sources(), do: @runtime_roots |> Map.values() |> List.flatten() |> sources()
 
   defp sources(roots), do: SourceWalk.files(roots)
 
   defp lines(paths), do: paths |> Enum.uniq() |> SourceWalk.lines()
+
+  # Every variable a runtime's own source names: any mention, or for the CLI a
+  # whole literal.
+  defp named(runtime) do
+    shape = if runtime == :cli, do: @cli_read, else: @env_name
+
+    for {_path, line, _number} <- lines(sources(Map.fetch!(@runtime_roots, runtime))),
+        match <- Regex.scan(shape, line),
+        into: MapSet.new(),
+        do: List.last(match)
+  end
+
+  # The line each match of `regex` over the whole file starts on, so a read
+  # wrapped over several lines is still found.
+  defp matched_lines(path, regex) do
+    text = SourceWalk.read(path)
+    numbered = SourceWalk.lines([path])
+
+    for [{offset, _length} | _] <- Regex.scan(regex, text, return: :index),
+        number = line_at(text, offset),
+        {_path, line, ^number} <- numbered,
+        do: {number, line}
+  end
+
+  defp line_at(text, offset),
+    do: text |> binary_part(0, offset) |> :binary.matches("\n") |> length() |> Kernel.+(1)
 
   # The remedy, not just the offence: the row this line should have read, found
   # by the variable it names or by the application key it reaches for.

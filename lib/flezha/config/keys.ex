@@ -66,7 +66,8 @@ defmodule Flezha.Config.Keys do
           surface: term() | nil,
           owner: atom() | nil,
           on_bad_value: atom() | nil,
-          blank: :value | nil
+          blank: :value | nil,
+          min: integer() | nil
         }
 
   # {name, type, default, opts}.
@@ -84,6 +85,9 @@ defmodule Flezha.Config.Keys do
   # config is being built, or a per-reader keyword list (`[controller: …,
   # runner: …]`). `env_default:` is the ONLY place a `:test`/`:dev`/`:prod`
   # default lives — what `config/test.exs` used to hold.
+  #
+  # `min:` is the least value the boot scan (`Environment.check!/1`) accepts,
+  # for a number whose zero has no meaning, such as a sweep's interval.
   @declared [
     # ---- the run token and the six resources one controller owns alone ------
     #
@@ -96,7 +100,11 @@ defmodule Flezha.Config.Keys do
     {:run_token, :string, nil,
      key: true, runtimes: [:harness], env_default: [test: {:late, {System, :pid, []}}]},
     {:state_root, :path, "app_data/state",
-     key: true, env: "FLEZHA_STATE_DIR", per_run: :state_root, surface: {:status, :state_root}},
+     key: true,
+     env: "FLEZHA_STATE_DIR",
+     per_run: :state_root,
+     runtimes: [:controller, :shell],
+     surface: {:status, :state_root}},
     # The UDS socket directory. Unset by default: `Flezha.Socket.Support`
     # resolves the ladder every SDK shares. A path that is set — a user's,
     # a per-run derivation, or a test's — is used as it stands.
@@ -280,11 +288,12 @@ defmodule Flezha.Config.Keys do
     # ---- state: compaction, watermarks, credit ------------------------------
     # A Cell whose un-snapshotted WAL exceeds this is compacted. A class that
     # declares `compact_after_bytes()` ships it in the `AddRelay` metadata
-    # and that per-class value is resolved ahead of this default; a user
-    # `%{class => bytes}` override wins over both.
+    # and that per-class value is resolved ahead of this default.
     {:default_compact_after_bytes, :int, 8_388_608, key: true, env: "FLEZHA_COMPACT_AFTER_BYTES"},
-    {:compact_after_bytes, :term, %{}, key: true},
     {:wal_high_watermark_bytes, :int, 16_777_216, key: true},
+    # The bytes a source's input log admits before its writers wait.
+    {:source_credit_window_bytes, :int, nil,
+     key: true, derived: {:factor, :wal_high_watermark_bytes, 1}},
     {:wal_low_watermark_bytes, :int, nil,
      key: true, derived: {:factor, :wal_high_watermark_bytes, 0.5}},
     {:wal_hard_watermark_bytes, :int, nil,
@@ -313,21 +322,18 @@ defmodule Flezha.Config.Keys do
     # (`Host.inject_many/4`), so a large fetch is not one mailbox flood.
     {:plugin_ingest_window, :positive_int, 64, key: true, env: "FLEZHA_PLUGIN_INGEST_WINDOW"},
     {:record_log_cut_after_bytes, :int, 65_536, key: true},
-    # Per-relay-class user overrides: a map from class to value, read
-    # ahead of the SDK's own declaration and of the global default below it.
-    {:output_stall_timeout_overrides, :term, %{}, key: :output_stall_timeout_ms},
     {:default_time_travel_retention_hours, :int, 6, key: true},
-    {:credit_window_bytes, :term, %{}, key: true},
-    # Unset means half the per-class credit window, which is not a row: the
-    # window is resolved per relay class, so the site holds the halving.
+    # Unset means half the relay's credit window, which is not a row: the
+    # window is resolved per relay, so the site holds the halving.
     {:credit_low_watermark_bytes, :int, nil, key: true},
     # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
     # every session to the legacy CellMailboxStatus and shed path.
     {:credit_flow_control_enabled, :bool, true, key: true, env: "FLEZHA_CREDIT_FLOW_CONTROL"},
+    # The `%{class => hours}` store `Steps.set_retention/3` writes, read ahead
+    # of the global default.
     {:time_travel_retention_hours, :term, %{}, key: true},
     {:default_relay_completed_retention_hours, :int, 72,
      key: true, env: "FLEZHA_STEPS_RETENTION_HOURS"},
-    {:relay_completed_retention_hours, :term, %{}, key: true},
 
     # ---- remote durability tier ---------------------------------------------
     # `backend: :none` wires nothing into the supervision tree and leaves every
@@ -425,7 +431,7 @@ defmodule Flezha.Config.Keys do
     {:authz_application_managed, :bool, true,
      key: {:authn_authz, :application_managed}, env_default: [test: false]},
     {:authz_auth_dir, :path, "app_data/auth",
-     key: {:authn_authz, :auth_dir}, env: "FLEZHA_AUTHZ_DIR"},
+     key: {:authn_authz, :auth_dir}, env: "FLEZHA_AUTHZ_DIR", runtimes: [:controller, :cli]},
     {:authz_bootstrap_token_path, :path, nil,
      key: {:authn_authz, :bootstrap_token_path},
      env: "FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH",
@@ -555,8 +561,7 @@ defmodule Flezha.Config.Keys do
      runtimes: [:rust], env: "FLEZHA_MAX_WRITE_BUFFER_BYTES"},
     {:send_gate_high_water, :int, nil, runtimes: [:rust], env: "FLEZHA_SEND_GATE_HIGH_WATER"},
     {:send_gate_low_water, :int, nil, runtimes: [:rust], env: "FLEZHA_SEND_GATE_LOW_WATER"},
-    {:max_activations, :positive_int, nil,
-     runtimes: [:rust, :php], env: "FLEZHA_MAX_ACTIVATIONS"},
+    {:max_activations, :positive_int, nil, runtimes: [:php], env: "FLEZHA_MAX_ACTIVATIONS"},
     {:max_inflight_activations, :positive_int, 1_024,
      runtimes: [:rust, :python, :ruby], env: "FLEZHA_MAX_INFLIGHT_ACTIVATIONS"},
     {:push_holdback_max, :positive_int, 4_096,
@@ -575,16 +580,18 @@ defmodule Flezha.Config.Keys do
      runtimes: [:rust], env: "FLEZHA_CONTROL_ACK_TIMEOUT_MS"},
     {:control_idle_timeout_ms, :ms, 45_000,
      env: "FLEZHA_CONTROL_IDLE_TIMEOUT_MS", runtimes: [:rust]},
-    {:native_binary, :path, nil, runtimes: [:rust, :node], env: "FLEZHA_NATIVE_BINARY"},
-    {:native_lib_dir, :path, nil,
-     runtimes: [:node, :python, :ruby, :php], env: "FLEZHA_NATIVE_LIB_DIR"},
+    {:native_binary, :path, nil, runtimes: [:node], env: "FLEZHA_NATIVE_BINARY"},
+    {:native_lib_dir, :path, nil, runtimes: [:java, :php], env: "FLEZHA_NATIVE_LIB_DIR"},
     {:socket_dir_group, :string, nil,
      key: true, env: "FLEZHA_SOCKET_DIR_GROUP", runtimes: [:controller, :rust]},
-    {:app_data_root, :path, "app_data", runtimes: [:shell], env: "FLEZHA_APP_DATA_ROOT"},
+    {:app_data_root, :path, "app_data", runtimes: [:shell, :cli], env: "FLEZHA_APP_DATA_ROOT"},
     {:container_user, :string, nil, runtimes: [:shell], env: "FLEZHA_CONTAINER_USER"},
     {:restore_wait_timeout_s, :int, 60, runtimes: [:shell], env: "FLEZHA_RESTORE_WAIT_TIMEOUT_S"},
     {:shutdown_token_file, :path, nil, runtimes: [:shell], env: "FLEZHA_SHUTDOWN_TOKEN_FILE"},
     {:dist_tls_optfile, :path, nil, runtimes: [:shell], env: "FLEZHA_DIST_TLS_OPTFILE"},
+    # Where a release keeps the cookie it minted; unset is `cookie` under the
+    # state directory.
+    {:cookie_file, :path, nil, runtimes: [:shell], env: "FLEZHA_COOKIE_FILE"},
     {:namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_NAMESPACE"},
     {:demo_namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_DEMO_NAMESPACE"},
     {:quic_address, :address, nil, runtimes: [:harness, :rust], env: "FLEZHA_QUIC_ADDRESS"},
@@ -606,7 +613,7 @@ defmodule Flezha.Config.Keys do
     {:fixture_sleep_after_ms, :ms, nil,
      runtimes: [:harness], env: "FLEZHA_FIXTURE_SLEEP_AFTER_MS"},
     {:reset_probe_override, :string, nil,
-     runtimes: [:harness], env: "FLEZHA_RESET_PROBE_OVERRIDE"},
+     runtimes: [:harness, :cli], env: "FLEZHA_RESET_PROBE_OVERRIDE"},
     {:persistence_relay, :string, nil, runtimes: [:harness], env: "FLEZHA_PERSISTENCE_RELAY"},
     {:persistence_processor, :string, nil,
      runtimes: [:harness], env: "FLEZHA_PERSISTENCE_PROCESSOR"},
@@ -622,6 +629,9 @@ defmodule Flezha.Config.Keys do
     {:rebuild_image, :bool, false, runtimes: [:build], env: "FLEZHA_REBUILD_IMAGE"},
     {:release_base_url, :string, nil, runtimes: [:php], env: "FLEZHA_RELEASE_BASE_URL"},
     {:ui_path, :path, nil, runtimes: [:build], env: "FLEZHA_UI_PATH"},
+    # A directory of bare repositories a distribution build fetches from in
+    # place of the organisation's remotes.
+    {:git_mirror, :path, nil, runtimes: [:build], env: "FLEZHA_GIT_MIRROR"},
     # The Elixir SDK's two build-time names: where its compile reads the
     # contract set, and whether its socket client builds from source.
     {:contract_dir, :path, nil, runtimes: [:elixir_sdk], env: "FLEZHA_CONTRACT_DIR"},
@@ -667,7 +677,8 @@ defmodule Flezha.Config.Keys do
              surface: opts[:surface],
              owner: opts[:owner],
              on_bad_value: opts[:on_bad_value],
-             blank: opts[:blank]
+             blank: opts[:blank],
+             min: opts[:min]
            }}
         end)
 

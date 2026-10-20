@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use flz_transport::errors::FlezhaError;
 use serde_json::Value;
@@ -48,10 +48,8 @@ fn handle_bootstrap(read: &Reading) {
 // invalidates the stale admin bindings/tokens, and re-enters the ordinary
 // bootstrap flow with a fresh token.
 fn handle_rebootstrap(read: &Reading) {
-    let auth_dir = match std::env::var("FLEZHA_AUTHZ_DIR") {
-        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => app_data_root(read).join("auth"),
-    };
+    let auth_dir = flz_transport::env::env_dir("FLEZHA_AUTHZ_DIR")
+        .unwrap_or_else(|| app_data_root(read).join("auth"));
 
     if !auth_dir.is_dir() {
         rpc::fail(FlezhaError::with(

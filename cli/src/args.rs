@@ -11,7 +11,6 @@
 //! The words a row declares it does NOT read — a provider's settings document
 //! — are stepped over here and read in `settings.rs`.
 
-use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -673,7 +672,7 @@ fn resolve_options(
         // when one was written empty: `--token ""` is not a credential.
         if let Some(name) = spec.env {
             if slot.1.as_deref().unwrap_or_default().is_empty() {
-                slot.1 = env::var(name).ok().filter(|value| !value.is_empty());
+                slot.1 = flz_transport::env::env_raw(name);
             }
         }
 

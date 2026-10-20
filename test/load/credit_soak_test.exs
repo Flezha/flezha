@@ -85,11 +85,14 @@ defmodule Flezha.Load.CreditSoakTest do
     on_exit(fn -> ensure_port_dead(mock_port) end)
 
     prev_fsync = Application.get_env(:flezha, :agent_fsync_interval_ms)
+    prev_wal = Application.get_env(:flezha, :wal_high_watermark_bytes)
     Application.put_env(:flezha, :agent_fsync_interval_ms, @fsync_tick_ms)
     restart_fsync_batcher()
 
     on_exit(fn ->
-      Application.delete_env(:flezha, :credit_window_bytes)
+      if prev_wal,
+        do: Application.put_env(:flezha, :wal_high_watermark_bytes, prev_wal),
+        else: Application.delete_env(:flezha, :wal_high_watermark_bytes)
 
       if prev_fsync,
         do: Application.put_env(:flezha, :agent_fsync_interval_ms, prev_fsync),
@@ -111,7 +114,7 @@ defmodule Flezha.Load.CreditSoakTest do
     end)
 
     relay_id = "credit_soak_#{System.unique_integer([:positive])}"
-    Application.put_env(:flezha, :credit_window_bytes, %{relay_id => @window_bytes})
+    Application.put_env(:flezha, :wal_high_watermark_bytes, @window_bytes)
 
     # Roomy SDK input mailbox so injected fsync stalls buffer runner-side
     # (park, never drop) instead of overflowing the input edge.

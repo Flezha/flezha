@@ -43,6 +43,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   # One scenario, one runner, under a deliberately slowed fsync path.
   setup do
     prev_fsync = Application.get_env(:flezha, :agent_fsync_interval_ms)
+    prev_wal = Application.get_env(:flezha, :wal_high_watermark_bytes)
 
     # Deliberately slowed fsync path: the batcher reads the interval at
     # init, so restart it under its supervisor to pick the value up.
@@ -50,7 +51,9 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     restart_fsync_batcher()
 
     on_exit(fn ->
-      Application.delete_env(:flezha, :credit_window_bytes)
+      if prev_wal,
+        do: Application.put_env(:flezha, :wal_high_watermark_bytes, prev_wal),
+        else: Application.delete_env(:flezha, :wal_high_watermark_bytes)
 
       if prev_fsync,
         do: Application.put_env(:flezha, :agent_fsync_interval_ms, prev_fsync),
@@ -81,8 +84,8 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   defp run_credit_scenario do
     relay_id = "credit_e2e_#{System.unique_integer([:positive])}"
 
-    # The stream window resolves per-Relay from the first Change's class.
-    Application.put_env(:flezha, :credit_window_bytes, %{relay_id => @window_bytes})
+    # The stream window is the WAL soft watermark.
+    Application.put_env(:flezha, :wal_high_watermark_bytes, @window_bytes)
 
     {port, ce_id} =
       NodeTestHelper.start_runner_port(@namespace,

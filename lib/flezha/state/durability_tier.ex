@@ -127,15 +127,15 @@ defmodule Flezha.State.DurabilityTier do
   @doc "Backstop sweep period — the bound on how stale a quiet cell's remote copy gets."
   @spec ship_interval_ms() :: pos_integer()
   def ship_interval_ms(),
-    do: positive(:durability_ship_interval_ms)
+    do: Durations.get(:durability_ship_interval_ms)
 
   @doc "Time since the last successful ship at which the RPO alarm fires."
   @spec rpo_target_ms() :: pos_integer()
-  def rpo_target_ms(), do: positive(:durability_rpo_target_ms)
+  def rpo_target_ms(), do: Durations.get(:durability_rpo_target_ms)
 
   @doc "Orphan-blob collection period."
   @spec gc_interval_ms() :: pos_integer()
-  def gc_interval_ms(), do: positive(:durability_gc_interval_ms)
+  def gc_interval_ms(), do: Durations.get(:durability_gc_interval_ms)
 
   @doc """
   Age below which an unreferenced artifact is never collected, whoever owns it.
@@ -145,7 +145,7 @@ defmodule Flezha.State.DurabilityTier do
   controller mid-ship is covered without any coordination between the two.
   """
   @spec gc_grace_ms() :: pos_integer()
-  def gc_grace_ms(), do: positive(:durability_gc_grace_ms)
+  def gc_grace_ms(), do: Durations.get(:durability_gc_grace_ms)
 
   @doc """
   Age at which an unreferenced artifact is collected even though no node holds
@@ -158,17 +158,7 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec gc_abandoned_after_ms() :: pos_integer()
   def gc_abandoned_after_ms(),
-    do: positive(:durability_gc_abandoned_after_ms)
-
-  # A user who sets one of these to zero or to something that is not a
-  # count is asking for no sweep at all, which the tier has no meaning for; the
-  # row's own value is what it falls back to.
-  defp positive(name) do
-    case Durations.get(name) do
-      value when is_integer(value) and value > 0 -> value
-      _ -> Durations.default(name)
-    end
-  end
+    do: Durations.get(:durability_gc_abandoned_after_ms)
 
   @doc """
   Supervision children for the application module: the backend connection, the
