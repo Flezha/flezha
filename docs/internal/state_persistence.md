@@ -274,12 +274,16 @@ still pending runs that disk step again before it serves. A prefix cut writes it
 it before the cut file is renamed. A writer whose open refused the WAL never read either file and
 writes neither.
 
-`folded_offset` is the highest consumed offset the WAL records a live writer's prefix cut
-(`WalWriter.truncate_up_to/3`: compaction, or retention while the writer runs) dropped carried,
-behind the remote gate only those already acknowledged. A retention cut with no live writer
-(`Retention.rewrite_offline/2`) does not fold. It is the one
+`folded_offset` is the highest consumed offset the WAL records a prefix cut dropped carried
+(`WalWriter.Epoch.cut_below/3`): a live writer's (`WalWriter.truncate_up_to/3`: compaction, or retention
+while the writer runs) folds behind the remote gate only what the gate acknowledged. A retention
+cut of a Cell with no writer runs in a task holding the Cell's file lock, so a writer starting
+meanwhile waits for it, and folds behind the gate only the records at or below the persisted flush
+cursor; it leaves a Cell whose bump is pending to its writer's boot, and one that finds a writer
+hands the cut to it once the lock is let go. It is the one
 field the WAL cannot rebuild, so every consumed-offset read of a Cell (the boot scan, a sleeper's
-seed, a rewind, a correction's baseline) starts from it. A cut is always at a snapshot's seq, so a
+seed, a hydration's seed, a rewind, a correction's baseline) starts from it; `WalWriter.Epoch.floor/2` is
+the one reader of the floor from disk. A cut is always at a snapshot's seq, so a
 rewind below the newest snapshot, or a realign, resets it to `-1`, and a read bounded below the
 newest snapshot does not count it.
 
@@ -288,7 +292,7 @@ newest snapshot does not count it.
 The header's `schema_version` (bytes 5..9) is the version of the Tasklet that
 wrote the record. The controller stores it and ships it back: `RestoreInitState`
 carries the change log's headers inside the WAL framing and the snapshot's own
-header in `snapshot_header` — `Restore.assemble_payload/1` reads it off disk
+header in `snapshot_header` — `Restore.payload/2` reads it off disk
 with the body rather than discarding it, because a stripped header leaves every
 compacted Cell unverifiable.
 
@@ -534,9 +538,10 @@ flz state delete <relay/tasklet/cell_key>                            # admin
 
 The verbs live in `cli/src/state.rs` and reach `Flezha.Service.Steps` through the door.
 `state list` reports each Cell's live writer counters (`Metrics.snapshot_all/0`: WAL size,
-snapshot seq, ...). `state at` runs `Flezha.State.TimeTravel.query/2`, which returns
-`%{snapshot_bytes, change_log_bytes, terminal_seq}` — the assembled baseline and change log at the
-resolved seq — and refuses a kind without the `:time_travel?` capability. `state rotate` resolves
+snapshot seq, ...). `state at` runs `Flezha.State.TimeTravel.query/2`, which returns the restore
+payload a bind ships, as of the resolved seq (`Restore.payload/2`: `%{snapshot_bytes,
+snapshot_header, change_log_bytes, terminal_seq}`; with no snapshot at or before it, the change log
+starts at record 0), and refuses a kind without the `:time_travel?` capability. `state rotate` resolves
 the runner with `Recovery.resolve_runner/1` and calls `Commands.dispatch_compact_cell/2`.
 `state retention` writes `Application.put_env(:flezha, :time_travel_retention_hours,
 %{class => hours}, persistent: true)`; the next sweep reads it, and surviving a boot requires

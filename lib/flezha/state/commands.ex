@@ -131,7 +131,7 @@ defmodule Flezha.State.Commands do
   end
 
   defp restore_command({rc, sh, pk}) do
-    case Restore.assemble_payload({rc, sh, pk}) do
+    case Restore.payload({rc, sh, pk}, :latest) do
       {:ok, payload} ->
         cell_id_bytes = Wire.encode_cell_id(rc, sh, pk)
         markers = Paths.compensation_markers({rc, sh, pk})
@@ -147,7 +147,7 @@ defmodule Flezha.State.Commands do
             has_compensation_done: markers.done,
             # A snapshot-only restore has no change-log record to re-arm
             # the SDK's seq from; the hint covers the snapshot.
-            terminal_seq: max(payload.terminal_seq_hint, 0)
+            terminal_seq: max(payload.terminal_seq, 0)
           }}}
 
       # The Cell's own WAL refused a record. Shipping the records before it

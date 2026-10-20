@@ -5,7 +5,7 @@ defmodule Flezha.State.FsyncBatcherTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Process.Timer
-  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{FsyncBatcher, Paths, Supervisor, TestHelpers, WalWriter, WriterRegistry}
   alias FlezhaTest.Helper.NodeTestHelper
 
   setup do
@@ -263,6 +263,26 @@ defmodule Flezha.State.FsyncBatcherTest do
         FsyncBatcher.forget(id, batcher)
       end
     end
+  end
+
+  # fails when: the batcher seeds its dirty set from every registered id, so a
+  # Cell's file lock enters it and its tick asks the lock's holder to sync.
+  test "a held Cell file lock never enters a starting batcher's dirty set" do
+    cell_id = TestHelpers.sample_cell_id("lock_" <> TestHelpers.uniq())
+    test_pid = self()
+
+    spawn_link(fn ->
+      WriterRegistry.with_files(cell_id, fn ->
+        send(test_pid, :holding)
+        receive do: (:release -> :ok)
+      end)
+    end)
+
+    assert_receive :holding
+    assert {:ok, _holder} = WriterRegistry.lookup({:cell_files, cell_id})
+    {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+    refute {:cell_files, cell_id} in FsyncBatcher.dirty_set(batcher)
+    GenServer.stop(batcher)
   end
 
   # An isolated batcher with nothing dirty: it seeds itself with every writer on

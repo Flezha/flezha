@@ -11,7 +11,8 @@ defmodule Flezha.State.Restore do
 
   When no snapshot exists, `snapshot_bytes = <<>>` and `change_log_bytes`
   contains the entire WAL. When neither snapshot nor WAL exist (true
-  cold start), `terminal_seq_hint = 0` and both bodies are empty.
+  cold start), `terminal_seq = -1` and both bodies are empty. `flz state at`
+  reads the same payload as of an earlier seq (`Flezha.State.TimeTravel`).
   """
 
   alias Flezha.Relay.ClassRegistry
@@ -22,36 +23,38 @@ defmodule Flezha.State.Restore do
           snapshot_bytes: binary(),
           snapshot_header: binary(),
           change_log_bytes: binary(),
-          terminal_seq_hint: non_neg_integer()
+          terminal_seq: integer()
         }
 
-  @spec assemble_payload(Paths.cell_id()) :: {:ok, payload()} | {:error, binary()}
-  def assemble_payload(cell_id) do
+  @doc """
+  The newest snapshot at or before `upto` (`:latest` or a seq) with the header it
+  was stored with, the WAL records above it through `upto` as they lie on disk,
+  and the highest seq the two reach (`-1` for none).
+  """
+  @spec payload(Paths.cell_id(), :latest | non_neg_integer()) ::
+          {:ok, payload()} | {:error, binary()}
+  def payload(cell_id, upto) do
     # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
     # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
-    # drop the very first change record. `-1` includes seq 0.
-    # The header travels with the body: it carries the schema_version the
-    # snapshot was written at, and stripping it left every compacted Cell
-    # unverifiable on the SDK side.
-    {snapshot_bytes, snapshot_header, snapshot_seq} =
-      case Snapshot.latest_snapshot(cell_id) do
-        nil ->
-          {<<>>, <<>>, -1}
+    # drop the very first change record. An atom sorts above every integer,
+    # so `:latest` passes every snapshot and record.
+    snaps = for {seq, _path} = snap <- Paths.snapshot_paths(cell_id), seq <= upto, do: snap
 
-        {seq, path} ->
-          case Snapshot.read_snapshot(path) do
-            {:ok, header, bytes} -> {bytes, header, seq}
-            {:error, _} -> {<<>>, <<>>, -1}
-          end
+    {snapshot_bytes, snapshot_header, snapshot_seq} =
+      with {seq, path} <- List.last(snaps),
+           {:ok, header, bytes} <- Snapshot.read_snapshot(path) do
+        {bytes, header, seq}
+      else
+        _none_or_unreadable -> {<<>>, <<>>, -1}
       end
 
-    with {:ok, {change_log_bytes, terminal_seq}} <- read_tail_wal(cell_id, snapshot_seq) do
+    with {:ok, {change_log_bytes, terminal_seq}} <- read_tail_wal(cell_id, snapshot_seq, upto) do
       {:ok,
        %{
          snapshot_bytes: snapshot_bytes,
          snapshot_header: snapshot_header,
          change_log_bytes: change_log_bytes,
-         terminal_seq_hint: max(snapshot_seq, terminal_seq)
+         terminal_seq: max(snapshot_seq, terminal_seq)
        }}
     end
   end
@@ -121,7 +124,7 @@ defmodule Flezha.State.Restore do
   # Read the WAL once and fold the records in memory; a per-record
   # `:file.pread` churns small transient refc binaries that fragment the binary
   # allocator.
-  defp read_tail_wal(cell_id, snapshot_seq) do
+  defp read_tail_wal(cell_id, snapshot_seq, upto) do
     path = Paths.wal_path(cell_id)
 
     case :file.read_file(path) do
@@ -130,7 +133,7 @@ defmodule Flezha.State.Restore do
         |> Frame.fold_bytes(
           {:log, path},
           {[], snapshot_seq},
-          &tail_record(&1, &2, snapshot_seq)
+          &tail_record(&1, &2, snapshot_seq, upto)
         )
         |> case do
           {:ok, {acc, term_seq}} -> {:ok, {change_log(acc), term_seq}}
@@ -144,7 +147,10 @@ defmodule Flezha.State.Restore do
 
   # Keep the on-disk bytes verbatim rather than re-framing them: they are
   # shipped to the SDK as they lie.
-  defp tail_record({seq, _header, _body, raw}, {acc, term_seq}, snapshot_seq) do
+  defp tail_record({seq, _header, _body, _raw}, acc, _snapshot_seq, upto) when seq > upto,
+    do: {:halt, acc}
+
+  defp tail_record({seq, _header, _body, raw}, {acc, term_seq}, snapshot_seq, _upto) do
     acc = if seq > snapshot_seq, do: [raw | acc], else: acc
     {:cont, {acc, max(term_seq, seq)}}
   end

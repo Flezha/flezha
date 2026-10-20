@@ -24,7 +24,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Manifest}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
-  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal}
+  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Paths, TaskJournal, WalWriter}
 
   @doc """
   Hydrate every shipped reference of `relay_class` whose local files are
@@ -335,9 +335,9 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # The in-memory floors a bind reads: the input log's for a Cell, and a
   # task-journal's consumed input, or the bind would re-deliver every retained
   # input the instance had consumed.
-  defp seed_floor(%Manifest{ref: {:cell, {class, _, _} = cell_id}} = manifest) do
+  defp seed_floor(%Manifest{ref: {:cell, {class, _, _} = cell_id}}) do
     with offset when is_integer(offset) and offset >= 0 <-
-           Map.get(manifest.source_offsets, :consumed_offset),
+           WalWriter.consumed_offset_on_disk(cell_id),
          do: InputLog.record_consumed(class, cell_id, offset)
 
     if cell_id == Paths.journal_id(class), do: TaskJournal.release_input(class), else: :ok

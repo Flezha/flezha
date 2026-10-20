@@ -12,7 +12,7 @@ defmodule Flezha.State.WalWriter.Epoch do
   """
 
   alias Flezha.Runner.FleetManager.Marks
-  alias Flezha.State.Wire
+  alias Flezha.State.{Frame, Wire}
   alias Flezha.State.{FsyncBatcher, InputLog, Lineage, Metrics, Paths, RecordFrame, SeqIndex}
   alias Flezha.State.WalWriter.{Admission, RemoteGate, Settlement, State}
 
@@ -207,39 +207,55 @@ defmodule Flezha.State.WalWriter.Epoch do
   defp baseline_result(seq, _offset) when seq < 0, do: {:error, :nothing_to_correct}
   defp baseline_result(seq, offset), do: {:ok, %{seq: seq, consumed_offset: offset}}
 
-  def scan_consumed_at(state, upto) do
-    seed = folded_through(state, upto)
+  @doc """
+  The highest input offset `cell_id` consumed through seq `upto`, read from disk
+  (`-1` for none): the folded offset once `upto` reaches the newest snapshot, and
+  the WAL records through `upto`. `:latest` is every durable record: behind the
+  remote gate those at or below the persisted flush cursor; a writer passes its own.
+  """
+  @spec floor(Paths.cell_id(), :latest | integer()) :: integer() | {:error, Frame.refusal()}
+  def floor(cell_id, upto) do
+    %{outbox_flushed_seq: flushed, folded_offset: folded} = Lineage.progress(cell_id)
+    # An atom sorts above every integer: `:latest` passes every snapshot and record.
+    seed = folded_through(%{cell_id: cell_id, folded_offset: folded}, upto)
+    upto = if upto == :latest and RemoteGate.new(cell_id, :record), do: flushed, else: upto
 
-    case RecordFrame.fold_records(state.file_handle, state.wal_path, seed, consumed_through(upto)) do
-      {:ok, offset} -> offset
-      {:error, _refusal} = refused -> refused
+    fold = fn
+      {seq, _header, _body}, acc when seq > upto -> {:halt, acc}
+      {_seq, header, body}, acc -> {:cont, max(acc, consumed(header, body))}
     end
+
+    with {:ok, offset} <- RecordFrame.fold_path(Paths.wal_path(cell_id), seed, fold), do: offset
   end
+
+  defp consumed(header, body), do: consumed_offset_of(Wire.decode_effect_record(header, body))
 
   @doc """
-  The highest consumed offset `cell_id`'s WAL records carry, or its
-  `folded_offset` (`Flezha.State.Lineage`), read from disk alone; `nil` when neither holds one.
-  Behind the remote gate only the records at or below the persisted flush
-  cursor count.
+  Fold what `holder`'s records through its gate's bound consumed into its lineage
+  record, then cut its WAL below `seq + 1`. `holder` is a writer's state, or an
+  offline cut's with the persisted flush cursor as `outbox_durable_seq`. Answers
+  `:ok`, `:none` or `{:error, reason}` (nothing cut) with the holder.
   """
-  @spec consumed_offset_on_disk(Paths.cell_id()) :: non_neg_integer() | nil
-  def consumed_offset_on_disk(cell_id) do
-    dedup = Lineage.progress(cell_id)
-    upto = if RemoteGate.new(cell_id, :record), do: dedup.outbox_flushed_seq, else: :infinity
-    fold = consumed_through(upto)
+  @spec cut_below(map(), non_neg_integer(), non_neg_integer()) :: {term(), map()}
+  def cut_below(%{cell_id: {_, _, key} = cell_id} = holder, seq, min_bytes) do
+    bound = RemoteGate.durable_through(holder, seq, holder.outbox_durable_seq)
 
-    case RecordFrame.fold_path(Paths.wal_path(cell_id), dedup.folded_offset, fold) do
-      {:ok, offset} when offset >= 0 -> offset
-      _none_or_refused -> nil
-    end
-  end
+    folded =
+      case key not in Paths.reserved_cell_keys() and floor(cell_id, bound) do
+        offset when is_integer(offset) and offset > holder.folded_offset ->
+          Settlement.put_lineage(holder, %{epoch: holder.outbox_epoch, folded_offset: offset})
 
-  # The fold of the highest consumed offset the records up to seq `upto` carry.
-  defp consumed_through(upto) do
-    fn {seq, header, body}, acc ->
-      if seq > upto,
-        do: {:halt, acc},
-        else: {:cont, max(acc, consumed_offset_of(Wire.decode_effect_record(header, body)))}
+        _reserved_refused_or_folded ->
+          {:ok, holder}
+      end
+
+    with {:ok, %{wal_path: path, file_handle: device, seq_index: index} = holder} <- folded do
+      case RecordFrame.cut_below(path, device, index, seq + 1, min_bytes) do
+        {:ok, _cut, file, index} -> {:ok, %{holder | file_handle: file, seq_index: index}}
+        not_cut -> {not_cut, holder}
+      end
+    else
+      failed -> {failed, holder}
     end
   end
 

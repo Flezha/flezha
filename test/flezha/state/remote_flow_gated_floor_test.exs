@@ -9,6 +9,7 @@ defmodule Flezha.State.RemoteFlowGatedFloorTest do
 
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
   alias Flezha.State.InputLog.Sweep
+  alias Flezha.State.{RecordFrame, Retention, Snapshot}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
   setup %{rc: rc} do
@@ -83,6 +84,28 @@ defmodule Flezha.State.RemoteFlowGatedFloorTest do
     close_writer(wa, a)
 
     assert WalWriter.consumed_offset_on_disk(a) == 1
+  end
+
+  # fails when: a cut with no writer folds the offsets of dropped records above
+  # the persisted flush cursor, which the remote copy may not hold.
+  test "a writer-less gated Cell's cut folds only through its flush cursor", ctx do
+    a = {ctx.rc, "task", "kA"}
+    offsets = [10, 15, 20, 25, 28, 30, 35, 41]
+
+    wal =
+      for {offset, seq} <- Enum.with_index(offsets),
+          into: "",
+          do: Frame.encode_record(seq, effect_header(), effect_body([], offset))
+
+    File.mkdir_p!(Path.dirname(Paths.wal_path(a)))
+    File.write!(Paths.wal_path(a), wal)
+    :ok = Lineage.put_dedup(a, %{last_persisted_seq: 7, outbox_flushed_seq: 5, epoch: 0})
+    {:ok, _} = Snapshot.write_snapshot(a, 7, TestHelpers.stub_header(), "snap@7")
+
+    :ok = Retention.sweep_cell(a, 0)
+
+    assert Lineage.progress(a).folded_offset == 30
+    assert RecordFrame.file_size(Paths.wal_path(a)) == 0
   end
 
   defp close_all(cells) do

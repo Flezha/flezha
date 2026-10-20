@@ -97,9 +97,9 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
       assert Frame.sdk_lang_name(decoded.sdk_lang) != "unallocated"
     end
 
-    assert {:ok, payload} = Restore.assemble_payload(cell_id)
+    assert {:ok, payload} = Restore.payload(cell_id, :latest)
     assert byte_size(payload.change_log_bytes) > 0
-    assert payload.terminal_seq_hint == List.last(seqs)
+    assert payload.terminal_seq == List.last(seqs)
   end
 
   @tag timeout: 300_000
@@ -121,7 +121,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
     # the records before it are complete and must survive.
     File.write!(path, whole <> binary_part(whole, 0, 20))
 
-    assert {:ok, repaired} = Restore.assemble_payload(cell_id)
+    assert {:ok, repaired} = Restore.payload(cell_id, :latest)
     assert byte_size(repaired.change_log_bytes) == byte_size(whole)
 
     # Row: corrupt record. One flipped bit in a MIDDLE record's body: the
@@ -138,7 +138,7 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
 
     log =
       capture_log(fn ->
-        assert {:error, reason} = Restore.assemble_payload(cell_id)
+        assert {:error, reason} = Restore.payload(cell_id, :latest)
         assert reason =~ "durable record refused (crc_mismatch)"
         assert reason =~ path
       end)

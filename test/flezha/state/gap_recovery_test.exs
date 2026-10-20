@@ -195,12 +195,12 @@ defmodule Flezha.State.GapRecoveryTest do
            )
 
     # A controller restart restores the complete state — snapshot baseline
-    # plus the post-takeover delta, not just the deltas. `assemble_payload`
+    # plus the post-takeover delta, not just the deltas. `payload/2`
     # is exactly what the post-restart RestoreInitState would ship.
     :ok = WalWriter.close(writer)
-    {:ok, payload} = Restore.assemble_payload(cold_id)
+    {:ok, payload} = Restore.payload(cold_id, :latest)
     assert payload.snapshot_bytes == "full"
-    assert payload.terminal_seq_hint == 5006
+    assert payload.terminal_seq == 5006
     assert byte_size(payload.change_log_bytes) > 0
   end
 

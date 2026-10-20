@@ -96,7 +96,10 @@ defmodule Flezha.State.RecordFrame do
                                                           {:cont, acc} | {:halt, acc})) ::
           {:ok, acc} | {:error, Frame.refusal()}
         when acc: term()
-  def fold_records(device, path, acc, fun), do: fold(device, path, 0, -1, acc, fun)
+  def fold_records(device, path, acc, fun) do
+    step = fn seq, header, body, _position, acc -> fun.({seq, header, body}, acc) end
+    fold(device, path, 0, -1, acc, {step, fn acc, _tail -> acc end})
+  end
 
   @doc """
   `fold_records/4` over a path: open read-only, fold, close. A file that is
@@ -142,17 +145,20 @@ defmodule Flezha.State.RecordFrame do
     end
   end
 
-  defp fold(device, path, position, last_seq, acc, fun) do
+  # The one walk. `step.(seq, header, body, position, acc)` answers `{:cont, acc}`
+  # or `{:halt, result}` per record; where the records end, `stop.(acc, tail)` with
+  # `tail` `{last_seq, position, reason, size}` gives the result. A walk never
+  # repairs by itself: a tail it may not read is where the records end, and
+  # anything else is a refusal.
+  defp fold(device, path, position, last_seq, acc, {step, stop} = rule) do
     case decode_record(device, position) do
       {:ok, seq, header, body, consumed} ->
-        case fun.({seq, header, body}, acc) do
-          {:cont, acc} -> fold(device, path, position + consumed, seq, acc, fun)
-          {:halt, acc} -> {:ok, acc}
+        case step.(seq, header, body, position, acc) do
+          {:cont, acc} -> fold(device, path, position + consumed, seq, acc, rule)
+          {:halt, result} -> {:ok, result}
         end
 
       {:error, reason, extent} ->
-        # A fold reads; it never repairs. A tail it may not read is where the
-        # records end, and anything else is a refusal.
         case Frame.stop_or_refuse(
                {:log, path},
                position,
@@ -161,7 +167,7 @@ defmodule Flezha.State.RecordFrame do
                extent,
                device_size(device)
              ) do
-          {:stop, _size} -> {:ok, acc}
+          {:stop, size} -> {:ok, stop.(acc, {last_seq, position, reason, size})}
           refused -> refused
         end
     end
@@ -208,32 +214,14 @@ defmodule Flezha.State.RecordFrame do
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
     # relay. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
-    do_scan(device, path, 0, -1)
+    # The step answers a literal, so the walk allocates nothing per record.
+    each = fn _, _, _, _, nil -> {:cont, nil} end
+    fold(device, path, 0, -1, nil, {each, fn nil, tail -> repair(device, path, tail) end})
   end
 
-  # `position` is both the next record's start and the end of the last one that
-  # verified, which is why a repair truncates to it.
-  defp do_scan(device, path, position, last_seq) do
-    case decode_record(device, position) do
-      {:ok, seq, _header, _bytes, consumed} ->
-        do_scan(device, path, position + consumed, seq)
-
-      {:error, reason, extent} ->
-        case Frame.stop_or_refuse(
-               {:log, path},
-               position,
-               last_seq,
-               reason,
-               extent,
-               device_size(device)
-             ) do
-          {:stop, size} -> {:ok, repair(device, path, reason, last_seq, position, size)}
-          refused -> refused
-        end
-    end
-  end
-
-  defp repair(device, path, reason, last_seq, position, size) do
+  # The tail's `position` is the end of the last record that verified, which is
+  # why a repair truncates to it.
+  defp repair(device, path, {last_seq, position, reason, size}) do
     case :file.position(device, position) do
       {:ok, _} ->
         _ = :file.truncate(device)
@@ -260,7 +248,8 @@ defmodule Flezha.State.RecordFrame do
   def position_of(index, device, path, floor) do
     {sample_seq, start} = SeqIndex.sample_at(index, floor)
     start = if start > 0 and not record_at?(device, start, sample_seq), do: 0, else: start
-    result = seek(device, path, start, -1, floor)
+    at_floor = fn seq, _, _, at, nil -> if seq >= floor, do: {:halt, at}, else: {:cont, nil} end
+    result = fold(device, path, start, -1, nil, {at_floor, fn nil, {_, at, _, _} -> at end})
     {:ok, _} = :file.position(device, :eof)
     result
   end
@@ -269,29 +258,6 @@ defmodule Flezha.State.RecordFrame do
   # seq: from a stale one a seek would cut mid-record or past the end.
   defp record_at?(device, position, seq),
     do: match?({:ok, ^seq, _header, _body, _consumed}, decode_record(device, position))
-
-  defp seek(device, path, position, last_seq, floor) do
-    case decode_record(device, position) do
-      {:ok, seq, _header, _body, _consumed} when seq >= floor ->
-        {:ok, position}
-
-      {:ok, seq, _header, _body, consumed} ->
-        seek(device, path, position + consumed, seq, floor)
-
-      {:error, reason, extent} ->
-        case Frame.stop_or_refuse(
-               {:log, path},
-               position,
-               last_seq,
-               reason,
-               extent,
-               device_size(device)
-             ) do
-          {:stop, _size} -> {:ok, position}
-          refused -> refused
-        end
-    end
-  end
 
   @doc """
   Drop the records below `floor` from the record log at `path`, whose live

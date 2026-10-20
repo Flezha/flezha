@@ -368,6 +368,35 @@ defmodule Flezha.State.WalWriterTest do
       TestHelpers.close_and_await(srv, pid)
     end
 
+    # fails when: a booting writer does not wait for the Cell's file lock, so it
+    # answers an append while a cut still holds the Cell's files.
+    test "an append waits for a killed lock holder to exit, then lands in the WAL",
+         %{cell_id: pid} do
+      test_pid = self()
+
+      spawn(fn ->
+        WriterRegistry.with_files(pid, fn ->
+          send(test_pid, :holding)
+          receive do: (:release -> :ok)
+        end)
+      end)
+
+      assert_receive :holding
+      {:ok, holder} = WriterRegistry.lookup({:cell_files, pid})
+      {:ok, srv} = Supervisor.find_or_start(pid)
+      append = Task.async(fn -> WalWriter.append(srv, 0, TestHelpers.stub_header(), "a") end)
+      waiting = {:current_function, {WriterRegistry, :await_files, 1}}
+      assert wait_until(fn -> Process.info(srv, :current_function) == waiting end, 2_000)
+      assert Task.yield(append, 0) == nil
+
+      Process.exit(holder, :kill)
+      assert :ok = Task.await(append)
+
+      seqs = RecordFrame.fold_path!(Paths.wal_path(pid), [], &{:cont, [elem(&1, 0) | &2]})
+      assert seqs == [0]
+      TestHelpers.close_and_await(srv, pid)
+    end
+
     test "a rewind refuses rather than cutting at a corrupt record below its boundary",
          %{cell_id: pid} do
       {:ok, srv} = Supervisor.find_or_start(pid)

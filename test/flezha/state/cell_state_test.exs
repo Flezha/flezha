@@ -15,11 +15,11 @@ defmodule Flezha.State.RestoreTest do
   test "cold cell: empty snapshot, empty change_log, terminal_seq=-1 (no records)", %{
     cell_id: pid
   } do
-    assert {:ok, payload} = Restore.assemble_payload(pid)
+    assert {:ok, payload} = Restore.payload(pid, :latest)
     assert payload.snapshot_bytes == <<>>
     assert payload.snapshot_header == <<>>
     assert payload.change_log_bytes == <<>>
-    assert payload.terminal_seq_hint == -1
+    assert payload.terminal_seq == -1
     refute Restore.has_persisted_state?(pid)
   end
 
@@ -27,7 +27,7 @@ defmodule Flezha.State.RestoreTest do
     header = TestHelpers.stub_header()
     {:ok, _} = Snapshot.write_snapshot(pid, 50, header, "snap-bytes")
 
-    assert {:ok, payload} = Restore.assemble_payload(pid)
+    assert {:ok, payload} = Restore.payload(pid, :latest)
     assert payload.snapshot_bytes == "snap-bytes"
 
     # The header travels with the body: it carries the schema_version the
@@ -35,7 +35,7 @@ defmodule Flezha.State.RestoreTest do
     assert payload.snapshot_header == header
     assert byte_size(payload.snapshot_header) == 16
     assert payload.change_log_bytes == <<>>
-    assert payload.terminal_seq_hint == 50
+    assert payload.terminal_seq == 50
     assert Restore.has_persisted_state?(pid)
   end
 
@@ -48,10 +48,10 @@ defmodule Flezha.State.RestoreTest do
 
     {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
 
-    assert {:ok, payload} = Restore.assemble_payload(pid)
+    assert {:ok, payload} = Restore.payload(pid, :latest)
     assert payload.snapshot_bytes == "snap@3"
     assert payload.snapshot_header == header
-    assert payload.terminal_seq_hint == 5
+    assert payload.terminal_seq == 5
 
     # change_log_bytes contains exactly seq 4 and seq 5 in WAL framing.
     expected =
@@ -77,7 +77,7 @@ defmodule Flezha.State.RestoreTest do
       capture_log(fn ->
         # Shipping seq 0 as the whole change log would restore the Cell from a
         # history that was cut short and report it as complete.
-        assert {:error, reason} = Restore.assemble_payload(pid)
+        assert {:error, reason} = Restore.payload(pid, :latest)
         assert is_binary(reason)
         assert reason =~ "crc_mismatch"
       end)
@@ -116,8 +116,8 @@ defmodule Flezha.State.RestoreTest do
 
     # Nothing complete can begin after it, so the proof holds and the payload
     # is the records before it — not a refusal.
-    assert {:ok, payload} = Restore.assemble_payload(pid)
-    assert payload.terminal_seq_hint == 1
+    assert {:ok, payload} = Restore.payload(pid, :latest)
+    assert payload.terminal_seq == 1
 
     assert payload.change_log_bytes ==
              Frame.encode_record(0, header, "x0") <>
@@ -221,6 +221,7 @@ defmodule Flezha.State.TimeTravelTest do
 
     assert {:ok, result} = TimeTravel.query(pid, {:seq, 4})
     assert result.snapshot_bytes == "snap@2"
+    assert result.snapshot_header == header
     assert result.terminal_seq == 4
 
     expected =
@@ -269,6 +270,7 @@ defmodule Flezha.State.TimeTravelTest do
 
     assert {:ok, result} = TimeTravel.query(cell_id, {:seq, 3})
     assert result.snapshot_bytes == "iter@1"
+    assert result.snapshot_header == header
     assert result.terminal_seq == 3
   end
 end
@@ -383,6 +385,7 @@ defmodule Flezha.State.RetentionTest do
   alias Flezha.State.{
     Completion,
     Frame,
+    Lineage,
     Paths,
     RecordFrame,
     Retention,
@@ -449,18 +452,21 @@ defmodule Flezha.State.RetentionTest do
       assert [{3, _}] = Paths.snapshot_paths(pid)
     end
 
-    test "rewriting preserves crc-validity of kept records", %{cell_id: pid} do
+    # fails when: a cut that finds a running writer renames a cut copy under it,
+    # so the writer's handle keeps the replaced file and its next record is lost.
+    test "a cut that finds a running writer hands the cut to it", %{cell_id: pid} do
       header = TestHelpers.stub_header()
-      {:ok, _} = Supervisor.find_or_start(pid)
-      {:ok, srv} = Supervisor.lookup(pid)
-
+      {:ok, srv} = Supervisor.find_or_start(pid)
       for n <- 0..4, do: :ok = WalWriter.append(srv, n, header, "y" <> Integer.to_string(n))
-      :ok = Retention.rewrite_wal_excluding_pre_seq(pid, 2)
+      TestHelpers.close_and_await(srv, pid)
+      {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
+      {:ok, srv} = Supervisor.find_or_start(pid)
 
-      {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
-      assert {:ok, 3, _, "y3", c1} = RecordFrame.decode_record(dev, 0)
-      assert {:ok, 4, _, "y4", _} = RecordFrame.decode_record(dev, c1)
-      :file.close(dev)
+      :ok = Retention.sweep_cell(pid, 0)
+      :ok = WalWriter.append(srv, 5, header, "y5")
+
+      records = RecordFrame.fold_path!(Paths.wal_path(pid), [], &{:cont, [elem(&1, 0) | &2]})
+      assert Enum.reverse(records) == [3, 4, 5]
     end
 
     test "a cut with no writer keeps the consumed offset its dropped records carry", %{
@@ -485,6 +491,32 @@ defmodule Flezha.State.RetentionTest do
 
       assert Supervisor.lookup(pid) == :error
       assert WalWriter.consumed_offset_on_disk(pid) == 41
+    end
+
+    # fails when: a cut with no writer folds records a pending rewind drops, so the
+    # floor claims the inputs its correction replays.
+    test "a cut with no writer leaves a Cell whose bump is pending as it found it", %{
+      cell_id: pid
+    } do
+      wal =
+        for seq <- 0..3, into: "" do
+          Frame.encode_record(
+            seq,
+            OutboxCase.effect_header(),
+            OutboxCase.effect_body([], 40 + seq)
+          )
+        end
+
+      File.mkdir_p!(Path.dirname(Paths.wal_path(pid)))
+      File.write!(Paths.wal_path(pid), wal)
+      stored = %{id: nil, trail: [], landed: false, epoch: 1, folded_offset: -1, cut: {:above, 0}}
+      :ok = Lineage.put(pid, stored)
+      {:ok, _} = Snapshot.write_snapshot(pid, 2, TestHelpers.stub_header(), "snap@2")
+
+      :ok = Retention.sweep_cell(pid, 0)
+
+      assert File.read!(Paths.wal_path(pid)) == wal
+      assert %{cut: {:above, 0}, progress: %{folded_offset: -1}} = Lineage.read(pid)
     end
   end
 

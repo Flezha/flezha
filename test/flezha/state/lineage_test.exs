@@ -186,12 +186,12 @@ defmodule Flezha.State.LineageTest do
   # which is a maximum over what the records still on disk consumed.
   test "a prefix cut's folded offset over records still in the WAL leaves the floor as it was" do
     cell_id = effect_cell(7)
-    floor = Epoch.consumed_offset_on_disk(cell_id)
+    floor = Epoch.floor(cell_id, :latest)
 
     :ok = Lineage.put(cell_id, %{stored(cell_id) | folded_offset: 3})
 
     assert floor == 7
-    assert Epoch.consumed_offset_on_disk(cell_id) == floor
+    assert Epoch.floor(cell_id, :latest) == floor
   end
 
   # fails when: the dedup file a cut left behind narrows the re-drive, which may

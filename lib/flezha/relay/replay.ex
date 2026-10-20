@@ -486,7 +486,7 @@ defmodule Flezha.Relay.Replay do
     if InputLog.cell_offsets(relay_class) == [] do
       for cell_id <- Paths.cells_of(relay_class),
           offset = WalWriter.consumed_offset_on_disk(cell_id),
-          offset != nil,
+          is_integer(offset) and offset >= 0,
           do: InputLog.record_consumed(relay_class, cell_id, offset)
     end
 

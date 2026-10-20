@@ -18,7 +18,7 @@ defmodule Flezha.State.WalWriter do
   alias Flezha.Config.Durations
   alias Flezha.State.Frame
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.{Metrics, Paths, RecordFrame, SeqIndex, WriterRegistry}
+  alias Flezha.State.{Metrics, RecordFrame, SeqIndex, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, RemoteGate, Settlement, State}
 
   @type t :: State.t()
@@ -224,8 +224,8 @@ defmodule Flezha.State.WalWriter do
   @spec consumed_offset_at(GenServer.server(), non_neg_integer()) :: integer() | {:error, term()}
   def consumed_offset_at(server, seq), do: call(server, {:consumed_offset_at, seq})
 
-  @doc "The highest consumed offset `cell_id`'s WAL records hold durably, read from disk; see `Epoch`."
-  defdelegate consumed_offset_on_disk(cell_id), to: Epoch
+  @doc "`cell_id`'s input floor, read from disk alone: `Epoch.floor/2` at `:latest`."
+  def consumed_offset_on_disk(cell_id), do: Epoch.floor(cell_id, :latest)
 
   @doc "The inter-tasklet values `cell_id`'s WAL records kept above `floor`; see `Epoch`."
   defdelegate edges_above(cell_id, floor), to: Epoch
@@ -416,40 +416,18 @@ defmodule Flezha.State.WalWriter do
   # little below it to be worth a rewrite yet, answers at once; a seq ahead of
   # the writer is still recorded, since that snapshot is its new baseline. The
   # dedup window releases the records in every case. What the dropped records
-  # consumed moves to the lineage record's folded offset before the cut, behind
-  # the remote gate only once acknowledged; a reserved writer keeps no lineage.
-  def handle_call({:truncate_up_to, seq, opts}, _from, %{cell_id: {_, _, key}} = state) do
-    min_bytes = Keyword.get(opts, :min_bytes, 0)
-    state = trim_header_index(state, seq)
-    bound = RemoteGate.durable_through(state, seq, state.outbox_durable_seq)
+  # consumed is folded first (`Epoch.cut_below/3`).
+  def handle_call({:truncate_up_to, seq, opts}, _from, state) do
+    case Epoch.cut_below(trim_header_index(state, seq), seq, Keyword.get(opts, :min_bytes, 0)) do
+      {:ok, state} ->
+        {:reply, :ok, after_prefix_cut(state, seq)}
 
-    folded =
-      case key not in Paths.reserved_cell_keys() and Epoch.scan_consumed_at(state, bound) do
-        offset when is_integer(offset) and offset > state.folded_offset ->
-          Settlement.put_lineage(state, %{epoch: state.outbox_epoch, folded_offset: offset})
-
-        _reserved_refused_or_folded ->
-          {:ok, state}
-      end
-
-    with {:ok, state} <- folded,
-         {:ok, _cut, file, seq_index} <-
-           RecordFrame.cut_below(
-             state.wal_path,
-             state.file_handle,
-             state.seq_index,
-             seq + 1,
-             min_bytes
-           ) do
-      {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
-    else
-      :none ->
+      {:none, state} ->
         {:reply, :ok, Epoch.establish_baseline(state, seq)}
 
-      # The file is gone from under a queued cut (its directory removed), a record
-      # on the way to the floor was refused, or the lineage install failed: nothing
-      # was cut, the handle is untouched; a refusal also stops this writer serving.
-      {:error, reason} ->
+      # Nothing cut, the handle untouched: the file went away under a queued cut, the
+      # lineage install failed, or a record was refused, which stops this writer serving.
+      {{:error, reason}, state} ->
         {:reply, {:error, reason}, note_refusal(state, reason)}
     end
   end
@@ -472,7 +450,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_call({:consumed_offset_at, seq}, _from, state) do
-    {:reply, Epoch.scan_consumed_at(state, seq), state}
+    {:reply, Epoch.floor(state.cell_id, seq), state}
   end
 
   def handle_call(:outbox_status, _from, state) do

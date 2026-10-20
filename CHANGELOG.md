@@ -39,6 +39,15 @@
   it, and ships none of the relay's turns until the relay binds there again. After a restart
   such a reference waits for its bind and is not counted against the RPO target.
 
+### Fixed: a point-in-time read keeps a Cell's first record, and a retention cut keeps its floor
+
+- `flz state at` on a Cell with no snapshot at or before its target now includes the Cell's
+  first record in the change log, so its reported sizes change; it returns the same payload a
+  bind's restore ships, header included.
+- A retention sweep of a Cell with no running writer holds the Cell's files while it cuts, so a
+  writer starting meanwhile waits for it and its first record is not lost, and it keeps the
+  consumed offsets of the records it drops, so the Cell's input floor does not fall back.
+
 ### Changed: a Cell keeps its epoch in a lineage file
 
 - Each Cell gains a `<cell_key>.lineage` file beside its `.outbox.dedup` file. It holds the

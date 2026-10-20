@@ -23,8 +23,11 @@ defmodule Flezha.State.Retention do
   alias Flezha.Config.Durations
   alias Flezha.State.InputLog.Sweep
 
+  alias Flezha.State.WalWriter.{Epoch, RemoteGate}
+
   alias Flezha.State.{
     Completion,
+    Lineage,
     Metrics,
     Paths,
     PersistenceResolver,
@@ -131,7 +134,7 @@ defmodule Flezha.State.Retention do
           if seq < kept_seq, do: File.rm(path)
         end)
 
-        rewrite_wal_excluding_pre_seq(cell_id, kept_seq)
+        cut(cell_id, kept_seq)
     end
 
     :ok
@@ -164,61 +167,48 @@ defmodule Flezha.State.Retention do
     end
   end
 
-  @doc """
-  Rewrite the WAL keeping only records with `seq > keep_above_seq`.
-  Atomic via `cell.wal.rewriting → rename`.
-  """
-  @spec rewrite_wal_excluding_pre_seq(Paths.cell_id(), non_neg_integer()) :: :ok
-  def rewrite_wal_excluding_pre_seq(cell_id, keep_above_seq) do
-    case WriterRegistry.lookup(cell_id) do
-      {:ok, pid} ->
-        # Delegate through the writer so it controls its own file handle.
-        WalWriter.truncate_up_to(pid, keep_above_seq)
-
-      :error ->
-        # No live writer — perform the rewrite in-process.
-        rewrite_offline(cell_id, keep_above_seq)
+  # The WAL keeps the records above `seq`. Under the Cell's file lock no writer
+  # opens; one already up cuts its own file, asked once the lock is let go, since
+  # its boot may be waiting on that lock.
+  defp cut(cell_id, seq) do
+    case WriterRegistry.with_files(cell_id, fn -> cut_offline(cell_id, seq) end) do
+      {:ok, writer} -> WalWriter.truncate_up_to(writer, seq)
+      _cut_or_no_wal -> :ok
     end
   end
 
-  # No live writer, so the rewrite happens in-process — but through the same
-  # primitive the writer uses, not a second copy of it.
-  defp rewrite_offline(cell_id, keep_above_seq) do
-    wal_path = Paths.wal_path(cell_id)
+  defp cut_offline(cell_id, seq) do
+    path = Paths.wal_path(cell_id)
 
-    case :file.open(wal_path, [:raw, :read, :write, :binary]) do
-      {:ok, device} ->
-        case RecordFrame.cut_below(
-               wal_path,
-               device,
-               SeqIndex.new(file_size(wal_path)),
-               keep_above_seq + 1
-             ) do
-          {:ok, _cut, file, _index} ->
-            _ = :file.close(file)
-            Metrics.put(Metrics.for_cell(cell_id), :wal_size_bytes, file_size(wal_path))
+    # A bump still pending is the writer's to finish at its boot; a fold before it
+    # would count records it drops. A cut reads the writer's state from disk, gated
+    # by the persisted flush cursor.
+    with :error <- WriterRegistry.lookup(cell_id),
+         %{cut: nil, record: record, progress: progress} <- Lineage.read(cell_id),
+         {:ok, device} <- :file.open(path, [:raw, :read, :write, :binary]) do
+      holder = %{
+        cell_id: cell_id,
+        lineage: record,
+        folded_offset: progress.folded_offset,
+        outbox_epoch: progress.epoch,
+        outbox_durable_seq: progress.outbox_flushed_seq,
+        remote: RemoteGate.new(cell_id, :record),
+        wal_path: path,
+        file_handle: device,
+        seq_index: SeqIndex.new(RecordFrame.file_size(path))
+      }
 
-          _ ->
-            _ = :file.close(device)
-        end
+      {cut, %{file_handle: file}} = Epoch.cut_below(holder, seq, 0)
+      _ = :file.close(file)
 
-      {:error, _} ->
-        :ok
+      if cut == :ok,
+        do: Metrics.put(Metrics.for_cell(cell_id), :wal_size_bytes, RecordFrame.file_size(path))
     end
-
-    :ok
   end
 
   defp mtime_seconds(path) do
     case :file.read_file_info(path, time: :posix) do
       {:ok, info} -> elem(info, 5)
-      _ -> 0
-    end
-  end
-
-  defp file_size(path) do
-    case :file.read_file_info(path) do
-      {:ok, info} -> elem(info, 1)
       _ -> 0
     end
   end

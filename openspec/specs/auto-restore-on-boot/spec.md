@@ -91,7 +91,7 @@ When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub doe
 
 ### Requirement: Cell state restoration fires on first stream attach
 
-When a Cell's data stream attaches to a `StreamChannel` AND the owning Relay has `keeps_state = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Relay did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Relay-startup BEFORE allowing input frames to flow.
+When a Cell's data stream attaches to a `StreamChannel` AND the owning Relay has `keeps_state = true` AND `Restore.payload/2` at `:latest` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Relay did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Relay-startup BEFORE allowing input frames to flow.
 
 The Relay's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 

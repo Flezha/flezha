@@ -9,8 +9,8 @@ defmodule Flezha.State.TimeTravel do
   replay (forwarded by the controller; the SDK runs the fold and ships
   back JSON-encoded terminal state).
 
-  v1 `query/2` returns the assembled bytes payload + the resolved
-  terminal seq. The replay-on-SDK round-trip is wired by
+  v1 `query/2` returns the restore payload as of the target, header
+  included. The replay-on-SDK round-trip is wired by
   `Flezha.State.Commands.dispatch_restore_init_state/2` and is invoked by the CLI
   command `flz state at <relay/tasklet/cell> <seq | timestamp>`.
 
@@ -18,25 +18,19 @@ defmodule Flezha.State.TimeTravel do
   point that is kept.
   """
 
-  alias Flezha.State.Frame
   alias Flezha.State.Wire
-  alias Flezha.State.{Paths, RecordFrame, Snapshot}
+  alias Flezha.State.{Paths, RecordFrame, Restore}
 
   @type target :: {:seq, non_neg_integer()} | {:timestamp, integer()}
 
-  @type result :: %{
-          snapshot_bytes: binary(),
-          change_log_bytes: binary(),
-          terminal_seq: non_neg_integer()
-        }
-
   @doc """
-  The Cell's state at `target`, or why it cannot be served: no persisted state
-  at all, or a target older than the retention window, naming the earliest
-  point that is kept.
+  The Cell's restore payload as of `target` (`Restore.payload/2`), or why it
+  cannot be served: no persisted state at all, a target older than the
+  retention window, naming the earliest point that is kept, or a refused record.
   """
   @spec query(Paths.cell_id(), target()) ::
-          {:ok, result()}
+          {:ok, Restore.payload()}
+          | {:error, binary()}
           | {:error, {:no_persisted_state, String.t()}}
           | {:error, {:outside_retention, String.t(), non_neg_integer(), non_neg_integer()}}
   def query({rc, sh, pk} = cell_id, target) do
@@ -51,31 +45,7 @@ defmodule Flezha.State.TimeTravel do
         {:error, {:outside_retention, "#{rc}/#{sh}/#{pk}", target_seq, earliest}}
 
       _earliest ->
-        snapshot = pick_snapshot(snaps, target_seq)
-
-        snapshot_bytes =
-          case snapshot do
-            nil ->
-              <<>>
-
-            {_seq, path} ->
-              case Snapshot.read_snapshot(path) do
-                {:ok, _header, bytes} -> bytes
-                {:error, _} -> <<>>
-              end
-          end
-
-        snapshot_seq = elem(snapshot || {0, nil}, 0)
-
-        {change_log_bytes, terminal_seq} =
-          read_wal_in_range(cell_id, snapshot_seq, target_seq)
-
-        {:ok,
-         %{
-           snapshot_bytes: snapshot_bytes,
-           change_log_bytes: change_log_bytes,
-           terminal_seq: max(snapshot_seq, terminal_seq)
-         }}
+        Restore.payload(cell_id, target_seq)
     end
   end
 
@@ -109,36 +79,4 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp earliest_available_seq([{seq, _} | _], _), do: seq
-
-  defp pick_snapshot([], _target_seq), do: nil
-
-  defp pick_snapshot(snaps, target_seq) do
-    snaps
-    |> Enum.filter(fn {seq, _} -> seq <= target_seq end)
-    |> List.last()
-  end
-
-  defp read_wal_in_range(cell_id, snapshot_seq, target_seq) do
-    {acc, terminal} =
-      RecordFrame.fold_path!(
-        Paths.wal_path(cell_id),
-        {[], snapshot_seq},
-        &gather(&1, &2, snapshot_seq, target_seq)
-      )
-
-    {acc |> Enum.reverse() |> IO.iodata_to_binary(), terminal}
-  end
-
-  defp gather({seq, header, bytes}, {acc, terminal} = unchanged, snapshot_seq, target_seq) do
-    cond do
-      seq > target_seq ->
-        {:halt, unchanged}
-
-      seq > snapshot_seq ->
-        {:cont, {[Frame.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
-
-      true ->
-        {:cont, unchanged}
-    end
-  end
 end

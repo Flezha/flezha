@@ -120,9 +120,13 @@ An instance's floor decides what retention may release from its input log and wh
 re-forward starts. It is not what the controller forwarded, and not any one Cell's progress.
 
 - **Every persistent Cell records the offset it consumed through**, in the record of the state
-  that input produced: the effect record under the tier, and outside it the change records a
-  drain writes, folded into one record that carries the highest offset. A restore, a hydration
-  and the controller's boot scan read a Cell's offset from its last record.
+  that input produced: the effect record under the effectively-once tier, and outside it the
+  change records a drain writes, folded into one record that carries the highest offset. A
+  Cell's offset read from disk has one reader, `WalWriter.Epoch.floor/2` (a sleeper's seed, a
+  hydration's seed, a prefix cut's fold): the folded offset its cut records left, then its
+  records; under the remote durability tier only those at or below the persisted flush cursor,
+  where a live writer counts what the gate acknowledged. The controller's boot scan reads the
+  same offset in the walk that finds the re-drive.
 - **Every Cell keeps a floor.** A restore seeds it from the Cell's records; it rises as the Cell
   takes each input the controller forwarded. An input at or below it is dropped unrun, so a
   tail re-forwarded twice is taken once.
