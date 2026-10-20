@@ -57,8 +57,8 @@ graph without cycles, rooted at the entry channels, naming the offending tasklet
 | --- | --- |
 | a tasklet's output can reach its own input (a cycle) | `topology.cycle` |
 | a tasklet produces on two output channels | `topology.multiple_output_channels` |
-| a tasklet no entry channel reaches | `topology.unreachable_tasklet` |
-| no entry channel, or no tasklets | `topology.no_entry_channel`, `topology.no_tasklets` |
+| a tasklet no entry channel reaches, as in a class with no entry channel | `topology.unreachable_tasklet` |
+| no tasklets | `topology.no_tasklets` |
 | a `chained` loop over a chain that branches | `topology.branching_chained_loop` |
 | a `chained` loop whose last tasklet hands nothing on | `topology.chained_loop_terminal_without_handoff` |
 

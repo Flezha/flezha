@@ -15,18 +15,12 @@ use super::cell::{
     host_serialize_unreachable, HostPayload, HostTaskletFacts,
 };
 use super::decl::{HostChannelDecl, HostChannelKind, HostClassDecl, HostClock, HostTaskletDecl};
-use super::issue::TopologyIssue;
 use super::register::DerivedChannel;
-use crate::channel::{ChannelDescriptor, ChannelKind, EntryWrapFn, RetryPolicy, TaskletId};
-use crate::error::Error;
+use crate::channel::{ChannelDescriptor, ChannelKind, EntryWrapFn, RetryPolicy};
 use crate::relay::settings::{Exactly, Run};
-use crate::relay::topology::{
-    AckGranularity, CellMode, CorrectionPolicy, RelayTopology, TaskletDescriptor,
-};
+use crate::relay::topology::{AckGranularity, CellMode, CorrectionPolicy, TaskletDescriptor};
 use crate::schema::InputForm;
-use crate::steps::spec::{graph_order, GraphSeed, TaskDag};
 use crate::timer::TimerPolicy;
-use crate::ErrorModel;
 
 /// The class facts every tasklet and the topology read, resolved once so
 /// they agree.
@@ -300,53 +294,4 @@ fn host_facts(
         },
         timers: TimerPolicy::new(task_decl.max_timers_per_cell, task_name, task_decl.clock),
     }
-}
-
-/// Kahn toposort from every entry channel's consumers. `check` judged the
-/// shape first, so what this refuses it refused already.
-pub(super) fn build_host_dag(topology: &RelayTopology) -> Result<TaskDag, Error> {
-    let entries = topology.entry_consumers();
-    if entries.is_empty() {
-        return Err(Error::Declaration(TopologyIssue::NoEntryChannel.to_error()));
-    }
-    let n = topology.tasklets.len();
-    let roots: Vec<TaskletId> = entries
-        .iter()
-        .flat_map(|(_, c)| c.iter().copied())
-        .collect();
-    let walk = graph_order(n, &inter_task_edges(topology), &roots, GraphSeed::Roots);
-    if walk.order.len() != n {
-        let name = |i: TaskletId| topology.tasklets[i as usize].name.to_string();
-        let issue = match walk.on_cycle {
-            Some(on_cycle) => TopologyIssue::Cycle {
-                tasklet: name(on_cycle),
-            },
-            None => TopologyIssue::UnreachableTasklet {
-                tasklet: (0..n as TaskletId)
-                    .find(|i| !walk.order.contains(i))
-                    .map(name)
-                    .unwrap_or_default(),
-            },
-        };
-        return Err(Error::Declaration(issue.to_error()));
-    }
-    Ok(TaskDag::from_walk(walk, entries))
-}
-
-/// Producer → consumer pairs over the inter-task channels only: a steps relay's
-/// stages are wired to each other, never through the entry channel.
-fn inter_task_edges(topology: &RelayTopology) -> Vec<(TaskletId, TaskletId)> {
-    let mut edges = Vec::new();
-    for channel in &topology.channels {
-        if channel.kind != ChannelKind::InterTasklet {
-            continue;
-        }
-        let Some(producer) = channel.producer else {
-            continue;
-        };
-        for edge in &channel.consumers {
-            edges.push((producer, edge.tasklet));
-        }
-    }
-    edges
 }

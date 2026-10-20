@@ -756,9 +756,7 @@ SDK raises or returns its one error type carrying them.
 | `topology.multiple_output_channels` | invalid | 2 | tasklet '{tasklet}' produces more than one channel; a tasklet emits on exactly one output channel |  |
 | `topology.named_on_entry` | invalid | 2 | entry channel '{channel}' cannot be renamed with named; an entry channel is named where it is declared |  |
 | `topology.negative_setting` | invalid | 2 | tasklet '{tasklet}' sets {setting} to {value}, and it must not be negative |  |
-| `topology.no_entry_channel` | invalid | 2 | the steps class declares no entry channel for its messages to arrive on |  |
 | `topology.no_relay_exported` | invalid | 2 | module '{module}' exports no relay declaration |  |
-| `topology.no_steps_body` | invalid | 2 | steps class '{factory_id}' declares no channels body, so it has no tasklets to run |  |
 | `topology.no_tasklets` | invalid | 2 | the class declares no tasklet; a host class declares at least one |  |
 | `topology.node_identity_collision` | invalid | 2 | node identity '{name}' is declared by two distinct nodes; a node name must be unique per relay and distinct from every tasklet name |  |
 | `topology.output_on_entry` | invalid | 2 | entry channel '{channel}' is given an output, and an output is fed by a tasklet; wire the entry channel into one first |  |

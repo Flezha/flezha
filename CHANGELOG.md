@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed: a steps class's DAG is built by one walk, and only the core's check refuses it
+
+- **BREAKING:** in the Rust SDK `build_spec` returns `TopologyBuildError`; `BuildStepsError`,
+  its re-export and `FlezhaError::InvalidSteps` are removed. A steps class with no tasklets is
+  refused `topology.no_tasklets` by the shared check, with no `factory_id` detail.
+- **BREAKING:** the codes `topology.no_entry_channel` and `topology.no_steps_body` leave the
+  catalogue. Nothing raised the first (a class with no entry channel is refused
+  `topology.unreachable_tasklet`); PHP's empty steps class is refused `topology.no_tasklets`.
+- **BREAKING:** a host SDK's steps class numbers its stages from every tasklet no channel
+  produces into, in declaration order, as the Rust SDK did. A class whose entry channels are
+  declared in another order than the tasklets they feed, or whose entry-fed tasklet also has a
+  producer, gets new stage indices, so its in-flight runs must finish before the upgrade.
+
 ### Changed: `flz relay call` without `--timeout` takes the controller's call deadline
 
 - `flz relay call` sends a deadline only when `--timeout` is given; without it the controller's

@@ -250,7 +250,6 @@ unrowed | topology.schema_floor_above_version
 unrowed | topology.schema_floor_without_migration
 unrowed | topology.max_cells_zero
 unrowed | topology.declaration_unreadable
-unrowed | topology.no_entry_channel
 unrowed | topology.multiple_output_channels
 unrowed | topology.branching_chained_loop
 unrowed | topology.chained_loop_terminal_without_handoff

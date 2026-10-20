@@ -3,18 +3,16 @@
 //! channel) with one chain per entry channel, plus the class's loop shape and
 //! failure mode.
 
-use flz_transport::errors::{ErrorModel, FlezhaError};
-use serde_json::{Map, Value};
-
 use super::{Each, OnFailure};
 use crate::channel::{ChannelId, TaskletId};
-use crate::Code;
+use crate::relay::settings::Run;
+use crate::relay::topology::{graph_order, reachable, GraphOrder, RelayTopology};
 
-/// The tasklet DAG in Kahn order from the entry channels' consumers, so
-/// every producer sits at a lower index than its consumer. A node's index is
-/// its `stage_idx` and its wire `task_idx`, and reversing the order is the
-/// compensation order. A pass runs one chain: an entry channel's, for a
-/// message that arrived on it, or a tasklet's, for a timer firing it set.
+/// The tasklet DAG in Kahn order, so every producer sits at a lower index
+/// than its consumer. A node's index is its `stage_idx` and its wire
+/// `task_idx`, and reversing the order is the compensation order. A pass
+/// runs one chain: an entry channel's, for a message that arrived on it, or
+/// a tasklet's, for a timer firing it set.
 #[derive(Debug, Default)]
 pub struct TaskDag {
     pub order: Vec<TaskletId>,
@@ -98,11 +96,27 @@ impl TaskDag {
         }
     }
 
+    /// The DAG of a class `check` accepted: one walk over every
+    /// producer-to-consumer edge, with one chain per entry channel.
+    pub fn of(topology: &RelayTopology) -> Self {
+        let entries = topology.entry_consumers();
+        let edges: Vec<_> = topology
+            .channels
+            .iter()
+            .filter_map(|c| c.producer.map(|p| (p, c)))
+            .flat_map(|(p, c)| c.consumer_ids().map(move |id| (p, id)))
+            .collect();
+        Self::from_walk(
+            graph_order(topology.tasklets.len(), &edges, &entries),
+            entries,
+        )
+    }
+
     /// The DAG a walk over every tasklet found, re-indexed positionally so
     /// stage `i`'s parents and children are stage indices too, each list
     /// ascending as a level's nodes commit, with one chain per entry channel
     /// from the positions `entries` feed.
-    pub fn from_walk(walk: GraphOrder, entries: Vec<(ChannelId, Vec<TaskletId>)>) -> Self {
+    pub(crate) fn from_walk(walk: GraphOrder, entries: Vec<(ChannelId, Vec<TaskletId>)>) -> Self {
         let positions = |nodes: &[usize]| {
             let mut at: Vec<usize> = nodes.iter().map(|&node| walk.pos[node]).collect();
             at.sort_unstable();
@@ -179,119 +193,6 @@ impl TaskDag {
     }
 }
 
-/// Where a graph walk starts. `Roots` is the entry-rooted shape a structured
-/// steps relay declares, so a node the roots do not reach is left out of the
-/// order; `EveryIndegreeZero` is the flow shape, where a disconnected node
-/// still takes a position and unreachability is reported separately.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum GraphSeed {
-    Roots,
-    EveryIndegreeZero,
-}
-
-/// One graph-shape walk over the tasklet nodes: Kahn topological order plus
-/// reachability from the roots. Both declaration surfaces read their shape
-/// refusals off this — the rule is one rule, so its mechanism is one
-/// mechanism, and each caller keeps its own refusal wording.
-pub struct GraphOrder {
-    /// Node ids in Kahn topological order (FIFO — for a tree this is exactly
-    /// BFS from the root, so steps relay `task_idx` numbering stays stable).
-    pub order: Vec<TaskletId>,
-    /// Node id → position in `order`; `usize::MAX` for a node the walk left
-    /// out.
-    pub pos: Vec<usize>,
-    /// Incoming edges per node, indexed by node id.
-    pub parents: Vec<Vec<usize>>,
-    /// Outgoing edges per node, indexed by node id.
-    pub children: Vec<Vec<usize>>,
-    /// First node unreachable from the roots, if any (meaningful only when
-    /// the graph is acyclic — a cycle already explains unreachability).
-    pub unreachable: Option<TaskletId>,
-    /// First node the walk left over — on (or strictly downstream of) a cycle.
-    pub on_cycle: Option<TaskletId>,
-}
-
-/// The edge tables one walk needs: outgoing, incoming, and the incoming count.
-fn adjacency(
-    n: usize,
-    edges: &[(TaskletId, TaskletId)],
-) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<usize>) {
-    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut indegree = vec![0usize; n];
-    for &(producer, consumer) in edges {
-        children[producer as usize].push(consumer as usize);
-        parents[consumer as usize].push(producer as usize);
-        indegree[consumer as usize] += 1;
-    }
-    (parents, children, indegree)
-}
-
-/// Which nodes `roots` reach, following `children`.
-fn reachable(children: &[Vec<usize>], roots: impl Iterator<Item = usize>) -> Vec<bool> {
-    let mut reached = vec![false; children.len()];
-    let mut stack: Vec<usize> = roots.collect();
-    while let Some(node) = stack.pop() {
-        if std::mem::replace(&mut reached[node], true) {
-            continue;
-        }
-        stack.extend(children[node].iter().copied());
-    }
-    reached
-}
-
-/// Walk `n` nodes over `edges` (producer → consumer pairs), reachable from
-/// `roots`. Merge mappings are irrelevant to shape, so an edge is a pair of
-/// tasklet ids.
-pub fn graph_order(
-    n: usize,
-    edges: &[(TaskletId, TaskletId)],
-    roots: &[TaskletId],
-    seed: GraphSeed,
-) -> GraphOrder {
-    let (parents, children, mut indegree) = adjacency(n, edges);
-    let reached = reachable(&children, roots.iter().map(|&r| r as usize));
-    let unreachable = (0..n).find(|&i| !reached[i]).map(|i| i as TaskletId);
-
-    // A tasklet several entry channels feed is one root, queued once.
-    let mut queued = vec![false; n];
-    let mut queue = std::collections::VecDeque::new();
-    let seeds: Vec<usize> = match seed {
-        GraphSeed::Roots => roots.iter().map(|&r| r as usize).collect(),
-        GraphSeed::EveryIndegreeZero => (0..n).filter(|&i| indegree[i] == 0).collect(),
-    };
-    for node in seeds {
-        if !std::mem::replace(&mut queued[node], true) {
-            queue.push_back(node);
-        }
-    }
-    let mut order = Vec::with_capacity(n);
-    let mut pos = vec![usize::MAX; n];
-    while let Some(node) = queue.pop_front() {
-        pos[node] = order.len();
-        order.push(node as TaskletId);
-        for &child in &children[node] {
-            indegree[child] = indegree[child].saturating_sub(1);
-            if indegree[child] == 0 && !queued[child] {
-                queued[child] = true;
-                queue.push_back(child);
-            }
-        }
-    }
-    let on_cycle = (0..n)
-        .find(|&i| pos[i] == usize::MAX)
-        .map(|i| i as TaskletId);
-
-    GraphOrder {
-        order,
-        pos,
-        parents,
-        children,
-        unreachable,
-        on_cycle,
-    }
-}
-
 /// What a steps class declares beyond its topology, carried on it as
 /// `RelayTopology::steps`: the one fact a class registry reads the kind from.
 #[derive(Debug)]
@@ -301,64 +202,21 @@ pub struct StepsSpec {
     pub each: Each,
 }
 
-/// Why a steps class is refused at registration.
-#[derive(Debug)]
-pub enum BuildStepsError {
-    /// The shared topology's own refusal, carried as the core rendered it.
-    Topology {
-        factory_id: &'static str,
-        error: FlezhaError,
-    },
-    NoEntryChannel {
-        factory_id: &'static str,
-    },
-    Cycle {
-        factory_id: &'static str,
-        tasklet: String,
-    },
-    Disconnected {
-        factory_id: &'static str,
-        tasklet: String,
-    },
-    NoTasklets {
-        factory_id: &'static str,
-    },
-}
-
-impl ErrorModel for BuildStepsError {
-    /// The refusal in the model's one shape, naming the factory.
-    fn to_error(&self) -> FlezhaError {
-        match self.judged() {
-            Ok((code, details)) => code.error(details),
-            Err(error) => error.clone(),
-        }
-    }
-}
-
-impl BuildStepsError {
-    /// This refusal's code and details, or the shared topology's own error.
-    fn judged(&self) -> Result<(Code, Map<String, Value>), &FlezhaError> {
-        let tasklet = |tasklet: &String| vec![("tasklet", Value::from(tasklet.as_str()))];
-        let (factory_id, code, pairs) = match self {
-            Self::Topology { error, .. } => return Err(error),
-            Self::NoEntryChannel { factory_id } => (factory_id, Code::NoEntryChannel, vec![]),
-            Self::NoTasklets { factory_id } => (factory_id, Code::NoTasklets, vec![]),
-            Self::Cycle {
-                factory_id,
-                tasklet: t,
-            } => (factory_id, Code::Cycle, tasklet(t)),
-            Self::Disconnected {
-                factory_id,
-                tasklet: t,
-            } => (factory_id, Code::UnreachableTasklet, tasklet(t)),
+impl StepsSpec {
+    /// What a class running `run` carries beyond its topology: nothing for a
+    /// flow class.
+    pub fn of(topology: &RelayTopology, run: &Run) -> Option<Self> {
+        let Run::Steps { each, on_failure } = *run else {
+            return None;
         };
-        let mut details: Map<String, Value> = pairs
-            .into_iter()
-            .map(|(key, value)| (key.to_string(), value))
-            .collect();
-        details.insert("factory_id".into(), (*factory_id).into());
-        Ok((code, details))
+        Some(Self {
+            dag: TaskDag::of(topology),
+            on_failure,
+            each,
+        })
     }
 }
 
-flz_transport::model_error!(BuildStepsError);
+#[cfg(test)]
+#[path = "spec_tests.rs"]
+mod tests;

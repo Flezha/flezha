@@ -17,8 +17,8 @@ flz_core/src/effect.rs::fold 76
 flz_core/src/effect_result.rs::keep 52
 flz_core/src/host/activation.rs::settle_item 67
 flz_core/src/host/activation.rs::settle_items 60
-flz_core/src/host/issue.rs::details 167
-flz_core/src/host/issue.rs::kind 67
+flz_core/src/host/issue.rs::details 166
+flz_core/src/host/issue.rs::kind 66
 flz_core/src/host/leave.rs::relay_left 58
 flz_core/src/poll_core/assembly.rs::assemble_batch 64
 flz_core/src/poll_core/mod.rs::host_command_within 53

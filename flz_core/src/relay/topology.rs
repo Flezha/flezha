@@ -294,3 +294,98 @@ impl RelayTopology {
         names
     }
 }
+
+/// One graph-shape walk over the tasklet nodes: Kahn topological order plus
+/// reachability from the roots. The check reads its shape refusals off this
+/// and a steps class's DAG is built from it, so the rule and the order are one
+/// mechanism.
+pub(crate) struct GraphOrder {
+    /// Node ids in Kahn topological order, FIFO from every node no edge
+    /// enters, so every producer sits before its consumers.
+    pub order: Vec<TaskletId>,
+    /// Node id → position in `order`; `usize::MAX` for a node the walk left
+    /// out.
+    pub pos: Vec<usize>,
+    /// Incoming edges per node, indexed by node id.
+    pub parents: Vec<Vec<usize>>,
+    /// Outgoing edges per node, indexed by node id.
+    pub children: Vec<Vec<usize>>,
+    /// First node unreachable from the roots, if any (meaningful only when
+    /// the graph is acyclic — a cycle already explains unreachability).
+    pub unreachable: Option<TaskletId>,
+    /// First node the walk left over — on (or strictly downstream of) a cycle.
+    pub on_cycle: Option<TaskletId>,
+}
+
+/// The edge tables one walk needs: outgoing, incoming, and the incoming count.
+fn adjacency(
+    n: usize,
+    edges: &[(TaskletId, TaskletId)],
+) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, Vec<usize>) {
+    let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut indegree = vec![0usize; n];
+    for &(producer, consumer) in edges {
+        children[producer as usize].push(consumer as usize);
+        parents[consumer as usize].push(producer as usize);
+        indegree[consumer as usize] += 1;
+    }
+    (parents, children, indegree)
+}
+
+/// Which nodes `roots` reach, following `children`.
+pub(crate) fn reachable(children: &[Vec<usize>], roots: impl Iterator<Item = usize>) -> Vec<bool> {
+    let mut reached = vec![false; children.len()];
+    let mut stack: Vec<usize> = roots.collect();
+    while let Some(node) = stack.pop() {
+        if std::mem::replace(&mut reached[node], true) {
+            continue;
+        }
+        stack.extend(children[node].iter().copied());
+    }
+    reached
+}
+
+/// Walk `n` nodes over `edges` (producer → consumer pairs), reachable from
+/// the tasklets the `entries` feed. Merge mappings are irrelevant to shape, so an edge is a pair of
+/// tasklet ids. The walk starts at every node no edge enters, so a node the
+/// roots do not reach still takes a position and is reported on its own.
+pub(crate) fn graph_order(
+    n: usize,
+    edges: &[(TaskletId, TaskletId)],
+    entries: &[(ChannelId, Vec<TaskletId>)],
+) -> GraphOrder {
+    let (parents, children, mut indegree) = adjacency(n, edges);
+    let roots = entries
+        .iter()
+        .flat_map(|(_, c)| c.iter().map(|&r| r as usize));
+    let reached = reachable(&children, roots);
+    let unreachable = (0..n).find(|&i| !reached[i]).map(|i| i as TaskletId);
+
+    let mut queue: std::collections::VecDeque<usize> =
+        (0..n).filter(|&i| indegree[i] == 0).collect();
+    let mut order = Vec::with_capacity(n);
+    let mut pos = vec![usize::MAX; n];
+    while let Some(node) = queue.pop_front() {
+        pos[node] = order.len();
+        order.push(node as TaskletId);
+        for &child in &children[node] {
+            indegree[child] -= 1;
+            if indegree[child] == 0 {
+                queue.push_back(child);
+            }
+        }
+    }
+    let on_cycle = (0..n)
+        .find(|&i| pos[i] == usize::MAX)
+        .map(|i| i as TaskletId);
+
+    GraphOrder {
+        order,
+        pos,
+        parents,
+        children,
+        unreachable,
+        on_cycle,
+    }
+}

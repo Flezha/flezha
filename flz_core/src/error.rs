@@ -83,7 +83,6 @@ codes! {
     DeclarationUnreadable => "topology.declaration_unreadable",
     UnknownField => "topology.unknown_field",
     InvalidSetting => "topology.invalid_setting",
-    NoEntryChannel => "topology.no_entry_channel",
     MultipleOutputChannels => "topology.multiple_output_channels",
     BranchingChainedLoop => "topology.branching_chained_loop",
     ChainedLoopTerminalWithoutHandoff => "topology.chained_loop_terminal_without_handoff",

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use flz_transport::service::payloader::MAX_METADATA_FIELD_LEN;
 
-use super::build::{build_channels, build_host_dag, build_tasklets, resolve_class_facts};
+use super::build::{build_channels, build_tasklets, resolve_class_facts};
 use super::chains::derive_channels;
 use super::decl::{
     HostAckGranularity, HostChannelDecl, HostChannelKind, HostClassDecl, HostClock, HostCodec,
@@ -23,9 +23,10 @@ use crate::channel::{ChannelId, OverflowPolicy, TaskletId};
 use crate::error::Error;
 use crate::relay::settings::{self, Durable, Each, Exactly, Run, SettingIssue};
 use crate::relay::topology::{
-    AckGranularity, BeyondWindowPolicy, CellMode, ChannelApi, CheckpointOutputs, RelayTopology,
+    graph_order, AckGranularity, BeyondWindowPolicy, CellMode, ChannelApi, CheckpointOutputs,
+    GraphOrder, RelayTopology,
 };
-use crate::steps::spec::{graph_order, GraphOrder, GraphSeed, StepsSpec, TaskDag};
+use crate::steps::spec::{StepsSpec, TaskDag};
 use crate::ErrorModel;
 
 /// Hard upper bound on a per-Cell mailbox: ~1M items is past sanity for any
@@ -116,7 +117,8 @@ fn parse_decl(bytes: &[u8]) -> Result<HostClassDecl, TopologyIssue> {
 
 pub fn register_host_class(decl: HostClassDecl) -> Result<(), Error> {
     let derived = check(decl).map_err(|issues| Error::Declaration(render_issues(&issues)))?;
-    register(derived)
+    register(derived);
+    Ok(())
 }
 
 /// Judge a record and derive its declaration. Three stages, accumulating:
@@ -588,16 +590,7 @@ fn refuse_graph_shape(
         .filter(|c| c.kind == HostChannelKind::Entry)
         .map(|c| (c.index, c.consumers.iter().map(|e| e.tasklet).collect()))
         .collect();
-    let roots: Vec<_> = entries
-        .iter()
-        .flat_map(|(_, c)| c.iter().copied())
-        .collect();
-    let shape = graph_order(
-        decl.tasklets.len(),
-        &edges,
-        &roots,
-        GraphSeed::EveryIndegreeZero,
-    );
+    let shape = graph_order(decl.tasklets.len(), &edges, &entries);
     if let Some(node) = shape.on_cycle {
         issues.push(TopologyIssue::Cycle {
             tasklet: decl.tasklets[node as usize].name.clone(),
@@ -665,7 +658,7 @@ fn steps_shape_issue(
 }
 
 /// Build the checked declaration's topology and register it.
-fn register(derived: Derived) -> Result<(), Error> {
+fn register(derived: Derived) {
     let Derived {
         channels: derived_channels,
         modes,
@@ -697,15 +690,8 @@ fn register(derived: Derived) -> Result<(), Error> {
         steps: None,
         api: decl.channels.iter().map(channel_api).collect(),
     };
-    if let Run::Steps { each, on_failure } = run {
-        topology.steps = Some(StepsSpec {
-            dag: build_host_dag(&topology)?,
-            on_failure,
-            each,
-        });
-    }
+    topology.steps = StepsSpec::of(&topology, &run);
     crate::relay::registry::register_class(class.factory_id, Arc::new(topology));
-    Ok(())
 }
 
 /// What a channel announces in its relay's API, as its host declared it.

@@ -192,7 +192,6 @@ pub enum TopologyIssue {
         value: String,
         expected: String,
     },
-    NoEntryChannel,
     MultipleOutputChannels {
         tasklet: String,
     },
@@ -279,7 +278,6 @@ impl TopologyIssue {
             Self::DeclarationUnreadable { .. } => Code::DeclarationUnreadable,
             Self::UnknownField { .. } => Code::UnknownField,
             Self::InvalidSetting { .. } => Code::InvalidSetting,
-            Self::NoEntryChannel => Code::NoEntryChannel,
             Self::MultipleOutputChannels { .. } => Code::MultipleOutputChannels,
             Self::BranchingChainedLoop { .. } => Code::BranchingChainedLoop,
             Self::ChainedLoopTerminalWithoutHandoff { .. } => {
@@ -447,8 +445,7 @@ impl TopologyIssue {
             | Self::AtCheckpointWithoutMaxDelay
             | Self::NoTasklets
             | Self::EffectivelyOnceWithoutPersistence
-            | Self::CheckpointMaxDelayZero
-            | Self::NoEntryChannel => Vec::new(),
+            | Self::CheckpointMaxDelayZero => Vec::new(),
         };
         pairs
             .into_iter()
