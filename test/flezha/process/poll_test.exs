@@ -23,7 +23,7 @@ defmodule Flezha.Process.PollTest do
 
   # A pause that records what it was asked to wait, then waits it.
   defp recorded_pause do
-    pauses = :ets.new(:pauses, [:bag, :public])
+    pauses = :ets.new(:pauses, [:duplicate_bag, :public])
     pause = fn ms -> :ets.insert(pauses, {:pause, ms}) && Process.sleep(ms) end
     {pause, fn -> for {:pause, ms} <- :ets.tab2list(pauses), do: ms end}
   end

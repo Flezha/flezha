@@ -44,6 +44,8 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     # facts in another sense
     "lib/flezha/plugin/provider/http_poll/poll_worker.ex" =>
       "`:failed` is an event segment; `:suspended` is a poll outcome journaled for wake",
+    "lib/flezha/plugin/provider/http_push.ex" =>
+      "`:failed` is the telemetry verb a dropped output is counted under; `:healthy` is its probe's verdict",
     "lib/flezha/cli/state.ex" =>
       "both are `{:not_resident, _}` refusal reasons rendered as text, not health",
     "lib/flezha/relay/overwatch.ex" =>

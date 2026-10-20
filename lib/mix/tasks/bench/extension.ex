@@ -179,7 +179,7 @@ defmodule Mix.Tasks.Bench.Extension do
   end
 
   defp http_push(records) do
-    port = __MODULE__.Origin.start()
+    port = Origin.start()
 
     opts =
       provider_opts(HttpPush, %{

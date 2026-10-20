@@ -189,9 +189,11 @@ defmodule Flezha.Config.BackoffSeamTest do
       sites = read_text(lib_files() -- [@ladder_seam])
 
       for {key, %{reset: reset}} <- Backoff.ladders() do
+        # `Flezha.Plugin.Provider.Batcher` resets its `ladder:` on every committed batch.
         announced? =
           String.contains?(sites, "Backoff.reset(:#{key}") or
-            String.contains?(sites, "Backoff.new(:#{key})")
+            String.contains?(sites, "Backoff.new(:#{key})") or
+            String.contains?(sites, "Batcher, ladder: :#{key},")
 
         case reset do
           :on_success ->
