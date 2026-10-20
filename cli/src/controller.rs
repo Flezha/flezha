@@ -37,11 +37,11 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["Controller.stop"])
             .notes(help::CONTROLLER_STOP)
             .help_word(),
-        Verb::new("status", rpc::bare)
+        Verb::door("status")
             .calls(&["Controller.status"])
             .notes(help::CONTROLLER_STATUS)
             .help_word(),
-        Verb::new("mem-top", rpc::bare)
+        Verb::door("mem-top")
             .calls(&["Controller.mem_top"])
             .notes(help::CONTROLLER_MEM_TOP)
             .help_word(),

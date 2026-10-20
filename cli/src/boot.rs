@@ -19,7 +19,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Boot/recovery commands.",
     notes: Some(help::BOOT),
     verbs: &[
-        Verb::new("status", rpc::bare).calls(&["Controller.boot_status"]),
+        Verb::door("status").calls(&["Controller.boot_status"]),
         Verb::new("await", handle_await)
             .reading(&[TIMEOUT])
             .strict()

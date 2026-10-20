@@ -857,13 +857,18 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
     assert refused_token_issue("superuser") =~ "authz.unknown_role"
   end
 
-  defp refused_token_issue(role) do
+  # `flz token issue` sends the lifetime as written, so this is its only check.
+  test "a token lifetime of zero is refused" do
+    assert refused_token_issue("ops", 0) =~ "authz.invalid_ttl"
+  end
+
+  defp refused_token_issue(role, ttl \\ 3_600) do
     :ok = AuthState.set_enabled()
     {:ok, admin, _} = TokenStore.issue("render-admin", "_system", :admin, 3_600)
 
     cli_refusal(
       "Namespace.issue_token",
-      ["carol", "render-ns", role, %{ttl: 3_600}],
+      ["carol", "render-ns", role, %{ttl: ttl}],
       [token: admin],
       2
     )

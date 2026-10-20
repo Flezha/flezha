@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed: `flz` sends a verb's options as written and leaves their checks to the controller
+
+- **BREAKING:** `flz relay start --plugins` and `flz schedule add --plugins` send the text as
+  written; a malformed list is refused by the controller with a `plugin.*` code, and
+  `usage.invalid_plugins` is gone from the error catalogue.
+- `flz token issue --ttl 0` reaches the controller, which refuses it with `authz.invalid_ttl`
+  as before.
+
 ### Changed: one sink admission and one batching loop
 
 - **BREAKING:** the RabbitMQ producer's `queue_overflow` default is `drop_nothing` (was

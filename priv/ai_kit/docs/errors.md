@@ -810,7 +810,6 @@ SDK raises or returns its one error type carrying them.
 | `usage.command_required` | invalid | 2 | {command} needs a command | `{command} help` |
 | `usage.invalid_json` | invalid | 2 | {option} is not valid JSON: {reason} |  |
 | `usage.invalid_number` | invalid | 2 | invalid {option} value '{value}' |  |
-| `usage.invalid_plugins` | invalid | 2 | --plugins is not a plugin list: {reason} |  |
 | `usage.json_not_object` | invalid | 2 | {option} must be a JSON object |  |
 | `usage.missing_argument` | invalid | 2 | the command is missing an argument | `{usage}` |
 | `usage.negative` | invalid | 2 | {option} must be zero or more, got {value} |  |

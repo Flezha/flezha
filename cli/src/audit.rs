@@ -1,7 +1,5 @@
-use serde_json::{Map, Value};
-
 use crate::args::{OptSpec, Positional, Reading, DURATION_MS};
-use crate::dispatch::{Command, Missing, Verb};
+use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::{help, rpc};
 
 /// The five filters `audit read` narrows a file with. Their long spelling is
@@ -22,12 +20,20 @@ pub(crate) const TABLE: Command = Command {
     title: "Durable audit log inspection.",
     notes: None,
     verbs: &[
-        Verb::new("list", rpc::bare)
+        Verb::door("list")
             .calls(&["AuditLog.list_files"])
             .help_word(),
-        Verb::new("read", handle_read)
+        Verb::door("read")
             .taking(&[Positional::required("<file>")])
             .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT])
+            .sending(&[Arg::Fields(&[
+                ("file", Arg::Pos("<file>")),
+                ("source", Arg::Opt(&SOURCE)),
+                ("name", Arg::Opt(&NAME)),
+                ("since_us", Arg::Opt(&SINCE)),
+                ("until_us", Arg::Opt(&UNTIL)),
+                ("limit", Arg::Opt(&LIMIT)),
+            ])])
             .calls(&["AuditLog.read"])
             .notes(help::AUDIT_READ)
             .help_word(),
@@ -36,34 +42,12 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["AuditLog.tail"])
             .notes(help::AUDIT_TAIL)
             .help_word(),
-        Verb::new("stats", rpc::bare)
-            .calls(&["AuditLog.stats"])
-            .help_word(),
-        Verb::new("rotate", rpc::bare)
-            .calls(&["AuditLog.rotate"])
-            .help_word(),
+        Verb::door("stats").calls(&["AuditLog.stats"]).help_word(),
+        Verb::door("rotate").calls(&["AuditLog.rotate"]).help_word(),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-fn handle_read(read: &Reading) {
-    let mut params = Map::new();
-    params.insert("file".into(), Value::from(read.pos("<file>")));
-
-    for (spec, key) in [(SOURCE, "source"), (NAME, "name")] {
-        if let Some(value) = read.opt(spec.long) {
-            params.insert(key.into(), Value::from(value));
-        }
-    }
-    for (spec, key) in [(SINCE, "since_us"), (UNTIL, "until_us"), (LIMIT, "limit")] {
-        if let Some(value) = read.num::<i64>(spec.long) {
-            params.insert(key.into(), Value::from(value));
-        }
-    }
-
-    rpc::door("AuditLog.read", &[Value::Object(params)], &[], read);
-}
 
 fn handle_tail(read: &Reading) {
     rpc::door("AuditLog.tail", &[], &[rpc::window(read)], read);

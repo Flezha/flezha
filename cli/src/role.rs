@@ -1,8 +1,6 @@
-use serde_json::Value;
-
-use crate::args::{Positional, Reading};
+use crate::args::Positional;
 use crate::dispatch::{Command, Missing, Verb};
-use crate::{help, rpc};
+use crate::help;
 
 /// The enumeration, spelled once: both verbs read the same label, so a role
 /// added to it cannot reach one of them and miss the other.
@@ -13,47 +11,21 @@ pub(crate) const TABLE: Command = Command {
     title: "Principal → role bindings.",
     notes: Some(help::ROLE),
     verbs: &[
-        Verb::new("bind", handle_bind)
+        Verb::door("bind")
             .taking(&[
                 Positional::required("<principal>"),
                 Positional::required(ROLE),
                 Positional::required("<namespace>"),
             ])
             .calls(&["Namespace.bind_role"]),
-        Verb::new("unbind", handle_unbind)
+        Verb::door("unbind")
             .taking(&[
                 Positional::required("<principal>"),
                 Positional::optional(ROLE),
             ])
             .calls(&["Namespace.unbind_role"]),
-        Verb::new("list", rpc::bare).calls(&["Namespace.list_roles"]),
+        Verb::door("list").calls(&["Namespace.list_roles"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-fn handle_bind(read: &Reading) {
-    rpc::door(
-        "Namespace.bind_role",
-        &[
-            Value::from(read.pos("<principal>")),
-            Value::from(read.pos(ROLE)),
-            Value::from(read.pos("<namespace>")),
-        ],
-        &[],
-        read,
-    );
-}
-
-/// An unbind with no role takes the principal's whole binding.
-fn handle_unbind(read: &Reading) {
-    rpc::door(
-        "Namespace.unbind_role",
-        &[
-            Value::from(read.pos("<principal>")),
-            read.maybe_pos(ROLE).map_or(Value::Null, Value::from),
-        ],
-        &[],
-        read,
-    );
-}

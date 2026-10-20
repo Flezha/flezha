@@ -1,8 +1,5 @@
-use serde_json::Value;
-
-use crate::args::{Positional, Reading};
+use crate::args::Positional;
 use crate::dispatch::{Command, Missing, Verb};
-use crate::rpc;
 
 const ENTRY_REF: &[Positional] = &[Positional::required("<relay/tasklet/entry-id>")];
 
@@ -11,19 +8,19 @@ pub(crate) const TABLE: Command = Command {
     title: "Dead-letter queue: parked poison payloads (retry budget exhausted).",
     notes: None,
     verbs: &[
-        Verb::new("list", handle_list)
+        Verb::door("list")
             .taking(&[Positional::optional("<relay_class>")])
             .strict()
             .calls(&["Dlq.list"]),
-        Verb::new("show", rpc::one_arg)
+        Verb::door("show")
             .taking(ENTRY_REF)
             .strict()
             .calls(&["Dlq.get"]),
-        Verb::new("replay", rpc::one_arg)
+        Verb::door("replay")
             .taking(ENTRY_REF)
             .strict()
             .calls(&["Dlq.replay"]),
-        Verb::new("drop", rpc::one_arg)
+        Verb::door("drop")
             .taking(ENTRY_REF)
             .strict()
             .calls(&["Dlq.drop"]),
@@ -31,13 +28,6 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };
-
-fn handle_list(read: &Reading) {
-    let class = read
-        .maybe_pos("<relay_class>")
-        .map_or(Value::Null, Value::from);
-    rpc::door("Dlq.list", &[class], &[], read);
-}
 
 #[cfg(test)]
 mod tests {

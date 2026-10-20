@@ -11,11 +11,11 @@ pub(crate) const TABLE: Command = Command {
     title: "Observability foundation inspection.",
     notes: None,
     verbs: &[
-        Verb::new("sources", rpc::bare)
+        Verb::door("sources")
             .calls(&["Observability.list_sources"])
             .notes(help::OBSERVE_SOURCES)
             .help_word(),
-        Verb::new("sinks", rpc::bare)
+        Verb::door("sinks")
             .calls(&["Observability.list_sinks"])
             .notes(help::OBSERVE_SINKS)
             .help_word(),
@@ -25,11 +25,11 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["Observability.tail"])
             .notes(help::OBSERVE_TAIL)
             .help_word(),
-        Verb::new("enable", rpc::one_arg)
+        Verb::door("enable")
             .taking(SOURCE)
             .calls(&["Observability.enable_source"])
             .help_word(),
-        Verb::new("disable", rpc::one_arg)
+        Verb::door("disable")
             .taking(SOURCE)
             .calls(&["Observability.disable_source"])
             .help_word(),

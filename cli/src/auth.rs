@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::Path;
 
 use flz_transport::errors::FlezhaError;
-use serde_json::Value;
 
 use crate::args::{app_data_root, Positional, Reading, APP_DATA_ROOT};
 use crate::dispatch::{Command, Missing, Verb};
@@ -15,10 +14,10 @@ pub(crate) const TABLE: Command = Command {
     title: "Authentication bootstrap and identity.",
     notes: Some(help::AUTH),
     verbs: &[
-        Verb::new("bootstrap", handle_bootstrap)
+        Verb::door("bootstrap")
             .taking(&[Positional::required("<token>")])
             .calls(&["Namespace.bootstrap"]),
-        Verb::new("whoami", rpc::bare).calls(&["Namespace.whoami"]),
+        Verb::door("whoami").calls(&["Namespace.whoami"]),
         Verb::new("rebootstrap", handle_rebootstrap)
             .reading(&[APP_DATA_ROOT])
             .about("Break-glass: recover a lost admin@_system."),
@@ -26,15 +25,6 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-fn handle_bootstrap(read: &Reading) {
-    rpc::door(
-        "Namespace.bootstrap",
-        &[Value::from(read.pos("<token>"))],
-        &[],
-        read,
-    );
-}
 
 // Break-glass recovery for a lost admin@_system. Both readings need filesystem
 // access to `app_data/auth/` and nothing else — the same trust the original

@@ -15,9 +15,10 @@
 use flz_transport::errors::FlezhaError;
 use serde_json::Value;
 
-use crate::args::{self, Open, OptSpec, Positional, Reading};
+use crate::args::{self, Kind, Open, OptSpec, Positional, Reading};
 use crate::help::{self, Help};
 use crate::rpc;
+use crate::settings::{extract_x_flags, flags_object};
 
 /// What a verb does with the words the walk read for it.
 pub(crate) enum Body {
@@ -42,6 +43,8 @@ pub(crate) struct Verb {
     pub(crate) conflicts: &'static [(&'static str, &'static str)],
     /// The catalogue operations this verb sends; the first describes it.
     pub(crate) calls: &'static [&'static str],
+    /// The first operation's arguments, in order, as `send` builds them.
+    pub(crate) sends: &'static [Arg],
     /// What a verb that sends no operation does, in one line.
     pub(crate) about: Option<&'static str>,
     /// Examples and notes only the CLI has, printed after the rendered screen.
@@ -54,6 +57,12 @@ pub(crate) struct Verb {
 impl Verb {
     pub(crate) const fn new(name: &'static str, run: fn(&Reading)) -> Self {
         Verb::row(name, Body::Run(run))
+    }
+
+    /// A verb that sends its row's operation and does nothing else: its
+    /// positionals in order, unless `sending` says otherwise.
+    pub(crate) const fn door(name: &'static str) -> Self {
+        Verb::new(name, send)
     }
 
     /// A verb that is itself a table: `flz relay` before `stop`.
@@ -71,6 +80,7 @@ impl Verb {
             open: Open::Closed,
             conflicts: &[],
             calls: &[],
+            sends: &[Arg::Positionals],
             about: None,
             notes: None,
             help_word: false,
@@ -120,6 +130,11 @@ impl Verb {
         self
     }
 
+    pub(crate) const fn sending(mut self, args: &'static [Arg]) -> Self {
+        self.sends = args;
+        self
+    }
+
     pub(crate) const fn about(mut self, text: &'static str) -> Self {
         self.about = Some(text);
         self
@@ -134,6 +149,77 @@ impl Verb {
         self.help_word = true;
         self
     }
+}
+
+/// Where one argument of a row's operation comes from in the caller's words.
+pub(crate) enum Arg {
+    /// The namespace written, `default` when none was.
+    Namespace,
+    /// Every positional the row declares, in order.
+    Positionals,
+    Pos(&'static str),
+    Opt(&'static OptSpec),
+    /// The `--X<key>=<value>` settings, by key.
+    Settings,
+    /// An object of the fields written; one not written is left out, so the
+    /// controller applies its default.
+    Fields(&'static [(&'static str, Arg)]),
+}
+
+impl Arg {
+    /// What the caller wrote for this argument, `None` when nothing was.
+    fn value(&self, read: &Reading) -> Option<Value> {
+        match self {
+            Arg::Namespace => Some(rpc::namespace(read)),
+            Arg::Positionals => unreachable!("expanded by `send`"),
+            Arg::Pos(name) => {
+                let written = read.maybe_pos(name)?;
+                let slot = read
+                    .verb
+                    .positionals
+                    .iter()
+                    .find(|slot| slot.name == *name)?;
+                Some(typed(&slot.kind, written))
+            }
+            Arg::Opt(spec) => read
+                .opt(spec.long)
+                .map(|written| typed(&spec.kind, written)),
+            Arg::Settings => Some(flags_object(&extract_x_flags(read.rest()))),
+            Arg::Fields(fields) => Some(Value::Object(
+                fields
+                    .iter()
+                    .filter_map(|(key, arg)| Some((key.to_string(), arg.value(read)?)))
+                    .collect(),
+            )),
+        }
+    }
+}
+
+/// A written word as its kind reads it. The walk refused a number that does not
+/// parse, so a number here is one.
+fn typed(kind: &Kind, written: &str) -> Value {
+    match (kind, written.parse::<u64>()) {
+        (Kind::Number | Kind::NumberOr { .. }, Ok(number)) => Value::from(number),
+        _ => Value::from(written),
+    }
+}
+
+/// Send the row's operation with the arguments its row declares; one the
+/// caller did not write is `null`.
+pub(crate) fn send(read: &Reading) {
+    let mut args = Vec::new();
+    for arg in read.verb.sends {
+        match arg {
+            Arg::Positionals => args.extend(
+                read.verb
+                    .positionals
+                    .iter()
+                    .map(|slot| Arg::Pos(slot.name).value(read).unwrap_or(Value::Null)),
+            ),
+            arg => args.push(arg.value(read).unwrap_or(Value::Null)),
+        }
+    }
+    rpc::door(read.operation(), &args, &[], read);
 }
 
 pub(crate) struct Command {

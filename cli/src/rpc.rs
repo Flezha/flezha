@@ -368,19 +368,15 @@ pub(crate) fn namespace(read: &Reading) -> Value {
 }
 
 /// The read verbs — a namespace, an output format, a progress line only text
-/// mode prints, and the row's operation taking the namespace. `progress` names
-/// what is being fetched; `None` prints no line, which is what `flz cluster
-/// status` does.
-pub(crate) fn scoped_read(read: &Reading, progress: Option<&str>) {
+/// mode prints naming what is being fetched, and the row's operation taking the
+/// namespace.
+pub(crate) fn scoped_read(read: &Reading, noun: &str) {
     let namespace = namespace(read);
-
-    if let Some(noun) = progress {
-        let shown = namespace.as_str().unwrap_or_default();
-        progress_line(
-            read,
-            &format!("Fetching {} for namespace '{}'...", noun, shown),
-        );
-    }
+    let shown = namespace.as_str().unwrap_or_default();
+    progress_line(
+        read,
+        &format!("Fetching {} for namespace '{}'...", noun, shown),
+    );
 
     door(read.operation(), &[namespace], &[], read);
 }
@@ -404,20 +400,6 @@ pub(crate) fn window_ms(read: &Reading) -> u64 {
 /// different subjects and their print loop owns the window.
 pub(crate) fn window(read: &Reading) -> Opt<'static> {
     ("duration_ms", window_ms(read).to_string())
-}
-
-/// The verbs that name one thing and do one thing to it: a dead-letter entry,
-/// a Cell path, a schedule, a namespace, an observability source. Each sends
-/// its row's operation with its one positional.
-pub(crate) fn one_arg(read: &Reading) {
-    let args = [Value::from(read.positional_at(0))];
-    door(read.operation(), &args, &[], read);
-}
-
-/// The verbs that send their row's operation with nothing but the options every
-/// call carries: the authz list and identity reads, `flz controller status`.
-pub(crate) fn bare(read: &Reading) {
-    door(read.operation(), &[], &[], read);
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its

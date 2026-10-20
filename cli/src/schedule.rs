@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{Command, Missing, Verb};
-use crate::relay::{first_message, json_object, plugins_json_or_refuse, FIRST_CHANNEL, TEXT};
+use crate::relay::{first_message, json_object, FIRST_CHANNEL, TEXT};
 use crate::{help, rpc};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>")
@@ -44,13 +44,11 @@ pub(crate) const TABLE: Command = Command {
             ])
             .strict()
             .calls(&["Schedule.add"]),
-        Verb::new("list", rpc::bare).calls(&["Schedule.list"]),
-        Verb::new("remove", rpc::one_arg)
+        Verb::door("list").calls(&["Schedule.list"]),
+        Verb::door("remove")
             .taking(NAME)
             .calls(&["Schedule.remove"]),
-        Verb::new("run", rpc::one_arg)
-            .taking(NAME)
-            .calls(&["Schedule.run"]),
+        Verb::door("run").taking(NAME).calls(&["Schedule.run"]),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,
@@ -71,6 +69,7 @@ fn handle_add(read: &Reading) {
         ("timezone", read.opt(TZ.long)),
         ("factory_id", read.opt(FACTORY.long)),
         ("namespace", read.opt(NAMESPACE.long)),
+        ("plugins", read.opt(PLUGINS.long)),
     ] {
         if let Some(value) = value {
             fields.insert(key.into(), Value::from(value));
@@ -80,12 +79,6 @@ fn handle_add(read: &Reading) {
         fields.insert("init_values".into(), json_object(read, INIT_VALUES.long));
     }
     fields.extend(first_message(read));
-    if let Some(plugins) = read.opt(PLUGINS.long) {
-        fields.insert(
-            "plugins".into(),
-            Value::from(plugins_json_or_refuse(plugins)),
-        );
-    }
 
     rpc::door("Schedule.add", &[Value::Object(fields)], &[], read);
 }

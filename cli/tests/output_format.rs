@@ -591,10 +591,12 @@ const CASES: &[(&[&str], Want)] = &[
         &["token", "issue", "p", "ns", "viewer", "--ttl", "abc"],
         Refused("invalid --ttl value 'abc'"),
     ),
-    // A range rule is the option's own, and only the parse is shared.
+    // A range rule is the controller's: the parse is the only check here.
     (
         &["token", "issue", "p", "ns", "viewer", "--ttl", "0"],
-        Refused("(authz.invalid_ttl)"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{\"ttl\":0}]", [])"#,
+        ),
     ),
     // The word reading: the registry has always answered an entry with no
     // expiry, and this is the spelling that reaches it.
@@ -664,7 +666,7 @@ const CASES: &[(&[&str], Want)] = &[
     (
         &["relay", "start", "fac", "--id", "op", "--plugins", "[]"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"plugins\":[]}]", [])"#,
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"factory_id\":\"fac\",\"id\":\"op\",\"plugins\":\"[]\"}]", [])"#,
         ),
     ),
     // A start without an id carries no id at all: the controller generates it.
@@ -890,7 +892,7 @@ const CASES: &[(&[&str], Want)] = &[
             "t",
         ],
         Rpc(
-            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"init_values\":{\"a\":1},\"name\":\"digest\",\"namespace\":\"prod\",\"plugins\":\"[{\\\"hooks\\\":[\\\"on_output\\\"],\\\"name\\\":\\\"p\\\",\\\"provider\\\":\\\"x\\\"}]\",\"timezone\":\"Etc/UTC\"}]", [token: IO.read(:eof)])"#,
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"factory_id\":\"f\",\"init_values\":{\"a\":1},\"name\":\"digest\",\"namespace\":\"prod\",\"plugins\":\"[{\\\"name\\\":\\\"p\\\",\\\"provider\\\":\\\"x\\\",\\\"hooks\\\":[\\\"on_output\\\"]}]\",\"timezone\":\"Etc/UTC\"}]", [token: IO.read(:eof)])"#,
         ),
     ),
 ];
