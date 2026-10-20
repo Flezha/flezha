@@ -502,12 +502,14 @@ flowchart LR
 The controller ties an input to the outputs it causes with a token in the input's metadata,
 `flz.reply_to`. It creates one for every outside call, after removing any `flz.reply_to` the
 caller's metadata carried. Every other way into a relay drops that key, so no hook, plugin or
-sender can add, drop or change one. The token is journaled with the input wherever the relay
-journals input, so a sleep, a move to another runner or a crash re-run deliver it again. The
-runner carries it from the input to every value derived from it and stamps it on each output
-the input causes; a tasklet never sees it, and a timer firing carries none. `flz relay
-listen --input` shows it on the arriving input, but it is of no use there: an answer only ever
-goes to the caller waiting for it, and no plugin or listener sees it on an output.
+sender can add, drop or change one. Every way in also drops the keys only the controller sets,
+`flz.replay`, `flz.replay_end`, `flz.edge` and `flz.offset`; `flz.msg_id` passes. The token is
+journaled with the input wherever the relay journals input, so a sleep, a move to another
+runner or a crash re-run deliver it again. The runner carries it from the input to every value
+derived from it and stamps it on each output the input causes; a tasklet never sees it, and a
+timer firing carries none. `flz relay listen --input` shows it on the arriving input, but it is
+of no use there: an answer only ever goes to the caller waiting for it, and no plugin or
+listener sees it on an output.
 
 The answer may come from any tasklet downstream of the input, not only the one that received it:
 in `input("in") |> into(Parse) |> into(Price) |> output("quotes")` the value `Price` emits answers

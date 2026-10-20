@@ -14,6 +14,9 @@ defmodule Flezha.Relay.Calls.Token do
   @call "flz.call"
   @answer_channel "flz.call_answer_channel"
   @source "flz.call_source"
+  # The controller stamps these on its own re-forwards and journal answers;
+  # no sender may set them.
+  @routing [@reply_to, "flz.replay", "flz.replay_end", "flz.edge", "flz.offset"]
 
   @type t :: binary()
 
@@ -38,17 +41,22 @@ defmodule Flezha.Relay.Calls.Token do
   def mint, do: "w:" <> Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
 
   @doc """
-  `metadata` carrying `token` as its one `flz.reply_to`, whatever the caller
-  put there, and without the answer channel its row keeps or the source its
-  call event named.
+  `metadata` as `strip/1` admits it, carrying `token` as its one
+  `flz.reply_to`, and without the answer channel its row keeps or the source
+  its call event named.
   """
   @spec entry_metadata(map(), t()) :: map()
   def entry_metadata(metadata, token),
-    do: metadata |> Map.drop([@answer_channel, @source]) |> Map.put(@reply_to, token)
+    do: metadata |> Map.drop([@answer_channel, @source | @routing]) |> Map.put(@reply_to, token)
 
-  @doc "`metadata` without a `flz.reply_to`: what every other entry point admits."
+  @doc """
+  `metadata` without the keys only the controller sets (`flz.reply_to`,
+  `flz.replay`, `flz.replay_end`, `flz.edge`, `flz.offset`): what every other
+  entry point admits. `flz.msg_id` passes, so a sender's id still absorbs a
+  duplicate.
+  """
   @spec strip(map()) :: map()
-  def strip(metadata), do: Map.delete(metadata, @reply_to)
+  def strip(metadata), do: Map.drop(metadata, @routing)
 
   @doc """
   Put back on `after_hooks` the token `before_hooks` arrived with, so no

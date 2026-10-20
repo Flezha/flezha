@@ -18,6 +18,13 @@
 - `flz` reads `FLEZHA_TOKEN`, `FLEZHA_APP_DATA_ROOT` and `FLEZHA_AUTHZ_DIR` by the shared rule: a
   value with surrounding spaces is trimmed.
 
+### Fixed: no sender can mark an input a replay, an edge re-forward or a journal offset
+
+- Every way into a relay, an outside or a plugin's call included, now drops `flz.replay`,
+  `flz.replay_end`, `flz.edge` and `flz.offset` with `flz.reply_to`. A plugin's inject that
+  carried `flz.replay` was run as a correction's replay, without its parts and spawns.
+  `flz.msg_id` still passes, so a sender's id still absorbs a duplicate.
+
 ### Changed: one sink registration, one listener shell, one memory reading
 
 - **BREAKING:** `FLEZHA_MEMORY_REPORT_INTERVAL_MS` (`:memory_report_interval_ms`) and the
