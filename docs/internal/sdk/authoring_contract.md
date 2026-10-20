@@ -161,6 +161,16 @@ result, so a re-run of the invocation reads it instead of calling again
 ([`effectively_once.md`](../../public/topics/core/effectively_once.md#recorded-effects)). `apply_to`
 makes no outside call at all.
 
+In a steps relay an emit is held for the stage's commit, not routed: a hosted
+SDK hands the core one untransformed edge output naming the channel's first
+consumer, which applies its own edge on delivery. A channel nothing consumes
+releases one only when the core derived it `inter_task` (the `kind` in the
+`check_class` answer, which every hosted SDK keeps per channel when it declares
+the class), naming its producer: that value is the pass's handoff. A
+plugin-bound terminal, an output's or a call end's, releases no edge output;
+its plugin output or requests leave as in flow. Rust's emit goes through the
+core's own routing.
+
 ### 2.2 One form, completed by what it declares
 
 - **Java** — one tier, the author's own class. `Input`, `State` and `Output` are
