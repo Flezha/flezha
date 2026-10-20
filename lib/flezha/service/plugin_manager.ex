@@ -21,7 +21,6 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
-  alias Flezha.Convergence.Probe
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Parallel
@@ -36,6 +35,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Process.Cspec
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
+  alias Flezha.Service.PluginRecords
   alias Flezha.Service.RelayApi
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Init
@@ -217,7 +217,7 @@ defmodule Flezha.Service.PluginManager do
     targets = targets(namespace, relay_id)
 
     with :ok <- refuse_init_hook(binding),
-         {:ok, entry} <- fetch_entry(namespace, binding.id) do
+         {:ok, entry} <- PluginRecords.entry(namespace, binding.id) do
       one_holder(entry, fn ->
         with {:ok, binding} <- checked_binding(binding, targets, nil) do
           targets
@@ -244,7 +244,7 @@ defmodule Flezha.Service.PluginManager do
   # refusal its plugin's entry or its relay's announced channels give it; a
   # relay not declared yet announces `factory_id`'s.
   defp checked_binding(%Plugin{id: name, namespace: namespace} = binding, targets, factory_id) do
-    with {:ok, entry} <- fetch_entry(namespace, name),
+    with {:ok, entry} <- PluginRecords.entry(namespace, name),
          binding = %Plugin{binding | provider: entry.provider},
          {:ok, binding} <- Table.canonicalise(Overwatch.__extensions_catalog__(), binding),
          :ok <- refuse_binding(entry, binding, targets),
@@ -333,7 +333,7 @@ defmodule Flezha.Service.PluginManager do
     own = MapSet.new(targets, &Plugin.group_of(elem(&1, 0)))
 
     namespace
-    |> bound_relays(name)
+    |> PluginRecords.relays(name)
     |> Enum.map(&Plugin.group_of/1)
     |> Enum.reject(&MapSet.member?(own, &1))
     |> List.first()
@@ -502,7 +502,7 @@ defmodule Flezha.Service.PluginManager do
   # under the base name.
   defp rebind_relay(namespace, {relay_id, bindings}) do
     for {id, binding} <- bindings do
-      with {:ok, entry} <- fetch_entry(namespace, Plugin.base_id(id)),
+      with {:ok, entry} <- PluginRecords.entry(namespace, Plugin.base_id(id)),
            do: bind_one(namespace, relay_id, binding, entry)
     end
   end
@@ -532,12 +532,12 @@ defmodule Flezha.Service.PluginManager do
 
   @doc false
   def update_here(namespace, name, opts, hooks) do
-    with {:ok, %Plugin{} = old} <- fetch_entry(namespace, name),
+    with {:ok, %Plugin{} = old} <- PluginRecords.entry(namespace, name),
          {:ok, hooks} <- updated_hooks(old, hooks),
          opts = Map.merge(old.opts, Plugin.option_keys(old.provider, opts)),
          {:ok, new} <- entry_of(%Plugin{old | opts: opts, hooks: hooks}) do
       case change(old, new) do
-        :none -> {:ok, %{applied: :unchanged, relays: bound_relays(namespace, name)}}
+        :none -> {:ok, %{applied: :unchanged, relays: PluginRecords.relays(namespace, name)}}
         mode -> apply_update(namespace, name, new, mode)
       end
     end
@@ -546,7 +546,7 @@ defmodule Flezha.Service.PluginManager do
   # Each bound relay's entry channel is checked before anything is rewritten.
   defp apply_update(namespace, name, new, mode) do
     with :ok <-
-           Enum.find_value(bound_to(all_bindings(namespace), name), :ok, fn {relay_id, _, binding} ->
+           Enum.find_value(PluginRecords.bindings(namespace, name), :ok, fn {relay_id, _, binding} ->
              channel = Plugin.entry_channel(binding, new)
              refused = RelayApi.refuse_unknown_entry(namespace, relay_id, channel)
 
@@ -555,7 +555,7 @@ defmodule Flezha.Service.PluginManager do
          :ok <-
            update_cspec_plugins(namespace, {:plugin, name}, RegistryUpdate.add_plugin(name, new)) do
       Enum.each(Directory.plugin_hosts(namespace, name), &Shared.update(&1, new, mode))
-      relays = bound_relays(namespace, name)
+      relays = PluginRecords.relays(namespace, name)
       _ = reconverge(namespace, name, &Overwatch.plugin_update(&1, &2, &3, mode, new))
       {:ok, %{applied: if(mode == :live, do: :live, else: :restarted), relays: relays}}
     end
@@ -598,7 +598,7 @@ defmodule Flezha.Service.PluginManager do
   def disable_here(namespace, name) do
     timeout = Durations.get(:hub_start_child_ms)
 
-    with {:ok, _entry} <- fetch_entry(namespace, name),
+    with {:ok, _entry} <- PluginRecords.entry(namespace, name),
          :ok <- Teardown.hub_stop_child(namespace, {:plugin, name}, timeout) do
       Enum.each(Directory.plugin_hosts(namespace, name), &Shared.stop/1)
 
@@ -623,61 +623,7 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  ## Reading
-
-  @doc """
-  Every plugin enabled in `namespace`: its name, its provider, whether it is
-  `single`, the relays bound to it, and the controllers it runs on; for a
-  controller plugin, its hooks and the controllers whose copy lags.
-  """
-  @spec plugins(binary()) :: [map()]
-  def plugins(namespace) do
-    with {:error, _} <- on_hub_node(namespace, :plugins_here, [namespace], :none), do: []
-  end
-
-  @doc false
-  def plugins_here(namespace) do
-    bound = all_bindings(namespace)
-    running = Probe.plugins_running(namespace, relays_of(bound))
-
-    for %Plugin{id: name} = entry <- HubManager.plugin_entries(namespace) do
-      %{
-        name: name,
-        provider: provider_name(entry.provider),
-        provider_id: provider_id(entry.provider),
-        single: entry.single,
-        relays: bound |> bound_to(name) |> relays_of() |> Enum.sort(),
-        hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0)))
-      }
-      |> Map.merge(Shared.running_on(%Plugin{entry | namespace: namespace}, running))
-    end
-  end
-
-  # The id the provider is registered under, which `Fleet.provider/2` and an
-  # enable take, and its name: `nil` and its module's for one not loaded here.
-  defp provider_id(provider),
-    do: Enum.find_value(Providers.all(), fn {id, module} -> module == provider && id end)
-
-  defp provider_name(provider) do
-    if Code.ensure_loaded?(provider), do: provider.__provider__().name, else: inspect(provider)
-  end
-
-  defp bound_relays(namespace, name),
-    do: namespace |> all_bindings() |> bound_to(name) |> relays_of()
-
-  # Every binding in the namespace as `{relay_id, id, binding}`: the
-  # registry rows, and the declared set that holds a moving relay's
-  # bindings while its row is between its two homes.
-  defp all_bindings(namespace) do
-    for {relay_id, bindings} <-
-          HubManager.relay_bindings(namespace) ++ HubManager.declared_bindings(namespace),
-        {id, binding} <- bindings,
-        uniq: true,
-        do: {relay_id, id, binding}
-  end
-
-  defp bound_to(bindings, name), do: Enum.filter(bindings, &(Plugin.base_id(elem(&1, 1)) == name))
-  defp relays_of(bindings), do: bindings |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+  ## Resolve
 
   @doc """
   `binding` laid over its plugin's entry, or why it cannot come up here: its
@@ -710,18 +656,12 @@ defmodule Flezha.Service.PluginManager do
   defp known_entry(:none, _namespace, _name), do: :error
   defp known_entry(%Plugin{} = entry, _namespace, _name), do: {:ok, entry}
 
-  defp fetch_entry(namespace, name) do
-    with :error <- HubManager.plugin_entry(namespace, name),
-         do: {:error, {:plugin_not_found, name}}
-  end
-
   # Ask every relay bound to `name` to bring its binding to what the
   # plugin's entry now says: up after an enable, not started after a disable.
   # One bound for the whole walk; answers the relays it could not reach.
   defp reconverge(namespace, name, ask) do
     namespace
-    |> all_bindings()
-    |> bound_to(name)
+    |> PluginRecords.bindings(name)
     |> Parallel.results(
       fn {relay_id, id, binding} ->
         with {:ok, pid} <- RelayManager.get_relay_pid(namespace, relay_id),
@@ -735,6 +675,8 @@ defmodule Flezha.Service.PluginManager do
     |> Enum.map(fn {{relay_id, _id, _binding}, _outcome} -> relay_id end)
   end
 
+  ## The durable write
+
   @doc """
   Persist a value a running provider committed onto the record it starts from:
   `owner` is a relay, or `{:plugin, name}` for a shared plugin's copy.
@@ -744,35 +686,11 @@ defmodule Flezha.Service.PluginManager do
   def persist_opt(namespace, owner, id, key, value),
     do: update_cspec_plugins(namespace, owner, RegistryUpdate.put_plugin_opt(id, key, value))
 
-  ## The durable write
-
   defp update_cspec_plugins(namespace, child_id, update_fn),
     do: Init.write_plugins(namespace, child_id, RegistryUpdate.rewrite_cspec_plugins(update_fn))
 
-  # A namespace's records are written and read on a node that hosts its hub:
-  # this one when it does, otherwise one that does, under a bound. With no hub
-  # anywhere nothing is enabled or bound there, which `none` says. `function`
-  # is this module's, or a `{module, function}` reading the same records.
-  @doc false
-  def on_hub_node(namespace, function, args, none) do
-    {module, function} = if is_atom(function), do: {__MODULE__, function}, else: function
-
-    case Directory.hub_nodes(namespace) do
-      [] ->
-        {:error, none}
-
-      hub_nodes ->
-        if node() in hub_nodes,
-          do: apply(module, function, args),
-          else: remote(hd(hub_nodes), module, function, args)
-    end
-  end
-
-  defp remote(hub_node, module, function, args) do
-    :erpc.call(hub_node, module, function, args, Durations.get(:route_call_timeout_ms))
-  catch
-    _kind, _reason -> {:error, :registry_unavailable}
-  end
+  defp on_hub_node(namespace, function, args, none),
+    do: PluginRecords.on_hub_node(namespace, {__MODULE__, function}, args, none)
 
   # ---------- Published surface: each function is judged in the plugin's own
   # namespace, which `fields` carries and the door stamps from a connection.
@@ -783,7 +701,7 @@ defmodule Flezha.Service.PluginManager do
   @doc "Every plugin enabled in the caller's namespace."
   @spec list(CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
   verb list(caller_context), verb: :plugin_list do
-    {:ok, plugins(Map.get(caller_context, :namespace) || "default")}
+    {:ok, PluginRecords.plugins(Map.get(caller_context, :namespace) || "default")}
   end
 
   @doc "Every plugin enabled in a namespace. Answered as `list/1` answers the caller's own."
@@ -791,7 +709,7 @@ defmodule Flezha.Service.PluginManager do
   verb enabled(namespace, caller_context),
     verb: :plugin_enabled,
     args: [namespace: [type: :string, doc: "The namespace."]] do
-    {:ok, plugins(Flezha.AuthZ.Namespace.or_default(namespace))}
+    {:ok, PluginRecords.plugins(Flezha.AuthZ.Namespace.or_default(namespace))}
   end
 
   @doc """

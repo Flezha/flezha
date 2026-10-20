@@ -27,6 +27,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PluginRecords
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
@@ -150,7 +151,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert copies() == []
 
     assert %{controllers: [], provider_id: "relay_websocket"} =
-             Enum.find(PluginManager.plugins(@namespace), &(&1.name == "trades"))
+             Enum.find(PluginRecords.plugins(@namespace), &(&1.name == "trades"))
   end
 
   test "a killed Overwatch back inside the idle stop keeps the one connection",

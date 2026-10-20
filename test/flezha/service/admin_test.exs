@@ -229,7 +229,7 @@ defmodule Flezha.Service.AdminTest do
                )
 
       assert details["fields"] == ["trigger"]
-      assert Flezha.Service.PluginManager.plugins(@ns) == []
+      assert Flezha.Service.PluginRecords.plugins(@ns) == []
     end
 
     test "the frame has no namespace field and no principal field" do

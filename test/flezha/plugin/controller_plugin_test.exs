@@ -89,6 +89,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PluginRecords
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.HookRecorder
@@ -156,7 +157,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
     test "an enable stores the hooks, binds no relay and starts one copy until disabled" do
       {:ok, _} = notify(["on_relay_failed"])
 
-      row = Enum.find(PluginManager.plugins(@namespace), &(&1.name == "notify"))
+      row = Enum.find(PluginRecords.plugins(@namespace), &(&1.name == "notify"))
       assert row.hooks == ["on_relay_failed"]
       assert row.relays == []
       assert [copy] = Directory.plugin_hosts(@namespace, "notify")
@@ -293,7 +294,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
                  {"on_relay_started", []}
                ])
 
-      row = Enum.find(PluginManager.plugins(@namespace), &(&1.name == "notify"))
+      row = Enum.find(PluginRecords.plugins(@namespace), &(&1.name == "notify"))
       assert row.hooks == ["on_relay_started"]
 
       op = start_relay("updated_hooks_op")

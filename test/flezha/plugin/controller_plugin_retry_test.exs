@@ -49,6 +49,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginRetryTest do
   alias Flezha.Plugin.Shared
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PluginRecords
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.RefusingProvider
   alias FlezhaTest.RefusingWorker
@@ -91,7 +92,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginRetryTest do
 
           assert Directory.plugin_hosts(@namespace, "retry") == [copy]
           assert Shared.health(copy) == :healthy
-          assert [%{controllers: [here]}] = PluginManager.plugins(@namespace)
+          assert [%{controllers: [here]}] = PluginRecords.plugins(@namespace)
           assert here == node()
         end)
 
@@ -138,7 +139,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginRetryTest do
              {:worker_start_failed, _key, {:http_listen_failed, %{reason: :eaddrinuse}}}}} =
              Shared.health(copy)
 
-    assert [%{name: "retry", controllers: []}] = PluginManager.plugins(@namespace)
+    assert [%{name: "retry", controllers: []}] = PluginRecords.plugins(@namespace)
     copy
   end
 

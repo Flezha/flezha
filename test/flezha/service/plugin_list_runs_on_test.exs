@@ -18,6 +18,7 @@ defmodule FlezhaTest.Service.PluginListRunsOnTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Cli
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PluginRecords
   alias Flezha.Service.RelayManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
@@ -162,7 +163,7 @@ defmodule FlezhaTest.Service.PluginListRunsOnTest do
 
   # The plugin's row of `flz plugin list` and its rendered line.
   defp listed(name \\ "writer") do
-    row = Enum.find(PluginManager.plugins(@namespace), &(&1.name == name))
+    row = Enum.find(PluginRecords.plugins(@namespace), &(&1.name == name))
     {_, out, _err} = CliCapture.run(fn -> Cli.Plugin.enabled([row], [], []) end)
     {row, out}
   end

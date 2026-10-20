@@ -18,6 +18,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Runner.StreamChannel
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
+  alias Flezha.Service.PluginRecords
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
 
@@ -230,7 +231,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       30_000
     )
 
-    for %{name: name} <- PluginManager.plugins(namespace),
+    for %{name: name} <- PluginRecords.plugins(namespace),
         do: {:ok, _} = PluginManager.disable_plugin(namespace, name)
 
     RelayManager.stop_all_relays(namespace)
