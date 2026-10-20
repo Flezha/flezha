@@ -67,6 +67,17 @@ defmodule Flezha.Observability.AuditLog.Writer do
     SafeCall.bounded(__MODULE__, :close, timeout, on_error: :ok)
   end
 
+  @doc "The node stop's audit row: the log closed after the flush, before the hubs stop."
+  def shutdown_steps,
+    do: [%{scope: :node, order: 30, name: :audit_log, run: &__MODULE__.close_step/2}]
+
+  @doc false
+  def close_step(_target, budget) do
+    if Process.whereis(__MODULE__),
+      do: close(min(budget, Durations.get(:shutdown_finalise_call_ms))),
+      else: :ok
+  end
+
   @doc "Rotate the active file. Returns `{:ok, %{rotated_to, size, count, sha256}}`."
   @spec rotate_now(integer() | nil, timeout()) :: {:ok, map()} | {:error, term()}
   def rotate_now(ts_us \\ nil, timeout \\ 10_000) do

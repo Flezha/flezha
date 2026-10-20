@@ -84,4 +84,4 @@ sdk/rust/src/relay/dispatcher/emit_sink.rs::emit 61
 sdk/rust/src/relay/dispatcher/invocation.rs::call_contained 61
 sdk/rust/src/tasklet/ctx.rs 813
 xref cycles 4
-xref largest 148
+xref largest 147

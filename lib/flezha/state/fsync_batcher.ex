@@ -66,12 +66,23 @@ defmodule Flezha.State.FsyncBatcher do
 
   @doc """
   Synchronously flush every dirty `WalWriter`. Equivalent to
-  `flush_now/0`; named separately so the graceful-shutdown
-  coordinator's intent is unambiguous at the call site.
+  `flush_now/0`; named separately so the node stop's flush row reads as
+  what it is.
   """
-  @spec flush_all(GenServer.server()) :: :ok
-  def flush_all(server \\ __MODULE__) do
-    GenServer.call(server, :flush_all)
+  @spec flush_all(GenServer.server(), timeout()) :: :ok
+  def flush_all(server \\ __MODULE__, timeout \\ 5_000) do
+    GenServer.call(server, :flush_all, timeout)
+  end
+
+  @doc "The node stop's first finalise row: the writes synced before the hubs stop."
+  def shutdown_steps,
+    do: [%{scope: :node, order: 20, name: :fsync, run: &__MODULE__.flush_step/2}]
+
+  @doc false
+  def flush_step(_target, budget) do
+    if Process.whereis(__MODULE__),
+      do: flush_all(__MODULE__, min(budget, Durations.get(:shutdown_finalise_call_ms))),
+      else: :ok
   end
 
   @spec dirty_set(GenServer.server()) :: MapSet.t()

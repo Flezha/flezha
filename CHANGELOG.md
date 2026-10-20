@@ -19,6 +19,15 @@
   reach only `d` before, and the data-stream connect was not jittered. The controller's
   control-channel liveness check draws from the same band.
 
+### Fixed: a controller's shutdown stops its hubs and transports once
+
+- The graceful shutdown's finalise stopped the hub supervisor and the transports in a way their
+  supervisor answered by restarting them, so both came back up before the node stopped. They
+  stay stopped now, also when graceful shutdown is off. Finalise flushes the disk writes and
+  closes the audit log before it stops the hubs, runs under its own budget (the 15 s of headroom
+  above the shutdown timeout) and logs a failed step as `[shutdown] step node/<name> failed: ...`
+  instead of `[shutdown] <label> <kind>: ...`.
+
 ### Fixed: a controller that finished its shutdown still refuses starts
 
 - A relay start or a runner connect that reached a controller after its graceful shutdown had

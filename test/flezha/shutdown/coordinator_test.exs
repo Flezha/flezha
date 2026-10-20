@@ -8,13 +8,22 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0, collect: 1]
 
+  alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
+  alias Flezha.Observability.AuditLog.Writer
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
   alias FlezhaTest.Helper.NodeTestHelper
+
+  @finalise_rows [
+    {FsyncBatcher, :flush_step, :fsync},
+    {Writer, :close_step, :audit_log},
+    {HubManager.Lifecycle, :hubs_step, :hubs},
+    {TransportServer, :transports_step, :transports}
+  ]
 
   setup :set_mimic_global_until_exit
   setup :verify_on_exit!
@@ -49,9 +58,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
     test "a finished shutdown keeps admission closed until the node stops" do
       stub(HubManager, :get_running_namespaces, fn -> [] end)
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(FsyncBatcher, :flush_all, fn -> :ok end)
-      stub(TransportServer, :stop_all, fn -> :ok end)
+      stub_finalise_rows()
 
       assert :ok = Coordinator.shutdown(:cli, force: true, timeout_ms: 5_000)
 
@@ -64,9 +71,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   describe "shutdown/2 with force: true" do
     test "skips quiesce + drain, runs only finalise, returns :ok" do
       stub(HubManager, :get_running_namespaces, fn -> [] end)
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(FsyncBatcher, :flush_all, fn -> :ok end)
-      stub(TransportServer, :stop_all, fn -> :ok end)
+      stub_finalise_rows()
 
       events = attach_telemetry()
 
@@ -89,9 +94,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   describe "shutdown/2 with no peers and no running namespaces" do
     test "runs through all phases cleanly" do
       stub(HubManager, :get_running_namespaces, fn -> [] end)
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(FsyncBatcher, :flush_all, fn -> :ok end)
-      stub(TransportServer, :stop_all, fn -> :ok end)
+      stub_finalise_rows()
 
       events = attach_telemetry()
 
@@ -125,9 +128,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
         []
       end)
 
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(FsyncBatcher, :flush_all, fn -> :ok end)
-      stub(TransportServer, :stop_all, fn -> :ok end)
+      stub_finalise_rows()
 
       caller_a =
         Task.async(fn ->
@@ -168,35 +169,26 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
       stub(ProcessHub, :process_list, fn _hub, :local -> [] end)
 
-      stub(FsyncBatcher, :flush_all, fn -> :ok end)
-      stub(TransportServer, :stop_all, fn -> :ok end)
+      stub_finalise_rows()
     end
 
-    test "the hub drains before its supervisor stops" do
+    test "the hub drains before its supervisor stops, and the data rows run before that" do
       test_pid = self()
       stub_local_relays()
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, opts ->
         assert Keyword.fetch!(opts, :timeout) > 0
-        send(test_pid, :drain_called)
+        send(test_pid, {:row, :drain})
         {:ok, %{migrated: 1, forced: 0}}
-      end)
-
-      stub(HubManager, :stop_hub_manager, fn ->
-        send(test_pid, :hub_stopped)
-        :ok
       end)
 
       assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
 
-      assert_receive msg_a, 2_000
-      assert_receive msg_b, 2_000
-      assert [msg_a, msg_b] == [:drain_called, :hub_stopped]
+      assert received_rows() == [:drain, :fsync, :audit_log, :hubs, :transports]
     end
 
     test "solo node (:no_target_nodes) skips migration and completes clean" do
       stub_local_relays()
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :no_target_nodes} end)
 
       events = attach_telemetry()
@@ -217,7 +209,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "a drain precondition failure degrades instead of wedging" do
       on_exit(NodeTestHelper.override_log_level(:warning))
       stub_local_relays()
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :locked} end)
 
       log =
@@ -231,7 +222,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "forced migrations are counted and logged, outcome stays clean" do
       on_exit(NodeTestHelper.override_log_level(:warning))
       stub_local_relays()
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
         {:ok, %{migrated: 1, forced: 2}}
@@ -259,18 +249,12 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
 
     test "a drain exceeding the budget times out to {:partial, still_local}" do
-      test_pid = self()
       stub_local_relays()
 
       # A drain that never returns inside the budget.
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
         NodeTestHelper.park()
         {:ok, %{migrated: 1, forced: 0}}
-      end)
-
-      stub(HubManager, :stop_hub_manager, fn ->
-        send(test_pid, :hub_stopped)
-        :ok
       end)
 
       log =
@@ -282,15 +266,74 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       assert log =~ "timeout phase=draining"
       assert log =~ "still_local=1"
 
-      # The timeout path still stops the hub before finalise.
-      assert_receive :hub_stopped, 1_000
+      # The timeout path still stops the hub, in finalise.
+      assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
+    end
+
+    test "a timed-out drain leaves finalise its own budget, and a hub stop that never returns ends it" do
+      test_pid = self()
+      stub_local_relays()
+      expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
+
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+        send(test_pid, {:walk, hd(Process.get(:"$callers"))})
+        NodeTestHelper.park()
+      end)
+
+      stub_finalise_rows(%{
+        hubs: fn _target, budget ->
+          send(test_pid, {:hubs, budget})
+          NodeTestHelper.park()
+        end
+      })
+
+      {task, _walk} = start_parked_shutdown()
+      %{timers: %{phase_timeout: {drain_timer, _}}} = :sys.get_state(Coordinator)
+
+      budget =
+        Durations.get(:orchestrator_grace_ms) - Durations.get(:graceful_shutdown_timeout_ms)
+
+      armed = (budget - 1_000)..(budget + Durations.get(:drain_budget_slack_ms))
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(Coordinator, :phase_timeout)
+          assert_receive {:hubs, hubs_budget}, 5_000
+          assert hubs_budget > budget - 1_000
+
+          assert %{phase: :finalising, timers: %{phase_timeout: {timer, _}}} =
+                   :sys.get_state(Coordinator)
+
+          assert timer != drain_timer
+
+          assert Process.read_timer(timer) in armed
+
+          send(Coordinator, :phase_timeout)
+          assert {:partial, ["op-1"]} = Task.await(task)
+        end)
+
+      assert log =~ "timeout phase=finalising"
+      assert received_rows() == [:fsync, :audit_log]
+    end
+
+    test "a failed row is logged and the rows after it still run" do
+      on_exit(NodeTestHelper.override_log_level(:warning))
+      stub(HubManager, :get_running_namespaces, fn -> [] end)
+      stub_finalise_rows(%{fsync: fn _target, _budget -> exit(:disk_gone) end})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok = Coordinator.shutdown(:cli, force: true, timeout_ms: 5_000)
+        end)
+
+      assert log =~ "[shutdown] step node/fsync failed: {:exit, :disk_gone}"
+      assert received_rows() == [:audit_log, :hubs, :transports]
     end
 
     test "the drain walk ends with its shutdown, and an old walk's report is never read" do
       test_pid = self()
       stub_local_relays()
       expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
-      stub(HubManager, :stop_hub_manager, fn -> send(test_pid, :hub_stopped) && :ok end)
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
         send(test_pid, {:walk, hd(Process.get(:"$callers"))})
@@ -310,19 +353,71 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       assert log =~ "timeout phase=draining"
       assert_receive {:DOWN, _, :process, ^walk, :killed}, 5_000
-      assert_receive :hub_stopped
+      assert :hubs in received_rows()
 
       reset_coordinator!()
       {second, walk} = start_parked_shutdown()
-      {_pid, old_ref} = draining.drain_runner
-      send(Coordinator, {:drain_done, old_ref, %{migrated: 0, forced: 0}})
+      {_pid, old_ref} = draining.walk
+      send(Coordinator, {:walk_done, old_ref, %{results: %{drain: %{migrated: 0, forced: 0}}}})
 
       assert %{shutdown_phase: :drain} = Coordinator.status()
-      refute_received :hub_stopped
+      refute_received {:row, :hubs}
 
       reset_coordinator!()
       assert_receive {:DOWN, _, :process, ^walk, :killed}, 5_000
       Task.shutdown(second, :brutal_kill)
+    end
+  end
+
+  describe "the hub and transport rows" do
+    # A stand-in for `Flezha.Supervisor`, so the suite keeps its own hubs and transports.
+    test "a stopped hub supervisor and stopped transports stay stopped" do
+      ids = [HubManager | Enum.map(Flezha.Config.get(:transports), &{TransportServer, &1})]
+      children = Enum.map(ids, &Supervisor.child_spec({Agent, fn -> :ok end}, id: &1))
+
+      sup =
+        start_supervised!(%{
+          id: :stand_in,
+          start: {Supervisor, :start_link, [children, [strategy: :one_for_one]]},
+          type: :supervisor
+        })
+
+      refs = for {_id, pid, _, _} <- Supervisor.which_children(sup), do: Process.monitor(pid)
+      rows = Enum.filter(Shutdown.steps(:node), &(&1.name in [:hubs, :transports]))
+
+      assert {:ok, %{ran: [:hubs, :transports]}} =
+               Shutdown.run(:node, %{supervisor: sup}, 5_000, rows, on_error: :continue)
+
+      for ref <- refs, do: assert_receive({:DOWN, ^ref, :process, _, _})
+      # Every exit has reached the supervisor before it is read.
+      _ = :sys.get_state(sup)
+      assert Enum.all?(Supervisor.which_children(sup), &match?({_id, :undefined, _, _}, &1))
+    end
+  end
+
+  describe "Application.prep_stop/1" do
+    test "with the kill switch off it walks the finalise rows itself" do
+      Application.put_env(:flezha, :graceful_shutdown_enabled, false)
+      stub_finalise_rows()
+
+      assert Flezha.Application.prep_stop(:state) == :state
+      assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
+      refute Shutdown.quiesced?(:node, nil)
+    end
+
+    test "with the coordinator unreachable it walks the finalise rows itself" do
+      on_exit(NodeTestHelper.override_log_level(:warning))
+      Application.put_env(:flezha, :graceful_shutdown_enabled, true)
+      stub(Coordinator, :shutdown, fn :prep_stop -> exit(:noproc) end)
+      stub_finalise_rows()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert Flezha.Application.prep_stop(:state) == :state
+        end)
+
+      assert log =~ "[shutdown] coordinator unavailable in prep_stop: :noproc"
+      assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
     end
   end
 
@@ -334,7 +429,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "the drain declares itself at quiesce, runs as the node walk's step, and clears with finalise" do
       become_loop()
       stub_local_relays()
-      stub(HubManager, :stop_hub_manager, fn -> :ok end)
 
       test_pid = self()
 
@@ -343,7 +437,9 @@ defmodule Flezha.Shutdown.CoordinatorTest do
         {:ok, %{migrated: 1, forced: 0}}
       end)
 
-      assert [%{name: :drain}] = Shutdown.steps(:node)
+      assert Enum.map(Shutdown.steps(:node), & &1.name) ==
+               [:drain, :fsync, :audit_log, :hubs, :transports]
+
       assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
 
       node = node()
@@ -355,6 +451,26 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       {facts, :new} = Facts.put(%{}, :node_draining, node, %{deadline: 0}, 0)
       {facts, :cleared} = Facts.put(facts, :node_drained, node, %{}, 1)
       assert facts == %{}
+    end
+  end
+
+  # The finalise rows stand in for the node's own, so no test stops the suite's
+  # hubs or transports; each reports its run as `{:row, name}`.
+  defp stub_finalise_rows(overrides \\ %{}) do
+    test_pid = self()
+
+    for {module, function, name} <- @finalise_rows do
+      stub(
+        module,
+        function,
+        Map.get(overrides, name, fn _target, _budget -> send(test_pid, {:row, name}) && :ok end)
+      )
+    end
+  end
+
+  defp received_rows() do
+    collect do
+      {:row, name} -> name
     end
   end
 

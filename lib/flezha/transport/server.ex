@@ -115,27 +115,13 @@ defmodule Flezha.Transport.Server do
     end
   end
 
-  @doc """
-  Stop every configured transport server. Used by
-  `Flezha.Shutdown.Coordinator` during the finalise phase so transport
-  sockets/QUIC endpoints are closed before the application supervision
-  tree's normal shutdown takes over.
-  """
-  @spec stop_all() :: :ok
-  def stop_all() do
-    transports = Config.get(:transports)
+  @doc "The node stop's last finalise row: every transport terminated, so none is restarted."
+  def shutdown_steps,
+    do: [%{scope: :node, order: 50, name: :transports, run: &__MODULE__.transports_step/2}]
 
-    Enum.each(transports, fn t ->
-      pid = Process.whereis(name(t))
-
-      if is_pid(pid) and Process.alive?(pid) do
-        try do
-          GenServer.stop(pid, :normal, 5_000)
-        catch
-          :exit, _ -> :ok
-        end
-      end
-    end)
+  @doc false
+  def transports_step(%{supervisor: sup}, _budget) do
+    Enum.each(Config.get(:transports), &(:ok = Supervisor.terminate_child(sup, {__MODULE__, &1})))
   end
 
   @impl true

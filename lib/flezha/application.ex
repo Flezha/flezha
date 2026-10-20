@@ -9,7 +9,6 @@ defmodule Flezha.Application do
   alias Flezha.Diagnostics.MemoryReporter
   alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
@@ -89,32 +88,19 @@ defmodule Flezha.Application do
         drain_on_prep_stop()
 
       true ->
-        safe_legacy_stop()
+        Coordinator.finalise()
     end
 
     state
   end
 
   defp drain_on_prep_stop() do
-    # The Coordinator owns the drain — it dispatches ProcessHub
-    # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
-    # drain phase and waits for peers to claim our Relays before
-    # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
     _ = Coordinator.shutdown(:prep_stop)
   catch
     :exit, reason ->
       require Logger
       Logger.warning("[shutdown] coordinator unavailable in prep_stop: #{inspect(reason)}")
-      # Coordinator isn't running (e.g. early-boot crash) — fall
-      # back to the legacy direct call so the BEAM still tears
-      # the hub down before halting.
-      safe_legacy_stop()
-  end
-
-  defp safe_legacy_stop() do
-    HubManager.stop_hub_manager()
-  catch
-    :exit, _ -> :ok
+      Coordinator.finalise()
   end
 
   # The controller tree, in start order. Every entry's position is load-bearing;

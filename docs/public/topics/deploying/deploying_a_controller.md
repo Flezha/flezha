@@ -361,13 +361,20 @@ three phases:
    the deadline is moved by force. With no peer to move to, nothing moves, and
    the next boot restores the relays from disk
    ([`running_and_testing.md`](../core/running_and_testing.md#after-a-controller-restart)).
-3. **Finalise.** The audit log is closed, pending disk writes are flushed and
-   the transports stop; each step is bounded to 5 s, and a failure is logged,
-   not fatal.
+3. **Finalise.** Pending disk writes are flushed, the audit log is closed,
+   then the hubs stop with the relays they still host, and the transports
+   stop; both stay stopped until the node ends. The flush and the close are
+   bounded to 5 s each, and each hub stops its relays inside its own
+   shutdown bound. A step that fails is logged as
+   `[shutdown] step node/<name> failed: ...` and the next one still runs.
+   Finalise has its own budget, the 15 s of headroom below, so a drain that
+   used the whole timeout still leaves it whole; at its end the node's own
+   shutdown finishes whatever is left.
 
-The whole sequence is bounded by `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. On
-expiry the controller logs an error, stops the remaining relays, finalises
-and reports which relays were still local. It does not hang on a drain.
+Quiesce and drain are bounded by `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. On
+expiry the controller logs an error, finalises, which stops the remaining
+relays, and reports which relays were still local. It does not hang on a
+drain.
 
 **What starts it:**
 

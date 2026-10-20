@@ -3,9 +3,9 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   What a hub does around its own start and stop: the registry backend, recovery
   and migration settings it starts with, the post-start hook wiring, the
   aliveness wait, the drain, and the registry directory a stopped hub leaves
-  behind. The drain and the stop are the hub's steps of the shutdown
-  plan — the `:node` drain and the `:namespace` hub stop — and nothing else
-  reaches `drain_hub/2`.
+  behind. The drain and the stops are the hub's steps of the shutdown
+  plan — the `:node` drain and hub stop, and the `:namespace` hub stop — and
+  nothing else reaches `drain_hub/2`.
   """
 
   alias Flezha.Boot.RecoveryHooks
@@ -176,17 +176,22 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     end
   end
 
-  # The hub's two steps: the node drain — every running namespace's hub
-  # drained concurrently under the budget the coordinator derived, one
-  # `:drain_progress` per hub — and the namespace stop, which stops the hub
-  # and wipes its registry directory.
+  # The hub's steps: the node drain — every running namespace's hub drained
+  # concurrently under the budget the coordinator derived, one
+  # `:drain_progress` per hub — the node's hub stop after the data rows, and
+  # the namespace stop, which stops the hub and wipes its registry directory.
   @impl Flezha.Shutdown.Step
   def shutdown_steps do
     [
       %{scope: :node, order: 10, name: :drain, run: &drain_step/2},
+      %{scope: :node, order: 40, name: :hubs, run: &__MODULE__.hubs_step/2},
       %{scope: :namespace, order: 40, name: :hub, run: &hub_step/2}
     ]
   end
+
+  # Terminated, not stopped: its supervisor would restart a stopped child.
+  @doc false
+  def hubs_step(%{supervisor: sup}, _budget), do: Supervisor.terminate_child(sup, HubManager)
 
   defp hub_step(%{namespace: namespace}, _budget), do: HubManager.stop_hub(namespace)
 

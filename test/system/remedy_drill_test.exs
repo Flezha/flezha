@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   import FlezhaTest.Helper.MimicGlobal
 
   import FlezhaTest.Helper.NodeTestHelper,
-    only: [crash_report: 2, wait_until: 2, with_only_logged: 2]
+    only: [wait_until: 2, with_only_logged: 2]
 
   import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
@@ -413,18 +413,18 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   end
 
   # The exception: the drain declares itself; while it stands the loop plans
-  # nothing onto the node, and the fact clears at finalise. The rebind AFTER a
-  # drain is not asserted here — the drain stops the hub manager, so there is
-  # no hub left in this VM to rebind into; `Flezha.ShutdownTest` proves the
-  # Planner's suppression against a populated Diff.
+  # nothing onto the node, and the fact clears at finalise. The hub and
+  # transport rows are stubbed, so the suite keeps its hubs; the rebind AFTER a
+  # drain is not asserted here, and `Flezha.ShutdownTest` proves the Planner's
+  # suppression against a populated Diff.
   defp row(:drain, namespace) do
     {port_a, runner_a} = boot_runner(namespace, unique_id_path("drill"), [])
     id = start_relay(namespace, "drained")
     assert bound_runner(namespace, id) == runner_a
     start_loop()
 
-    stub(Flezha.State.FsyncBatcher, :flush_all, fn -> :ok end)
-    stub(Flezha.Transport.Server, :stop_all, fn -> :ok end)
+    stub(HubManager.Lifecycle, :hubs_step, fn _target, _budget -> :ok end)
+    stub(Flezha.Transport.Server, :transports_step, fn _target, _budget -> :ok end)
     on_exit(fn -> Coordinator.__reset_for_tests__() end)
 
     # The runner dies mid-drain: a disconnect the loop would rebind on any
@@ -439,20 +439,10 @@ defmodule FlezhaTest.System.RemedyDrillTest do
       {:error, :no_target_nodes}
     end)
 
-    # Finalise stops the hub manager, which its supervisor reports and restarts;
-    # a tick caught calling it meanwhile aborts.
-    hub_manager = Process.whereis(HubManager)
-
-    aborted =
-      ~r/\[convergence\] tick aborted \(exit\): \{:(normal|noproc), \{GenServer, :call, \[#{inspect(HubManager)},/
-
-    with_only_logged([{crash_report(HubManager, "normal"), :always}, {aborted, :maybe}], fn ->
-      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
-      assert_receive :ticked_under_the_drain, 30_000
-      assert wait_until(fn -> Process.whereis(HubManager) not in [nil, hub_manager] end, 10_000)
-      # A tick runs in the Loop's own process, so this waits out one in flight.
-      _ = :sys.get_state(Loop)
-    end)
+    assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
+    assert_receive :ticked_under_the_drain, 30_000
+    # A tick runs in the Loop's own process, so this waits out one in flight.
+    _ = :sys.get_state(Loop)
 
     refute heal?(:rebind_relay, id)
 

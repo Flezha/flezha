@@ -76,10 +76,6 @@ defmodule Flezha.Service.HubManager do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
   end
 
-  def stop_hub_manager() do
-    Supervisor.stop(__MODULE__)
-  end
-
   def start_hub(namespace) do
     hub_id = Identificator.hub(namespace)
 
