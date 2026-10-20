@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use flz_transport::transport::FlezhaStream;
 
-use super::commit::{ack_timeout, BARRIER_SENDS};
-use super::effects::Effects;
+use super::commit::ack_timeout;
+use super::effects::{Effects, Frame};
 use super::instance::{
     AfterUndo, Barrier, BarrierFor, Carry, CellPos, Deadline, Firing, Message, MidResume,
     PassOrigin, PassSheet, Phase, Release, StepsRun, Value,
@@ -575,21 +575,37 @@ impl Decide<'_, '_, '_> {
         self.clear_waits();
     }
 
+    /// A refused compensation goes out again under its reference id while
+    /// [`Barrier::resend`] allows. The refusal consumed the send's waiter, so
+    /// the stored command is sent as a new frame, which registers another.
+    /// Whether it was sent.
+    pub(super) fn resend_refused(&mut self, id: u64) -> bool {
+        let Some(command) = self
+            .s
+            .barriers
+            .get_mut(&id)
+            .filter(|barrier| barrier.target == BarrierFor::Undo)
+            .and_then(Barrier::resend)
+        else {
+            return false;
+        };
+        self.fx.frames.push((id, Frame::Built(Box::new(command))));
+        self.disarm(Deadline::Ack(id));
+        true
+    }
+
     /// An ack overdue: the barrier goes out again under its reference id (the
-    /// controller journals a barrier once by identity), up to
-    /// [`BARRIER_SENDS`] sends.
+    /// controller journals a barrier once by identity) while
+    /// [`Barrier::resend`] allows.
     fn ack_overdue(&mut self, id: u64) {
         let Some(barrier) = self.s.barriers.get_mut(&id) else {
             return;
         };
-        if barrier.sends < BARRIER_SENDS {
-            if let Some(command) = barrier.command.clone() {
-                barrier.sends += 1;
-                self.fx
-                    .control
-                    .push((barrier.reference_id.clone(), command));
-                return self.arm(Deadline::Ack(id), ack_timeout());
-            }
+        if let Some(command) = barrier.resend() {
+            self.fx
+                .control
+                .push((barrier.reference_id.clone(), command));
+            return self.arm(Deadline::Ack(id), ack_timeout());
         }
         let Some(barrier) = self.s.barriers.remove(&id) else {
             return;

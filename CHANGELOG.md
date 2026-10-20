@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: a saga's compensation the controller does not acknowledge fails the run
+
+- A steps relay's `compensated` entry the controller refuses is sent again under the same
+  reference id, up to three sends as for an ack that timed out, and the Cell's compensation-done
+  marker is written only after the entry is acked. Before, a refused or never-acked entry was
+  logged and the marker written anyway, so the hook's undo output was never released and a
+  resume skipped the hook.
+- When every send fails, the Cell is left unmarked (a resume runs its hook again), the rest of
+  the undo still runs, and the run ends `error` naming the tasklet and the controller's answer.
+
 ### Changed: a steps class's DAG is built by one walk, and only the core's check refuses it
 
 - **BREAKING:** in the Rust SDK `build_spec` returns `TopologyBuildError`; `BuildStepsError`,

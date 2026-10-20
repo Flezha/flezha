@@ -285,7 +285,11 @@ forward resume; intent markers alone do not, because they also accumulate during
 progress. Tasklets the journal skipped still roll back on a later abnormal exit, folded into
 the plan from their intent markers. The undo record (`TaskCommit` with `compensating = true`,
 journaled as `compensated`) is written **before** the done marker, so a crash between the two
-re-runs the idempotent hook rather than losing its undo output. Author contract: a
+re-runs the idempotent hook rather than losing its undo output. The marker follows only an ack: a
+refused undo record is re-sent under its reference id as a fresh send (the refusal consumed the
+first send's waiter), within the three sends a timeout re-send counts; once they run out the
+Cell's record and marker steps are both dropped, the rest of the plan runs, and the undo ends
+`error` naming the tasklet, whether it was planned to end or to resume. Author contract: a
 journal-rebuilt tasklet's `completed_output` is empty on resume (its inter-tasklet output
 was never durable), so a durable compensable tasklet keeps its undo handle in Cell state,
 and hooks are idempotent.

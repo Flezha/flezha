@@ -288,6 +288,14 @@ impl Run<'_> {
                 });
             }
         };
+        // Kept before the send: a refusal can answer before this thread
+        // takes the sheet again, and its re-send needs the command.
+        self.decide(|d| {
+            if let Some(barrier) = d.s.barriers.get_mut(&id) {
+                barrier.command = Some(command.clone());
+                d.arm(Deadline::Ack(id), ack_timeout());
+            }
+        });
         let weak = self.weak();
         crate::shutdown::register_pending_ack(
             reference_id.clone(),
@@ -299,13 +307,7 @@ impl Run<'_> {
                 )
             }),
         );
-        crate::runner::emit_control_request(reference_id, command.clone());
-        self.decide(|d| {
-            if let Some(barrier) = d.s.barriers.get_mut(&id) {
-                barrier.command = Some(command);
-                d.arm(Deadline::Ack(id), ack_timeout());
-            }
-        });
+        crate::runner::emit_control_request(reference_id, command);
     }
 
     /// Items into their Cells without waiting: a producing Cell's holdback

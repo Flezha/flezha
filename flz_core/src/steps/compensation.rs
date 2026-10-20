@@ -230,6 +230,7 @@ impl Decide<'_, '_, '_> {
             steps,
             cells: Vec::new(),
             then,
+            error: None,
         });
         self.undo_step();
     }
@@ -273,11 +274,7 @@ impl Decide<'_, '_, '_> {
                 }
             };
             let Some((node, iter, cells_ran)) = next else {
-                let finished = self.s.undo.take().expect("undo checked above");
-                return match finished.then {
-                    AfterUndo::Terminal(status, error) => self.terminal(&status, error, Vec::new()),
-                    AfterUndo::Resume => self.resume(),
-                };
+                return self.undo_finished();
             };
             if !r.journaling() {
                 undo.steps.pop_front();
@@ -289,6 +286,46 @@ impl Decide<'_, '_, '_> {
             self.fx.frames.push((id, Frame::Built(Box::new(command))));
             return;
         }
+    }
+
+    /// The undo plan ran out: what it planned, or `error` when an undo's
+    /// entry was never journaled.
+    fn undo_finished(&mut self) {
+        let finished = self.s.undo.take().expect("undo checked above");
+        match (finished.then, finished.error) {
+            (AfterUndo::Terminal(status, error), None) => self.terminal(&status, error, Vec::new()),
+            (AfterUndo::Resume, None) => self.resume(),
+            (AfterUndo::Terminal(_, planned), Some(error)) if !planned.is_empty() => {
+                self.terminal("error", format!("{planned}; {error}"), Vec::new())
+            }
+            (_, Some(error)) => self.terminal("error", error, Vec::new()),
+        }
+    }
+
+    /// The controller's last answer to an undo's `compensated` entry. Only an
+    /// ack lets the Cell's done marker follow; an entry never journaled drops
+    /// the marker too, so a resume runs the (idempotent) hook again, and the
+    /// rest of the plan still runs.
+    pub(super) fn undo_journaled(&mut self, result: Result<(), String>) {
+        let r = self.r;
+        let Some(undo) = self.s.undo.as_mut() else {
+            return;
+        };
+        let recorded = undo.steps.pop_front();
+        if let Err(error) = result {
+            let id = &r.inst.instance_id;
+            flz_transport::notice!(Error, "steps {id} compensation journaling failed: {error}");
+            if matches!(undo.steps.front(), Some(UndoStep::Mark { .. })) {
+                undo.steps.pop_front();
+            }
+            if let Some(UndoStep::Record { node, .. }) = recorded {
+                let tasklet = &r.task(node).name;
+                undo.error.get_or_insert_with(|| {
+                    format!("compensation of tasklet `{tasklet}` was not journaled: {error}")
+                });
+            }
+        }
+        self.undo_step();
     }
 
     /// One Cell's undo answered. A saga journals the record the hook wrote

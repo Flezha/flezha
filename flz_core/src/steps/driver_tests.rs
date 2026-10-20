@@ -28,6 +28,7 @@ use crate::timer::{TimerKind, TimerOp};
 use crate::{schema, state_sink, ErrorModel};
 
 mod call;
+mod undo;
 
 /// Answers every activation the poll core hands out while it lives: an
 /// apply-state command is recorded and answered applied; each work item is
@@ -1101,19 +1102,7 @@ fn turn_effect(
             ),
         };
     }
-    let mut forwarded = schema::ItemEffect {
-        outputs: vec![schema::Output {
-            target: schema::OutputTarget::Edge {
-                channel: mid,
-                consumer: 1,
-            },
-            key: None,
-            event_time: None,
-            metadata: Vec::new(),
-            payload: bytes.clone(),
-        }],
-        ..effect(schema::Verdict::Ok, &[])
-    };
+    let mut forwarded = forwarded(mid, 1, &bytes);
     if bytes == b"arm" {
         forwarded.timers = vec![crate::timer::TimerOp::register(
             crate::timer::TimerKind::ProcessingTime,
@@ -1121,6 +1110,20 @@ fn turn_effect(
         )];
     }
     forwarded
+}
+
+/// An `Ok` effect sending `bytes` on to `consumer` over edge `channel`.
+fn forwarded(channel: u32, consumer: u32, bytes: &[u8]) -> schema::ItemEffect {
+    schema::ItemEffect {
+        outputs: vec![schema::Output {
+            target: schema::OutputTarget::Edge { channel, consumer },
+            key: None,
+            event_time: None,
+            metadata: Vec::new(),
+            payload: bytes.to_vec(),
+        }],
+        ..effect(schema::Verdict::Ok, &[])
+    }
 }
 
 /// Register a [`turn_json`] class and serve it; the host's undo count.
@@ -1159,21 +1162,41 @@ fn bind_turns(
 }
 
 /// What the controller saw of one steps instance: its iteration commits,
-/// the tasklets whose undo it journaled, and its completion.
+/// the tasklets whose undo it was sent (re-sends included) under which
+/// reference id, and its completion.
 #[derive(Default)]
 struct Seen {
     iters: Vec<crate::pb::IterCommit>,
     undone: Vec<(u32, u32)>,
+    undo_refs: Vec<(u32, String)>,
     done: Option<(String, String)>,
 }
 
-/// Answer `id`'s barriers as the controller does, refusing those `refuse`
-/// names, until `until` holds or the run completes.
-fn pump_turns(
+/// How the fake controller answers one barrier send; a `bool` refuses on `true`.
+enum Answer {
+    Ack,
+    Refuse,
+    /// Never answered, as if the ack were lost.
+    Ignore,
+}
+
+impl From<bool> for Answer {
+    fn from(refuse: bool) -> Self {
+        if refuse {
+            Answer::Refuse
+        } else {
+            Answer::Ack
+        }
+    }
+}
+
+/// Answer `id`'s barriers as the controller does, as `answer` says, until
+/// `until` holds or the run completes.
+fn pump_turns<A: Into<Answer>>(
     rx: &Receiver<RunnerMessage>,
     id: &str,
     seen: &mut Seen,
-    refuse: impl Fn(&crate::pb::command_request::Command) -> bool,
+    answer: impl Fn(&crate::pb::command_request::Command) -> A,
     until: impl Fn(&Seen) -> bool,
 ) {
     use crate::pb::command_request::Command;
@@ -1190,16 +1213,19 @@ fn pump_turns(
                         seen.iters.push(commit.clone())
                     }
                     Command::TaskCommit(commit) if commit.relay_id == id && commit.compensating => {
-                        seen.undone.push((commit.task_idx, commit.iter))
+                        seen.undone.push((commit.task_idx, commit.iter));
+                        seen.undo_refs.push((commit.task_idx, reference_id.clone()));
                     }
                     _ => {}
                 }
-                if refuse(&command) {
-                    let refusal =
-                        crate::FlezhaError::with("commit.not_owner", [("relay", id.into())]);
-                    crate::shutdown::signal_result(&reference_id, Err(refusal));
-                } else {
-                    ack_control_request(reference_id, *command);
+                match answer(&command).into() {
+                    Answer::Ack => ack_control_request(reference_id, *command),
+                    Answer::Refuse => {
+                        let refusal =
+                            crate::FlezhaError::with("commit.not_owner", [("relay", id.into())]);
+                        crate::shutdown::signal_result(&reference_id, Err(refusal));
+                    }
+                    Answer::Ignore => {}
                 }
             }
             Ok(RunnerMessage::EmitRelayCompleted {

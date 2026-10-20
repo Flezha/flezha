@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use flz_transport::transport::FlezhaStream;
 
+use super::commit::BARRIER_SENDS;
 use super::compensation::{CellRun, RecordSpan, StageRecord};
 use super::spec::Chain;
 use super::StepsError;
@@ -516,6 +517,19 @@ pub(crate) struct Barrier {
     pub(crate) sends: u32,
 }
 
+impl Barrier {
+    /// The stored command for one more send under the same reference id,
+    /// counted, while [`BARRIER_SENDS`] are not used up.
+    pub(crate) fn resend(&mut self) -> Option<crate::pb::command_request::Command> {
+        if self.sends >= BARRIER_SENDS {
+            return None;
+        }
+        let command = self.command.clone()?;
+        self.sends += 1;
+        Some(command)
+    }
+}
+
 /// A compensation in progress: the Cells still to undo, in order, and what
 /// happens once the last one is done.
 pub(crate) struct Undo {
@@ -524,6 +538,8 @@ pub(crate) struct Undo {
     /// `compensated` entry.
     pub(crate) cells: Vec<crate::pb::CommittedCell>,
     pub(crate) then: AfterUndo,
+    /// The first undo whose entry was never journaled: the undo ends `error`.
+    pub(crate) error: Option<String>,
 }
 
 pub(crate) enum UndoStep {

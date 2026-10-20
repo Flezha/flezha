@@ -677,19 +677,7 @@ impl Decide<'_, '_, '_> {
                 let (status, error) = self.abnormal(&error);
                 self.compensate(AfterUndo::Terminal(status, error));
             }
-            (BarrierFor::Undo, result) => {
-                if let Err(error) = result {
-                    let id = &self.r.inst.instance_id;
-                    flz_transport::notice!(
-                        Error,
-                        "steps {id} compensation journaling failed: {error}"
-                    );
-                }
-                if let Some(undo) = self.s.undo.as_mut() {
-                    undo.steps.pop_front();
-                }
-                self.undo_step();
-            }
+            (BarrierFor::Undo, result) => self.undo_journaled(result),
         }
     }
 }

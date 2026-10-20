@@ -268,7 +268,11 @@ A tasklet with no `compensate` hook is skipped. A failing hook is logged and the
 still runs: stopping half way would leave more inconsistency than going on.
 
 **The undo record is journaled before the done marker.** A crash between the two runs the hook
-again rather than losing its undo output, so a hook must be safe to run twice.
+again rather than losing its undo output, so a hook must be safe to run twice. An undo record the
+controller refuses is sent again under the same reference id, as one whose ack timed out is, up
+to three sends in all. When none is acked the cell gets no done marker, so a resume runs its hook
+again, the rest of the plan still runs, and the run ends `error` naming the tasklet and the
+controller's answer.
 
 > **After a crash, a tasklet's values are not available to its undo hook.** Values passed between
 > tasklets were never durable, so a hook run after a crash receives an empty list. A durable

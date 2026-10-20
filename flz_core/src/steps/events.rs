@@ -460,6 +460,9 @@ pub(super) fn barrier_acked(inst: &Weak<RelayInstance>, id: u64, result: Result<
     let Some(inst) = inst.upgrade() else { return };
     let Some(r) = Run::of(&inst) else { return };
     r.decide(|d| {
+        if result.is_err() && d.resend_refused(id) {
+            return;
+        }
         let Some(barrier) = d.s.barriers.remove(&id) else {
             return;
         };
