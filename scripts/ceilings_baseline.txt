@@ -24,7 +24,6 @@ flz_core/src/host/issue.rs::kind 67
 flz_core/src/host/leave.rs::relay_left 58
 flz_core/src/host/prepare.rs::re_cross 61
 flz_core/src/poll_core/assembly.rs::assemble_batch 64
-flz_core/src/poll_core/mod.rs 814
 flz_core/src/poll_core/mod.rs::host_command_within 53
 flz_core/src/poll_core/wake.rs::wake_target 52
 flz_core/src/relay/instance.rs::with_options 71
