@@ -1,6 +1,7 @@
 # The wire constants every runtime spells, one row per value: the `sdk_lang`
 # allocation, the `format_id` allocation, the activation `schema_version`, the
-# frame payload ids and the reserved `flz.` metadata keys.
+# longest effect name in bytes, the frame payload ids and the reserved `flz.`
+# metadata keys.
 #
 # The Rust sources are the authority and the file is checked against them both
 # ways: `flz_core/src/wire_constants_tests.rs` fails on a constant the file
@@ -34,6 +35,8 @@ format_id|json|6
 format_id|etf|7
 
 schema_version|activation|8
+
+effect|name_max_bytes|255
 
 payload_id|cell_state_change|cell_state_change
 payload_id|cell_effect_record|cell_effect_record

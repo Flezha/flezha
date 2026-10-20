@@ -41,6 +41,7 @@ fn constant_row(line: &str) -> Option<String> {
     let row = |table: &str, name: &str, value: &str| Some(format!("{table}|{name}|{value}"));
     match (name, ty) {
         ("SCHEMA_VERSION", "u32") => row("schema_version", "activation", value),
+        ("MAX_NAME_BYTES", "usize") => row("effect", "name_max_bytes", value),
         (_, "u8") if name.starts_with("SDK_LANG_") => {
             row("sdk_lang", &name["SDK_LANG_".len()..].to_lowercase(), value)
         }
