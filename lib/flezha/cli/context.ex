@@ -8,7 +8,7 @@ defmodule Flezha.Service.Cli.Context do
   """
 
   alias Flezha.Config.Durations
-  alias Flezha.Service.CallerContext
+  alias Flezha.Service.Admin
 
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
@@ -17,30 +17,22 @@ defmodule Flezha.Service.Cli.Context do
   The caller context a verb's trailing options describe. Identity comes ONLY
   from a verified token (`flz --token` / `FLEZHA_TOKEN`, threaded through as
   `opts[:token]`); a caller-supplied principal, namespace or role is never
-  trusted, so without a resolvable token the context stays unbound and a gated
-  verb refuses naming the credential.
+  trusted. Without a token the context stays unbound and a gated verb refuses
+  naming the credential; a token that does not verify is refused through
+  `render!/2` before the verb runs. An empty token is no token, because `flz`
+  passes one when none was given.
   """
   def cli_context(opts) do
-    base = %{source: :cli}
+    token = with "" <- Keyword.get(opts, :token), do: nil
 
-    base =
-      case Keyword.get(opts, :request_id) do
-        nil -> base
-        id when is_binary(id) -> Map.put(base, :request_id, id)
-      end
-
-    case Keyword.get(opts, :token) do
-      token when is_binary(token) and token != "" -> bind_token_identity(base, token)
-      _ -> base
+    case Admin.context(:cli, token) do
+      {:ok, context} -> with_request_id(context, Keyword.get(opts, :request_id))
+      {:error, %Flezha.Error{} = refused} -> render!(refused, opts)
     end
   end
 
-  defp bind_token_identity(base, token) do
-    case CallerContext.from_token(:cli, token) do
-      {:ok, identity} -> Map.merge(base, identity)
-      {:error, _reason} -> base
-    end
-  end
+  defp with_request_id(context, nil), do: context
+  defp with_request_id(context, id) when is_binary(id), do: Map.put(context, :request_id, id)
 
   @doc """
   The one printer: `error` rendered in the format the call's options asked for,

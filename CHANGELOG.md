@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed: one bad-token rule, one answer decoder, a quota field by its kind
+
+- **BREAKING:** `flz` refuses a token that does not verify with its own code
+  (`authz.token_unknown`, `authz.token_expired`, ...) before the verb runs, even while
+  enforcement is off; it used to run the verb as if no token was given. `flz mcp` and the HTTP
+  API already did. `Flezha.Service.Admin.context/2` is the rule every surface calls.
+- **BREAKING:** `usage.invalid_number` for a quota ceiling names the field in `option`
+  (`max_relays`); it was `--Xmax_relays`. A quota override names one of the documented quota
+  fields, written as text or as an atom; any other name is `namespace.unknown_quota_field`.
+- A relay process that exits under a call answers `call.unavailable` with its exit term,
+  which a caller over the network reads as the controller log's pointer.
+- `Flezha.Service.RelayApi.answer/1` reads a `Relay.call_channel` answer for `flz relay call`,
+  the MCP tools and the HTTP API alike.
+
 ### Changed: `flz` sends a verb's options as written and leaves their checks to the controller
 
 - **BREAKING:** `flz relay start --plugins` and `flz schedule add --plugins` send the text as

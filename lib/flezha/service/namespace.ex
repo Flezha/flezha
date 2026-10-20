@@ -37,7 +37,7 @@ defmodule Flezha.Service.Namespace do
   @quotas [
     type: :map,
     default: %{},
-    doc: "The ceilings that differ from the defaults, by quota kind."
+    doc: "The ceilings that differ from the defaults, by quota field."
   ]
 
   # ---------- Reads ----------
@@ -334,11 +334,13 @@ defmodule Flezha.Service.Namespace do
   # Resolved against the one enumeration, so a name nobody declared never
   # becomes an atom and a declared role is never missing here.
   defp parse_role(role) do
-    case Enum.find(Role.all(), &(Atom.to_string(&1) == to_string(role))) do
+    case named(Role.all(), role) do
       nil -> {:error, {:unknown_role, role}}
       role -> {:ok, role}
     end
   end
+
+  defp named(atoms, word), do: Enum.find(atoms, &(Atom.to_string(&1) == to_string(word)))
 
   # A role carrying `runner.connect` is what a runner principal is bound to,
   # and a runner proves itself with a `runner` credential, so no credential is
@@ -363,27 +365,29 @@ defmodule Flezha.Service.Namespace do
     end)
   end
 
-  defp quota_field(key) when is_atom(key), do: {:ok, key}
-
   defp quota_field(key) do
-    {:ok, String.to_existing_atom(key)}
-  rescue
-    ArgumentError -> {:error, {:unknown_quota_field, key}}
+    case named(Map.keys(Namespace.default_quotas()), key) do
+      nil -> {:error, {:unknown_quota_field, key}}
+      field -> {:ok, field}
+    end
   end
 
   defp quota_value(_field, value) when is_integer(value), do: {:ok, value}
 
   defp quota_value(field, value) when is_binary(value) do
     case Integer.parse(value) do
-      {ceiling, ""} -> {:ok, ceiling}
-      _ -> {:error, Flezha.Error.new("usage.invalid_number", option: "--X#{field}", value: value)}
+      {ceiling, ""} ->
+        {:ok, ceiling}
+
+      _ ->
+        {:error, Flezha.Error.new("usage.invalid_number", option: to_string(field), value: value)}
     end
   end
 
   defp quota_value(field, value),
     do:
       {:error,
-       Flezha.Error.new("usage.invalid_number", option: "--X#{field}", value: inspect(value))}
+       Flezha.Error.new("usage.invalid_number", option: to_string(field), value: inspect(value))}
 
   # A binding with no namespace is cluster-wide and reaches every namespace, so
   # it belongs in the answer for each of them.

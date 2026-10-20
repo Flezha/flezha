@@ -42,7 +42,8 @@ Three things about it are worth knowing before anything else:
   answers it as JSON. A verb that acts still prints its success in text, so
   for it `--json` changes only how a failure is written.
 - **Identity for a gated verb** rides `--token <t>` or the `FLEZHA_TOKEN`
-  variable of the shell that runs `flz` ([`authorization.md`](../core/authorization.md)).
+  variable of the shell that runs `flz`. A token that does not verify is
+  refused before any verb runs ([`authorization.md`](../core/authorization.md#how-it-works)).
 
 ## How it reaches the controller
 

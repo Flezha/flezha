@@ -589,6 +589,25 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
       assert length(String.split(log, "s3cr3t-7f3a")) == 2
     end
 
+    # Fails when: the exit of the journal's writer rides to the runner as text.
+    test "a park whose journal writer exits is acked with the log's pointer", ctx do
+      set_mimic_global_until_exit()
+
+      Mimic.stub(TaskJournal.Turns, :park_turn_async, fn _id, _turn, reqids, label ->
+        gone = spawn(fn -> receive do: (_ -> exit({:shutdown, "vault key s3cr3t-7f3a"})) end)
+        {:ok, :gen_server.send_request(gone, :append, label, reqids)}
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert %{error: error} = send_dead_letter(ctx, ctx.inst, 0, "ref-dl-gone")
+          assert error.code == "commit.turn_not_parked"
+          assert error.details_json =~ ~s({"reason":"the controller's log names the cause (ref )
+        end)
+
+      assert length(String.split(log, "s3cr3t-7f3a")) == 2
+    end
+
     test "parks the message, journals the record naming its entry, acks, then releases", ctx do
       %{inst: inst} = ctx
 

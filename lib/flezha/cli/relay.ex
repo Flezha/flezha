@@ -9,6 +9,7 @@ defmodule Flezha.Service.Cli.Relay do
   alias Flezha.Service.Admin
   alias Flezha.Service.Cli
   alias Flezha.Service.Cli.Context
+  alias Flezha.Service.RelayApi
 
   @doc "`flz relay start`: the id it runs under, or a group's members."
   def start(%{members: members, already_running: already} = group, _args, _opts) do
@@ -118,12 +119,14 @@ defmodule Flezha.Service.Cli.Relay do
   end
 
   @doc "`flz relay call`: the answer as its format reads, or `accepted` for a send."
-  def answered(%{accepted: true}, _args, _opts), do: IO.puts("accepted")
-
-  def answered(%{answer_codec: "json", answer: answer}, _args, _opts),
-    do: IO.puts(Jason.encode!(answer))
-
-  def answered(%{answer: answer}, _args, _opts), do: IO.puts(answer)
+  def answered(value, _args, _opts) do
+    case RelayApi.answer(value) do
+      :accepted -> IO.puts("accepted")
+      {:json, answer} -> IO.puts(Jason.encode!(answer))
+      {:text, text} -> IO.puts(text)
+      {:bytes, bytes} -> IO.puts(Base.encode64(bytes))
+    end
+  end
 
   defp typed(args_json, context) do
     [namespace, relay_id, channel, fields, call_opts] = Jason.decode!(args_json)

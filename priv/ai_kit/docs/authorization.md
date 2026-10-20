@@ -32,6 +32,13 @@ proven namespace for a runner (`runner@<namespace>`). Each refusal is recorded
 as `:authorization_denied`. `FLEZHA_TOKEN` is read by the `flz` process: export
 it in the shell that runs `flz`, not in the controller's environment.
 
+One rule holds for a token on every surface, `flz`, `flz mcp` and the HTTP API:
+no token is no identity, and a token that does not verify is refused with its
+own code (`authz.token_malformed`, `authz.token_unknown`, `authz.token_expired`
+or `authz.token_revoked`) before anything runs, even while enforcement is off.
+A mistyped or expired token is never taken for no token at all. `flz` treats an
+empty `--token` or `FLEZHA_TOKEN` as none.
+
 ## Claim the admin
 
 With enforcement on and no admin claimed, the controller writes a one-time

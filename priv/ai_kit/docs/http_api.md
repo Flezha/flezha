@@ -83,7 +83,10 @@ token (shown once, store it now): flzt_mceqxmydtjgzolxgmgow7ffybum5ztfb5vrasr5ab
 ```
 
 The assistant sees only the tools its role allows. A call the role does not allow is
-refused with an `authz.*` code, and the refusal is audited like any other.
+refused with an `authz.*` code, and the refusal is audited like any other. A request
+with no `Authorization` header is a 401 asking for one; a token that does not verify,
+an empty one included, is a 401 with its own code, as on every surface
+([authorization.md](../topics/core/authorization.md#how-it-works)).
 
 ## Connect Claude Code
 

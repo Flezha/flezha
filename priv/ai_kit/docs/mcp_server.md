@@ -111,7 +111,8 @@ Whatever the token, the assistant cannot stop the controller, issue or revoke
 tokens, bind roles or delete a namespace: those are not tools. Once the admin
 is claimed, an assistant with no token gets the five knowledge tools and every
 operation is refused with `authz.principal_not_bound`; one whose token does not
-verify gets the token's own error, such as `authz.token_expired`.
+verify gets the token's own error, as on every surface
+([authorization.md](authorization.md#how-it-works)).
 
 ## A controller on another machine
 

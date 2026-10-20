@@ -415,6 +415,22 @@ defmodule FlezhaTest.Relay.CallsTest do
       refute_received {:call_event, :answer_dropped, _, _}
     end
 
+    # Fails when: the exit of the relay's process reaches a networked caller as text.
+    test "a relay process that exits under a call is unavailable, its exit kept for the log" do
+      gone = spawn(fn -> receive do: (_ -> exit({:shutdown, "vault key s3cr3t-7f3a"})) end)
+
+      assert {:error, %Error{code: "call.unavailable"} = error} =
+               Inbound.call(gone, "x", %{}, 1_000, "callee", "http")
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert Error.withheld(error, "door").details["reason"] =~
+                   "the controller's log names the cause"
+        end)
+
+      assert log =~ "s3cr3t-7f3a"
+    end
+
     test "a call the relay cannot take is refused at once, nothing ingested", %{inst: inst} do
       on_exit(TestHelpers.override_env(:call_pending_max, 1))
 

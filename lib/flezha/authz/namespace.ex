@@ -124,15 +124,21 @@ defmodule Flezha.AuthZ.Namespace do
 
   def validate_name(name), do: {:error, {:invalid_namespace_name, name}}
 
+  @doc "Every quota field with its default ceiling."
+  @spec default_quotas() :: quotas()
+  def default_quotas, do: @default_quotas
+
   @doc """
   Merge user-supplied quota overrides over the defaults, validating
   that every value is a non-negative integer.
   """
   @spec build_quotas(map()) :: {:ok, quotas()} | {:error, term()}
   def build_quotas(overrides) when is_map(overrides) do
-    Enum.reduce_while(overrides, {:ok, @default_quotas}, fn {k, v}, {:ok, acc} ->
+    defaults = default_quotas()
+
+    Enum.reduce_while(overrides, {:ok, defaults}, fn {k, v}, {:ok, acc} ->
       cond do
-        not Map.has_key?(@default_quotas, k) ->
+        not Map.has_key?(defaults, k) ->
           {:halt, {:error, {:unknown_quota_field, k}}}
 
         not (is_integer(v) and v >= 0) ->

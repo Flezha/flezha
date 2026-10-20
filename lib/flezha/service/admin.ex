@@ -7,8 +7,8 @@ defmodule Flezha.Service.Admin do
 
   Nothing in a request names a principal or a role. The caller context is
   built by the surface: `Flezha.Runner.FleetManager.Session.runner_caller_context/1`
-  from a runner connection, `Flezha.Service.Cli.Context.cli_context/1` from a
-  verified token. Every call is then judged at the policy point every other
+  from a runner connection, `context/2` from the token any other surface was
+  given. Every call is then judged at the policy point every other
   caller is judged at, against the row its published function binds, and
   writes the audit record that row declares.
 
@@ -66,6 +66,17 @@ defmodule Flezha.Service.Admin do
       entry |> apply_entry(positional ++ [caller_context]) |> withheld(name, caller_context)
     end
   end
+
+  @doc """
+  The caller context a surface's credential proves, the one bad-token rule
+  every surface keeps: no token is the unbound context of `source`, a token
+  that verifies is its own context, and any other token, `""` included, is
+  refused with the reason it does not verify. It takes no context, because its
+  answer is the context.
+  """
+  @spec context(atom(), String.t() | nil) :: {:ok, CallerContext.t()} | {:error, Flezha.Error.t()}
+  def context(source, nil), do: {:ok, %{source: source}}
+  def context(source, token) when is_binary(token), do: CallerContext.from_token(source, token)
 
   @doc "`run/4`, answering the value as the JSON every remote surface carries."
   @spec call(String.t(), String.t() | [term()], CallerContext.t(), placement()) ::

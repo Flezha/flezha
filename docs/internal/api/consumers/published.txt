@@ -11,13 +11,16 @@
 # or a `Flezha.Service.*` module, and a name is retired only together with the
 # manifests that spell it.
 #
-# TWO NAMES ARE CALLABLE WITHOUT A CONTEXT, AND ONLY TWO. A consumer verifies a
-# token and reads the enforcement posture BEFORE it holds a context, because
-# their answers are what a context is built from; they cannot be authorized by
-# the thing they bootstrap. Both are read-only. Nothing else may join them.
+# THREE NAMES ARE CALLABLE WITHOUT A CONTEXT, AND ONLY THREE. A consumer
+# verifies a token and reads the enforcement posture BEFORE it holds a context,
+# because their answers are what a context is built from; they cannot be
+# authorized by the thing they bootstrap. The door's context/2 joins them
+# because it IS that build: the one bad-token rule every surface keeps, over
+# verify/1. All three are read-only. Nothing else may join them.
 #
 #   Flezha.AuthZ.TokenStore.verify/1
 #   Flezha.AuthZ.enforcement_posture/0
+#   Flezha.Service.Admin.context/2
 #
 # One public function on the modules below is NOT on this surface, because it
 # takes no context and no consumer calls it:

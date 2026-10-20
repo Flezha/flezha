@@ -14,7 +14,6 @@ defmodule Flezha.Mcp.Stdio do
 
   alias Flezha.Error
   alias Flezha.Service.Admin
-  alias Flezha.Service.CallerContext
 
   @doc """
   Answer `message` on the controller, as the caller `opts` names. A token
@@ -23,12 +22,12 @@ defmodule Flezha.Mcp.Stdio do
   """
   @spec answer(binary(), keyword()) :: :ok
   def answer(message, opts) do
-    with token when is_binary(token) <- Keyword.get(opts, :token),
-         {:error, %Error{} = refused} <- CallerContext.from_token(:mcp, token) do
-      serve(message, fn -> [] end, fn _, _ -> {:error, refused} end)
-    else
-      {:ok, context} -> as(message, context)
-      nil -> as(message, %{source: :mcp})
+    case Admin.context(:mcp, Keyword.get(opts, :token)) do
+      {:ok, context} ->
+        as(message, context)
+
+      {:error, %Error{} = refused} ->
+        serve(message, fn -> [] end, fn _, _ -> {:error, refused} end)
     end
   end
 

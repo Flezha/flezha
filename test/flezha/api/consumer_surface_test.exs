@@ -24,9 +24,13 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   @published "docs/internal/api/consumers/published.txt"
   @generator "scripts/consumer_surface.py"
 
-  # The only two published names callable before a caller holds a context,
+  # The only published names callable before a caller holds a context,
   # because their answers are what one is built from.
-  @context_free [{Flezha.AuthZ.TokenStore, :verify, 1}, {Flezha.AuthZ, :enforcement_posture, 0}]
+  @context_free [
+    {Flezha.AuthZ.TokenStore, :verify, 1},
+    {Flezha.AuthZ, :enforcement_posture, 0},
+    {Flezha.Service.Admin, :context, 2}
+  ]
 
   # What the console calls today and this tree does not answer. The console
   # calls only the published surface, so nothing is. A break recorded here is
@@ -147,7 +151,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
                Enum.join(strays, ", ")
     end
 
-    test "the two context-free identity reads exist and are the only ones named" do
+    test "the context-free identity reads exist and are the only ones named" do
       entries = for {module, fun, arity} <- @context_free, do: {module, fun, arity, @published}
       assert RpcSurface.unresolved(entries) == []
 

@@ -17,7 +17,7 @@ defmodule Flezha.Service.RelayApiTest do
   alias Flezha.Partition
   alias Flezha.Relay.{Builder, Overwatch, PartitionGroup}
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{Cli, HubManager, Relay, RelayApi, RelayManager}
+  alias Flezha.Service.{Admin, Cli, HubManager, Relay, RelayApi, RelayManager}
   alias FlezhaTest.Helper.{CliCapture, FleetStateHelper}
   alias ProcessHub.Service.ProcessRegistry
 
@@ -498,6 +498,31 @@ defmodule Flezha.Service.RelayApiTest do
       assert RelayApi.decode("text", <<255>>) == %{answer: "/w==", answer_codec: "bytes"}
       assert RelayApi.decode("msgpack", <<1>>) == %{answer: "AQ==", answer_codec: "msgpack"}
       assert RelayApi.decode("custom", <<1>>) == %{answer: "AQ==", answer_codec: "custom"}
+    end
+  end
+
+  # Each shape read from the operation's value and from the JSON the door carries.
+  describe "answer/1" do
+    defp both(value), do: {RelayApi.answer(value), RelayApi.answer(Admin.json(value))}
+
+    test "a send is accepted" do
+      assert both(%{accepted: true}) == {:accepted, :accepted}
+    end
+
+    test "a JSON answer is its value" do
+      value = RelayApi.decode("json", ~s({"a":[1]}))
+      assert both(value) == {{:json, %{"a" => [1]}}, {:json, %{"a" => [1]}}}
+    end
+
+    test "a text answer is its text" do
+      assert both(RelayApi.decode("text", "héllo")) == {{:text, "héllo"}, {:text, "héllo"}}
+    end
+
+    test "an answer in a binary format is its bytes" do
+      for codec <- ["bytes", "msgpack", "custom"] do
+        assert both(RelayApi.decode(codec, <<255, 0>>)) ==
+                 {{:bytes, <<255, 0>>}, {:bytes, <<255, 0>>}}
+      end
     end
   end
 end

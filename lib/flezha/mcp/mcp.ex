@@ -14,6 +14,7 @@ defmodule Flezha.Mcp do
 
   alias Flezha.Error
   alias Flezha.Mcp.Knowledge
+  alias Flezha.Service.RelayApi
 
   @modern "2026-07-28"
   @legacy "2025-11-25"
@@ -539,11 +540,11 @@ defmodule Flezha.Mcp do
   # A JSON answer is structured content, text is text, bytes an embedded
   # blob, and a send `accepted`.
   defp relay_tool_result(id, {:ok, json}) do
-    case Jason.decode!(json) do
-      %{"accepted" => true} ->
+    case RelayApi.answer(json) do
+      :accepted ->
         result(id, %{content: [text("accepted")], isError: false})
 
-      %{"answer_codec" => "json", "answer" => value} ->
+      {:json, value} ->
         structured = if is_map(value), do: value, else: %{"result" => value}
 
         result(id, %{
@@ -552,11 +553,16 @@ defmodule Flezha.Mcp do
           isError: false
         })
 
-      %{"answer_codec" => "text", "answer" => value} ->
+      {:text, value} ->
         result(id, %{content: [text(value)], isError: false})
 
-      %{"answer" => blob} ->
-        resource = %{uri: "flezha:answer", mimeType: "application/octet-stream", blob: blob}
+      {:bytes, bytes} ->
+        resource = %{
+          uri: "flezha:answer",
+          mimeType: "application/octet-stream",
+          blob: Base.encode64(bytes)
+        }
+
         result(id, %{content: [%{type: "resource", resource: resource}], isError: false})
     end
   end

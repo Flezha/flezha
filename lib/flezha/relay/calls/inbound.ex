@@ -153,7 +153,8 @@ defmodule Flezha.Relay.Calls.Inbound do
   defp down_reason(:timeout), do: "no answer from its controller process"
   defp down_reason(reason) when reason in [:noproc, :normal], do: "its process is gone"
   defp down_reason(:noconnection), do: "its node is unreachable"
-  defp down_reason(reason), do: "its process exited (#{inspect(reason)})"
+  # The exit term itself, so a caller over the network reads the log's pointer.
+  defp down_reason(reason), do: reason
 
   # ---------------------------------------------------------------
   # The table

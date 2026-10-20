@@ -110,7 +110,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
       end
     end
 
-    test "an invalid token leaves the identity unbound" do
+    test "an invalid token is refused with its own code" do
       claim!()
 
       output =
@@ -121,7 +121,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
                    {:shutdown, 4}
         end)
 
-      assert output =~ "(authz.principal_not_bound)"
+      assert output =~ "(authz.token_unknown)"
     end
 
     test "the runner principal is bound to its connection's namespace" do

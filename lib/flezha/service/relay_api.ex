@@ -233,6 +233,25 @@ defmodule Flezha.Service.RelayApi do
      )}
   end
 
+  @typedoc "A `Relay.call_channel` answer as each surface maps it to its medium."
+  @type answer :: :accepted | {:json, term()} | {:text, String.t()} | {:bytes, binary()}
+
+  @doc """
+  The answer `Relay.call_channel` gave: its value, or the JSON the door
+  carries it as. A send is `:accepted`; an answer in a binary format is its
+  bytes.
+  """
+  @spec answer(map() | String.t()) :: answer()
+  def answer(json) when is_binary(json), do: json |> Jason.decode!() |> answer()
+  def answer(%{"accepted" => true}), do: :accepted
+  def answer(%{"answer_codec" => codec, "answer" => answer}), do: shape(codec, answer)
+  def answer(%{accepted: true}), do: :accepted
+  def answer(%{answer_codec: codec, answer: answer}), do: shape(codec, answer)
+
+  defp shape("json", value), do: {:json, value}
+  defp shape("text", text), do: {:text, text}
+  defp shape(_binary, base64), do: {:bytes, Base.decode64!(base64)}
+
   @doc """
   An answer's bytes as `codec` reads them: a JSON value (or the text, when
   they are not JSON), a string, or base64 for the binary formats. Bytes that
