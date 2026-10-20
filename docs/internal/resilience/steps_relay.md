@@ -147,8 +147,9 @@ A barrier (`Barrier`) keeps its reference id for its whole life. An ack not rece
 setting; the ack stays registered across the re-sends, so a late one continues the chain. The
 controller journals a barrier once by the entry's identity, so a re-sent barrier is answered from
 the existing entry. Only an `Undo` barrier is re-sent on a refusal (`resend_refused`, as a new
-frame, since the refusal consumed the first send's waiter); every other refusal fails the
-barrier at once.
+frame, since the refusal consumed the first send's waiter, and its ack wait re-armed in place, so
+a refusal answered in the send's own millisecond cannot drop the new wait); every other refusal
+fails the barrier at once.
 
 ### Record, then Mark
 

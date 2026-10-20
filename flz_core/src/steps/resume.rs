@@ -37,19 +37,12 @@ pub(super) fn carried_channel(r: &Run<'_>, resume: &JournalResume) -> ChannelId 
 /// fragment. A timer-fed pass's root is whichever tasklet's commit carries
 /// the firing.
 fn resumed_nodes(r: &Run<'_>, journal: &JournalResume) -> Vec<usize> {
-    let root_committed = journal.in_flight_trigger().is_some()
-        || journal
-            .committed_task_idxs
-            .iter()
-            .any(|&i| r.spec.dag.is_root(i as usize));
-    if root_committed {
-        journal
-            .committed_task_idxs
-            .iter()
-            .map(|&i| i as usize)
-            .collect()
-    } else {
-        Vec::new()
+    let committed = journal.committed_task_idxs.iter().map(|&i| i as usize);
+    let root_committed =
+        journal.in_flight_trigger().is_some() || committed.clone().any(|i| r.spec.dag.is_root(i));
+    match root_committed {
+        true => committed.collect(),
+        false => Vec::new(),
     }
 }
 
@@ -162,7 +155,6 @@ fn reseed(
     committed_parents: &[usize],
     stream: &Arc<FlezhaStream>,
 ) -> Result<BTreeMap<usize, Vec<Release>>, StepsError> {
-    let dag = &r.spec.dag;
     let mut by_parent: BTreeMap<usize, Vec<Release>> = BTreeMap::new();
     for &parent in committed_parents {
         let handoff = journal
@@ -173,7 +165,7 @@ fn reseed(
             .unwrap_or_default();
         let producer_channel = r.task(parent).output_channel_id;
         let values = seed_from_journal(&r.inst.topology, handoff, producer_channel)?;
-        let (Some(channel_id), target) = (producer_channel, dag.order[node]) else {
+        let (Some(channel_id), target) = (producer_channel, r.spec.dag.order[node]) else {
             continue;
         };
         let Some(descriptor) = r.inst.topology.channel(channel_id) else {

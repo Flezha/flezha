@@ -145,37 +145,19 @@ pub(super) struct Effects {
 }
 
 impl Run<'_> {
-    pub(super) fn act(&self, fx: Effects) {
-        let Effects {
-            markers,
-            frames,
-            control,
-            drop_acks,
-            disarm,
-            arm,
-            admit,
-            cancel_retries,
-            parked,
-            completed,
-            run_undo,
-            start,
-            removals,
-            arms,
-            ready,
-            park,
-        } = fx;
-        self.send(markers, frames, control, removals, park, drop_acks);
-        self.schedule(disarm, arm, arms, admit, ready, cancel_retries);
-        if let Some(parked) = parked {
+    pub(super) fn act(&self, mut fx: Effects) {
+        self.send(&mut fx);
+        self.schedule(&mut fx);
+        if let Some(parked) = fx.parked {
             self.park_message(parked);
         }
-        if let Some((status, error, result)) = completed {
+        if let Some((status, error, result)) = fx.completed {
             self.emit_completed(status, error, result);
         }
-        if let Some((slot, outputs, offset)) = run_undo {
+        if let Some((slot, outputs, offset)) = fx.run_undo {
             self.run_undo(slot, outputs, offset);
         }
-        if let Some(source) = start {
+        if let Some(source) = fx.start {
             self.begin_pass(source);
         }
     }
@@ -183,67 +165,51 @@ impl Run<'_> {
     /// What goes to the controller, in `act`'s order. Inlined: it runs per
     /// event.
     #[inline(always)]
-    fn send(
-        &self,
-        markers: Vec<(&'static str, Arc<Vec<u8>>)>,
-        frames: Vec<(u64, Frame)>,
-        control: Vec<(String, Command)>,
-        removals: Vec<(Arc<CellSlot>, Vec<TimerOp>)>,
-        park: Option<(u32, Option<u64>)>,
-        drop_acks: Vec<String>,
-    ) {
+    fn send(&self, fx: &mut Effects) {
         // Intent markers precede the commit: a crash between marker and ack
         // resolves as "not committed, re-run".
-        for (payload_id, identity) in markers {
+        for (payload_id, identity) in fx.markers.drain(..) {
             crate::state_sink::send_compensation_record(payload_id, &identity);
         }
-        for (id, frame) in frames {
+        for (id, frame) in fx.frames.drain(..) {
             self.send_barrier(id, frame);
         }
-        for (reference_id, command) in control {
+        for (reference_id, command) in fx.control.drain(..) {
             crate::runner::emit_control_request(reference_id, command);
         }
-        for (slot, ops) in removals {
+        for (slot, ops) in fx.removals.drain(..) {
             slot.dispatcher.write_timer_ops(&slot, ops);
         }
-        if let Some((iter, offset)) = park {
+        if let Some((iter, offset)) = fx.park.take() {
             let wake = self.inst.earliest_processing_timer();
             let (reference_id, command) = iter_park(&self.inst.instance_id, iter, wake, offset);
             crate::runner::emit_control_request(reference_id, command);
         }
-        for reference_id in drop_acks {
+        for reference_id in fx.drop_acks.drain(..) {
             crate::shutdown::drop_pending_ack(&reference_id);
         }
     }
 
     /// What goes to the poller, in `act`'s order. Inlined: it runs per event.
     #[inline(always)]
-    fn schedule(
-        &self,
-        disarm: Vec<(Deadline, u64)>,
-        arm: Vec<(Deadline, Option<u64>, u64)>,
-        arms: Vec<HeldArm>,
-        admit: Vec<Release>,
-        ready: Vec<Arc<CellSlot>>,
-        cancel_retries: Vec<Arc<CellSlot>>,
-    ) {
+    fn schedule(&self, fx: &mut Effects) {
         let core = crate::poll_core::global();
-        for (deadline, due) in disarm {
+        for (deadline, due) in fx.disarm.drain(..) {
             core.disarm_instance(self.inst.seq, deadline, due);
         }
-        for (deadline, old, due) in arm {
+        for (deadline, old, due) in fx.arm.drain(..) {
             core.rearm_instance(self.weak(), self.inst.seq, deadline, old, due);
         }
-        for (slot, at, stream) in arms {
+        for (slot, at, stream) in fx.arms.drain(..) {
             core.arm_timer(&slot, at, stream);
         }
-        self.admit(admit);
-        for slot in ready {
+        self.admit(std::mem::take(&mut fx.admit));
+        for slot in fx.ready.drain(..) {
             if slot.mailbox.claim_inflight() {
                 core.schedule(&slot);
             }
         }
-        for slot in cancel_retries {
+        for slot in fx.cancel_retries.drain(..) {
             items_dropped(&slot, core.cancel_retry(&slot));
         }
     }

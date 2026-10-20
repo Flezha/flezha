@@ -107,8 +107,7 @@ defmodule Flezha.Service.RelayManager.Init do
   Record, at the first bind of `relay` that succeeds, when its run window of
   `max_duration_ms` ends on this controller's clock. The row and the declared
   entry keep it through a sleep, a restart and a move, and a stop removes both,
-  so the next start opens a new window. A class with no window, or a bind that
-  already carried an end, writes nothing.
+  so the next start opens a new window.
 
   The write runs off the caller: a first bind can finish before the start has
   written the row, and the write waits for it on the `:no_response` ladder.
@@ -117,13 +116,12 @@ defmodule Flezha.Service.RelayManager.Init do
   def stamp_window_end(_namespace, _relay, nil), do: :ok
 
   def stamp_window_end(namespace, relay, max_duration_ms) do
-    if Keyword.get(relay.opts, :max_duration_ends_at) do
-      :ok
-    else
+    if !Keyword.get(relay.opts, :max_duration_ends_at) do
       transform = RegistryUpdate.put_window_end(System.os_time(:millisecond) + max_duration_ms)
       {:ok, _pid} = DurableTasks.start(fn -> write_plugins(namespace, relay.id, transform) end)
-      :ok
     end
+
+    :ok
   end
 
   @doc "When `relay_id`'s run window ends, as its registry row records it, or `nil`."

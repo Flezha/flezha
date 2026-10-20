@@ -264,9 +264,8 @@ pub(crate) fn arm_sweep(registry: &Arc<DynamicCellRegistry>, idle_ttl: Duration)
 }
 
 /// A sweep came due on a poller: sweep, then arm the next one, until the
-/// relay stops. A host-run Cell's eviction waits for the host's
-/// answer, which a poller must not, so that sweep runs on its own thread, as
-/// a relay's leave does.
+/// relay stops. A host-run Cell's eviction waits for the host's answer, which
+/// a poller must not, so that sweep runs on its own thread, as a leave does.
 pub(crate) fn sweep_due(registry: Arc<DynamicCellRegistry>, idle_ttl: Duration) {
     if registry.relay_stopped.load(Ordering::Acquire) {
         return;

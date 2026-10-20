@@ -1,9 +1,9 @@
 //! The core's one deferred-wake list: retry backoffs, processing-time timer
-//! deadlines, interval closes, push re-arms and instance deadlines, keyed by
-//! clock lane, then due time. It owns no
-//! thread — entries are promoted by whichever poller next enters or wakes —
-//! and nothing in a promotion waits for mailbox room: a firing that cannot be
-//! admitted is re-recorded strictly later, so the list IS the holdback.
+//! deadlines, interval closes, push re-arms, instance deadlines and idle
+//! sweeps, keyed by clock lane, then due time. It owns no thread — entries are
+//! promoted by whichever poller next enters or wakes — and nothing in a
+//! promotion waits for mailbox room: a firing that cannot be admitted is
+//! re-recorded strictly later, so the list IS the holdback.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
