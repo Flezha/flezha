@@ -148,10 +148,10 @@ What each signal says on the observability bus, and the series an exporter names
 <!-- bridge-signals:begin flezha_http_push -->
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
-| `flezha_http_push` | `failed` | event |  | An HTTP request failed too often and was given up. |
-| `flezha_http_push` | `overflowed` | metric | `flezha_http_push_overflowed` | The HTTP queue was full, so requests were dropped. |
-| `flezha_http_push` | `retried` | metric | `flezha_http_push_retried` | An HTTP request failed and will be tried again. |
-| `flezha_http_push` | `shipped` | metric | `flezha_http_push_shipped` | An HTTP request was sent. |
+| `flezha_http_push` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_http_push` | `overflowed` | metric | `flezha_http_push_overflowed` | The plugin's queue was full, so items were dropped. |
+| `flezha_http_push` | `retried` | metric | `flezha_http_push_retried` | A delivery failed and will be tried again; nothing is lost yet. |
+| `flezha_http_push` | `shipped` | metric | `flezha_http_push_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 <!-- bridge-signals:end -->
 
 | Event | Source | Measurements | Metadata |

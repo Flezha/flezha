@@ -204,8 +204,8 @@ What each signal says on the observability bus, and the series an exporter names
 <!-- bridge-signals:begin flezha_http_poll -->
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
-| `flezha_http_poll` | `failed` | event |  | A poll request failed. |
-| `flezha_http_poll` | `shipped` | metric | `flezha_http_poll_shipped` | A poll got a new response and handed it to the relay. |
+| `flezha_http_poll` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_http_poll` | `shipped` | metric | `flezha_http_poll_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_http_poll` | `unchanged` | metric | `flezha_http_poll_unchanged` | A poll's response matched the last one, so it was skipped. |
 <!-- bridge-signals:end -->
 

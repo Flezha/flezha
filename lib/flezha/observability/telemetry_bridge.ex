@@ -4,11 +4,12 @@ defmodule Flezha.Observability.TelemetryBridge do
   `[:flezha, ...]` telemetry events onto the observability bus.
 
   No producer call-site is rewritten. The mapping has three halves: the
-  hand-kept half, kept under each source in `Lines.sources/0`; a half DERIVED from the convergence
-  loop's detector table, so every event a detector entry declares is bridged by
-  that declaration and a new detector needs no edit here; and a half derived at
-  start from the providers packages installed (`provider_mapping/0`), so a
-  package's events are exported under its provider's name with no edit here.
+  hand-kept half, kept under each source in `Lines.sources/0`; a half DERIVED
+  from the convergence loop's detector table, so every event a detector entry
+  declares is bridged by that declaration and a new detector needs no edit here;
+  and a half derived at start from the provider table (`provider_mapping/0`), so
+  a provider's events are exported under its name from its declaration, with no
+  edit here.
   Where halves name one event the hand-kept line wins, because its source, name
   and kind are a deliberate choice a derivation cannot know.
 
@@ -158,7 +159,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     |> Map.values()
     |> Enum.group_by(&elem(&1, 0), fn {_source, name, kind, words} -> {name, {kind, words}} end)
     |> Enum.reduce(@groups, fn {source, signals}, groups ->
-      Map.update(groups, source, package_source(source, signals), fn {area, title, text, own} ->
+      Map.update(groups, source, provider_source(source, signals), fn {area, title, text, own} ->
         {area, title, text, own ++ signals}
       end)
     end)
@@ -173,21 +174,28 @@ defmodule Flezha.Observability.TelemetryBridge do
     end)
   end
 
-  defp package_source(source, signals) do
+  # A provider source with no hand-kept group says what its declaration says,
+  # else what a package that declares nothing gets.
+  defp provider_source(source, signals) do
     name = source |> Atom.to_string() |> String.replace_prefix("flezha_", "")
 
-    {:plugins, "#{SignalWords.humanize(name)} plugin",
-     "The #{name} plugin, installed from a package.", signals}
+    decl =
+      Enum.find_value(Providers.all(), %{}, fn {_id, module} ->
+        decl = module.__provider__()
+        if decl.name == name, do: decl
+      end)
+
+    {:plugins, Map.get(decl, :title) || "#{SignalWords.humanize(name)} plugin",
+     Map.get(decl, :description) || "The #{name} plugin, installed from a package.", signals}
   end
 
   @doc """
-  The half derived from the provider table as it stands, for the providers a
-  package installed: each one's shared verbs and its own declared ones under
-  `[:flezha, :plugin, <name>, verb]`, `name` being the one its declaration
-  answers and `ProviderBehaviour.emit/4` writes, sourced `flezha_<name>`, less
-  every event `mapping/0` already names. A first-party provider's events are
-  hand-kept lines, which the suite judges against what the tree writes. Read
-  once at bridge start, which a package's provider row precedes.
+  The half derived from the provider table as it stands: for each provider its
+  own declared verbs and the shared ones (a first-party provider only those its
+  `emits:` names, a package every one) under `[:flezha, :plugin, <name>, verb]`,
+  `name` being the one its declaration answers and `ProviderBehaviour.emit/4`
+  writes, sourced `flezha_<name>`, less every event `mapping/0` already names.
+  Read once at bridge start, which a package's provider row precedes.
   """
   @spec provider_mapping() :: %{[atom()] => {atom(), atom(), Signal.kind()}}
   def provider_mapping(), do: strip(provider_lines())
@@ -196,16 +204,32 @@ defmodule Flezha.Observability.TelemetryBridge do
   @spec provider_lines() ::
           %{[atom()] => {atom(), atom(), Signal.kind(), String.t() | keyword()}}
   def provider_lines() do
-    for {_id, module} <- Providers.installed(),
+    first_party = Providers.first_party()
+
+    for {id, module} <- Providers.all(),
         Code.ensure_loaded?(module),
         decl = module.__provider__(),
-        {verb, kind, words} <- @shared_verbs ++ own_verbs(decl),
-        # A name from code a verified package ships, never input.
+        {verb, kind, words} <-
+          shared_verbs(decl, Map.has_key?(first_party, id)) ++ own_verbs(decl),
+        # A name from a declaration the release or a verified package ships, never input.
         event = ProviderBehaviour.event(String.to_atom(decl.name), verb),
         not Map.has_key?(@all_mapping, event),
         into: %{},
         do: {event, {:"flezha_#{decl.name}", verb, kind, words}}
   end
+
+  # A package built before `emits:` existed carries no such key and writes every
+  # shared verb; a level adds the line's log level.
+  defp shared_verbs(decl, first_party?) do
+    emits = Map.get(decl, :emits, [])
+
+    for {verb, kind, words} <- @shared_verbs,
+        not first_party? or Keyword.has_key?(emits, verb),
+        do: {verb, kind, leveled(words, emits[verb])}
+  end
+
+  defp leveled(words, nil), do: words
+  defp leveled(words, level), do: [{:level, level} | words]
 
   # A package built before `telemetry:` existed declares no own verbs, and one
   # built before a verb could carry a meaning declares a bare kind.

@@ -27,6 +27,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   use ProviderBehaviour,
     shareable: true,
+    title: "HTTP poll plugin",
+    description: "The plugin that reads a URL on a timer and hands what changed to a relay.",
+    emits: [shipped: nil, failed: nil],
+    telemetry: [
+      unchanged:
+        {:metric,
+         label: "Nothing new",
+         meaning: "A poll's response matched the last one, so it was skipped.",
+         sentence: "{plugin_id} found nothing new"}
+    ],
     source: [
       partitioned: :own_copy,
       failure_reason: :poll_failing,

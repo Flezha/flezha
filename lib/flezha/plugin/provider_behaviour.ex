@@ -37,9 +37,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     whether one running copy can serve several bound relays, which a file
     reader with one offset or a server on one port cannot. `telemetry` names the
     verbs a provider emits beyond the shared vocabulary, each a metric or an
-    event, which the telemetry bridge exports under the provider's name.
-    `namespace` is the one namespace the provider may be enabled in, or nil for
-    any.
+    event, which the telemetry bridge exports under the provider's name; `emits`
+    the shared verbs a first-party provider writes, each with the level its event
+    is also logged at, or nil; `title` and `description` what a reader of its
+    source is told. `namespace` is the one namespace the provider may be enabled
+    in, or nil for any.
     """
 
     @type worker :: %{
@@ -57,6 +59,9 @@ defmodule Flezha.Plugin.ProviderBehaviour do
             own: [atom()],
             worker: worker() | nil,
             telemetry: [{atom(), :metric | :event | {:metric | :event, String.t()}}],
+            emits: [{atom(), Logger.level() | nil}],
+            title: String.t() | nil,
+            description: String.t() | nil,
             feeds: boolean(),
             shareable: boolean(),
             namespace: binary() | nil
@@ -68,10 +73,13 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       :type,
       :worker,
       :namespace,
+      :title,
+      :description,
       options: [],
       extensions: [],
       own: [],
       telemetry: [],
+      emits: [],
       feeds: false,
       shareable: false
     ]

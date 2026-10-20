@@ -130,10 +130,10 @@ What each signal says on the observability bus, and the series an exporter names
 <!-- bridge-signals:begin flezha_hook_webhook -->
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
-| `flezha_hook_webhook` | `failed` | event |  | A webhook request failed too often and was given up. |
-| `flezha_hook_webhook` | `overflowed` | metric | `flezha_hook_webhook_overflowed` | The webhook queue was full, so requests were dropped. |
-| `flezha_hook_webhook` | `retried` | metric | `flezha_hook_webhook_retried` | A webhook request failed and will be tried again. |
-| `flezha_hook_webhook` | `shipped` | metric | `flezha_hook_webhook_shipped` | A webhook request was sent. |
+| `flezha_hook_webhook` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_hook_webhook` | `overflowed` | metric | `flezha_hook_webhook_overflowed` | The plugin's queue was full, so items were dropped. |
+| `flezha_hook_webhook` | `retried` | metric | `flezha_hook_webhook_retried` | A delivery failed and will be tried again; nothing is lost yet. |
+| `flezha_hook_webhook` | `shipped` | metric | `flezha_hook_webhook_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 <!-- bridge-signals:end -->
 
 | Event | Source | Measurements | Metadata |

@@ -31,6 +31,9 @@ defmodule Flezha.Plugin.Provider.HttpPush do
 
   use ProviderBehaviour,
     shareable: true,
+    title: "HTTP push plugin",
+    description: "The plugin that sends a relay's output to a URL.",
+    emits: [shipped: nil, retried: nil, failed: nil, overflowed: nil],
     options:
       [
         url: [

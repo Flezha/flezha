@@ -57,7 +57,8 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
 
   describe "clause 1: every event name reaches an exporter" do
     test "every event name the tree writes is mapped or unexported with a reason" do
-      mapped = MapSet.new(Map.keys(TelemetryBridge.mapping()))
+      derived = TelemetryBridge.provider_mapping()
+      mapped = MapSet.new(Map.keys(Map.merge(derived, TelemetryBridge.mapping())))
       unexported = MapSet.new(TelemetryBridge.unexported())
 
       offenders =

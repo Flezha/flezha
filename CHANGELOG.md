@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed: the controller's own plugins derive their telemetry from their declarations
+
+- A provider declaration accepts `emits:` (a log level for a shared verb, such as
+  `[failed: :warning]`, which also writes that event as a log line), `title:` and
+  `description:` (what `flz observe sources` says about the plugin's source). A blank title or
+  description, or an `emits:` entry outside the shared verbs, fails the plugin's compilation.
+- `flz observe sources` describes the shared verbs (`shipped`, `retried`, `failed`,
+  `overflowed`) of the file, HTTP poll, HTTP push, webhook, Postgres poll and relay forward
+  plugins with the shared words every plugin uses, as it already did for packages. Their series
+  and signal names are unchanged.
+
 ### Changed: every metric series names its source once
 
 - **BREAKING:** seventeen exported series are renamed, so a name no longer repeats its source
@@ -32,15 +43,6 @@
   where the HTTP poll plugin said `injected`.
 - The new page *Telemetry and metrics* lists every signal the controller's telemetry carries,
   with its series and what it says; each plugin page's Telemetry section lists its own.
-
-### Changed: an observability source is declared once
-
-- `flz observe sources` lists `platform_authz` with the kind `event` only: it emits no metric.
-- The access control, audit log and metric export sources come back after the observability
-  registry restarts, and the audit log source is listed whether or not the audit log runs.
-- `use Flezha.Observability.Source` declares a source: its registration (`__source__/0`, kinds
-  taken from its signals) and an `emit/3` that refuses a signal the source does not declare.
-  `Flezha.Observability.SourceSupervisor` is removed; it never had a child.
 
 ### Changed: an observability source is declared once
 

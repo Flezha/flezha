@@ -148,34 +148,34 @@ Compiling 34 files (.ex)
 <!-- bridge-signals:begin plugins -->
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
-| `flezha_file_sink` | `failed` | event |  | Writing to the file failed; it will be tried again. |
+| `flezha_file_sink` | `failed` | event |  | A delivery or a read failed. |
 | `flezha_file_sink` | `refused` | event |  | A record was refused because it cannot be written as one line. |
-| `flezha_file_sink` | `shipped` | metric | `flezha_file_sink_shipped` | Records were written to the file. |
-| `flezha_file_source` | `failed` | event |  | Reading the file failed. |
-| `flezha_file_source` | `shipped` | metric | `flezha_file_source_shipped` | A line read from the file was handed to the relay. |
+| `flezha_file_sink` | `shipped` | metric | `flezha_file_sink_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
+| `flezha_file_source` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_file_source` | `shipped` | metric | `flezha_file_source_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_file_source` | `truncated` | event |  | The file was cut short or replaced, so it is read again from the start. |
-| `flezha_hook_webhook` | `failed` | event |  | A webhook request failed too often and was given up. |
-| `flezha_hook_webhook` | `overflowed` | metric | `flezha_hook_webhook_overflowed` | The webhook queue was full, so requests were dropped. |
-| `flezha_hook_webhook` | `retried` | metric | `flezha_hook_webhook_retried` | A webhook request failed and will be tried again. |
-| `flezha_hook_webhook` | `shipped` | metric | `flezha_hook_webhook_shipped` | A webhook request was sent. |
+| `flezha_hook_webhook` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_hook_webhook` | `overflowed` | metric | `flezha_hook_webhook_overflowed` | The plugin's queue was full, so items were dropped. |
+| `flezha_hook_webhook` | `retried` | metric | `flezha_hook_webhook_retried` | A delivery failed and will be tried again; nothing is lost yet. |
+| `flezha_hook_webhook` | `shipped` | metric | `flezha_hook_webhook_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_hooks` | `on_dead_letter` | event |  | A message became a dead letter, and controller plugins were told. |
-| `flezha_http_poll` | `failed` | event |  | A poll request failed. |
-| `flezha_http_poll` | `shipped` | metric | `flezha_http_poll_shipped` | A poll got a new response and handed it to the relay. |
+| `flezha_http_poll` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_http_poll` | `shipped` | metric | `flezha_http_poll_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_http_poll` | `unchanged` | metric | `flezha_http_poll_unchanged` | A poll's response matched the last one, so it was skipped. |
-| `flezha_http_push` | `failed` | event |  | An HTTP request failed too often and was given up. |
-| `flezha_http_push` | `overflowed` | metric | `flezha_http_push_overflowed` | The HTTP queue was full, so requests were dropped. |
-| `flezha_http_push` | `retried` | metric | `flezha_http_push_retried` | An HTTP request failed and will be tried again. |
-| `flezha_http_push` | `shipped` | metric | `flezha_http_push_shipped` | An HTTP request was sent. |
+| `flezha_http_push` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_http_push` | `overflowed` | metric | `flezha_http_push_overflowed` | The plugin's queue was full, so items were dropped. |
+| `flezha_http_push` | `retried` | metric | `flezha_http_push_retried` | A delivery failed and will be tried again; nothing is lost yet. |
+| `flezha_http_push` | `shipped` | metric | `flezha_http_push_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_plugin` | `phase` | event |  | A plugin moved from one phase of its life to another, such as from prepared to running. |
 | `flezha_plugin_packages` | `loaded` | event |  | A plugin package was loaded when the controller started. |
 | `flezha_plugin_packages` | `refused` | event |  | A plugin package was refused when the controller started, so its plugins are missing. |
 | `flezha_postgres_poll` | `caught_up` | event |  | The poll reached the newest row in the table. |
-| `flezha_postgres_poll` | `failed` | event |  | Reading the table failed. |
-| `flezha_postgres_poll` | `shipped` | metric | `flezha_postgres_poll_shipped` | New rows read from the table were handed to the relay. |
+| `flezha_postgres_poll` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_postgres_poll` | `shipped` | metric | `flezha_postgres_poll_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_relay_forward` | `queue_depth` | metric | `flezha_relay_forward_queue_depth` | How many messages are waiting to be forwarded. |
-| `flezha_relay_forward` | `retried` | metric | `flezha_relay_forward_retried` | A forward failed and will be tried again. |
+| `flezha_relay_forward` | `retried` | metric | `flezha_relay_forward_retried` | A delivery failed and will be tried again; nothing is lost yet. |
 | `flezha_relay_forward` | `saturated` | event |  | The forward queue was full and turned messages away. |
-| `flezha_relay_forward` | `shipped` | metric | `flezha_relay_forward_shipped` | Messages were handed to the next relay. |
+| `flezha_relay_forward` | `shipped` | metric | `flezha_relay_forward_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_ws` | `failed` | event |  | A websocket send failed and was given up. |
 | `flezha_ws` | `idle_reconnect` | event |  | A websocket was silent for too long, so it was reconnected. |
 | `flezha_ws` | `overflowed` | event |  | A websocket's queue was full, so messages were dropped. |

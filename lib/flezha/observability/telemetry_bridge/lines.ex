@@ -415,10 +415,6 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:plugins, "Relay forward plugin",
        "The plugin that hands a relay's messages to the next relay.",
        [
-         {[:flezha, :plugin, :relay_forward, :shipped], :shipped, :metric,
-          label: "Forwarded", meaning: "Messages were handed to the next relay."},
-         {[:flezha, :plugin, :relay_forward, :retried], :retried, :metric,
-          label: "Retrying", meaning: "A forward failed and will be tried again."},
          {[:flezha, :plugin, :relay_forward, :queue_depth], :queue_depth, :metric,
           label: "Waiting to forward",
           meaning: "How many messages are waiting to be forwarded.",
@@ -427,100 +423,6 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
           label: "Queue full",
           outcome: :failure,
           meaning: "The forward queue was full and turned messages away."}
-       ]},
-    flezha_http_poll:
-      {:plugins, "HTTP poll plugin",
-       "The plugin that reads a URL on a timer and hands what changed to a relay.",
-       [
-         {[:flezha, :plugin, :http_poll, :shipped], :shipped, :metric,
-          label: "Fetched",
-          meaning: "A poll got a new response and handed it to the relay.",
-          sentence: "{plugin_id} fetched {bytes:byte} in {latency_ms} ms"},
-         {[:flezha, :plugin, :http_poll, :unchanged], :unchanged, :metric,
-          label: "Nothing new",
-          meaning: "A poll's response matched the last one, so it was skipped.",
-          sentence: "{plugin_id} found nothing new"},
-         {[:flezha, :plugin, :http_poll, :failed], :failed, :event,
-          label: "Poll failed", outcome: :failure, meaning: "A poll request failed."}
-       ]},
-    flezha_http_push:
-      {:plugins, "HTTP push plugin", "The plugin that sends a relay's output to a URL.",
-       [
-         {[:flezha, :plugin, :http_push, :shipped], :shipped, :metric,
-          label: "Sent", meaning: "An HTTP request was sent.", sentence: "Sent {count:request}"},
-         {[:flezha, :plugin, :http_push, :retried], :retried, :metric,
-          label: "Retrying", meaning: "An HTTP request failed and will be tried again."},
-         {[:flezha, :plugin, :http_push, :failed], :failed, :event,
-          label: "Given up",
-          outcome: :failure,
-          meaning: "An HTTP request failed too often and was given up."},
-         {[:flezha, :plugin, :http_push, :overflowed], :overflowed, :metric,
-          label: "Queue full",
-          outcome: :failure,
-          meaning: "The HTTP queue was full, so requests were dropped."}
-       ]},
-    flezha_hook_webhook:
-      {:plugins, "Webhook plugin", "The plugin that sends controller notices to a URL.",
-       [
-         {[:flezha, :plugin, :hook_webhook, :shipped], :shipped, :metric,
-          label: "Sent", meaning: "A webhook request was sent.", sentence: "Sent {count:request}"},
-         {[:flezha, :plugin, :hook_webhook, :retried], :retried, :metric,
-          label: "Retrying", meaning: "A webhook request failed and will be tried again."},
-         {[:flezha, :plugin, :hook_webhook, :failed], :failed, :event,
-          label: "Given up",
-          outcome: :failure,
-          meaning: "A webhook request failed too often and was given up."},
-         {[:flezha, :plugin, :hook_webhook, :overflowed], :overflowed, :metric,
-          label: "Queue full",
-          outcome: :failure,
-          meaning: "The webhook queue was full, so requests were dropped."}
-       ]},
-    flezha_file_source:
-      {:plugins, "File source plugin", "The plugin that reads lines from a file into a relay.",
-       [
-         {[:flezha, :plugin, :file_source, :shipped], :shipped, :metric,
-          label: "Read",
-          meaning: "A line read from the file was handed to the relay.",
-          sentence: "{plugin_id} read a line from {path}"},
-         {[:flezha, :plugin, :file_source, :truncated], :truncated, :event,
-          label: "File restarted",
-          meaning: "The file was cut short or replaced, so it is read again from the start.",
-          sentence: "{plugin_id} reads {path} again from the start"},
-         {[:flezha, :plugin, :file_source, :failed], :failed, :event,
-          label: "Read failed", outcome: :failure, meaning: "Reading the file failed."}
-       ]},
-    flezha_file_sink:
-      {:plugins, "File sink plugin", "The plugin that writes a relay's output to a file.",
-       [
-         {[:flezha, :plugin, :file_sink, :shipped], :shipped, :metric,
-          label: "Saved",
-          meaning: "Records were written to the file.",
-          sentence: "{plugin_id} saved {count:record} to {path}"},
-         {[:flezha, :plugin, :file_sink, :refused], :refused, :event,
-          label: "Record refused",
-          outcome: :failure,
-          meaning: "A record was refused because it cannot be written as one line.",
-          sentence: "{plugin_id} refused a record for {path}"},
-         {[:flezha, :plugin, :file_sink, :failed], :failed, :event,
-          label: "Write failed",
-          outcome: :failure,
-          meaning: "Writing to the file failed; it will be tried again.",
-          sentence: "{plugin_id} could not write to {path}"}
-       ]},
-    flezha_postgres_poll:
-      {:plugins, "Postgres poll plugin",
-       "The plugin that reads new rows from a table into a relay.",
-       [
-         {[:flezha, :plugin, :postgres_poll, :shipped], :shipped, :metric,
-          label: "Read rows",
-          meaning: "New rows read from the table were handed to the relay.",
-          sentence: "{plugin_id} read {count:row} from {table}"},
-         {[:flezha, :plugin, :postgres_poll, :failed], :failed, :event,
-          label: "Poll failed", outcome: :failure, meaning: "Reading the table failed."},
-         {[:flezha, :plugin, :postgres_poll, :caught_up], :caught_up, :event,
-          label: "Caught up",
-          meaning: "The poll reached the newest row in the table.",
-          sentence: "{plugin_id} caught up with {table}"}
        ]}
   }
 

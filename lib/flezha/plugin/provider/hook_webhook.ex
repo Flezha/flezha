@@ -23,6 +23,9 @@ defmodule Flezha.Plugin.Provider.HookWebhook do
 
   use ProviderBehaviour,
     type: :controller,
+    title: "Webhook plugin",
+    description: "The plugin that sends controller notices to a URL.",
+    emits: [shipped: nil, retried: nil, failed: nil, overflowed: nil],
     options: [
       url: [
         type: :string,

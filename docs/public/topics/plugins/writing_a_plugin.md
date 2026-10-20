@@ -76,6 +76,9 @@ in; a project outside the Flezha repository depends on `flezha` by git or Hex in
 | `feeds:` | the provider's own worker injects records into the relay | `false` |
 | `name:` | the name in errors, help and telemetry | the module's last segment, underscored |
 | `telemetry:` | the verbs it emits beyond the shared ones, each `:metric` or `:event`, `{kind, "what it says"}`, or `{kind, meaning: "what it says", label:, outcome:, sentence:, level:}` | none |
+| `emits:` | a log level for a shared verb, `[failed: :warning]`: its event is then also written as a log line at that level (a plugin of the controller's own lists every shared verb it writes, with `nil` for no level) | no level |
+| `title:` | the plugin's telemetry source title in `flz observe sources` | `"<Name> plugin"` |
+| `description:` | one line saying what the plugin does, shown with its telemetry source | `"The <name> plugin, installed from a package."` |
 
 An option row takes `type` (`:int`, `:bool`, `:string`, `:names`, `:enum`, `:json`,
 `:headers`, `:map`, `:list`, `:pid`, `:any`), `default`, `required`, `min` and `max`, `values`

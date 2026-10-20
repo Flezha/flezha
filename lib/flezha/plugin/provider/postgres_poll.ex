@@ -28,7 +28,15 @@ defmodule Flezha.Plugin.Provider.PostgresPoll do
   use ProviderBehaviour,
     shareable: false,
     source: [partitioned: :refuse, idle_interval: :interval_ms],
-    telemetry: [caught_up: :event],
+    description: "The plugin that reads new rows from a table into a relay.",
+    emits: [shipped: nil, failed: nil],
+    telemetry: [
+      caught_up:
+        {:event,
+         label: "Caught up",
+         meaning: "The poll reached the newest row in the table.",
+         sentence: "{plugin_id} caught up with {table}"}
+    ],
     options:
       Connection.rows() ++
         [

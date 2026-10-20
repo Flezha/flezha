@@ -33,6 +33,7 @@ defmodule Flezha.Plugin.Provider.RelayForward do
   require Logger
 
   use ProviderBehaviour,
+    emits: [shipped: nil, retried: nil],
     options:
       [
         target_relay_id: [

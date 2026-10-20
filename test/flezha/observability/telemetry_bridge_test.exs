@@ -586,13 +586,30 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     end
   end
 
-  test "a core with no package derives nothing: no source for a first-party provider" do
+  test "a core with no package derives only the verbs first-party providers declare" do
     Flezha.Plugin.Providers.reset_installed()
     restart_bridge()
 
-    assert TelemetryBridge.provider_mapping() == %{}
-    assert Registry.lookup_source(:flezha_std_out) == :error
-    assert Registry.lookup_source(:flezha_producer) == :error
+    sources = TelemetryBridge.provider_mapping() |> Map.values() |> MapSet.new(&elem(&1, 0))
+
+    assert sources ==
+             MapSet.new([
+               :flezha_file_sink,
+               :flezha_file_source,
+               :flezha_hook_webhook,
+               :flezha_http_poll,
+               :flezha_http_push,
+               :flezha_postgres_poll,
+               :flezha_relay_forward
+             ])
+
+    for source <- [:flezha_websocket, :flezha_std_out, :flezha_producer],
+        do: assert(Registry.lookup_source(source) == :error)
+
+    assert {:ok, %{description: "The plugin that reads lines from a file into a relay."}} =
+             Registry.lookup_source(:flezha_file_source)
+
+    assert {:ok, %{title: "HTTP poll plugin"}} = Registry.lookup_source(:flezha_http_poll)
   end
 
   test "a package provider declared before `telemetry:` existed still starts the bridge" do
@@ -698,6 +715,23 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     """
 
     assert_raise CompileError, ~r/telemetry entry/, fn -> Code.compile_string(source) end
+  end
+
+  test "a blank description or an emits entry outside the vocabulary fails the compilation" do
+    for {opts, message} <- [
+          {~s(description: " "), ~r/description " " is not a line of text/},
+          {"title: 7", ~r/title 7 is not a line of text/},
+          {"emits: [stalled: nil]", ~r/emits \[stalled: nil\] is not/},
+          {"emits: [failed: :loud]", ~r/emits \[failed: :loud\] is not/}
+        ] do
+      source = """
+      defmodule FlezhaTest.BadDecl#{System.unique_integer([:positive])} do
+        use Flezha.Plugin.ProviderBehaviour, #{opts}
+      end
+      """
+
+      assert_raise CompileError, message, fn -> Code.compile_string(source) end
+    end
   end
 
   test "an own verb that repeats the vocabulary fails the provider's compilation" do

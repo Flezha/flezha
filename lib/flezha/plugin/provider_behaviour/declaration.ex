@@ -77,6 +77,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     feeds = if source, do: true, else: Keyword.get(opts, :feeds, false)
     shareable = Keyword.get(opts, :shareable, false)
     telemetry = Keyword.get(opts, :telemetry, [])
+    emits = Keyword.get(opts, :emits, [])
     namespace = Keyword.get(opts, :namespace)
 
     quote do
@@ -90,6 +91,9 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
       @__provider_feeds__ unquote(feeds)
       @__provider_shareable__ unquote(shareable)
       @__provider_telemetry__ unquote(telemetry)
+      @__provider_emits__ unquote(emits)
+      @__provider_title__ unquote(Keyword.get(opts, :title))
+      @__provider_description__ unquote(Keyword.get(opts, :description))
       @__provider_namespace__ unquote(namespace)
       @__provider_source__ unquote(source)
     end
@@ -230,6 +234,10 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     require_reconfigure!(env, rows)
     validate_type!(env, Module.get_attribute(env.module, :__provider_type__))
     validate_telemetry!(env, Module.get_attribute(env.module, :__provider_telemetry__))
+    validate_emits!(env, Module.get_attribute(env.module, :__provider_emits__))
+
+    for key <- [:title, :description],
+        do: validate_text!(env, key, Module.get_attribute(env.module, :"__provider_#{key}__"))
 
     [
       decl(env.module),
@@ -265,6 +273,9 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
           own: unquote(own),
           worker: @__provider_worker__,
           telemetry: @__provider_telemetry__,
+          emits: @__provider_emits__,
+          title: @__provider_title__,
+          description: @__provider_description__,
           feeds: @__provider_feeds__,
           shareable: @__provider_shareable__,
           namespace: @__provider_namespace__
@@ -498,7 +509,7 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
     do: raise_row!(env, "type #{inspect(type)} must be :relay or :controller")
 
   @verb_form "`verb: :metric | :event`, `verb: {:metric | :event, \"what it says\"}` or " <>
-               "`verb: {:metric | :event, meaning: \"what it says\", label:, outcome:, sentence:}`"
+               "`verb: {:metric | :event, meaning: \"what it says\", label:, outcome:, sentence:, level:}`"
 
   # An own verb that repeats a shared one would be a second account of the same
   # fact under a kind the vocabulary already fixes.
@@ -518,6 +529,27 @@ defmodule Flezha.Plugin.ProviderBehaviour.Declaration do
 
   defp validate_telemetry!(env, other),
     do: raise_row!(env, "telemetry #{inspect(other)} is not a keyword list")
+
+  # The shared verbs a provider writes, each with the level its event is also
+  # logged at, or nil.
+  defp validate_emits!(env, emits) do
+    valid? =
+      Keyword.keyword?(emits) and
+        Enum.all?(emits, fn {verb, level} ->
+          verb in ProviderBehaviour.verbs() and
+            (is_nil(level) or SignalWords.valid_word?(:level, level))
+        end)
+
+    unless valid?,
+      do: raise_row!(env, "emits #{inspect(emits)} is not `shared_verb: nil | log_level`")
+  end
+
+  defp validate_text!(_env, _key, nil), do: :ok
+
+  defp validate_text!(env, key, text) do
+    unless SignalWords.text?(text),
+      do: raise_row!(env, "#{key} #{inspect(text)} is not a line of text")
+  end
 
   # A verb's meaning is optional, so a package built before it existed loads.
   defp declared_kind({kind, meaning}) when is_binary(meaning),

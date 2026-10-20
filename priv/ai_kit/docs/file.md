@@ -461,17 +461,17 @@ What each signal says on the observability bus, and the series an exporter names
 <!-- bridge-signals:begin flezha_file_source -->
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
-| `flezha_file_source` | `failed` | event |  | Reading the file failed. |
-| `flezha_file_source` | `shipped` | metric | `flezha_file_source_shipped` | A line read from the file was handed to the relay. |
+| `flezha_file_source` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_file_source` | `shipped` | metric | `flezha_file_source_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 | `flezha_file_source` | `truncated` | event |  | The file was cut short or replaced, so it is read again from the start. |
 <!-- bridge-signals:end -->
 
 <!-- bridge-signals:begin flezha_file_sink -->
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
-| `flezha_file_sink` | `failed` | event |  | Writing to the file failed; it will be tried again. |
+| `flezha_file_sink` | `failed` | event |  | A delivery or a read failed. |
 | `flezha_file_sink` | `refused` | event |  | A record was refused because it cannot be written as one line. |
-| `flezha_file_sink` | `shipped` | metric | `flezha_file_sink_shipped` | Records were written to the file. |
+| `flezha_file_sink` | `shipped` | metric | `flezha_file_sink_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 <!-- bridge-signals:end -->
 
 | Event | Measurements | Metadata |

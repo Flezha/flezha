@@ -6,7 +6,8 @@ defmodule Flezha.Observability.TelemetryBridgeGoldenTest do
   lines it names.
   """
 
-  use ExUnit.Case, async: true
+  # async: false: the provider table, which a test installing a package changes.
+  use ExUnit.Case, async: false
 
   alias Flezha.Observability.TelemetryBridge
 
@@ -22,19 +23,19 @@ defmodule Flezha.Observability.TelemetryBridgeGoldenTest do
         do: assert(current[key] == value, "#{key} differs from the golden")
   end
 
-  # A registration's kinds and signals are compared as sets: their order follows
-  # map iteration, which says nothing to a reader.
+  # The bridged events of both halves the core derives at start, hand-kept and
+  # provider-derived. A registration's kinds and signals are compared as sets:
+  # their order follows map iteration, which says nothing to a reader.
   @doc false
   def snapshot() do
     %{
-      mapping: TelemetryBridge.mapping(),
+      mapping: Map.merge(TelemetryBridge.provider_mapping(), TelemetryBridge.mapping()),
       derived: TelemetryBridge.derived(),
       unexported: TelemetryBridge.unexported(),
       unwritten: TelemetryBridge.unwritten(),
-      lines: TelemetryBridge.lines(),
+      lines: Map.merge(TelemetryBridge.provider_lines(), TelemetryBridge.lines()),
       registrations:
-        %{}
-        |> TelemetryBridge.registrations()
+        TelemetryBridge.registrations()
         |> Enum.map(fn entry ->
           %{
             entry

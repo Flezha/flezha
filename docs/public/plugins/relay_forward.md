@@ -206,9 +206,9 @@ What each signal says on the observability bus, and the series an exporter names
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
 | `flezha_relay_forward` | `queue_depth` | metric | `flezha_relay_forward_queue_depth` | How many messages are waiting to be forwarded. |
-| `flezha_relay_forward` | `retried` | metric | `flezha_relay_forward_retried` | A forward failed and will be tried again. |
+| `flezha_relay_forward` | `retried` | metric | `flezha_relay_forward_retried` | A delivery failed and will be tried again; nothing is lost yet. |
 | `flezha_relay_forward` | `saturated` | event |  | The forward queue was full and turned messages away. |
-| `flezha_relay_forward` | `shipped` | metric | `flezha_relay_forward_shipped` | Messages were handed to the next relay. |
+| `flezha_relay_forward` | `shipped` | metric | `flezha_relay_forward_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 <!-- bridge-signals:end -->
 
 | Event | Measurements | Metadata |

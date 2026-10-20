@@ -190,10 +190,9 @@
     [:flezha, :plugin, :file_sink, :failed] =>
       {:flezha_file_sink, :failed, :event,
        [
-         label: "Write failed",
+         label: "Failed",
          outcome: :failure,
-         meaning: "Writing to the file failed; it will be tried again.",
-         sentence: "{plugin_id} could not write to {path}"
+         meaning: "A delivery or a read failed."
        ]},
     [:flezha, :plugin, :file_sink, :refused] =>
       {:flezha_file_sink, :refused, :event,
@@ -206,23 +205,23 @@
     [:flezha, :plugin, :file_sink, :shipped] =>
       {:flezha_file_sink, :shipped, :metric,
        [
-         label: "Saved",
-         meaning: "Records were written to the file.",
-         sentence: "{plugin_id} saved {count:record} to {path}"
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
        ]},
     [:flezha, :plugin, :file_source, :failed] =>
       {:flezha_file_source, :failed, :event,
        [
-         label: "Read failed",
+         label: "Failed",
          outcome: :failure,
-         meaning: "Reading the file failed."
+         meaning: "A delivery or a read failed."
        ]},
     [:flezha, :plugin, :file_source, :shipped] =>
       {:flezha_file_source, :shipped, :metric,
        [
-         label: "Read",
-         meaning: "A line read from the file was handed to the relay.",
-         sentence: "{plugin_id} read a line from {path}"
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
        ]},
     [:flezha, :plugin, :file_source, :truncated] =>
       {:flezha_file_source, :truncated, :event,
@@ -242,43 +241,44 @@
     [:flezha, :plugin, :hook_webhook, :failed] =>
       {:flezha_hook_webhook, :failed, :event,
        [
-         label: "Given up",
+         label: "Failed",
          outcome: :failure,
-         meaning: "A webhook request failed too often and was given up."
+         meaning: "A delivery or a read failed."
        ]},
     [:flezha, :plugin, :hook_webhook, :overflowed] =>
       {:flezha_hook_webhook, :overflowed, :metric,
        [
          label: "Queue full",
          outcome: :failure,
-         meaning: "The webhook queue was full, so requests were dropped."
+         meaning: "The plugin's queue was full, so items were dropped."
        ]},
     [:flezha, :plugin, :hook_webhook, :retried] =>
       {:flezha_hook_webhook, :retried, :metric,
        [
          label: "Retrying",
-         meaning: "A webhook request failed and will be tried again."
+         outcome: :normal,
+         meaning: "A delivery failed and will be tried again; nothing is lost yet."
        ]},
     [:flezha, :plugin, :hook_webhook, :shipped] =>
       {:flezha_hook_webhook, :shipped, :metric,
        [
-         label: "Sent",
-         meaning: "A webhook request was sent.",
-         sentence: "Sent {count:request}"
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
        ]},
     [:flezha, :plugin, :http_poll, :failed] =>
       {:flezha_http_poll, :failed, :event,
        [
-         label: "Poll failed",
+         label: "Failed",
          outcome: :failure,
-         meaning: "A poll request failed."
+         meaning: "A delivery or a read failed."
        ]},
     [:flezha, :plugin, :http_poll, :shipped] =>
       {:flezha_http_poll, :shipped, :metric,
        [
-         label: "Fetched",
-         meaning: "A poll got a new response and handed it to the relay.",
-         sentence: "{plugin_id} fetched {bytes:byte} in {latency_ms} ms"
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
        ]},
     [:flezha, :plugin, :http_poll, :unchanged] =>
       {:flezha_http_poll, :unchanged, :metric,
@@ -290,29 +290,30 @@
     [:flezha, :plugin, :http_push, :failed] =>
       {:flezha_http_push, :failed, :event,
        [
-         label: "Given up",
+         label: "Failed",
          outcome: :failure,
-         meaning: "An HTTP request failed too often and was given up."
+         meaning: "A delivery or a read failed."
        ]},
     [:flezha, :plugin, :http_push, :overflowed] =>
       {:flezha_http_push, :overflowed, :metric,
        [
          label: "Queue full",
          outcome: :failure,
-         meaning: "The HTTP queue was full, so requests were dropped."
+         meaning: "The plugin's queue was full, so items were dropped."
        ]},
     [:flezha, :plugin, :http_push, :retried] =>
       {:flezha_http_push, :retried, :metric,
        [
          label: "Retrying",
-         meaning: "An HTTP request failed and will be tried again."
+         outcome: :normal,
+         meaning: "A delivery failed and will be tried again; nothing is lost yet."
        ]},
     [:flezha, :plugin, :http_push, :shipped] =>
       {:flezha_http_push, :shipped, :metric,
        [
-         label: "Sent",
-         meaning: "An HTTP request was sent.",
-         sentence: "Sent {count:request}"
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
        ]},
     [:flezha, :plugin, :phase] =>
       {:flezha_plugin, :phase, :event,
@@ -332,16 +333,16 @@
     [:flezha, :plugin, :postgres_poll, :failed] =>
       {:flezha_postgres_poll, :failed, :event,
        [
-         label: "Poll failed",
+         label: "Failed",
          outcome: :failure,
-         meaning: "Reading the table failed."
+         meaning: "A delivery or a read failed."
        ]},
     [:flezha, :plugin, :postgres_poll, :shipped] =>
       {:flezha_postgres_poll, :shipped, :metric,
        [
-         label: "Read rows",
-         meaning: "New rows read from the table were handed to the relay.",
-         sentence: "{plugin_id} read {count:row} from {table}"
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
        ]},
     [:flezha, :plugin, :relay_forward, :overflowed] =>
       {:flezha_relay_forward, :saturated, :event,
@@ -359,10 +360,18 @@
        ]},
     [:flezha, :plugin, :relay_forward, :retried] =>
       {:flezha_relay_forward, :retried, :metric,
-       [label: "Retrying", meaning: "A forward failed and will be tried again."]},
+       [
+         label: "Retrying",
+         outcome: :normal,
+         meaning: "A delivery failed and will be tried again; nothing is lost yet."
+       ]},
     [:flezha, :plugin, :relay_forward, :shipped] =>
       {:flezha_relay_forward, :shipped, :metric,
-       [label: "Forwarded", meaning: "Messages were handed to the next relay."]},
+       [
+         label: "Delivered",
+         outcome: :normal,
+         meaning: "The plugin passed items on, into its relay or out to where it sends them."
+       ]},
     [:flezha, :plugin, :websocket, :failed] =>
       {:flezha_ws, :failed, :event,
        [
@@ -1264,12 +1273,11 @@
       name: :flezha_file_sink,
       signals: [
         %{
-          description: "Writing to the file failed; it will be tried again.",
+          description: "A delivery or a read failed.",
           kind: :event,
-          label: "Write failed",
+          label: "Failed",
           name: :failed,
-          outcome: :failure,
-          sentence: "{plugin_id} could not write to {path}"
+          outcome: :failure
         },
         %{
           description: "A record was refused because it cannot be written as one line.",
@@ -1280,12 +1288,12 @@
           sentence: "{plugin_id} refused a record for {path}"
         },
         %{
-          description: "Records were written to the file.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Saved",
+          label: "Delivered",
           name: :shipped,
-          outcome: :normal,
-          sentence: "{plugin_id} saved {count:record} to {path}"
+          outcome: :normal
         }
       ],
       title: "File sink plugin"
@@ -1298,19 +1306,19 @@
       name: :flezha_file_source,
       signals: [
         %{
-          description: "Reading the file failed.",
+          description: "A delivery or a read failed.",
           kind: :event,
-          label: "Read failed",
+          label: "Failed",
           name: :failed,
           outcome: :failure
         },
         %{
-          description: "A line read from the file was handed to the relay.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Read",
+          label: "Delivered",
           name: :shipped,
-          outcome: :normal,
-          sentence: "{plugin_id} read a line from {path}"
+          outcome: :normal
         },
         %{
           description: "The file was cut short or replaced, so it is read again from the start.",
@@ -1462,33 +1470,33 @@
       name: :flezha_hook_webhook,
       signals: [
         %{
-          description: "A webhook request failed too often and was given up.",
+          description: "A delivery or a read failed.",
           kind: :event,
-          label: "Given up",
+          label: "Failed",
           name: :failed,
           outcome: :failure
         },
         %{
-          description: "The webhook queue was full, so requests were dropped.",
+          description: "The plugin's queue was full, so items were dropped.",
           kind: :metric,
           label: "Queue full",
           name: :overflowed,
           outcome: :failure
         },
         %{
-          description: "A webhook request failed and will be tried again.",
+          description: "A delivery failed and will be tried again; nothing is lost yet.",
           kind: :metric,
           label: "Retrying",
           name: :retried,
           outcome: :normal
         },
         %{
-          description: "A webhook request was sent.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Sent",
+          label: "Delivered",
           name: :shipped,
-          outcome: :normal,
-          sentence: "Sent {count:request}"
+          outcome: :normal
         }
       ],
       title: "Webhook plugin"
@@ -1519,19 +1527,19 @@
       name: :flezha_http_poll,
       signals: [
         %{
-          description: "A poll request failed.",
+          description: "A delivery or a read failed.",
           kind: :event,
-          label: "Poll failed",
+          label: "Failed",
           name: :failed,
           outcome: :failure
         },
         %{
-          description: "A poll got a new response and handed it to the relay.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Fetched",
+          label: "Delivered",
           name: :shipped,
-          outcome: :normal,
-          sentence: "{plugin_id} fetched {bytes:byte} in {latency_ms} ms"
+          outcome: :normal
         },
         %{
           description: "A poll's response matched the last one, so it was skipped.",
@@ -1552,33 +1560,33 @@
       name: :flezha_http_push,
       signals: [
         %{
-          description: "An HTTP request failed too often and was given up.",
+          description: "A delivery or a read failed.",
           kind: :event,
-          label: "Given up",
+          label: "Failed",
           name: :failed,
           outcome: :failure
         },
         %{
-          description: "The HTTP queue was full, so requests were dropped.",
+          description: "The plugin's queue was full, so items were dropped.",
           kind: :metric,
           label: "Queue full",
           name: :overflowed,
           outcome: :failure
         },
         %{
-          description: "An HTTP request failed and will be tried again.",
+          description: "A delivery failed and will be tried again; nothing is lost yet.",
           kind: :metric,
           label: "Retrying",
           name: :retried,
           outcome: :normal
         },
         %{
-          description: "An HTTP request was sent.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Sent",
+          label: "Delivered",
           name: :shipped,
-          outcome: :normal,
-          sentence: "Sent {count:request}"
+          outcome: :normal
         }
       ],
       title: "HTTP push plugin"
@@ -1643,19 +1651,19 @@
           sentence: "{plugin_id} caught up with {table}"
         },
         %{
-          description: "Reading the table failed.",
+          description: "A delivery or a read failed.",
           kind: :event,
-          label: "Poll failed",
+          label: "Failed",
           name: :failed,
           outcome: :failure
         },
         %{
-          description: "New rows read from the table were handed to the relay.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Read rows",
+          label: "Delivered",
           name: :shipped,
-          outcome: :normal,
-          sentence: "{plugin_id} read {count:row} from {table}"
+          outcome: :normal
         }
       ],
       title: "Postgres poll plugin"
@@ -1710,7 +1718,7 @@
           sentence: "{depth:message} waiting to be forwarded"
         },
         %{
-          description: "A forward failed and will be tried again.",
+          description: "A delivery failed and will be tried again; nothing is lost yet.",
           kind: :metric,
           label: "Retrying",
           name: :retried,
@@ -1724,9 +1732,10 @@
           outcome: :failure
         },
         %{
-          description: "Messages were handed to the next relay.",
+          description:
+            "The plugin passed items on, into its relay or out to where it sends them.",
           kind: :metric,
-          label: "Forwarded",
+          label: "Delivered",
           name: :shipped,
           outcome: :normal
         }

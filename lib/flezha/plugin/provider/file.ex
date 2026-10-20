@@ -48,6 +48,15 @@ defmodule Flezha.Plugin.Provider.File do
 
     use ProviderBehaviour,
       name: "file_source",
+      description: "The plugin that reads lines from a file into a relay.",
+      emits: [shipped: nil, failed: nil],
+      telemetry: [
+        truncated:
+          {:event,
+           label: "File restarted",
+           meaning: "The file was cut short or replaced, so it is read again from the start.",
+           sentence: "{plugin_id} reads {path} again from the start"}
+      ],
       source: [partitioned: :own_copy, idle_interval: :poll_interval_ms],
       options:
         [
@@ -147,6 +156,16 @@ defmodule Flezha.Plugin.Provider.File do
 
     use ProviderBehaviour,
       name: "file_sink",
+      description: "The plugin that writes a relay's output to a file.",
+      emits: [shipped: nil, failed: nil],
+      telemetry: [
+        refused:
+          {:event,
+           label: "Record refused",
+           outcome: :failure,
+           meaning: "A record was refused because it cannot be written as one line.",
+           sentence: "{plugin_id} refused a record for {path}"}
+      ],
       options:
         [
           path: [

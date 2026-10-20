@@ -219,8 +219,8 @@ What each signal says on the observability bus, and the series an exporter names
 | Source | Signal | Kind | Series | Meaning |
 | --- | --- | --- | --- | --- |
 | `flezha_postgres_poll` | `caught_up` | event |  | The poll reached the newest row in the table. |
-| `flezha_postgres_poll` | `failed` | event |  | Reading the table failed. |
-| `flezha_postgres_poll` | `shipped` | metric | `flezha_postgres_poll_shipped` | New rows read from the table were handed to the relay. |
+| `flezha_postgres_poll` | `failed` | event |  | A delivery or a read failed. |
+| `flezha_postgres_poll` | `shipped` | metric | `flezha_postgres_poll_shipped` | The plugin passed items on, into its relay or out to where it sends them. |
 <!-- bridge-signals:end -->
 
 | Event | Measurements | Metadata |
