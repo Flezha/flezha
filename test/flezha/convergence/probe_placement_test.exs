@@ -4,19 +4,22 @@ defmodule Flezha.Convergence.ProbePlacementTest do
   the factory's group on the namespace hub, the table the hub places by, never
   the nodes whose runners merely advertise it. A relay with no local runner is
   waiting only while one of those nodes exists. A suspended relay is read
-  suspended from its own Overwatch, so it is never planned.
+  suspended from its own Overwatch, so it is never planned. A relay stopped
+  after it was listed reads as unanswered without a warning; a wedged one warns.
   """
 
   # async: false: Mimic stubs on modules the live controller also calls.
   use ExUnit.Case, async: false
   use Mimic
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.ConvergenceFixtures, only: [diff: 2]
 
   alias Flezha.Cluster.{Directory, GroupedHashing}
   alias Flezha.Convergence.{Intent, Probe}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost
 
   @factory "probe_placement_factory"
@@ -82,5 +85,28 @@ defmodule Flezha.Convergence.ProbePlacementTest do
 
     assert reality.relays[ctx.ref].phase == :suspended
     assert diff(ctx.intent, reality).unbound_relays == []
+  end
+
+  # fails when: every relay a mass stop removes between the listing and the
+  # read logs a warning, one line per relay.
+  test "a relay already gone reads :error without a warning" do
+    on_exit(NodeTestHelper.override_log_level(:warning))
+    gone = spawn(fn -> :ok end)
+    ref = Process.monitor(gone)
+    assert_receive {:DOWN, ^ref, _, _, _}
+
+    log = capture_log([level: :warning], fn -> assert Probe.overwatch(gone) == :error end)
+
+    refute log =~ "bounded call failed"
+  end
+
+  test "CONTROL: a relay that does not answer still warns" do
+    on_exit(NodeTestHelper.override_log_level(:warning))
+    wedged = spawn_link(fn -> Process.sleep(:infinity) end)
+
+    log = capture_log([level: :warning], fn -> assert Probe.overwatch(wedged) == :error end)
+
+    assert log =~ "bounded call failed"
+    assert log =~ ":get_overwatch_state"
   end
 end
