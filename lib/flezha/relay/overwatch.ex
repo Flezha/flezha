@@ -98,9 +98,10 @@ defmodule Flezha.Relay.Overwatch do
     # then, plus `reforward` once its own re-forward is owed again. `nil` when
     # no bind is in flight.
     bind_task: nil,
-    # Outputs that arrived while a bind task was binding, newest first,
-    # delivered once its binding is adopted.
+    # Outputs that arrived while a bind task was binding, newest first, and
+    # whether any went unsettled with no plugin up, for the next bind to redrive.
     held_outputs: [],
+    owes_outputs: false,
     # Effectively-once tier, declared by the SDK in the AddRelay response
     # metadata: one of the two ways an instance has durable input, which gates
     # the input-log journal and the `flz.offset` stamp on `:io_in`.
@@ -485,12 +486,6 @@ defmodule Flezha.Relay.Overwatch do
   # run settles the entry it was dispatched under, carrying the holds its sinks
   # took — so an output no delivery-guaranteed sink took is complete the moment
   # the chain has had it, filtered included.
-  # A bind task binds the plugins on its own copy of this state, so an
-  # output of the instance it woke or rebound waits for that binding to be
-  # adopted rather than meet a plugin table the bind has not brought up (a
-  # sleeper rediscovered at boot has none running). An instance moved while it
-  # was running still has its table up, and its output is not held: a run that
-  # completes before the bind reports would be torn down holding it.
   # A part goes to the listeners there are now and is never held: a preview
   # waits for nothing, and nothing but `:on_preview` sees it.
   @impl true
@@ -499,11 +494,15 @@ defmodule Flezha.Relay.Overwatch do
     {:noreply, state}
   end
 
-  def handle_cast(frame, %__MODULE__{bind_task: %{}} = state)
-      when is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] and
-             (state.phase == :suspended or state.halt_reason != nil) do
-    {:noreply, %__MODULE__{state | held_outputs: [frame | state.held_outputs]}}
-  end
+  # Held while a bind task brings the plugins up on its own copy; a moved running
+  # instance keeps its table up, as holding would tear a run ending first down.
+  # With no bind in flight and no plugin subscribed (a failed bind, a boot sleeper),
+  # calls and answers go out unsettled, owed to the next bind. Running relays fail at phase.
+  def handle_cast(frame, %__MODULE__{phase: phase} = state)
+      when phase != :running and is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] and
+             (phase == :suspended or state.halt_reason != nil) and
+             (state.bind_task != nil or state.extensions.active_mask == 0),
+      do: {:noreply, hold_or_owe(frame, state)}
 
   def handle_cast({:io_out_batch, outputs}, state),
     do: {:noreply, Outbox.run(outputs, state, &output(&3, &1, &2))}
@@ -735,6 +734,13 @@ defmodule Flezha.Relay.Overwatch do
         Outbound.request(state, message, metadata, Outbox.guaranteed?(metadata))
     end
   end
+
+  defp hold_or_owe(frame, %__MODULE__{bind_task: %{}} = state),
+    do: %__MODULE__{state | held_outputs: [frame | state.held_outputs]}
+
+  defp hold_or_owe({:io_out, message, metadata}, state), do: owe({message, metadata, nil}, state)
+  defp hold_or_owe({:io_out_batch, outputs}, state), do: Enum.reduce(outputs, state, &owe/2)
+  defp owe({msg, md, _ack}, state), do: output(%{state | owes_outputs: true}, msg, md)
 
   @doc "Answer the outbox hold a call took on `metadata`; `nil` holds nothing."
   @spec confirm_hold(map() | nil) :: :ok

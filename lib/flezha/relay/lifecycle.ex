@@ -301,7 +301,7 @@ defmodule Flezha.Relay.Lifecycle do
          state = Replay.reforward_undelivered_tail(state) do
       record_and_replay(state, relay, declarations)
     else
-      {:error, reason, %Overwatch{} = halted} -> {:error, reason, halted}
+      {:error, reason, %Overwatch{} = copy} -> {:error, reason, Plugins.unprepare(copy, state)}
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -435,7 +435,8 @@ defmodule Flezha.Relay.Lifecycle do
     %Overwatch{
       state
       | runner_id: runner_id,
-        channel: attach_channel(relay_id, runner_id)
+        channel: attach_channel(relay_id, runner_id),
+        owes_outputs: false
     }
   end
 

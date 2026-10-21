@@ -173,6 +173,17 @@ defmodule Flezha.Relay.Plugins do
   end
 
   @doc """
+  Unsubscribe what `prepare/2` added to `prepared` beyond the table of `before`:
+  a bind that fails after it leaves the table it found, so an output reaching
+  the halted relay meets no hook whose plugin never started.
+  """
+  @spec unprepare(Overwatch.t(), Overwatch.t()) :: Overwatch.t()
+  def unprepare(%Overwatch{extensions: table} = prepared, %Overwatch{extensions: before}) do
+    added = Table.subscribed_ids(table) -- Table.subscribed_ids(before)
+    %Overwatch{prepared | extensions: Enum.reduce(added, table, &Table.unsubscribe(&2, &1))}
+  end
+
+  @doc """
   Warn that an entry written before plugins had names carries plugin rows of
   its own: the relay starts without them, and nothing converts them.
   """

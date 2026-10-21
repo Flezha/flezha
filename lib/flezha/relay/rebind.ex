@@ -140,7 +140,8 @@ defmodule Flezha.Relay.Rebind do
   @doc """
   The bind task ended before it reported: its bind failed with `reason`. A
   task that reported is no longer in flight, so its exit reaches here only
-  when it died first. The outputs held meanwhile are delivered after it.
+  when it died first. The outputs held meanwhile go back through the output
+  path after it.
   """
   @spec bind_task_exited(Overwatch.t(), term()) :: Overwatch.t()
   def bind_task_exited(%Overwatch{} = state, reason),

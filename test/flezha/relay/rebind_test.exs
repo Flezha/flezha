@@ -8,13 +8,17 @@ defmodule FlezhaTest.Relay.RebindTest do
   # async: false: writes Application env; the live controller and its fleet; the primary Logger.
 
   use FlezhaTest.Case, fixtures: [:env], async: false
+  use Mimic
 
+  alias Flezha.Plugin
   alias Flezha.Relay.Builder
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Rebind
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.Service.RelayManager
+  alias Flezha.Service.{PluginManager, RelayManager}
+  alias Flezha.State.{Outbox, WriterRegistry}
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "default"
@@ -144,9 +148,80 @@ defmodule FlezhaTest.Relay.RebindTest do
              Overwatch.handle_cast(frame, %{binding | phase: :suspended})
 
     assert {:noreply, %{held_outputs: [^frame]}} =
-             Overwatch.handle_cast(frame, %{binding | halt_reason: :timeout})
+             Overwatch.handle_cast(frame, %{binding | phase: :halted, halt_reason: :timeout})
 
     assert {:noreply, %{held_outputs: []}} = Overwatch.handle_cast(frame, binding)
+  end
+
+  # fails when: an output held through a bind that failed, or dispatched again
+  # after it, meets a relay whose plugins never came up and is settled, so its
+  # Cell writer stops owing an output no sink took.
+  test "a failed bind leaves an output nothing took owed to its Cell writer" do
+    output = owed_output({"failed_bind_owed", "t", "k"}, 7)
+
+    halted = %{
+      running_state()
+      | phase: :halted,
+        halt_reason: :runner_gone,
+        bind_task: %{pid: self(), then: nil, from: :halted, journaled: nil},
+        held_outputs: [{:io_out_batch, [output]}]
+    }
+
+    {failed, _log} =
+      ExUnit.CaptureLog.with_log(fn -> Rebind.bind_task_exited(halted, :killed) end)
+
+    assert %{held_outputs: [], bind_task: nil, owes_outputs: true} = failed
+    assert {:noreply, ^failed} = Overwatch.handle_cast({:io_out_batch, [output]}, failed)
+    refute_received {:"$gen_cast", {:outbox_settled_many, _}}
+
+    # A bound relay, or a halted one whose plugins came up, settles it.
+    up = %{failed | extensions: %{failed.extensions | active_mask: 1}}
+
+    for state <- [running_state(), up] do
+      assert {:noreply, _} = Overwatch.handle_cast({:io_out_batch, [output]}, state)
+      assert_received {:"$gen_cast", {:outbox_settled_many, [{{:cursor, 7}, 0}]}}
+    end
+  end
+
+  # fails when: a bind that fails after preparing its plugins hands the halted
+  # relay hooks no started plugin runs behind, so an output it owes is settled
+  # through them.
+  test "a bind that fails after preparing its plugins leaves its outputs owed" do
+    stub(PluginManager, :resolve, fn _namespace, binding, _entry -> {:ok, binding} end)
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
+    halted = %{running_state() | phase: :halted, halt_reason: :runner_gone}
+    on_exit(fn -> ClassRegistry.delete(halted.id) end)
+
+    sink =
+      Plugin.new(
+        id: "sink",
+        provider: Plugin.Provider.BeamMsgForward,
+        opts: %{recv_pid: self()},
+        namespace: @namespace,
+        relay_id: halted.id,
+        hooks: [{:on_output, []}]
+      )
+
+    relay = %{halted.builder | opts: [bindings: [sink]]}
+
+    {{:error, reason, copy}, _log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        Lifecycle.complete_init(halted, "runner_b", relay, self(), :pinned)
+      end)
+
+    output = owed_output({"prepared_bind_owed", "t", "k"}, 3)
+    binding = %{halted | bind_task: %{pid: self(), then: nil, from: :halted, journaled: nil}}
+
+    {failed, _log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        binding
+        |> Map.put(:held_outputs, [{:io_out_batch, [output]}])
+        |> Rebind.bind_task_reported({:halt, copy, reason})
+      end)
+
+    refute_received {:"$gen_cast", {:outbox_settled_many, _}}
+    assert %{bind_task: nil, owes_outputs: true} = failed
+    assert Table.phase(failed.extensions, "sink") == :unknown
   end
 
   # fails when: a move stops seeding the runner from the final state a
@@ -242,6 +317,13 @@ defmodule FlezhaTest.Relay.RebindTest do
       assert %{arrived_via_hotswap?: true, cause: :arrive} =
                Overwatch.alter_handover_state(state, {handover, "sdk-state"})
     end)
+  end
+
+  # A durable output of `cell`, whose writer this process stands in for.
+  defp owed_output(cell, seq) do
+    {:ok, _} = Registry.register(WriterRegistry.name(), cell, nil)
+    identity = %{cell: cell, seq: Integer.to_string(seq), epoch: 0, channel: "out"}
+    Outbox.stamp("out", Map.merge(identity, %{owner: cell, entry: {:cursor, seq}}))
   end
 
   defp running_state() do

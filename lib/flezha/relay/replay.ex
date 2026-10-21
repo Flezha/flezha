@@ -281,13 +281,13 @@ defmodule Flezha.Relay.Replay do
 
   @doc """
   Hand a new `owner`, before it is recorded, what the Cell writers sent an
-  Overwatch now dead and never saw run, so it lands ahead of anything newer.
+  Overwatch now dead or left owed, so it lands ahead of anything newer.
   """
   @spec redrive_outboxes(Overwatch.t(), pid()) :: :ok
   def redrive_outboxes(%Overwatch{} = state, owner) do
     class = Overwatch.relay_class(state)
 
-    if ClassRegistry.overwatch_pid(class) == :error,
+    if state.owes_outputs or ClassRegistry.overwatch_pid(class) == :error,
       do: Enum.each(Flezha.State.Supervisor.live_writers(class), &WalWriter.redrive(&1, owner))
 
     :ok

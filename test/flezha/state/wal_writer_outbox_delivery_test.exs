@@ -8,6 +8,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
   use FlezhaTest.OutboxCase, async: false
 
   alias Flezha.Relay.Calls.Token
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Relay.{Builder, Lifecycle, Overwatch}
 
   test "stall_status reports the outbox cursors producing-liveness compares", %{
@@ -248,6 +249,31 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert {"a", _md, _ack} = next_output()
     assert {"b", _md, _ack} = next_output()
     assert {"c", _md, _ack} = next_output()
+  end
+
+  test "a rebind gets what a failed bind left owed before anything newer", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    ClassRegistry.put_overwatch(rc, self(), nil)
+    pid = start_writer(cell_id)
+    append_effect(pid, 0, [output("k1", "a")], 1)
+
+    halted = %Overwatch{
+      id: rc,
+      builder: %Builder{id: rc, factory_id: "f", opts: []},
+      extensions: Table.new(Overwatch.__extensions_catalog__()),
+      phase: :halted,
+      halt_reason: :runner_gone
+    }
+
+    assert {:noreply, owing} = Overwatch.handle_cast({:io_out_batch, [next_output()]}, halted)
+
+    assert %{owes_outputs: false} = Lifecycle.bind_to_runner(owing, rc, "runner_b", self())
+    append_effect(pid, 1, [output("k1", "b")], 2)
+
+    assert {"a", _md, _ack} = next_output()
+    assert {"b", _md, _ack} = next_output()
   end
 
   test "a held call is re-dispatched until its caller answers it; any other hold waits", %{
