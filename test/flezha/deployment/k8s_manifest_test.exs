@@ -1,8 +1,8 @@
 defmodule FlezhaTest.Deployment.K8sManifestTest do
   use ExUnit.Case, async: true
 
-  @daemonset_path Path.expand("../../../kubernetes/flezha-daemonset.yaml", __DIR__)
-  @configmap_path Path.expand("../../../kubernetes/flezha-configmap.yaml", __DIR__)
+  @daemonset_path Path.expand("../../../deploy/kubernetes/flezha-daemonset.yaml", __DIR__)
+  @configmap_path Path.expand("../../../deploy/kubernetes/flezha-configmap.yaml", __DIR__)
 
   # Hand-rolled string assertions deliberately — adding YamlElixir to the
   # production dep tree just for these manifest sanity checks isn't worth it.

@@ -358,8 +358,7 @@ defmodule Flezha.State.WalWriterTest do
 
       assert_receive {:holding, holder}
       {:ok, srv} = Supervisor.find_or_start(pid)
-      waiting = {:current_function, {WriterRegistry, :await_files, 1}}
-      assert wait_until(fn -> Process.info(srv, :current_function) == waiting end, 2_000)
+      assert wait_until(fn -> awaiting_files?(srv) end, 2_000)
       refute File.exists?(Paths.wal_path(pid))
 
       send(holder, :release)
@@ -383,10 +382,10 @@ defmodule Flezha.State.WalWriterTest do
 
       assert_receive :holding
       {:ok, holder} = WriterRegistry.lookup({:cell_files, pid})
+      on_exit(fn -> Process.exit(holder, :kill) end)
       {:ok, srv} = Supervisor.find_or_start(pid)
       append = Task.async(fn -> WalWriter.append(srv, 0, TestHelpers.stub_header(), "a") end)
-      waiting = {:current_function, {WriterRegistry, :await_files, 1}}
-      assert wait_until(fn -> Process.info(srv, :current_function) == waiting end, 2_000)
+      assert wait_until(fn -> awaiting_files?(srv) end, 2_000)
       assert Task.yield(append, 0) == nil
 
       Process.exit(holder, :kill)
@@ -792,6 +791,12 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   defp ok!({:ok, x}), do: {:ok, x}
+
+  # Module-agnostic: once a test stubs WriterRegistry, Mimic runs its code
+  # under a renamed module for the rest of the run.
+  defp awaiting_files?(srv) do
+    match?({:current_function, {_, :await_files, 1}}, Process.info(srv, :current_function))
+  end
 
   describe "close_writers/1" do
     test "stops every live writer of the class and leaves its files", %{cell_id: cell_id} do
