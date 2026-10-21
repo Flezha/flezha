@@ -52,7 +52,7 @@ A test SHALL parse every source file under `lib/`. Each `{:error, atom}` and `{:
 
 ### Requirement: The controller's own terms SHALL stay with the controller
 
-A networked caller SHALL NOT read what the controller made of its own state: a detail filled from a term that is not plain data (text, a number, a boolean, an atom, or a list or object of those), and the `reason` of an `internal` code, whose keys beyond the declared details SHALL be dropped. Each such detail SHALL read as naming the controller's log, and the log SHALL record the error's code and details once. Text a site writes for the caller, and every other detail, SHALL be answered as it is. The rule SHALL apply in one place per path: `Flezha.Service.Admin` for a caller over HTTP or MCP, and `Flezha.Error.to_wire/1` for every reply a runner is sent, its admin answers included. A site that answers a runner SHALL log the failure as the runner reads it, so its reason reaches the log once. A local `flz` caller SHALL read every detail. An internal code the controller converts a reason into SHALL carry that reason as its `reason` detail; the codes a runner renders (`runtime.*`) carry the runner's own text.
+A networked caller SHALL NOT read what the controller made of its own state: a detail filled from a term that is not plain data (text, a number, a boolean, an atom, or a list or object of those), and the `reason` of an `internal` code, whose keys beyond the declared details SHALL be dropped. Each such detail SHALL read as naming the controller's log and SHALL carry a pointer id, eight lowercase hexadecimal characters minted once per withheld error; the log SHALL record the error's code and details once, in a line carrying the same id in its text and as its `log_ref` metadata, so an operator finds the one line by the id the caller read. A runner SHALL read no internal reason, `runner.bad_reply` and `relay.start_failed` included: the pointer is what it reads. Text a site writes for the caller, and every other detail, SHALL be answered as it is. The rule SHALL apply in one place per path: `Flezha.Service.Admin` for a caller over HTTP or MCP, and `Flezha.Error.to_wire/1` for every reply a runner is sent, its admin answers included. A site that answers a runner SHALL log the failure as the runner reads it, so its reason reaches the log once. A local `flz` caller SHALL read every detail. An internal code the controller converts a reason into SHALL carry that reason as its `reason` detail; the codes a runner renders (`runtime.*`) carry the runner's own text.
 
 #### Scenario: A caller over HTTP reads the code without the reason
 
@@ -74,6 +74,11 @@ A networked caller SHALL NOT read what the controller made of its own state: a d
 
 - **WHEN** `flz` calls the same operation
 - **THEN** the answer SHALL carry the reason in `details.reason`
+
+#### Scenario: A withheld reason leads to its log line
+
+- **WHEN** a runner is answered `relay.start_failed` and its `details.reason` is withheld
+- **THEN** the detail SHALL read as naming the controller's log with a pointer id, and exactly one controller log line SHALL carry that id, the code and the reason
 
 ### Requirement: The catalogue SHALL be published as a generated page
 

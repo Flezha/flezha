@@ -479,7 +479,9 @@ producer SHALL surface the failure to the outbox confirmation seam (so the batch
 parks through the dead-letter path) instead of dropping the records with only
 `:produce, :failed` telemetry. A client swap retried past `:delivery_timeout_ms`
 SHALL fail every record the worker holds, in flight, queued or blocked, and park
-each guaranteed one the same way. Plain (non-guaranteed) chains share the
+each guaranteed one the same way. Every park SHALL record the catalogue error `kafka.exhausted`
+whose `reason` detail names why (`queue_full`, the permanent produce error, or
+`worker_swap_exhausted` with its reason), so a dead letter reads the same way whatever parked it. Plain (non-guaranteed) chains share the
 `:drop_nothing` default; the alarm-grade drop event and the outbox park path remain specific to
 guaranteed records.
 
@@ -506,9 +508,16 @@ guaranteed records.
 
 - **GIVEN** a producer holding three guaranteed records, one queued and two blocked
 - **WHEN** its client dies and the swap is refused past `:delivery_timeout_ms`
-- **THEN** each record is parked to the dead-letter store with
-  `{:worker_swap_exhausted, reason}` and its outbox hold is answered
+- **THEN** each record is parked to the dead-letter store with `kafka.exhausted`, its
+  `reason` detail naming `worker_swap_exhausted` and the swap's reason, and its outbox hold is
+  answered
 - **AND** no record is left in the queue, the window or `blocked`
+
+#### Scenario: A guaranteed record past the block timeout is parked with a code
+
+- **GIVEN** a producer with `:queue_overflow = :drop_nothing` and a full lane
+- **WHEN** a dispatched guaranteed record waits past `:queue_block_timeout_ms`
+- **THEN** it SHALL be parked with `kafka.exhausted` and `reason` `queue_full`, and `flz dlq list` SHALL show that code
 
 ### Requirement: Every documented producer option is implemented
 

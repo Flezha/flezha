@@ -1632,3 +1632,33 @@ heartbeat SHALL be mirrored by the controller from one declared set, held by
 - **WHEN** a module writes a `[:flezha, …]` event name the bridge neither maps nor lists
 - **THEN** `telemetry_event_seam_test.exs` SHALL fail naming the file and the event
 
+### Requirement: Every call bound SHALL name a duration row, held by `backoff_seam_test.exs`
+
+Every call into a process SHALL take its bound from a row read, a parameter, or `:infinity`,
+never the implicit 5 s and never an integer literal: `GenServer.call`, `:gen_server.call`, the
+bounded safe call, `Task.await` and `Task.yield` in `lib`, `plugins/*/lib` and `sdk/elixir/lib`; a sleep, a
+default argument and an option default that is a duration SHALL name a row too.
+`test/flezha/config/backoff_seam_test.exs` SHALL walk the three roots and fail naming the file and
+the line.
+
+#### Scenario: An implicit bound
+
+- **WHEN** a module under `lib` calls `GenServer.call(server, :stats)` with no timeout
+- **THEN** `backoff_seam_test.exs` SHALL fail naming the file and the line
+
+#### Scenario: A literal bound in a package
+
+- **WHEN** a plugin package calls `GenServer.call(pid, :y, 30_000)`
+- **THEN** `backoff_seam_test.exs` SHALL fail naming the file and the line
+
+### Requirement: The keys seam SHALL walk every reader of a knob
+
+`test/flezha/config/keys_seam_test.exs` SHALL walk `cli/src`, every Java SDK module, `rel/`,
+`kubernetes/`, multi-line Elixir reads and Rust reads through a named constant, and SHALL fail on a
+name read with no row and a row no runtime reads, for every runtime a row names.
+
+#### Scenario: A read through a constant
+
+- **WHEN** a Rust crate reads `FLEZHA_X_MS` through `const ENV_X: &str = "FLEZHA_X_MS"` and no row names it
+- **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
+

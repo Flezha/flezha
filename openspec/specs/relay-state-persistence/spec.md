@@ -772,7 +772,7 @@ The Controller SHALL NOT leave a Cell indefinitely rejecting Changes with `{:err
 
 ### Requirement: Per-Cell output-staleness watchdog is emit-only
 
-The Controller SHALL track, per persistence-enabled Cell, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Cell whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (configurable per Relay class; default 60_000), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Cell metadata).
+The Controller SHALL track, per persistence-enabled Cell, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Cell whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (one controller setting, the application key `:default_output_stall_timeout_ms`; default 60_000; no per-class map), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Cell metadata).
 
 The sweep SHALL do nothing else. It SHALL NOT invoke `Flezha.State.Recovery.resync/2` or any other remedy, and SHALL keep no dedup bookkeeping of its own: the remedy is the convergence Loop's output-stall ladder (`resync_runner`, escalating to `rebind_relay`, under one per-target backoff — see `convergence-self-healing`). A sensor that also heals is a second, uncoordinated actor for one signal.
 

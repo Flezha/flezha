@@ -213,3 +213,16 @@ code a replay to a missing relay answers.
 - **WHEN** the session has completed and its `_turn` entry is replayed
 - **THEN** the replay SHALL be refused and the entry SHALL stay parked
 
+### Requirement: A sink's park SHALL record a catalogue error
+
+A sink that parks an output through the outbox SHALL hand the dead-letter store a catalogue
+error, and the entry's `error` SHALL be that error's JSON object (code, class, message, details).
+The HTTP push, RabbitMQ, Kafka and websocket sinks SHALL park with `http_push.exhausted`,
+`rabbitmq.exhausted` or `rabbitmq.unroutable`, `kafka.exhausted` and `websocket.unacknowledged`.
+No entry SHALL carry an inspected Elixir term as its error.
+
+#### Scenario: A websocket park reads as a code
+
+- **WHEN** a websocket sink exhausts a frame's retries and `flz dlq list` is read
+- **THEN** the entry's error SHALL carry the code `websocket.unacknowledged`
+

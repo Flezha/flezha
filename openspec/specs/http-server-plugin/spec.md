@@ -44,8 +44,9 @@ The provider SHALL declare these options: `port` (int, required, 1 to 65 535); `
 100 000); `max_connections` (int, default 1 000, 1 to 100 000); `pass_headers` (names, none by default, each a lower-case HTTP token);
 `heartbeat_ms` (int, default 15 000, 1 000 to 300 000); `stream_wait_ms` (int, default
 5 000, 0 to 60 000). `init_provider/1` SHALL refuse a value outside these rules and SHALL
-open no socket, resolve no name and start no process. The plugin SHALL be enabled with the
-hook `on_terminate`, which does nothing.
+open no socket, resolve no name and start no process. The plugin SHALL be enabled with no
+hook; an enable naming the hook `on_terminate` SHALL still be accepted, and that hook does
+nothing.
 
 #### Scenario: Loopback is the default
 
@@ -66,6 +67,11 @@ hook `on_terminate`, which does nothing.
 
 - **WHEN** the plugin is enabled with `port` set to `70000`
 - **THEN** the enable SHALL be refused naming `port` and its maximum
+
+#### Scenario: Enabled with no hook
+
+- **WHEN** the plugin is enabled with `port` and `channel` and no `--hook`
+- **THEN** it SHALL listen and every request SHALL reach the relay
 
 ### Requirement: The listener SHALL run as the plugin's declared worker and follow the plugin's lifecycle
 

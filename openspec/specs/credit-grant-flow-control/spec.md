@@ -5,7 +5,7 @@ TBD - created by archiving change credit-grant-flow-control. Update Purpose afte
 ## Requirements
 ### Requirement: Credit window is negotiated at stream attach
 
-The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes}` control-channel frame. The low watermark the controller batches grants on (`:credit_low_watermark_bytes`, default half the window) SHALL stay the controller's own and SHALL NOT be sent: no runner reads it. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `CellMailboxStatus` behaviour unchanged. The window SHALL be configurable per Relay (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
+The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes}` control-channel frame. The low watermark the controller batches grants on (`:credit_low_watermark_bytes`, default half the window) SHALL stay the controller's own and SHALL NOT be sent: no runner reads it. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `CellMailboxStatus` behaviour unchanged. The window SHALL be `wal_high_watermark_bytes`, capped by the namespace's mailbox quota while authorization is enforced; no per-class map SHALL override it.
 
 #### Scenario: Credit-speaking session established
 

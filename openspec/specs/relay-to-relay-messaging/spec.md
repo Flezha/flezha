@@ -62,8 +62,11 @@ queued items survive source-Overwatch restarts.
 The system SHALL provide a synchronous ingest entry point on `Flezha.Relay.Overwatch` that
 runs the same single pre-delivery path as the existing `{:io_in, _, _}` cast — the `:on_input`
 extension chain followed by `journal_input/3` — and returns a verdict describing the outcome
-instead of discarding it. `Flezha.Service.RelayManager` SHALL expose this entry point as a
-confirming counterpart to `send_io/4`, resolving the target by `(namespace, relay_id)`.
+instead of discarding it. `Flezha.Service.RelayManager` SHALL expose this entry point by resolving the target by
+`(namespace, relay_id)` and calling `Flezha.Plugin.Host.inject/5` in `:verdict` mode, the one
+ingress: a feeding plugin and a forward SHALL read the same verdicts below and the same exit
+policy (a target that exits or does not answer reads `{:error, {:unreachable, reason}}`).
+`RelayManager` SHALL carry no cast-only `send_io/4`.
 
 The verdicts SHALL be:
 
@@ -72,12 +75,13 @@ The verdicts SHALL be:
   a duplicate, or refused by the durable log as already consumed
 - `{:ok, :suspended}` — the target is suspended; the payload is durable in its inbox and SHALL
   be delivered when the instance rehydrates
-- `{:error, :not_ready}` — the target is parked with an `halt_reason`
+- `{:error, {:not_accepting_input, relay_id}}` — the target is parked with an `init_error`; the
+  Overwatch names its error verdicts itself, so every caller reads the same tuple
 - `{:error, :not_found}` — no pid is registered for `(namespace, relay_id)`
-- `{:error, :refused}` — the durable log refused the append
+- `{:error, {:input_refused, relay_id}}` — the durable log refused the append
 
 The existing `{:io_in, _, _}` cast behaviour SHALL be unchanged, including its silent drop for
-an `halt_reason`-parked relay. The drop SHALL be silent to the sender and never unrecorded:
+an `init_error`-parked relay. The drop SHALL be silent to the sender and never unrecorded:
 each dropped cast SHALL increment a per-relay counter, summed into the data-plane aggregates
 the transport source publishes, so a cast-based source's loss is measurable from outside the
 controller for as long as the relay stays parked.
@@ -105,8 +109,8 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
   inbox, and the relay SHALL rehydrate and receive the payload in its undelivered tail
 
 #### Scenario: A parked target reports not-ready rather than dropping
-- **WHEN** the confirming entry point is invoked against a relay whose `halt_reason` is set
-- **THEN** it SHALL return `{:error, :not_ready}` and the payload SHALL NOT be discarded by the
+- **WHEN** the confirming entry point is invoked against a relay whose `init_error` is set
+- **THEN** it SHALL return `{:error, {:not_accepting_input, relay_id}}` and the payload SHALL NOT be discarded by the
   Overwatch
 
 #### Scenario: A filtered payload reports absorbed
@@ -119,7 +123,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 - **THEN** it SHALL return `{:error, :not_found}`
 
 #### Scenario: The existing cast keeps its behaviour
-- **WHEN** `{:io_in, message, metadata}` is cast to a relay whose `halt_reason` is set
+- **WHEN** `{:io_in, message, metadata}` is cast to a relay whose `init_error` is set
 - **THEN** the message SHALL be silently discarded as before and no verdict SHALL be produced
 
 #### Scenario: A parked log parks the caller and only the caller
@@ -146,9 +150,14 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 
 #### Scenario: The parked cast's drop is counted
 
-- **WHEN** `{:io_in, message, metadata}` is cast twice to a relay whose `halt_reason` is set
+- **WHEN** `{:io_in, message, metadata}` is cast twice to a relay whose `init_error` is set
 - **THEN** the relay's parked-drop counter SHALL read `2`, its received-input counter SHALL
   stay at `0`, and the aggregate the transport source publishes SHALL include those two drops
+
+#### Scenario: A feeding plugin reads the typed verdict
+
+- **WHEN** a feeding plugin calls `Host.inject/5` in `:verdict` mode and an `:on_input` plugin on its relay filters the payload
+- **THEN** it SHALL read `{:ok, :absorbed}`, the verdict the confirming entry point answers for the same payload
 
 ### Requirement: Retry until confirmed, with bounded queue and back-pressure
 

@@ -386,3 +386,25 @@ of the same metric.
 - **THEN** both SHALL produce the refusal through `refuse_value/2` rather than one
   restating the other's sentence
 
+### Requirement: An exported metric name SHALL name its source once
+
+Every exported metric series SHALL be named `flezha_<source>_<name>` where the name does not
+repeat the source and does not begin with `flezha_`, and a provider's metric SHALL be named by its
+event's verb (`shipped`, `retried`, `overflowed` and the provider's own verbs). The suite SHALL
+fail a bridge line that breaks the rule. The exposition SHALL carry
+`flezha_call_answer_duration`, `flezha_call_timeouts_total`, `flezha_call_answers_dropped_total`,
+`flezha_call_refused_total`, `flezha_call_recovered_unanswered_total`, `flezha_dlq_parked_total`,
+`flezha_dlq_dropped_by_retention_total`, `flezha_dlq_usage`, `flezha_relay_halted_total`,
+`flezha_steps_turns_dead_lettered_total` and `flezha_durability_gc`, and each first-party
+source's delivered records as `flezha_<source>_shipped`.
+
+#### Scenario: The call histogram's name
+
+- **WHEN** a call is answered and Prometheus is scraped
+- **THEN** the exposition SHALL carry `flezha_call_answer_duration` and SHALL carry no name containing `flezha_call_flezha_call`
+
+#### Scenario: A source's delivered lines
+
+- **WHEN** the file source delivers a line and Prometheus is scraped
+- **THEN** the exposition SHALL carry `flezha_file_source_shipped` and no `flezha_file_source_injected`
+

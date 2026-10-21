@@ -779,7 +779,11 @@ provider — a record shipped, a delivery retried, a delivery failed, and an
 overflow shed — so that one dashboard reads every provider and a new provider
 cannot invent a third spelling for a fact two providers already report. Facts
 that belong to one provider alone, such as a broker metadata refresh or a topic
-creation, SHALL remain that provider's own verbs beside the declared ones.
+creation, SHALL remain that provider's own verbs beside the declared ones. An own verb SHALL be
+declared as `verb: kind`, `verb: {kind, meaning}` or `verb: {kind, meaning, level}`; a provider SHALL list the shared verbs it writes,
+each with an optional log level, under its declaration's `emits:` key, which a first-party
+provider's exported telemetry is derived from. A level names the `Logger` level the bridge writes
+the event at, so the provider writes no `Logger` line of its own for that fact.
 
 Every provider's events SHALL sit under one root. A provider that emits under a
 root of its own is unreachable by any consumer that subscribes to the family,
@@ -799,6 +803,12 @@ and the divergence is invisible until someone greps for it.
 
 - **WHEN** a provider reports a fact no other provider has
 - **THEN** it SHALL emit that verb under the same derived prefix, and the vocabulary test SHALL accept it
+
+#### Scenario: A declared level replaces the provider's own log line
+
+- **GIVEN** a provider declaring `emits: [failed: :warning]`
+- **WHEN** its worker executes its `failed` event
+- **THEN** the bridge SHALL write one `Logger` line at `:warning` for it, and the provider's module SHALL write none
 
 ### Requirement: A provider SHALL declare whether it feeds the relay
 
@@ -1365,9 +1375,14 @@ waiting and answer `:ok`.
 ### Requirement: A provider MAY declare telemetry verbs of its own
 
 `use Flezha.Plugin.ProviderBehaviour` SHALL accept `telemetry: [verb: :metric | :event]`, the
-verbs a provider emits beyond the declared vocabulary, and `__provider__/0` SHALL answer them.
-A declaration whose own verb repeats a vocabulary verb, or whose kind is neither `:metric` nor
-`:event`, SHALL fail the provider's compilation naming the verb. An own verb a provider emits
+verbs a provider emits beyond the declared vocabulary, each optionally with its meaning,
+`verb: {kind, "what it says"}`, or its meaning and a log level, `verb: {kind, "what it says",
+level}`, and `__provider__/0` SHALL answer them.
+A declaration whose own verb repeats a vocabulary verb, whose kind is neither `:metric` nor
+`:event`, whose meaning is blank, or whose level is not one of `Logger`'s, SHALL fail the
+provider's compilation naming the verb. A declaration MAY also carry `description:`, one line
+saying what the plugin does, which the telemetry bridge gives the provider's observability
+source; a non-binary or blank description SHALL fail the provider's compilation. An own verb a provider emits
 without declaring it SHALL reach handlers attached to its event and no exporter; a first-party
 provider's emitted verbs SHALL stay judged by the telemetry bridge's tree walk.
 
@@ -1380,6 +1395,21 @@ provider's emitted verbs SHALL stay judged by the telemetry bridge's tree walk.
 
 - **WHEN** a provider declares `telemetry: [shipped: :metric]`
 - **THEN** its compilation SHALL fail naming `shipped`
+
+#### Scenario: An own verb with a meaning and a level
+
+- **WHEN** a provider declares `telemetry: [rebalanced: {:event, "The sink moved its partitions.", :warning}]` and emits `:rebalanced`
+- **THEN** the bridge SHALL map it as an event carrying that meaning and write one `Logger` line at `:warning` for it
+
+#### Scenario: A level that is not a Logger level
+
+- **WHEN** a provider declares `telemetry: [rebalanced: {:event, "The sink moved its partitions.", :loud}]`
+- **THEN** its compilation SHALL fail naming `rebalanced`
+
+#### Scenario: A declared description reaches the source listing
+
+- **WHEN** a provider declaring `description: "Reads orders from the acme queue."` is loaded and its events are derived
+- **THEN** its observability source SHALL be listed with that description
 
 ### Requirement: A source that cannot route by key SHALL refuse a partitioned relay one way
 
@@ -1450,4 +1480,97 @@ first-party provider implementing `on_call/2`, and SHALL send an event as it sen
 - **THEN** the calls listener SHALL receive the call and its outcome, the output listener and
   the file output plugin SHALL receive the answer as an output, and neither SHALL receive a
   call event
+
+### Requirement: A pull source SHALL be one declaration, its own verdicts and its own read loop
+
+A provider SHALL declare a source with the `source:` key of its declaration, naming its worker
+module, `partitioned: :refuse | :own_copy` and the facts its worker reports. From that declaration
+the core SHALL derive, for every source alike: the refusal of a plugin that names no entry
+channel, the partitioned refusal when declared, the worker specs, the health verdict (a worker
+that does not answer its probe inside twice the probe budget reads `{:fail_open,
+:probe_timeout}`; `failure_threshold` consecutive failures read `{:unhealthy, {reason, error}}`, `reason` being
+the declaration's `failure_reason`, `:read_failed` unless declared; a worker idle past its window
+reads the shared idle verdict), and that the provider feeds the relay. The entry-channel check
+SHALL come before the partitioned refusal. The provider SHALL write verdict clauses only for facts
+of its own. Every provider declaration, a source's or not, SHALL define a no-op `on_terminate/2`
+unless the provider writes one, so a stored binding naming that hook binds. A provider worker SHALL be built on the one worker kit, which answers the health
+probe from the declared facts, stops when its host stops, and keeps the shared failure counters.
+The package API SHALL NOT carry `require_entry_channel/2`, `refuse_partitioned/2`,
+`park_or_reply/2`, `release_waiters/1` or `saturated?/1`.
+
+#### Scenario: A source with no entry channel is refused by the kit
+
+- **WHEN** a plugin of any declared source is enabled naming neither `channel` nor `channel_in`
+- **THEN** the enable SHALL be refused with `plugin.entry_channel_required` naming both spellings, and the provider's own module SHALL hold no code for that check
+
+#### Scenario: Every source reports repeated failures alike
+
+- **GIVEN** the file source, the Postgres poll source and a package source, each with `failure_threshold: 2`, none declaring a `failure_reason`
+- **WHEN** two consecutive reads fail on each
+- **THEN** each SHALL report `{:unhealthy, {:read_failed, error}}`, while the HTTP poll source, declaring `:poll_failing`, SHALL report `{:unhealthy, {:poll_failing, error}}`
+
+#### Scenario: A stored binding that names on_terminate still binds
+
+- **WHEN** a controller boots holding a source binding, and a websocket binding, each stored with the hook `on_terminate`
+- **THEN** both bindings SHALL be brought up and the source SHALL feed its relay
+
+### Requirement: Every bounded sink queue SHALL be admitted in one place
+
+A sink that queues outputs SHALL admit them through the controller's one sink admission, which
+reads the queue's `queue_overflow` word (`drop_nothing`, the default for every sink,
+`drop_oldest`, `drop_newest`). Under `drop_nothing` a dispatch arriving at a full queue SHALL wait
+for room; a sink that declares `queue_block_timeout_ms` SHALL overflow the output when that time
+passes, counting a plain output and parking a guaranteed one, and a sink that declares none SHALL
+hold the caller until room is made. A dispatch on its way when the queue filled MAY be admitted
+past the bound, and no other output SHALL be. A sink whose every enqueue is a call (the "delay,
+never loss" sinks) SHALL hold its caller under a hard bound; a sink whose dispatch casts while its
+full flag is down (`http_push`, Kafka, RabbitMQ) SHALL keep one flag per worker, up while any of
+its queues is full. A synchronous caller of a sink's enqueue SHALL be answered
+`{:error, {:queue_full, :timeout}}` at the block timeout, while a waiting dispatch's output
+overflows. The file and Postgres sinks SHALL batch through one
+loop whose provider callback commits one batch.
+
+#### Scenario: One admission bounds every policy sink
+
+- **GIVEN** `http_push`, `kafka_producer` and `rabbitmq_producer`, each with `queue_max: 10`, `queue_block_timeout_ms: 500` and the default policy, against an endpoint that is down
+- **WHEN** each receives 12 guaranteed outputs
+- **THEN** each queue SHALL hold at most 10 plus the outputs already on their way when it filled, and every output past the bound SHALL be parked within 500 ms of its dispatch
+
+#### Scenario: A delay-never-loss sink holds its caller
+
+- **WHEN** the file sink's queue reaches its `queue_max`
+- **THEN** the next dispatch SHALL wait until the queue drains below the bound, and no output SHALL be dropped
+
+### Requirement: An option shared by providers SHALL be declared once
+
+Each option several providers take SHALL be declared once (`channel`, `channel_in`,
+`channel_out`, `plugin_id`, `failure_threshold`, `idle_after_ms`, `queue_max`, `queue_overflow`,
+`queue_max_bytes`, `queue_block_timeout_ms`, `retry_backoff_ms`, `retry_max_backoff_ms`), as a fragment a provider's
+declaration takes, so their type, default, conversion and help text are one. A credential SHALL
+be one row kind: an inline value, an environment variable named by `<name>_env` read again at
+every client start, and a transient copy shown as `**redacted**`; the Postgres, RabbitMQ and Kafka
+providers SHALL use it, and the Kafka option is `password_env` (`sasl_password_env` is gone). A
+header list SHALL be one row type validated by the option table, not by another connector.
+
+#### Scenario: The Kafka password variable
+
+- **WHEN** a Kafka producer is enabled with `password_env: KAFKA_PASS` and `KAFKA_PASS` is set
+- **THEN** the client SHALL authenticate with that password, `flz plugin info` SHALL show `**redacted**` for it, and an enable naming `sasl_password_env` SHALL be refused as an option the provider does not read
+
+#### Scenario: One help text for a shared option
+
+- **WHEN** `flz plugin help` is read for the file source and the Kafka consumer
+- **THEN** their `failure_threshold` rows SHALL carry the same type, default and text except the noun each provider passes
+
+### Requirement: A plugin package SHALL reach the core only through declared modules
+
+A plugin package SHALL name only the core modules declared as the package surface. The Postgres
+CDC and RabbitMQ packages SHALL reach Postgres connection handling and SQL helpers only through
+the declared shared connection module, never through the poll source's own modules; the Postgres
+sink and poll source SHALL stay in the core.
+
+#### Scenario: A package naming a connector's internals
+
+- **WHEN** a package module aliases `Flezha.Plugin.Provider.PostgresPoll.Query`
+- **THEN** the package-surface test SHALL fail naming the package file and the module
 

@@ -226,3 +226,48 @@ file, and `ERL_FLAGS` after it.
 - **WHEN** `RELEASE_VM_ARGS` names a readable args file
 - **THEN** the node SHALL start with that file's flags in place of the release's own, and the reference SHALL name this as the route for a deployment whose root filesystem is read only
 
+### Requirement: The boot SHALL refuse an application-env key with no row and a value its row refuses
+
+At boot, once, the controller SHALL read every key of its application environment and SHALL
+refuse to start when a key is no row's key and no row group's root, naming the key, or when a
+value set by a configuration file is refused by its row's type, naming the key, the type and the
+value. Keys the runtime itself puts there SHALL be the scan's one declared allow-list. A read of a
+row SHALL NOT validate again what the boot already checked.
+
+#### Scenario: A removed key
+
+- **WHEN** the controller boots with `config :flezha, relay_persistence: %{}` set
+- **THEN** the boot SHALL fail naming `relay_persistence`
+
+#### Scenario: A misspelled key
+
+- **WHEN** the controller boots with `config :flezha, compact_after_byte: 1024`
+- **THEN** the boot SHALL fail naming `compact_after_byte`
+
+#### Scenario: A value of the wrong type
+
+- **WHEN** the controller boots with `config :flezha, call_pending_max: "ten"`
+- **THEN** the boot SHALL fail naming `call_pending_max`, its type and the value
+
+### Requirement: A relay class setting SHALL live in one layer
+
+A value a relay class declares SHALL NOT be overridden by an application-env map keyed by class:
+`:compact_after_bytes`, `:output_stall_timeout_ms` (the map; the global value is
+`:default_output_stall_timeout_ms`), `:credit_window_bytes` and `:relay_completed_retention_hours`
+SHALL NOT exist as such maps. Each such setting SHALL resolve
+from the class's declaration where it has one, then from the start's instance metadata where it
+has one, then from its one global row. Every name the controller, its release scripts or its build
+read SHALL have a row, `FLEZHA_COOKIE_FILE`, `FLEZHA_GIT_MIRROR` and `:source_credit_window_bytes`
+included.
+
+#### Scenario: A class map is refused
+
+- **WHEN** the controller boots with `config :flezha, credit_window_bytes: %{"MyClass" => 1024}`
+- **THEN** the boot SHALL fail naming `credit_window_bytes`
+
+#### Scenario: The relay list and the sweep agree
+
+- **GIVEN** a finished steps relay and the default `:default_relay_completed_retention_hours`
+- **WHEN** `flz relay list` and the retention sweeper each judge whether it is retained
+- **THEN** both SHALL read the same window
+

@@ -58,7 +58,7 @@ When a durable steps relay's runner or controller restarts mid-run, the relay SH
 
 ### Requirement: A finished steps relay's data is retained for a window
 
-On terminal teardown (status `ok | error | cancelled`), a durable steps relay's data SHALL NOT be deleted immediately. The controller SHALL record a completion record (status, result/error payload, finished-at) alongside the retained final state and SHALL retain them for a configurable window — default **3 days** (`:relay_completed_retention_hours = 72`, per-class override, env `FLEZHA_STEPS_RETENTION_HOURS`) — after which the existing retention sweeper SHALL delete them. During the window, `flz relay info <id>` SHALL report the finished relay's terminal status, result/error, and finish time.
+On terminal teardown (status `ok | error | cancelled`), a durable steps relay's data SHALL NOT be deleted immediately. The controller SHALL record a completion record (status, result/error payload, finished-at) alongside the retained final state and SHALL retain them for a configurable window — default **3 days** (`:default_relay_completed_retention_hours = 72`, env `FLEZHA_STEPS_RETENTION_HOURS`, or the value the start's instance metadata carries; no per-class map) — after which the existing retention sweeper SHALL delete them. During the window, `flz relay info <id>` SHALL report the finished relay's terminal status, result/error, and finish time.
 
 #### Scenario: Finished-job data survives until the window elapses
 

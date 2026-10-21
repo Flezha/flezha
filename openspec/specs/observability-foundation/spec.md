@@ -22,7 +22,9 @@ The observability subsystem SHALL define exactly one signal envelope structure u
 
 ### Requirement: Source contract
 
-The observability subsystem SHALL define a `Source` contract under which any producer of signals can register itself. The contract SHALL support two registration flavours: a **declarative** flavour in which the producer calls a public emit function directly, and a **process-backed** flavour in which the producer is a GenServer started under the source supervisor. Every registered source SHALL declare its name, the set of signal kinds it emits, and a per-source cardinality budget. A registration MAY also declare a plain `title`, a one-line `description`, an `area` (one of `:relays`, `:storage`, `:plugins`, `:controller`, `:machine`) and `signals`, a list of `%{name, kind, description}` naming each signal the source can emit, where each signal MAY also carry a plain `label`, an `outcome` of `:normal` or `:failure`, and a `sentence` template. A template is text whose placeholders are `{key}`, interpolating a label or measurement, and `{key:noun}`, interpolating a count with a noun; a key is a lowercase identifier, and any other `{` or `}` makes the template malformed. The registry SHALL refuse a malformed value for any of these keys, a malformed title as `{:invalid_title, title}` and a malformed signal key as `{:invalid_signals, signals}`, SHALL keep them, and `list_sources/0` SHALL answer them. `Flezha.Observability.Source.signals/1` SHALL build the declarations from `name: {kind, meaning}`, whose label is the humanized name and whose outcome is `:normal`, or from `name: {kind, words}`, the words being `meaning:` and optionally `label:`, `outcome:` and `sentence:`.
+The observability subsystem SHALL define a `Source` contract under which any producer of signals can register itself. The contract SHALL support two registration flavours: a **declarative** flavour in which the producer calls a public emit function directly, and a **process-backed** flavour in which the producer is a GenServer started under its owner's supervisor, which registers itself when it starts. Every registered source SHALL declare its name, the set of signal kinds it emits, and a per-source cardinality budget. A registration MAY also declare a plain `title`, a one-line `description`, an `area` (one of `:relays`, `:storage`, `:plugins`, `:controller`, `:machine`) and `signals`, a list of `%{name, kind, description}` naming each signal the source can emit, where each signal MAY also carry a plain `label`, an `outcome` of `:normal` or `:failure`, and a `sentence` template. A template is text whose placeholders are `{key}`, interpolating a label or measurement, and `{key:noun}`, interpolating a count with a noun; a key is a lowercase identifier, and any other `{` or `}` makes the template malformed. The registry SHALL refuse a malformed value for any of these keys, a malformed title as `{:invalid_title, title}` and a malformed signal key as `{:invalid_signals, signals}`, SHALL keep them, and `list_sources/0` SHALL answer them. `Flezha.Observability.Source.signals/1` SHALL build the declarations from `name: {kind, meaning}`, whose label is the humanized name and whose outcome is `:normal`, or from `name: {kind, words}`, the words being `meaning:` and optionally `label:`, `outcome:` and `sentence:`.
+
+Every source the controller registers itself SHALL be declared once, by the module that emits it, through `use Flezha.Observability.Source` with its name, area, title, description and signals (in either form `signals/1` takes) and, optionally, a cardinality budget (the registry's default applies without one), directly or through the poller template for a polled source. The declaration SHALL derive the registration's kinds from its signals, so a source is listed with the kinds it can emit (`:platform_authz`, whose signals are all events, is listed with the kinds `[:event]`); it SHALL be built by the one registration builder the bridge also uses and checked by the one validity check the registry applies to every registration, and SHALL give the module an emit function with a clause for each declared signal, carrying that signal's declared kind, and none for an undeclared name, unless the declaration says its records are written only by a shared emitter, in which case it SHALL generate no emit function. The registry SHALL register every declared declarative source each time it starts, found through one enumeration of the controller application's modules, so a registry restart brings every declared source back and a boot with observability disabled registers nothing and needs nothing from the absent registry; no other code SHALL register a declarative source the controller declares, and no supervisor SHALL be kept for sources it never starts.
 
 The `Flezha.Observability.Source` behaviour SHALL declare `config_schema/0` and no other callback. It SHALL NOT declare `init/1`: a declarative source owns no process and has no `init/1` to offer, and a process-backed source is a GenServer whose `init/1` is GenServer's — a module declaring both behaviours would name that callback twice, which the compiler refuses as conflicting behaviours. A behaviour a whole flavour cannot declare is not a contract that flavour can be held to.
 
@@ -31,8 +33,8 @@ The `Flezha.Observability.Source` behaviour SHALL declare `config_schema/0` and 
 - **THEN** the source SHALL appear in `list_sources/0` and emits from `:my_source` SHALL be accepted by the bus
 
 #### Scenario: Process-backed source registration
-- **WHEN** code registers a module implementing the process-backed `Source` behaviour
-- **THEN** the source supervisor SHALL start the module as a child under a one-for-one strategy, and the source SHALL appear in `list_sources/0` with its status
+- **WHEN** a process-backed source starts under its owner's supervisor
+- **THEN** it SHALL register itself, and the source SHALL appear in `list_sources/0` with its status
 
 #### Scenario: Source emits a signal kind it did not declare
 - **WHEN** a source registered with kinds `[:metric]` attempts to emit a `:log` signal
@@ -61,6 +63,22 @@ The `Flezha.Observability.Source` behaviour SHALL declare `config_schema/0` and 
 #### Scenario: A malformed title, label, outcome or sentence is refused
 - **WHEN** code registers a source with a blank `title`, or a signal with a blank `label`, an `outcome` of `:warning`, or a `sentence` of `"{shop received"`
 - **THEN** `register_source/1` SHALL answer an error naming the key and no source SHALL be registered
+
+#### Scenario: A declared source derives its kinds and emits only what it declares
+- **WHEN** a module declares `:my_source` through `use Flezha.Observability.Source` with the signals `received: {:metric, "An order arrived"}` and `refused: {:event, "An order was refused"}`
+- **THEN** its registration SHALL carry the kinds `:metric` and `:event`, its `emit(:received, %{count: 1}, %{})` SHALL put a `:metric` signal named `received` on the bus, and it SHALL have no emit clause for a name it did not declare
+
+#### Scenario: A registry restart brings every declared source back
+- **WHEN** the observability registry process is killed and its supervisor restarts it
+- **THEN** every declarative source the controller declares, `:platform_authz`, `:audit_log` and `:observability_export` among them, SHALL be listed by `list_sources/0` again
+
+#### Scenario: Authorization boots with observability disabled
+- **WHEN** the controller boots with observability disabled
+- **THEN** the authorization supervisor SHALL start and issue tokens with no observability registry running
+
+#### Scenario: An emit of an undeclared name raises
+- **WHEN** a declared source's emit function is called with a signal name its declaration does not list
+- **THEN** the call SHALL raise in the caller and no signal SHALL reach the bus
 
 ### Requirement: Sink contract
 
@@ -174,7 +192,7 @@ The foundation SHALL ship a built-in sink that fans signals out via `Phoenix.Pub
 
 ### Requirement: Logger handler bridges Elixir log records onto the bus
 
-The foundation SHALL install a `:logger` handler at supervisor start that converts every `Logger` event into a `:log` signal on the bus. The handler SHALL preserve at minimum the level, message, and `mfa`/`file`/`line` metadata of the original `Logger` event. The handler SHALL NOT cause log records to be lost in `Logger` if the bus dispatch fails — if dispatching raises, the handler SHALL catch the error, increment a `:logger_bridge_failures` counter, and return normally so the `Logger` pipeline continues.
+The foundation SHALL install a `:logger` handler at supervisor start that converts every `Logger` event into a `:log` signal on the bus, except a line the telemetry bridge wrote for an event whose mapping carries a level: that line SHALL carry the metadata `flezha_event: true` and SHALL NOT be lifted, because its event is already on the bus. The handler SHALL preserve at minimum the level, message, and `mfa`/`file`/`line` metadata of the original `Logger` event. The handler SHALL NOT cause log records to be lost in `Logger` if the bus dispatch fails — if dispatching raises, the handler SHALL catch the error, increment a `:logger_bridge_failures` counter, and return normally so the `Logger` pipeline continues.
 
 #### Scenario: Log record becomes a signal
 - **WHEN** application code calls `Logger.warning("hello")`
@@ -184,9 +202,14 @@ The foundation SHALL install a `:logger` handler at supervisor start that conver
 - **WHEN** the bus dispatch raises during a `:log` signal emit
 - **THEN** the original `Logger` call SHALL return normally, the `:logger_bridge_failures` counter SHALL increment by `1`, and subsequent `Logger` calls SHALL continue to function
 
+#### Scenario: A leveled event rides the bus once
+
+- **WHEN** an event whose bridge line carries the level `:warning` is executed
+- **THEN** one `Logger` line at `:warning` SHALL be written and exactly one signal for the fact, the `:event`, SHALL appear on the bus
+
 ### Requirement: Telemetry bridge lifts existing `:telemetry` events onto the bus
 
-The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL have three halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_package, :loaded]`, `[:flezha, :plugin_package, :refused]`, `[:flezha, :plugin, :websocket, :idle_reconnect]`, `[:flezha, :plugin, :websocket, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares (including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason`) so a detector's event is bridged by its declaration and never by a bridge edit; and a third half DERIVED at bridge start from the providers installed packages add to the provider table: for every such provider, `[:flezha, :plugin, <provider name>, verb]` for each of the declared verbs (`shipped`, `retried` and `overflowed` as metrics, `failed` as an event) and for each verb the provider declares as its own, sourced `flezha_<provider name>` and named by the verb, where the provider name is the one its declaration answers and its events are written under. A first-party provider's events SHALL be hand-kept lines, so a core with no package derives nothing and registers no source for it. The third half SHALL cost an event no more than the other two: it is built once at bridge start, each of its events is handled with its own line, the bridge's handler of the other halves carries nothing more per event than before, and it is not part of the merged mapping the tree walk below judges. A hand-kept line SHALL win over a derived one of either kind. The two package events SHALL map to the source `:flezha_plugin_packages` with the names `:loaded` and `:refused`. A relay's deliberate start and its stop or completion, `[:flezha, :relay, :started]` and `[:flezha, :relay, :stopped]`, SHALL map to the source `:flezha_relay` with the names `:relay_started` and `:relay_stopped`, and each SHALL reach every sink that accepts it, the controller hooks' sink among them, from its one `:telemetry.execute`. Existing call-sites SHALL NOT be modified. Every hand-kept line SHALL carry a one-line meaning for its signal, and every bridged source SHALL have an area and a description in the bridge, so a line or a source cannot be added without one; the bridge SHALL register each bridged source with its area, its description and the signals its lines name, each with its meaning. A detector table entry SHALL carry each declared event's meaning, and the shared provider verbs SHALL carry one meaning each; a provider's own verb MAY carry one, and one without is registered with no meaning of its own.
+The foundation SHALL attach a single dispatching `:telemetry` handler at supervisor start that maps each known `[:flezha, ...]` event onto an observability signal. The mapping SHALL have three halves: a hand-kept lifecycle half defined inside the bridge module, which SHALL include at minimum the events `[:flezha, :state, :wal, :backpressure]`, `[:flezha, :state, :fsync, :tick]`, `[:flezha, :boot, :recovery_complete]`, `[:flezha, :shutdown, :requested]`, `[:flezha, :plugin_package, :loaded]`, `[:flezha, :plugin_package, :refused]`, `[:flezha, :plugin, :websocket, :idle_reconnect]`, `[:flezha, :plugin, :websocket, :resubscribe]`, `[:flezha, :state, :seq_gap]`, `[:flezha, :state, :output_stall]`, `[:flezha, :state, :compaction_timeout]`, `[:flezha, :state, :wal_realign]`, and `[:flezha, :stream, :drop]`; and a half DERIVED from the convergence loop's detector table, mapping every event a detector entry declares (including `[:flezha, :health, :verdict]`, executed on every verdict-state transition with metadata `kind`, `id`, `state` and `reason`) so a detector's event is bridged by its declaration and never by a bridge edit; and a third half DERIVED at bridge start from the provider table: for every provider a package installed, `[:flezha, :plugin, <provider name>, verb]` for each of the declared verbs (`shipped`, `retried` and `overflowed` as metrics, `failed` as an event) and for each verb the provider declares as its own, and for every first-party provider only the shared verbs its declaration lists under `emits:` and the verbs it declares as its own, so no source appears that the hand-kept lines did not already name; each sourced `flezha_<provider name>` and named by the verb, where the provider name is the one its declaration answers and its events are written under. A first-party provider SHALL add no hand-kept line for an event the derivation names the same way; a hand-kept line SHALL remain only where its source or name differs from the derived one. The third half SHALL cost an event no more than the other two: it is built once at bridge start, each of its events is handled with its own line, the bridge's handler of the other halves carries nothing more per event than before, and it is not part of the merged mapping the tree walk below judges. A hand-kept line SHALL win over a derived one of either kind. A derived line SHALL take its log level, if any, from the provider's declaration (`emits:` for a shared verb, `telemetry:` for an own verb). A hand-kept line MAY carry a log level; the bridge SHALL then write one `Logger` line at that level, in the emitting process, naming the source, the name and the event's metadata and measurements, and the site SHALL write no `Logger` line of its own for that fact. A line with no level SHALL cost the handler nothing more than before. The two package events SHALL map to the source `:flezha_plugin_packages` with the names `:loaded` and `:refused`. A relay's deliberate start and its stop or completion, `[:flezha, :relay, :started]` and `[:flezha, :relay, :stopped]`, SHALL map to the source `:flezha_relay` with the names `:relay_started` and `:relay_stopped`, and each SHALL reach every sink that accepts it, the controller hooks' sink among them, from its one `:telemetry.execute`. Existing call-sites SHALL NOT be modified. The hand-kept lines SHALL be grouped under their source, the group carrying the source's area, title and description and every line its signal's words (its one-line meaning and, optionally, its label, outcome and sentence), so a line or a source cannot be added without one; a provider-derived source with no hand-kept group SHALL take the area `:plugins` and the description its provider's declaration gives, else a text naming the plugin; the bridge SHALL register each bridged source with its area, its title, its description and the signals its lines name, each with its words, through the registration builder every declared source uses. A detector table entry SHALL carry each declared event's meaning, and the shared provider verbs SHALL carry one meaning each, which every provider's derived shared-verb line carries, first-party or package; a provider's own verb MAY carry one, and one without is registered with no meaning of its own.
 
 Every `[:flezha, ...]` event NAME written anywhere in the controller SHALL be a key of the merged mapping or a member of an explicit unexported list inside the bridge module. The judged unit SHALL be the name wherever it is written, not only the `:telemetry.execute` call, because an event name may be assembled into a term in one module and executed in another, or assembled from a provider's own identifier. Each unexported entry SHALL name a reason that is a PROPERTY of the event rather than the change that owes it a sink: a reason naming a change expires when that change lands, and the list then passes while stating nothing. The unexported list is a ratchet: its length SHALL be pinned by the suite so it never grows, and an event name that is neither mapped nor unexported SHALL fail the suite naming where it is written and the event. A `:telemetry.execute` whose event argument the walk cannot resolve SHALL be a named entry in a pinned forward list, so a name the walk cannot read is refused rather than silently omitted.
 
@@ -246,6 +269,27 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 - **GIVEN** a package whose provider `acme_sink` declares `telemetry: [rebalanced: :event]`, loaded at boot
 - **WHEN** its worker executes `[:flezha, :plugin, :acme_sink, :shipped]` and `[:flezha, :plugin, :acme_sink, :rebalanced]`
 - **THEN** a metric signal named `shipped` and an event signal named `rebalanced`, both sourced `flezha_acme_sink`, SHALL appear on the bus, and the bridge module SHALL hold no line naming `acme_sink`
+
+#### Scenario: A built-in provider's event is exported with no bridge line
+
+- **WHEN** the file source's worker executes `[:flezha, :plugin, :file_source, :shipped]`
+- **THEN** a metric signal named `shipped` sourced `flezha_file_source` SHALL appear on the bus, and the bridge module SHALL hold no line naming `file_source`
+
+#### Scenario: Deriving first-party rows adds no source
+
+- **WHEN** the controller boots with no package installed
+- **THEN** `Flezha.Observability.Registry.list_sources/0` SHALL name the same bridged sources it named before first-party rows were derived, and no `flezha_websocket` source beside `flezha_ws`
+
+#### Scenario: A derived built-in source is described by its provider
+
+- **WHEN** the controller boots and `Flezha.Observability.Registry.list_sources/0` is read
+- **THEN** the `flezha_file_source` entry SHALL carry the area `:plugins` and the description the file source's declaration gives, and the bridge module SHALL hold no source entry naming `flezha_file_source`
+
+#### Scenario: An event with a level is logged once, by the bridge
+
+- **GIVEN** a bridge line `[:flezha, :state, :disk_quota_breach]` carrying the level `:error`
+- **WHEN** the watchdog executes that event
+- **THEN** one `Logger` line at `:error` naming `flezha_state` and `disk_quota_breach` SHALL be written by the bridge, and the watchdog SHALL write none
 
 ### Requirement: Service-API surface
 
@@ -317,7 +361,7 @@ The foundation SHALL accept `:trace_span` signals carrying `trace_id`, `span_id`
 
 ### Requirement: Observability subsystem is configurable and disengageable
 
-The foundation SHALL expose a runtime configuration key `:observability` with sub-keys controlling: ring-buffer retention duration, per-source maximum entry count, default overflow policy, default cardinality budget, PubSub-sink enable flag, and a master enable flag. When the master enable flag is `false`, the foundation supervisor SHALL NOT start sinks or attach the telemetry bridge or install the logger handler; service-API calls SHALL return a defined `:disabled` result.
+The foundation SHALL expose a runtime configuration key `:observability` with sub-keys controlling: ring-buffer retention duration, per-source maximum entry count, default overflow policy, default cardinality budget, PubSub-sink enable flag, and a master enable flag. When the master enable flag is `false`, the foundation supervisor SHALL NOT start sinks or install the logger handler, and the telemetry bridge SHALL attach only the events whose bridge line carries a level, writing their log lines and emitting nothing a sink can receive; service-API calls SHALL return a defined `:disabled` result.
 
 #### Scenario: Default configuration starts every subsystem
 - **WHEN** the application boots with default `:observability` configuration
@@ -325,7 +369,11 @@ The foundation SHALL expose a runtime configuration key `:observability` with su
 
 #### Scenario: Master-disable suppresses the subsystem
 - **WHEN** the application boots with `:observability` configuration including `enabled: false`
-- **THEN** no sinks SHALL be started, the telemetry bridge SHALL NOT be attached, the logger handler SHALL NOT be installed, and service-API calls SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}`
+- **THEN** no sinks SHALL be started, the telemetry bridge SHALL attach no event whose line carries no level, the logger handler SHALL NOT be installed, and service-API calls SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}`
+
+#### Scenario: A leveled event is still logged when the subsystem is disabled
+- **WHEN** the application boots with `enabled: false` and an event whose bridge line carries the level `:error` is executed
+- **THEN** its one `Logger` line SHALL be written at `:error`
 
 ### Requirement: Hot-path safety of producer emit
 
@@ -434,7 +482,8 @@ reference rather than left to be inferred.
 
 The controller SHALL emit `[:flezha, :runner, :connected]` when a runner session is admitted and
 `[:flezha, :runner, :disconnected]` when one ends, each with measurements `%{count: 1}` and
-metadata `%{namespace:, runner:}`, beside the event bus dispatches of the same two facts. The
+metadata `%{namespace:, runner:}`. The convergence loop SHALL learn of a connect through the
+fact the session declares, and no second in-process event bus SHALL carry either fact. The
 telemetry bridge SHALL lift them onto the `:flezha_runner` source as the events
 `runner_connected` and `runner_disconnected`, so a consumer on another node can follow runner
 sessions through `Observability.tail/2`.
@@ -451,6 +500,11 @@ sessions through `Observability.tail/2`.
 - **THEN** a `:flezha_runner` signal named `runner_disconnected` naming the same namespace and
   runner reaches the ring buffer
 
+#### Scenario: The loop hears a connect without an event bus
+
+- **WHEN** a runner session is admitted
+- **THEN** the convergence loop SHALL run its runner-connected tick from the declared fact, and the controller SHALL start no event-bus process
+
 ### Requirement: The controller's status SHALL carry the clock signals are stamped with
 
 `Flezha.Service.Controller.status/1` SHALL answer `monotonic_us`, the node's
@@ -464,7 +518,7 @@ against the controller's own clock.
 
 ### Requirement: Every source core registers is described
 
-Every observability source the controller registers itself SHALL declare a non-empty title, a non-empty description, an area, and every signal it can emit with its kind, a non-empty label, an outcome and a non-empty meaning. A signal that reports something that did not happen as asked (a refusal, a failure or timeout, an overflow or drop, a damaged record, a stall, or a health detector's finding) SHALL declare the outcome `:failure`; retries, waits and resets SHALL declare `:normal`. The shared provider verbs `failed` and `overflowed` SHALL be failures and `shipped` and `retried` normal; a provider's own verb MAY declare its label, outcome and sentence, and one that does not SHALL be normal. Every sentence template a core source declares SHALL parse, and a bridged line's template SHALL name only keys that the line's emit sites write, which the suite SHALL check wherever it can read a site's keys. A source that nothing in the controller can make emit SHALL NOT be registered. The suite SHALL assert both against every source the booted registry holds, and against the declared registration of every source a test boot does not start (the built-in pollers, the audit log, export and authorization).
+Every observability source the controller registers itself SHALL declare a non-empty title, a non-empty description, an area, and every signal it can emit with its kind, a non-empty label, an outcome and a non-empty meaning. A signal that reports something that did not happen as asked (a refusal, a failure or timeout, an overflow or drop, a damaged record, a stall, or a health detector's finding) SHALL declare the outcome `:failure`; retries, waits and resets SHALL declare `:normal`. The shared provider verbs `failed` and `overflowed` SHALL be failures and `shipped` and `retried` normal; a provider's own verb MAY declare its label, outcome and sentence, and one that does not SHALL be normal. Every sentence template a core source declares SHALL parse, and a bridged line's template SHALL name only keys that the line's emit sites write, which the suite SHALL check wherever it can read a site's keys. A source that nothing in the controller can make emit SHALL NOT be registered. The suite SHALL assert both against every source the booted registry holds, and against the declared registration of every source a test boot does not start (the built-in pollers, the audit log, export and authorization), found through the source declarations themselves (the registry's enumeration of declared sources, the poller modules and the bridge's registrations) rather than through a list kept beside them, so a new source cannot be left out. The suite SHALL also pin the kinds of every source the bridge does not register.
 
 #### Scenario: A booted controller's sources are described
 - **WHEN** the controller has booted with default configuration and `Registry.list_sources/0` is read
@@ -478,13 +532,17 @@ Every observability source the controller registers itself SHALL declare a non-e
 - **WHEN** a bridged line declares the sentence `"{runner} connected to {region}"` and its emit site writes `namespace` and `runner` but no `region`
 - **THEN** the suite SHALL fail naming the line and the missing key
 
+#### Scenario: A new declared source is checked with no list edit
+- **WHEN** a module declaring a source through `use Flezha.Observability.Source` with a blank description is compiled into the controller
+- **THEN** the suite SHALL fail naming that source, with no test list edited
+
 ### Requirement: The source listing carries recent activity
 
 `Flezha.Service.Observability.list_sources/1` SHALL answer, for each source, `recent: %{window_ms:, signals: %{name => %{count:, last_age_ms:}}}`, computed from the ring buffer over its retention window: per signal name, how many signals the buffer holds and how long ago, by the controller's monotonic clock, the newest one was emitted. The counts SHALL include only signals the caller could read through `query/2`. `recent` SHALL be `nil` when the ring-buffer sink is not running.
 
 #### Scenario: A source emitted recently
-- **WHEN** `:flezha_file_sink` emitted `flushed` three times in the last minute and an admin caller lists sources
-- **THEN** its entry SHALL carry `recent.signals.flushed.count == 3` and a `last_age_ms` no larger than the time since the last emit, and `recent.window_ms` SHALL equal the ring buffer's retention
+- **WHEN** `:flezha_file_sink` emitted `shipped` three times in the last minute and an admin caller lists sources
+- **THEN** its entry SHALL carry `recent.signals.shipped.count == 3` and a `last_age_ms` no larger than the time since the last emit, and `recent.window_ms` SHALL equal the ring buffer's retention
 
 #### Scenario: Counts honour the caller's namespace
 - **WHEN** a caller bound to namespace `team-a` lists sources and the buffer holds signals of `team-a`, of `team-b` and without a namespace
@@ -493,4 +551,35 @@ Every observability source the controller registers itself SHALL declare a non-e
 #### Scenario: No ring buffer
 - **WHEN** the ring-buffer sink is not running
 - **THEN** every entry SHALL carry `recent: nil`
+
+### Requirement: An orderly exit SHALL NOT be logged as a crash
+
+Whether an exit reason is orderly SHALL be decided by one classifier, `Flezha.SDK.SafeCall.orderly?/1`,
+beside the bounded call the controller imports: `:normal`, `:shutdown`, `{:shutdown, _}`, and a call exit judged on the reason it wraps. The
+bus, the WAL writer and the extension table SHALL use it. An orderly stop of a plugin worker SHALL
+be logged at info, never as a crash at error.
+
+#### Scenario: A plugin worker stopped by an application stop
+
+- **WHEN** a controller stops and a copy's provider worker exits with `:shutdown` before the copy
+- **THEN** no `subscriber ... crashed` line SHALL be logged at error, and one line naming the orderly stop SHALL be logged at info
+
+### Requirement: A log sink SHALL render the signals of the sources it is registered for
+
+The foundation SHALL provide a log sink a user registers through the sink configuration with a
+`sources:` filter; it SHALL write every signal it accepts as one `Logger` line at info, rendered as
+the bridge renders a leveled event. It SHALL NOT be registered by default. There SHALL be no
+separate memory reporter: the BEAM memory reading is the `:beam_vm` source's, and a user who wants
+it in the log registers the log sink for `:beam_vm`.
+
+#### Scenario: The BEAM memory reading in the log
+
+- **GIVEN** the log sink registered with `sources: [:beam_vm]`
+- **WHEN** the `:beam_vm` source polls
+- **THEN** one info line per signal naming `beam_vm`, the metric and its value SHALL be written
+
+#### Scenario: Nothing is logged by default
+
+- **WHEN** the controller boots with no log sink configured
+- **THEN** no `:beam_vm` reading SHALL be written to the log
 

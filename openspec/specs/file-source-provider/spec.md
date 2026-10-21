@@ -115,7 +115,7 @@ keep polling and report unhealthy until it appears.
 A line longer than `max_line_bytes` SHALL stop the reader at that line's offset and report
 `{:unhealthy, {:line_too_long, offset}}`; the committed offset SHALL NOT advance past it. A
 missing file SHALL report `{:unhealthy, {:file_missing, path}}`. `failure_threshold`
-consecutive read failures SHALL report `{:unhealthy, {:read_failing, error}}`. A reader whose
+consecutive read failures SHALL report `{:unhealthy, {:read_failed, error}}`, the reason every source reports for this condition. A reader whose
 last settled poll is older than the idle window (`idle_after_ms`, or three `poll_interval_ms`
 when 0) SHALL report `{:unhealthy, {:poll_idle, age_ms}}`. A worker that does not answer the
 probe inside its budget SHALL report `{:fail_open, :probe_timeout}`, per the provider health
@@ -145,4 +145,10 @@ contract. A file that does not grow SHALL read healthy.
 - **GIVEN** a reader whose last settled poll is older than the idle window
 - **WHEN** health is queried
 - **THEN** it SHALL report `{:unhealthy, {:poll_idle, age_ms}}`
+
+#### Scenario: Repeated read failures are reported as read_failed
+
+- **GIVEN** `failure_threshold: 3` and a file whose reads fail
+- **WHEN** three consecutive reads fail
+- **THEN** health SHALL report `{:unhealthy, {:read_failed, error}}` naming the last error
 

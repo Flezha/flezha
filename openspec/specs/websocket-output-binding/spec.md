@@ -65,8 +65,9 @@ without either being sent, being parked in the dead-letter store, or refusing th
 The queue SHALL be bounded by `sink_queue_max` (default `10000`). When the queue is at its
 bound the enqueueing caller SHALL be parked until the queue drains, applying back-pressure
 rather than dropping, which is the policy the other bounded output plugins share. A frame whose
-retry budget is permanently exhausted SHALL be parked through the dead-letter store,
-attributed to the output's own cell and channel, and SHALL NOT be silently lost.
+retry budget is permanently exhausted SHALL be parked through the dead-letter store with the
+catalogue error `websocket.unacknowledged` (its `attempts` detail the attempts made), attributed
+to the output's own cell and channel, and SHALL NOT be silently lost.
 
 On connect, subscription frames SHALL be sent before queued outbound frames, so a server
 that requires a subscription handshake receives it first.
@@ -89,7 +90,7 @@ that requires a subscription handshake receives it first.
 
 #### Scenario: An exhausted frame is parked, not dropped
 - **WHEN** a frame's retry budget is permanently exhausted
-- **THEN** it SHALL be written to the dead-letter store carrying its cell and channel
+- **THEN** it SHALL be written to the dead-letter store carrying its cell and channel and the error `websocket.unacknowledged`
 - **AND** the outbox hold SHALL be answered so the cursor advances past exactly the parked range
 
 ### Requirement: Delivery SHALL be confirmed by a declared acknowledgement mode

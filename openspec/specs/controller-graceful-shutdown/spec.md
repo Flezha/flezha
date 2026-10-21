@@ -348,17 +348,16 @@ cross-process call inside one is bounded as `Flezha.SDK.SafeCall.bounded/3` requ
 SHALL re-check the deadline between steps, and a step that raises, exits or answers
 `{:error, _}` SHALL halt it, unless the walk runs with `on_error: :continue`, which records
 the failure and runs the next step while the budget lasts. A `:start` step's `{:error, _}` is a
-refusal its caller answers and SHALL NOT be logged by the walk. The steps are declared by the resource they tear down — the bind task first,
+refusal its caller answers and SHALL NOT be logged by the walk. The steps are declared by the resource they tear down — the migrate task first,
 the class registry, the control unit, the plugin table (one step: the on-terminate hooks,
 the teardown and the manager's unregister), the stream-channel flush (flush, never count,
 before deregister), the state directory (one guard: `.tmp`/`.rewriting` or a completion
 record), the quota ledger, the hub — and a new resource with a teardown is one new step,
 editing no stop path. A `:relay` walk's target SHALL carry the cause of the stop, and one
-function SHALL derive from it which of the walk's steps act, controller plugins told of a stop or a
-completion and of no rescale; a failed start SHALL stop through the same rows under its own cause,
-its hub stop alone, and the namespace stop SHALL flush each relay's stream channels before its one
-hub stop. The budget is the node's `:graceful_shutdown_timeout_ms` at the `:node` drain, finalise's
-own headroom at the `:node` finalise, and is derived downward from the former; the `:relay` stop has one attribute.
+function SHALL derive from it whether the state is kept, whether controller plugins are told and
+why; a failed start SHALL stop through the same rows under its own cause, and the namespace stop
+SHALL flush each relay's stream channels before its one hub stop. The budget is the node's `:graceful_shutdown_timeout_ms` at `:node`
+and is derived downward from it; the `:relay` stop has one attribute.
 `Flezha.Shutdown.quiesced?/2` SHALL answer per scope and target, so a one-namespace stop
 does not read as the node not shutting down. The table it reads SHALL be created before the
 supervision tree by the application's own start, so no coordinator restart resets it, and the

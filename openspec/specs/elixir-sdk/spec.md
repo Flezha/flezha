@@ -161,7 +161,7 @@ The SDK SHALL be a mix project developed in its own repository and present here 
 
 Every call the Elixir SDK makes into one of its own processes SHALL wait a bound named by a row of the one configuration table and SHALL answer a target that does not reply with a refusal the caller can act on, never by exiting that caller. A runner runs inside a host application, so a wedged worker, runner process or local run must not take a process the host supervises with it.
 
-The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the controller imports rather than holding a second copy. Exactly one other SDK file, `Flezha.SDK.Call`, SHALL name it, and the rest of the SDK asks that one.
+The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the controller imports rather than holding a second copy. Exactly one other SDK file, `Flezha.SDK.Call`, SHALL name it, and the rest of the SDK asks that one. `Flezha.SDK.SafeCall` SHALL also hold the one judgement of whether an exit reason is orderly (`orderly?/1`), which the controller's exit readers use instead of judging exits themselves.
 
 #### Scenario: A suspended target refuses its caller
 
@@ -173,6 +173,11 @@ The bounded call SHALL be the package's own `Flezha.SDK.SafeCall`, which the con
 
 - **WHEN** the SDK package compiles with no controller code on the path
 - **THEN** `Flezha.SDK.SafeCall` SHALL resolve inside it, and no SDK file but `Flezha.SDK.Call` SHALL call it
+
+#### Scenario: One orderly-exit judgement
+
+- **WHEN** `Flezha.SDK.SafeCall.orderly?/1` is asked about `:normal`, `:shutdown`, `{:shutdown, :closed}` and a call exit wrapping `:shutdown`
+- **THEN** it SHALL answer true for each, and false for `:killed`
 
 ### Requirement: Bench harness covers the elixir runtime on all three transports
 `mix bench --runtime elixir` SHALL run the `regression`, `cell`, and `dynamic` shapes over `uds` and `quic`, spawning the `test/apps/elixir_runner` app via the same fleet mechanism as every other runtime, registering factories `do_nothing`, `cell_stress`, and `dynamic_cell` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as for every runtime — `scripts/bench.sh -t uds|quic` exporting `FLEZHA_TRANSPORT` — with no new `mix bench` flag, and no transport SHALL be offered that only one runtime can use. The app SHALL also register the round-trip fixtures `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, output names, output bytes and key function), `bench_keyed` as the persistent twin, `tier_store` and `bench_checkpoint`, read in `channels/1` as the reference reads them.

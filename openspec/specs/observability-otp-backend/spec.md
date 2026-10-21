@@ -6,7 +6,7 @@ The observability-otp-backend capability provides the content side of the observ
 ## Requirements
 ### Requirement: Built-in BEAM VM source
 
-The system SHALL provide a built-in process-backed source named `:beam_vm` that polls the running Erlang VM and emits `:metric` signals covering memory, schedulers, run queues, and garbage collection. The source SHALL register with the foundation Registry at supervisor start and SHALL be visible in `Flezha.Observability.Registry.list_sources/0`. The source SHALL respect a per-source cardinality budget appropriate to a single-node BEAM (a small constant — no per-process or per-scheduler labels at value granularity).
+The system SHALL provide a built-in process-backed source named `:beam_vm` that polls the running Erlang VM and emits `:metric` signals covering memory, schedulers, run queues, and garbage collection, and the binary allocator's carrier size (`memory_binary_alloc_carriers`), which tells binaries in use from carriers held. The source SHALL register with the foundation Registry at supervisor start and SHALL be visible in `Flezha.Observability.Registry.list_sources/0`. The source SHALL respect a per-source cardinality budget appropriate to a single-node BEAM (a small constant — no per-process or per-scheduler labels at value granularity).
 
 #### Scenario: BEAM VM source registers at boot
 - **WHEN** the application boots with `:otp_backend_enabled: true`
@@ -23,6 +23,11 @@ The system SHALL provide a built-in process-backed source named `:beam_vm` that 
 #### Scenario: BEAM VM source poll interval is configurable
 - **WHEN** the application boots with `:observability` → `:otp_backend` → `:poll_intervals` containing `beam_vm: 250`
 - **THEN** the source SHALL poll every `250` milliseconds rather than the default
+
+#### Scenario: BEAM VM source emits the binary carrier size
+
+- **WHEN** the source has been running for at least one poll interval
+- **THEN** a `:metric` signal named `memory_binary_alloc_carriers` with `measurements: %{value: integer()}` SHALL appear on source `:beam_vm`
 
 ### Requirement: Built-in host source with platform degradation
 
@@ -187,7 +192,7 @@ The system SHALL provide a `flz observe` CLI command tree exposing the observabi
 
 ### Requirement: Built-in sources share one poller template that declares the source contract
 
-Every built-in process-backed source SHALL be built with `Flezha.Observability.OtpBackend.Poller`, which SHALL inject the whole poll lifecycle — `start_link/1`, an `init/1` that registers the source and arms the first tick, `handle_info(:poll, …)` with a catch-all, and `poll_interval_ms/0` — and SHALL declare `@behaviour Flezha.Observability.Source` on every module it builds, supplying an overridable `config_schema/0`. A source SHALL supply only what varies: `init_state/1`, `poll/1`, and `config_schema/0` when it has configuration to describe. A source SHALL declare its `area`, `description` and `signals` to the template, which SHALL register them.
+Every built-in process-backed source SHALL be built with `Flezha.Observability.OtpBackend.Poller`, which SHALL inject the whole poll lifecycle — `start_link/1`, an `init/1` that registers the source and arms the first tick, `handle_info(:poll, …)` with a catch-all, and `poll_interval_ms/0` — and SHALL declare `@behaviour Flezha.Observability.Source` on every module it builds, supplying an overridable `config_schema/0`. A source SHALL supply only what varies: `init_state/1`, `poll/1`, and `config_schema/0` when it has configuration to describe. A source SHALL declare its `area`, `title`, `description`, cardinality budget and `signals` to the template, which SHALL declare the source through `use Flezha.Observability.Source` (flavour `:process_backed`), so its kinds are derived from its signals and are not written beside them, its registration is built by the one registration builder, and its `poll/1` emits through the declaration's emit function rather than an emit helper of its own.
 
 The template SHALL be named for what it is. It is poll plumbing, not a source: the modules it builds are the sources, and naming the template `Source` too leaves the subsystem with two different contracts under one name, which is what left the foundation's own `Source` behaviour with no declared implementers.
 
@@ -215,6 +220,10 @@ The template's periodic half SHALL be a separate extension point from its pollin
 #### Scenario: A built-in source registers its description
 - **WHEN** a built-in source starts
 - **THEN** its registry entry SHALL carry the area, description and signals it declared to the template
+
+#### Scenario: A polled source writes no kinds and no emit helper
+- **WHEN** each module in `Flezha.Observability.OtpBackend.Supervisor.source_modules/0` is read
+- **THEN** none SHALL pass a `kinds:` option or define its own function building a `Signal`, and each registration's kinds SHALL equal the kinds of its declared signals
 
 ### Requirement: A stamp SHALL be collapsed within a runner to the latest reading a channel took
 

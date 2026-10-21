@@ -105,8 +105,12 @@ carry `message_id` `<cell>/<seq>/<epoch>`.
 
 The producer SHALL publish on a channel in confirm mode. A plain output SHALL be published
 without the relay waiting. While the connection is down outputs SHALL wait in the plugin's
-queue: a full queue SHALL drop and count plain outputs as `queue_overflow` says, and SHALL keep
-every guaranteed one. A delivery-guaranteed output SHALL be held in the outbox until the
+queue, bounded by `queue_max`, and a full queue SHALL be admitted by the controller's one sink
+admission, as every bounded sink is: under `drop_nothing`, the default, the dispatch SHALL wait for
+room up to `queue_block_timeout_ms` and then overflow the output, counting a plain one and parking
+a guaranteed one with `rabbitmq.exhausted` (reason `queue_full`); `drop_oldest` and `drop_newest`
+SHALL drop and count plain outputs and SHALL keep every guaranteed one. No output SHALL wait past
+the bound with no deadline. A delivery-guaranteed output SHALL be held in the outbox until the
 broker's acknowledgement, SHALL be published again with the same `message_id` after a negative
 acknowledgement or a connection loss before its acknowledgement, SHALL be parked with
 `rabbitmq.exhausted` when its retries run out, and, with `mandatory`, SHALL be parked with
@@ -125,6 +129,17 @@ acknowledgement or a connection loss before its acknowledgement, SHALL be parked
 - **GIVEN** a producer with `mandatory: true` to an exchange with no binding for its routing key
 - **WHEN** a relay with `effectively_once` emits an output
 - **THEN** the relay's DLQ SHALL hold it with `rabbitmq.unroutable`
+
+#### Scenario: A full queue under the default waits, then parks
+
+- **GIVEN** a producer with the default `queue_overflow`, `queue_max: 10`, `queue_block_timeout_ms: 1000` and a broker that is down
+- **WHEN** a relay with `effectively_once` emits 12 outputs
+- **THEN** the queue SHALL hold ten plus the outputs already on their way when it filled, a dispatch that found it full SHALL wait, and after one second its output SHALL be in the relay's DLQ with `rabbitmq.exhausted`
+
+#### Scenario: The default drops nothing
+
+- **WHEN** `rabbitmq_producer` is enabled without `queue_overflow`
+- **THEN** its options SHALL read `queue_overflow: drop_nothing`
 
 ### Requirement: The consumer SHALL NOT be shared or bound to a partitioned relay, and the producer SHALL be shareable
 
