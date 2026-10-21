@@ -7,9 +7,6 @@
 # The directory Mix downloads your dependencies sources to.
 /deps/
 
-# Where third-party dependencies like ExDoc output generated docs.
-/doc/
-
 # Ignore .fetch files in case you like to edit your project deps locally.
 /.fetch
 
@@ -35,8 +32,6 @@ __pycache__/
 # Temporary files, for example, from tests.
 /tmp/
 
-# TODO file.
-/TODO.md
 
 # Ignore environment variables file
 .env
@@ -81,9 +76,6 @@ test/apps/java_compute_engine/target/
 # (x86-64 here, aarch64 on the rpi5 controller) so a committed copy is
 # both redundant and wrong for other targets.
 /priv/native/*.so
-
-# Local process_hub synced into the controller build context by the deploy
-.process-hub-local/
 
 # Local dev
 .playwright-mcp

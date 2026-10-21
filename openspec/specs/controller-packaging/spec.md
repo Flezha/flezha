@@ -179,7 +179,7 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
 
 ### Requirement: Prod image entrypoint SHALL provide graceful-restart lifecycle
 
-`docker/prod/Dockerfile.controller`'s runtime stage SHALL replace the direct `CMD ["bin/flzvm", "start"]` with `CMD ["/usr/local/bin/agent-entrypoint.sh"]`. Tini SHALL remain the ENTRYPOINT. The entrypoint script SHALL:
+`deploy/docker/prod/Dockerfile.controller`'s runtime stage SHALL replace the direct `CMD ["bin/flzvm", "start"]` with `CMD ["/usr/local/bin/agent-entrypoint.sh"]`. Tini SHALL remain the ENTRYPOINT. The entrypoint script SHALL:
 
 1. Remove a stale `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock` left by a previous container on a reused volume, then background `bin/flzvm start`. Only the controller's own control socket is removed; SDK-owned sockets are held open by external processes and MUST NOT be touched.
 2. If `FLEZHA_TESTNET_WS_PORT` is set and `/flezha/testnet/dist/index.js` exists, also background the testnet WS server (no-op in `:latest`; consumed by `:latest-dev` via inheritance).

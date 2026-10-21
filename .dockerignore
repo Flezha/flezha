@@ -31,11 +31,10 @@ docs
 openspec
 scripts
 
-# Re-include the runtime entrypoint scripts. These are referenced by `COPY`
-# in docker/prod/Dockerfile.{agent,controller} and have no other ingestion
-# path, so they MUST stay in the build context.
-!docker/prod/agent-entrypoint.sh
-!docker/prod/controller-entrypoint.sh
+# Re-include the runtime entrypoint script. It is referenced by `COPY` in
+# deploy/docker/prod/Dockerfile.controller and has no other ingestion path, so
+# it MUST stay in the build context.
+!deploy/docker/prod/controller-entrypoint.sh
 
 # Java SDK is a separate deliverable — not needed for the agent build.
 sdk/java
