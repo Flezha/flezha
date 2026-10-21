@@ -1,9 +1,7 @@
-use serde_json::{Map, Value};
-
-use crate::args::{OptSpec, Positional, Reading, INIT_VALUES, NAMESPACE};
-use crate::dispatch::{Command, Missing, Verb};
-use crate::relay::{first_message, json_object, FIRST_CHANNEL, TEXT};
-use crate::{help, rpc};
+use crate::args::{OptSpec, Positional, INIT_VALUES, NAMESPACE};
+use crate::dispatch::{Arg, Command, Missing, Verb};
+use crate::help;
+use crate::relay::{first_channel, init_values, FIRST_CHANNEL, TEXT};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>")
     .required()
@@ -30,7 +28,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Cron-scheduled steps relay spawns.",
     notes: Some(help::SCHEDULE),
     verbs: &[
-        Verb::new("add", handle_add)
+        Verb::door("add")
             .taking(NAME)
             .reading(&[
                 CRON,
@@ -43,6 +41,19 @@ pub(crate) const TABLE: Command = Command {
                 PLUGINS,
             ])
             .strict()
+            // `--plugins` and `--text` ride as written: the controller decodes
+            // the JSON at every firing, and stores the message verbatim.
+            .sending(&[Arg::Fields(&[
+                ("name", Arg::Pos("<name>")),
+                ("cron", Arg::Opt(&CRON)),
+                ("timezone", Arg::Opt(&TZ)),
+                ("factory_id", Arg::Opt(&FACTORY)),
+                ("namespace", Arg::Opt(&NAMESPACE)),
+                ("plugins", Arg::Opt(&PLUGINS)),
+                ("init_values", Arg::Built(init_values)),
+                ("text", Arg::Opt(&FIRST_MESSAGE)),
+                ("channel", Arg::Built(first_channel)),
+            ])])
             .calls(&["Schedule.add"]),
         Verb::door("list").calls(&["Schedule.list"]),
         Verb::door("remove")
@@ -53,32 +64,3 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-/// The flags travel as the options list: the three required ones first, then
-/// each optional one the caller wrote, so an absent flag is absent from the
-/// request and the controller applies its own default. `--plugins` and
-/// `--text` are carried as the text they were written as, whatever they parse
-/// as: the controller's decoder reads the JSON itself, at every firing, and
-/// the message is stored verbatim.
-fn handle_add(read: &Reading) {
-    let mut fields = Map::new();
-
-    for (key, value) in [
-        ("name", Some(read.pos(NAME[0].name))),
-        ("cron", read.opt(CRON.long)),
-        ("timezone", read.opt(TZ.long)),
-        ("factory_id", read.opt(FACTORY.long)),
-        ("namespace", read.opt(NAMESPACE.long)),
-        ("plugins", read.opt(PLUGINS.long)),
-    ] {
-        if let Some(value) = value {
-            fields.insert(key.into(), Value::from(value));
-        }
-    }
-    if read.opt(INIT_VALUES.long).is_some() {
-        fields.insert("init_values".into(), json_object(read, INIT_VALUES.long));
-    }
-    fields.extend(first_message(read));
-
-    rpc::door("Schedule.add", &[Value::Object(fields)], &[], read);
-}

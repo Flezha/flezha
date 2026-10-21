@@ -17,7 +17,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Runner management commands.",
     notes: None,
     verbs: &[
-        Verb::new("list", handle_list)
+        Verb::new("list", |read| rpc::scoped_read(read, "runners"))
             .reading(&[NAMESPACE])
             .calls(&["Fleet.runners"]),
         Verb::new("check", handle_check)
@@ -39,10 +39,6 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Refuse,
     unknown_prints_help: false,
 };
-
-fn handle_list(read: &Reading) {
-    rpc::scoped_read(read, "runners");
-}
 
 /// Where this host's controller is, and why a runner cannot reach it — the
 /// same ladder and the same probe a runner walks, from a shell, with no runner

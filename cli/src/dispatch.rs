@@ -45,6 +45,8 @@ pub(crate) struct Verb {
     pub(crate) calls: &'static [&'static str],
     /// The first operation's arguments, in order, as `send` builds them.
     pub(crate) sends: &'static [Arg],
+    /// The options `send` adds to the request, each only when it has a value.
+    pub(crate) carries: &'static [(&'static str, Arg)],
     /// What a verb that sends no operation does, in one line.
     pub(crate) about: Option<&'static str>,
     /// Examples and notes only the CLI has, printed after the rendered screen.
@@ -81,6 +83,7 @@ impl Verb {
             conflicts: &[],
             calls: &[],
             sends: &[Arg::Positionals],
+            carries: &[],
             about: None,
             notes: None,
             help_word: false,
@@ -135,6 +138,11 @@ impl Verb {
         self
     }
 
+    pub(crate) const fn carrying(mut self, opts: &'static [(&'static str, Arg)]) -> Self {
+        self.carries = opts;
+        self
+    }
+
     pub(crate) const fn about(mut self, text: &'static str) -> Self {
         self.about = Some(text);
         self
@@ -164,6 +172,8 @@ pub(crate) enum Arg {
     /// An object of the fields written; one not written is left out, so the
     /// controller applies its default.
     Fields(&'static [(&'static str, Arg)]),
+    /// What a function of the verb makes of its words, refusing them there.
+    Built(fn(&Reading) -> Option<Value>),
 }
 
 impl Arg {
@@ -191,6 +201,7 @@ impl Arg {
                     .filter_map(|(key, arg)| Some((key.to_string(), arg.value(read)?)))
                     .collect(),
             )),
+            Arg::Built(build) => build(read),
         }
     }
 }
@@ -204,8 +215,8 @@ fn typed(kind: &Kind, written: &str) -> Value {
     }
 }
 
-/// Send the row's operation with the arguments its row declares; one the
-/// caller did not write is `null`.
+/// Send the row's operation with the arguments and options its row declares;
+/// an argument the caller did not write is `null`.
 pub(crate) fn send(read: &Reading) {
     let mut args = Vec::new();
     for arg in read.verb.sends {
@@ -219,7 +230,14 @@ pub(crate) fn send(read: &Reading) {
             arg => args.push(arg.value(read).unwrap_or(Value::Null)),
         }
     }
-    rpc::door(read.operation(), &args, &[], read);
+    // An option's value is an Elixir literal.
+    let opts: Vec<rpc::Opt> = (read.verb.carries.iter())
+        .filter_map(|(key, arg)| match arg.value(read)? {
+            Value::String(text) => Some((*key, rpc::text(&text))),
+            other => Some((*key, other.to_string())),
+        })
+        .collect();
+    rpc::door(read.operation(), &args, &opts, read);
 }
 
 pub(crate) struct Command {

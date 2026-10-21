@@ -71,11 +71,11 @@ const CASES: &[(&[&str], &str)] = &[
     // whichever side of the positionals it was written on.
     (
         &["relay", "send", "--text", "a\"b\\cä", "-n", "prod", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",null,{}]", [])"#,
     ),
     (
         &["relay", "send", "op1", "-n", "prod", "--text", "a\"b\\cä"],
-        r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",\"\",{}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"prod\",\"op1\",\"a\\\"b\\\\cä\",null,{}]", [])"#,
     ),
     // `call` sends a deadline only with `--timeout`, so the controller's
     // default holds without it; `-t` is `--text`, the payload as written.
@@ -133,11 +133,11 @@ const CASES: &[(&[&str], &str)] = &[
     ),
     (
         &["relay", "send", "prices", "--key", "EURUSD", "--text", "x"],
-        r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"prices\",\"x\",\"\",{\"key\":\"EURUSD\"}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"prices\",\"x\",null,{\"key\":\"EURUSD\"}]", [])"#,
     ),
     (
         &["relay", "send", "orders", "--msg-id", "a1", "--text", "x"],
-        r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"orders\",\"x\",\"\",{\"msg_id\":\"a1\"}]", [])"#,
+        r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"orders\",\"x\",null,{\"msg_id\":\"a1\"}]", [])"#,
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],

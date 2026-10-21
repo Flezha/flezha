@@ -391,15 +391,11 @@ pub(crate) fn progress_line(read: &Reading, line: &str) {
 
 /// The window a bounded stream runs for, in milliseconds: `--duration-ms`, or
 /// the default every streaming verb shares.
-pub(crate) fn window_ms(read: &Reading) -> u64 {
-    read.num::<u64>(DURATION_MS.long)
-        .unwrap_or(DEFAULT_WINDOW_MS)
-}
-
-/// The window, as the option a tail's request carries: the two tails name
-/// different subjects and their print loop owns the window.
-pub(crate) fn window(read: &Reading) -> Opt<'static> {
-    ("duration_ms", window_ms(read).to_string())
+pub(crate) fn window(read: &Reading) -> Option<Value> {
+    Some(Value::from(
+        read.num::<u64>(DURATION_MS.long)
+            .unwrap_or(DEFAULT_WINDOW_MS),
+    ))
 }
 
 /// A `Command` for the sibling `flzvm`, for the three verbs that read its

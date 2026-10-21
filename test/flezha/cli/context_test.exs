@@ -2,8 +2,8 @@ defmodule Flezha.Service.Cli.ContextTest do
   @moduledoc """
   The one bad-token rule as `flz` keeps it (`Flezha.Service.Admin.context/2`):
   a token that does not verify is refused with its own code before the verb
-  runs, even while authorization is open, and an empty one, which `flz` passes
-  when none was given, is no token.
+  runs, even while authorization is open, and an empty one is no token, as
+  `flz` reads an empty `--token`.
   """
   # async: false: the auth stores are node-global singletons.
   use FlezhaTest.Case,

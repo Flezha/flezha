@@ -1,7 +1,5 @@
-use serde_json::Value;
-
-use crate::args::{Positional, Reading, DURATION_MS};
-use crate::dispatch::{Command, Missing, Verb};
+use crate::args::{Positional, DURATION_MS};
+use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::{help, rpc};
 
 const SOURCE: &[Positional] = &[Positional::required("<source>")];
@@ -19,9 +17,10 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["Observability.list_sinks"])
             .notes(help::OBSERVE_SINKS)
             .help_word(),
-        Verb::new("tail", handle_tail)
+        Verb::door("tail")
             .taking(SOURCE)
             .reading(&[DURATION_MS])
+            .carrying(&[("duration_ms", Arg::Built(rpc::window))])
             .calls(&["Observability.tail"])
             .notes(help::OBSERVE_TAIL)
             .help_word(),
@@ -37,12 +36,3 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-fn handle_tail(read: &Reading) {
-    rpc::door(
-        "Observability.tail",
-        &[Value::from(read.pos(SOURCE[0].name))],
-        &[rpc::window(read)],
-        read,
-    );
-}

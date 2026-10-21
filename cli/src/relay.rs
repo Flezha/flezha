@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use crate::args::{self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Arg, Command, Missing, Verb};
 use crate::help;
-use crate::rpc::{self, Opt};
+use crate::rpc;
 
 const RELAY_ID: &[Positional] = &[Positional::required("<relay_id>")];
 /// The verbs that name one relay, or one of its Cells, within the namespace.
@@ -69,7 +69,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Relay management commands.",
     notes: Some(help::RELAY),
     verbs: &[
-        Verb::new("start", handle_start)
+        Verb::door("start")
             .taking(&[Positional::required("<factory_id>")])
             .reading(&[
                 ID,
@@ -81,6 +81,18 @@ pub(crate) const TABLE: Command = Command {
                 PARTITIONS,
             ])
             .strict()
+            .sending(&[
+                Arg::Namespace,
+                Arg::Fields(&[
+                    ("factory_id", Arg::Pos("<factory_id>")),
+                    ("id", Arg::Opt(&ID)),
+                    ("init_values", Arg::Built(init_values)),
+                    ("plugins", Arg::Opt(&PLUGINS)),
+                    ("partitions", Arg::Opt(&PARTITIONS)),
+                    ("text", Arg::Opt(&TEXT)),
+                    ("channel", Arg::Built(first_channel)),
+                ]),
+            ])
             .calls(&["Relay.start"])
             .notes(help::RELAY_START)
             .help_word(),
@@ -90,6 +102,11 @@ pub(crate) const TABLE: Command = Command {
                 Positional::number("<partitions>"),
             ])
             .reading(&[NAMESPACE, TIMEOUT])
+            .sending(&[
+                Arg::Namespace,
+                Arg::Positionals,
+                Arg::Fields(&[("quiesce_timeout_ms", Arg::Opt(&TIMEOUT))]),
+            ])
             .calls(&["Steps.rescale"]),
         Verb::new("stop", handle_stop)
             .taking(RELAY_ID)
@@ -127,7 +144,7 @@ pub(crate) const TABLE: Command = Command {
                 Arg::Fields(&[("cells_of", Arg::Opt(&CELLS)), ("limit", Arg::Opt(&LIMIT))]),
             ])
             .calls(&["Relay.activity"]),
-        Verb::new("listen", handle_listen)
+        Verb::door("listen")
             .taking(RELAY_ID)
             .reading(&[INPUT, CALLS, TALLY, DURATION_MS, NAMESPACE])
             .refusing(&[
@@ -136,12 +153,26 @@ pub(crate) const TABLE: Command = Command {
                 (CALLS.long, TALLY.long),
             ])
             .strict()
+            .sending(&[
+                Arg::Namespace,
+                Arg::Positionals,
+                Arg::Built(direction),
+                Arg::Fields(&[("window_ms", Arg::Built(rpc::window))]),
+            ])
             .calls(&["Relay.listen"])
             .notes(help::RELAY_LISTEN)
             .help_word(),
-        Verb::new("send", handle_send)
+        Verb::door("send")
             .taking(RELAY_ID)
             .reading(&[PAYLOAD, CHANNEL, KEY, MSG_ID, AWAIT, NAMESPACE])
+            .sending(&[
+                Arg::Namespace,
+                Arg::Positionals,
+                Arg::Opt(&PAYLOAD),
+                Arg::Opt(&CHANNEL),
+                Arg::Fields(&[("key", Arg::Opt(&KEY)), ("msg_id", Arg::Opt(&MSG_ID))]),
+            ])
+            .carrying(&[("await_ms", Arg::Opt(&AWAIT))])
             .calls(&["Relay.send"]),
         Verb::new("call", handle_call)
             .taking(RELAY_ID)
@@ -174,44 +205,13 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
-/// `--id`, `--init-values`, `--plugins`, `--partitions`, `--text` and
-/// `--channel` ride the relay's fields, and only when written: an absent
-/// flag is absent from the request and the controller applies its default,
-/// which for the id is one it generates. `--text` is the instance's first
-/// message, on the entry channel `--channel` names; a channel with no text
-/// names nothing and is refused. How the relay runs is the factory's,
-/// announced by its runner, so no flag names it.
-fn handle_start(read: &Reading) {
-    let mut fields = Map::new();
-    fields.insert("factory_id".into(), Value::from(read.pos("<factory_id>")));
-
-    if let Some(id) = read.opt(ID.long) {
-        fields.insert("id".into(), Value::from(id));
-    }
-    if read.opt(INIT_VALUES.long).is_some() {
-        fields.insert("init_values".into(), json_object(read, INIT_VALUES.long));
-    }
-    if let Some(plugins) = read.opt(PLUGINS.long) {
-        fields.insert("plugins".into(), Value::from(plugins));
-    }
-    if let Some(count) = read.num::<u64>(PARTITIONS.long) {
-        fields.insert("partitions".into(), Value::from(count));
-    }
-    fields.extend(first_message(read));
-
-    rpc::door(
-        "Relay.start",
-        &[rpc::namespace(read), Value::Object(fields)],
-        &[],
-        read,
-    );
-}
-
-/// A JSON object the caller wrote behind `option`, refused here when it is
-/// not one.
-pub(crate) fn json_object(read: &Reading, option: &str) -> Value {
+/// The state a `start` or a `schedule add` begins with, refused here when
+/// `--init-values` is not a JSON object.
+pub(crate) fn init_values(read: &Reading) -> Option<Value> {
+    let option = INIT_VALUES.long;
+    read.opt(option)?;
     match serde_json::from_str::<Value>(read.json(option)) {
-        Ok(object @ Value::Object(_)) => object,
+        Ok(object @ Value::Object(_)) => Some(object),
         Ok(_) => rpc::fail(FlezhaError::with(
             "usage.json_not_object",
             [("option", Value::from(option))],
@@ -226,22 +226,17 @@ pub(crate) fn json_object(read: &Reading, option: &str) -> Value {
     }
 }
 
-/// The first message a `start` or a `schedule add` carries: `text` and,
-/// when written, `channel`; `--channel` without `--text` is refused.
-pub(crate) fn first_message(read: &Reading) -> Vec<(String, Value)> {
-    let mut fields = Vec::new();
-    let payload = read.opt(TEXT.long);
-    if let Some(payload) = payload {
-        fields.push(("text".to_string(), Value::from(payload)));
+/// The entry channel of the first message a `start` or a `schedule add`
+/// carries; `--channel` without `--text` is refused.
+pub(crate) fn first_channel(read: &Reading) -> Option<Value> {
+    let channel = read.opt(CHANNEL.long)?;
+    if read.opt(TEXT.long).is_none() {
+        rpc::fail(FlezhaError::new(
+            "relay.channel_without_text",
+            Default::default(),
+        ));
     }
-    if let Some(channel) = read.opt(CHANNEL.long) {
-        args::or_refuse(
-            payload
-                .ok_or_else(|| FlezhaError::new("relay.channel_without_text", Default::default())),
-        );
-        fields.push(("channel".to_string(), Value::from(channel)));
-    }
-    fields
+    Some(Value::from(channel))
 }
 
 /// `flz relay scale <group> <partitions>` — rescale a partition group.
@@ -254,51 +249,17 @@ fn handle_scale(read: &Reading) {
         read.pos("<partitions>"),
     ));
 
-    let mut opts = Map::new();
-    if let Some(timeout_ms) = read.num::<u64>(TIMEOUT.long) {
-        opts.insert("quiesce_timeout_ms".into(), Value::from(timeout_ms));
-    }
-
     rpc::progress_line(
         read,
         &format!("Scaling relay group {} to {}...", group_id, partitions),
     );
-
-    rpc::door(
-        "Steps.rescale",
-        &[
-            rpc::namespace(read),
-            Value::from(group_id),
-            Value::from(partitions),
-            Value::Object(opts),
-        ],
-        &[],
-        read,
-    );
+    dispatch::send(read);
 }
 
 fn handle_stop(read: &Reading) {
     rpc::progress_line(read, "Stopping relay...");
     dispatch::send(read);
     rpc::progress_line(read, "Relay stopped successfully.");
-}
-
-/// `flz relay send <relay_id> --text <payload> [--channel <ch>]
-/// [--key <k>] [--msg-id <id>] [--await <ms>]`: inject a payload into an
-/// relay's input stream (the SDK-facing `send_io` route). Blocks for the
-/// confirming verdict so a halted or absent target is reported rather than
-/// silently dropped. `--msg-id` and `--await` ride only when written.
-fn handle_send(read: &Reading) {
-    let opts: Vec<Opt> = read
-        .opt(AWAIT.long)
-        .map(|ms| vec![("await_ms", ms.to_string())])
-        .unwrap_or_default();
-
-    let mut fields = key_fields(read);
-    if let Some(id) = read.opt(MSG_ID.long) {
-        fields.insert("msg_id".into(), Value::from(id));
-    }
-    rpc::door("Relay.send", &input(read, fields), &opts, read);
 }
 
 /// `flz relay info [<relay_id>]`: every relay of the namespace, or one
@@ -384,18 +345,6 @@ fn named_args(read: &Reading) -> Value {
     Value::Object(fields)
 }
 
-/// The arguments `send` takes: where, which relay, the payload and its
-/// channel (`""` is none), then the named fields.
-fn input(read: &Reading, fields: Map<String, Value>) -> Vec<Value> {
-    vec![
-        rpc::namespace(read),
-        relay_id(read),
-        Value::from(read.opt(PAYLOAD.long).unwrap_or_default()),
-        Value::from(read.opt(CHANNEL.long).unwrap_or_default()),
-        Value::Object(fields),
-    ]
-}
-
 /// A partition group's member is named by `--key`; absent, no field rides.
 fn key_fields(read: &Reading) -> Map<String, Value> {
     let mut fields = Map::new();
@@ -409,26 +358,12 @@ fn relay_id(read: &Reading) -> Value {
     Value::from(read.pos(RELAY_ID[0].name))
 }
 
-/// `flz relay listen <relay_id> [--input | --calls | --tally]`: print every
-/// frame the relay emits, or ingests, or each call it takes and how it ended,
-/// or its output counts per channel, until the window closes. Prints nothing
-/// of its own, so what reaches stdout is the frames alone.
-fn handle_listen(read: &Reading) {
+/// What `flz relay listen` prints: every frame the relay emits, or ingests,
+/// or each call it takes and how it ended, or its output counts per channel.
+fn direction(read: &Reading) -> Option<Value> {
     let direction = [(INPUT, "input"), (CALLS, "calls"), (TALLY, "tally")]
         .into_iter()
         .find(|(spec, _)| read.switch(spec.long))
         .map_or("output", |(_, direction)| direction);
-    let window_ms = rpc::window_ms(read);
-
-    rpc::door(
-        "Relay.listen",
-        &[
-            rpc::namespace(read),
-            relay_id(read),
-            Value::from(direction),
-            serde_json::json!({ "window_ms": window_ms }),
-        ],
-        &[],
-        read,
-    );
+    Some(Value::from(direction))
 }

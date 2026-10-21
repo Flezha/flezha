@@ -19,8 +19,8 @@ defmodule Flezha.Service.Cli.Context do
   `opts[:token]`); a caller-supplied principal, namespace or role is never
   trusted. Without a token the context stays unbound and a gated verb refuses
   naming the credential; a token that does not verify is refused through
-  `render!/2` before the verb runs. An empty token is no token, because `flz`
-  passes one when none was given.
+  `render!/2` before the verb runs. An empty token is no token, as `flz` reads
+  an empty `--token`.
   """
   def cli_context(opts) do
     token = with "" <- Keyword.get(opts, :token), do: nil

@@ -136,12 +136,12 @@ const CASES: &[(&[&str], Want)] = &[
     // `--await` rides the options list only when written.
     (
         &["relay", "send", "op", "--text", "hi"],
-        Rpc(r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [])"#),
+        Rpc(r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"op\",\"hi\",null,{}]", [])"#),
     ),
     (
         &["relay", "send", "op", "--text", "hi", "--await", "2000"],
         Rpc(
-            r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"op\",\"hi\",\"\",{}]", [await_ms: 2000])"#,
+            r#"Flezha.Service.Cli.call("Relay.send", "[\"default\",\"op\",\"hi\",null,{}]", [await_ms: 2000])"#,
         ),
     ),
     // `flz audit` — the `--json` dialect.

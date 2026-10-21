@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::args::{OptSpec, Positional, Reading, NAMESPACE};
-use crate::dispatch::{Command, Missing, Verb};
+use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
 use crate::settings::{
@@ -17,6 +17,10 @@ const PROVIDERS: OptSpec =
     OptSpec::switch("--providers", "--providers").doc("List the providers instead.");
 const SINGLE: OptSpec =
     OptSpec::switch("--single", "--single").doc("Run one copy in the whole cluster.");
+
+/// The verbs that name a plugin and carry its fields. A verb refuses a field
+/// it does not read, so each carries all of them.
+const NAMED: &[Arg] = &[Arg::Positionals, Arg::Built(named_fields)];
 
 /// Where the verbs that place packages run, in a VM of their own.
 const LOCAL: &str = "Flezha.Plugin.Installer.Command";
@@ -34,21 +38,25 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[SINGLE])
             .open()
             .calls(&["PluginManager.enable"]),
-        Verb::new("bind", named)
+        Verb::door("bind")
             .taking(NAME)
             .open()
+            .sending(NAMED)
             .calls(&["PluginManager.bind"]),
-        Verb::new("unbind", named)
+        Verb::door("unbind")
             .taking(NAME)
             .open()
+            .sending(NAMED)
             .calls(&["PluginManager.unbind"]),
-        Verb::new("update", named)
+        Verb::door("update")
             .taking(NAME)
             .open()
+            .sending(NAMED)
             .calls(&["PluginManager.update"]),
-        Verb::new("disable", named)
+        Verb::door("disable")
             .taking(NAME)
             .open()
+            .sending(NAMED)
             .calls(&["PluginManager.disable"]),
         // `help` is a verb here, not a spelling of the screen: with a provider
         // id it asks the controller for that provider's own help.
@@ -109,21 +117,12 @@ fn handle_enable(read: &Reading) {
     );
 }
 
-/// The verbs that name a plugin and carry its fields: the plain options, the
-/// `X<key>=<value>` settings as `opts`, and the `--hook` families as `hooks`.
-/// A verb refuses a field it does not read, so each carries all of them.
-fn named(read: &Reading) {
-    rpc::door(
-        read.operation(),
-        &[
-            Value::from(read.pos(NAME[0].name)),
-            Value::Object(fields(read.rest())),
-        ],
-        &[],
-        read,
-    );
+fn named_fields(read: &Reading) -> Option<Value> {
+    Some(Value::Object(fields(read.rest())))
 }
 
+/// A plugin's fields: the plain options, the `X<key>=<value>` settings as
+/// `opts`, and the `--hook` families as `hooks`.
 fn fields(args: &[String]) -> Map<String, Value> {
     let Value::Object(mut fields) = flags_object(&plain_opts(args)) else {
         unreachable!("flags serialize to an object")

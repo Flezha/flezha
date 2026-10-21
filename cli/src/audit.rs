@@ -1,4 +1,4 @@
-use crate::args::{OptSpec, Positional, Reading, DURATION_MS};
+use crate::args::{OptSpec, Positional, DURATION_MS};
 use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::{help, rpc};
 
@@ -37,8 +37,9 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["AuditLog.read"])
             .notes(help::AUDIT_READ)
             .help_word(),
-        Verb::new("tail", handle_tail)
+        Verb::door("tail")
             .reading(&[DURATION_MS])
+            .carrying(&[("duration_ms", Arg::Built(rpc::window))])
             .calls(&["AuditLog.tail"])
             .notes(help::AUDIT_TAIL)
             .help_word(),
@@ -48,7 +49,3 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
-
-fn handle_tail(read: &Reading) {
-    rpc::door("AuditLog.tail", &[], &[rpc::window(read)], read);
-}

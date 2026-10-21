@@ -344,7 +344,7 @@ defmodule Flezha.Service.Cli.ListenTest do
 
       out =
         in_caller(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 50)
         end)
 
       assert out == "Delivered to 'op'.\necho\thello\n"
@@ -354,7 +354,7 @@ defmodule Flezha.Service.Cli.ListenTest do
     test "with nothing emitted it prints the verdict alone" do
       out =
         in_caller(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 20)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 20)
         end)
 
       assert out == "Delivered to 'op'.\n"
@@ -370,7 +370,7 @@ defmodule Flezha.Service.Cli.ListenTest do
 
       {reason, err} =
         refused(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), await_ms: 50)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 50)
         end)
 
       assert reason == {:shutdown, 5}
@@ -382,7 +382,7 @@ defmodule Flezha.Service.Cli.ListenTest do
     test "without it nothing is attached" do
       out =
         in_caller(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", "", %{}]), [])
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), [])
         end)
 
       assert out == "Delivered to 'op'.\n"
