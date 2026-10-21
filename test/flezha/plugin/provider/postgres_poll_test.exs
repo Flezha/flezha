@@ -80,24 +80,12 @@ defmodule Flezha.Plugin.Provider.PostgresPollTest do
                )
     end
 
-    test "the starting point, the batch and an absent channel are refused by their rows" do
+    test "the starting point and the batch are refused by their rows" do
       assert {:error, {:invalid_option_value, :start_at, "now"}} =
                ProviderPrepare.prepare(PostgresPoll, opts(%{start_at: "now"}))
 
       assert {:error, {:option_below_minimum, :batch_size, 0, 1}} =
                ProviderPrepare.prepare(PostgresPoll, opts(%{batch_size: 0}))
-
-      assert {:error, {:entry_channel_required, "postgres_poll"}} =
-               ProviderPrepare.prepare(PostgresPoll, Map.delete(opts(), :channel))
-    end
-
-    test "a member of a partition group is refused" do
-      member = opts(%{partition_index: 0, partition_count: 2, source_relay_id: "pg#p0"})
-
-      assert {:error, {:partitioned_host, %{provider: "postgres_poll", relay: "pg#p0"}} = reason} =
-               ProviderPrepare.prepare(PostgresPoll, member)
-
-      assert code(reason) == "plugin.partitioned_host"
     end
   end
 

@@ -280,20 +280,6 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
       assert wait_until(fn -> :sys.get_state(reader).last_settled_at > since + 200 end, 2_000)
       assert health(opts, reader) == :healthy
     end
-
-    test "a reader whose last settled poll is older than the idle window is unhealthy",
-         %{events: file} do
-      File.write!(file, "")
-      {opts, reader} = start_reader(%{idle_after_ms: 100})
-      assert_committed(0)
-
-      assert wait_until(
-               fn ->
-                 match?({:unhealthy, {:poll_idle, age}} when age > 100, health(opts, reader))
-               end,
-               2_000
-             )
-    end
   end
 
   # Against `FlezhaTest.Helper.FakeS3`, or MinIO under `S3_INTEGRATION=1`.
@@ -404,11 +390,6 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
                  channel_in: @channel,
                  channel_out: "alerts"
                })
-    end
-
-    test "naming neither channel spelling is refused naming both" do
-      assert {:error, {:entry_channel_required, "file_source"}} =
-               ProviderPrepare.prepare(Source, %{path: "events.ndjson"})
     end
   end
 

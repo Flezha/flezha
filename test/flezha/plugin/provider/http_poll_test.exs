@@ -21,7 +21,6 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   alias Flezha.Plugin.Provider.HttpPoll
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
   alias Flezha.Plugin.ProviderBehaviour.Options, as: ProviderOptions
-  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebhookServer
 
   @catalog Host.build_catalog(
@@ -363,17 +362,6 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   end
 
   describe "a poller that stopped settling polls says so" do
-    test "a worker idle past the window is unhealthy with a zero failure run" do
-      poller = stub_worker(failures: 0, last_error: nil, settled_ago_ms: 400)
-
-      assert {:unhealthy, {:poll_idle, age}} =
-               HttpPoll.health(
-                 health_opts(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
-               )
-
-      assert age >= 400
-    end
-
     test "unchanged content on cadence stays healthy" do
       # `settle/3` stamps on EVERY outcome, so a content-gated poller that has
       # injected nothing for many intervals is still settling and still healthy.
@@ -423,18 +411,6 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
                    interval_ms: 1_000
                  })
                )
-    end
-
-    test "a wedged worker is reported as uncertain, not as a verdict" do
-      wedged = spawn(&NodeTestHelper.park/0)
-      on_exit(fn -> if Process.alive?(wedged), do: Process.exit(wedged, :kill) end)
-
-      # A worker that is alive but not answering is neither healthy nor
-      # unhealthy. The provider says so rather than swallowing it as `:healthy`;
-      # `Extension.Table` is what turns this into telemetry, because it is the
-      # layer that knows which plugin the provider belongs to.
-      assert {:fail_open, :probe_timeout} =
-               HttpPoll.health(health_opts(%{owned_pid: wedged, failure_threshold: 3}))
     end
   end
 

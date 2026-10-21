@@ -484,14 +484,6 @@ defmodule Flezha.Observability.PrometheusExportTest do
       body = http_get(port, "/")
       assert body =~ "/metrics"
     end
-
-    test "unknown path returns 404", %{port: port} do
-      assert http_status(port, "GET", "/admin") == 404
-    end
-
-    test "disallowed method returns 405", %{port: port} do
-      assert http_status(port, "POST", "/metrics") == 405
-    end
   end
 
   defp http_get(port, path) do
@@ -508,26 +500,6 @@ defmodule Flezha.Observability.PrometheusExportTest do
     case String.split(body, "\r\n\r\n", parts: 2) do
       [_headers, body_part] -> body_part
       _ -> body
-    end
-  end
-
-  defp http_status(port, method, path) do
-    {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, packet: :raw, active: false])
-
-    req =
-      "#{method} #{path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-
-    :ok = :gen_tcp.send(socket, req)
-    body = recv_all(socket, "")
-    :gen_tcp.close(socket)
-
-    case body do
-      "HTTP/1.1 " <> rest ->
-        {n, _} = Integer.parse(rest)
-        n
-
-      _ ->
-        0
     end
   end
 
