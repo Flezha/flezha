@@ -441,11 +441,11 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end)
 
     assert :ok = Coordinator.shutdown(:cli, timeout_ms: 15_000)
-    assert_receive :ticked_under_the_drain, 30_000
-    # A tick runs in the Loop's own process, so this waits out one in flight.
-    _ = :sys.get_state(Loop)
 
-    refute heal?(:rebind_relay, id)
+    # Finalise clears the fact, and the next tick rebinds the relay as on any
+    # other day: only the heals that arrived before the tick under the drain
+    # answered were planned while it stood.
+    refute heal?(:rebind_relay, id, :ticked_under_the_drain)
 
     # Finalise clears the fact.
     assert wait_until(fn -> not draining?() end, 10_000),
@@ -511,17 +511,27 @@ defmodule FlezhaTest.System.RemedyDrillTest do
   # Every heal event collected so far names `primitive` for `target`. The
   # collector delivers into this process's mailbox, so a row can drive ticks
   # and ask, instead of racing one `assert_receive`.
-  defp heal?(primitive, target) do
-    Enum.any?(drain_heals(), &(&1.primitive == primitive and &1.target == target))
+  # With `until`, only the heals that arrived before that message count.
+  defp heal?(primitive, target, until \\ :now) do
+    Enum.any?(drain_heals(until, []), &(&1.primitive == primitive and &1.target == target))
   end
 
-  defp drain_heals(acc \\ []) do
+  defp drain_heals(:now, acc) do
     receive do
-      {:heal, meta} -> drain_heals([meta | acc])
+      {:heal, meta} -> drain_heals(:now, [meta | acc])
     after
       0 ->
         Enum.each(acc, &send(self(), {:heal, &1}))
         acc
+    end
+  end
+
+  defp drain_heals(until, acc) do
+    receive do
+      {:heal, meta} -> drain_heals(until, [meta | acc])
+      ^until -> acc
+    after
+      30_000 -> flunk("#{inspect(until)} never arrived")
     end
   end
 

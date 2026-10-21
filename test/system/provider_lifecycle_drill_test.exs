@@ -234,13 +234,15 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     for {id, provider} <- Providers.all(), not Map.has_key?(@deferred, provider) do
       {fixture, opts} = Map.fetch!(rows, provider)
 
-      if provider == Provider.Websocket do
+      if provider in [Provider.Websocket, Provider.PostgresPoll] do
         dyn_sup = inspect(WorkerSup.dyn_sup_name(WorkerSup.family(provider)))
 
-        # The row's kill reports reach this capture too; the nested one asserts them.
+        # The row's kill reports reach this capture too; the nested one asserts
+        # them. The reader's connection is linked to it and dies with it.
         kills = [
           {~r/crashed: :killed/, :maybe},
-          {~r/#{Regex.escape(dyn_sup)} terminated/, :maybe}
+          {~r/#{Regex.escape(dyn_sup)} terminated/, :maybe},
+          {~r/terminating\n\*\* \((stop|exit)\) killed/, :maybe}
         ]
 
         with_only_logged([refused() | kills], fn ->
@@ -276,8 +278,9 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     with_only_logged([refused()], fn -> Enum.each(rows, &assert_ws_channel(&1, ctx)) end)
   end
 
-  # `ctx.ws_uri` answers nothing, so a socket that dials it before its disable
-  # logs the refusal, and whether it does is timing.
+  # `ctx.ws_uri` and the Postgres row's port answer nothing, so a socket or a
+  # reader that dials one before its kill or disable logs the refusal, and
+  # whether it does is timing.
   defp refused, do: {~r/econnrefused/, :maybe}
 
   defp assert_ws_channel({flags, extension, entry, filter}, ctx) do
