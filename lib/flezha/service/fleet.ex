@@ -9,12 +9,6 @@ defmodule Flezha.Service.Fleet do
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data. A fleet read
   is a relay-topology read — the row `flz runner list` binds — scoped to
   the namespace asked about rather than to one the caller declares.
-
-  The two runner reads are named so they cannot be confused, because the answers
-  differ: `runners/2` is **cluster-wide** — it fans out across this node and
-  every node the directory lists for the namespace — while the unpublished
-  `runners_on_this_node/1` is **node-local**. Two screens took the node-local
-  answer while believing it was the fleet's.
   """
 
   use Flezha.AuthZ.Verb
@@ -22,7 +16,6 @@ defmodule Flezha.Service.Fleet do
   @namespace [type: :string, doc: "The namespace."]
   @runner_id [type: :string, doc: "The runner's id, as `runners/2` lists it."]
 
-  alias Flezha.Cluster.Directory
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Providers
   alias Flezha.Runner.DropMarks
@@ -42,15 +35,6 @@ defmodule Flezha.Service.Fleet do
   verb runners(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
     FleetManager.global_runner_rows(namespace)
   end
-
-  @doc """
-  The runners serving `namespace` **on this node only**.
-
-  For a node-scoped view. A caller asking "what runners does this namespace
-  have" wants `runners/2`.
-  """
-  @spec runners_on_this_node(String.t()) :: {:ok, [term()]}
-  def runners_on_this_node(namespace), do: {:ok, FleetManager.active_runners(namespace)}
 
   @doc """
   Drop one runner serving a namespace. It is dropped wherever in the cluster it
@@ -141,10 +125,6 @@ defmodule Flezha.Service.Fleet do
     args: [namespace: @namespace] do
     {:ok, FleetManager.runner_caller_context(namespace)}
   end
-
-  @doc "The nodes holding a hub for `namespace`."
-  @spec hub_nodes(String.t()) :: {:ok, [node()]}
-  def hub_nodes(namespace), do: {:ok, Directory.hub_nodes(namespace)}
 
   @doc """
   Every plugin package this controller loaded or refused at boot. It also lists

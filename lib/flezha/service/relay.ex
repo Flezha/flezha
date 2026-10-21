@@ -145,10 +145,6 @@ defmodule Flezha.Service.Relay do
     HubManager.get_registry(namespace)
   end
 
-  @doc "Partition coverage over `{id, range}` pairs: gaps, overlaps and total."
-  @spec partition_coverage([{String.t(), term()}]) :: {:ok, term()}
-  def partition_coverage(members) when is_list(members), do: {:ok, Partition.coverage(members)}
-
   @doc """
   The partition groups `rows` describe. Each answers its group, declared width,
   members and key-group coverage.
@@ -162,10 +158,6 @@ defmodule Flezha.Service.Relay do
     args: [rows: [type: :list, doc: "The relay rows."]] do
     {:ok, Partition.groups(rows)}
   end
-
-  @doc "Whether `run` is a way a relay runs that this controller knows."
-  @spec run_known?(term()) :: {:ok, boolean()}
-  def run_known?(run), do: {:ok, ClassRegistry.known_run?(run)}
 
   @doc """
   A relay's live state, as JSON, and the change sequence it was read at.

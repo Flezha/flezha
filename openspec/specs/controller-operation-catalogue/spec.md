@@ -102,5 +102,5 @@ internal function without a `verb` binding, which `/v1/call`, MCP and the door d
 #### Scenario: An uncalled function is not an operation
 
 - **WHEN** the catalogue is generated
-- **THEN** it SHALL carry no entry for `Relay.partition_coverage`, `Schedule.parse_cron` or any other function no `flz` verb, SDK method or console manifest line names, except the operation that undoes a stream a surface calls (`AuditLog.unsubscribe`, `Observability.unsubscribe`), and a `/v1/call` naming one SHALL be answered `control.unknown_function`
+- **THEN** it SHALL carry no entry for a function no `flz` verb, SDK method or console manifest line names, except the operation that undoes a stream a surface calls (`AuditLog.unsubscribe`, `Observability.unsubscribe`), and a `/v1/call` naming one SHALL be answered `control.unknown_function`
 

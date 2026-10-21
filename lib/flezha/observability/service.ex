@@ -8,7 +8,7 @@ defmodule Flezha.Service.Observability do
   function returns `{:error, :observability_disabled}`.
 
   `tail/2` hands each signal to the context's `:emit` (see its doc); without
-  one it subscribes the calling process, like `subscribe/1`.
+  one it subscribes the calling process.
 
   The tail, its undo and the two mutations are audited on the
   `:observability_service` source before the effect, under the function's
@@ -46,14 +46,6 @@ defmodule Flezha.Service.Observability do
         }
 
   # ---------- Subscriptions ----------
-
-  @doc "Subscribe the calling process to the live signals of `source`."
-  @spec subscribe(atom() | String.t()) :: :ok | {:error, term()}
-  def subscribe(source) when is_atom(source) or is_binary(source) do
-    with :ok <- check_enabled(),
-         {:ok, source} <- registered(source),
-         do: Observability.subscribe(source)
-  end
 
   @doc """
   Undo a `tail/2`.

@@ -122,26 +122,6 @@ defmodule Flezha.Service.Schedule do
     end
   end
 
-  @doc "What the hub currently holds for each schedule."
-  @spec statuses() :: {:ok, term()}
-  def statuses, do: {:ok, Hub.statuses()}
-
-  @doc "Assert `entry` on the hub, so it starts firing."
-  @spec assert_entry(term()) :: term()
-  def assert_entry(entry), do: Hub.assert(entry)
-
-  @doc "Retract the schedule `name` from the hub, so it stops firing."
-  @spec retract(String.t()) :: term()
-  def retract(name), do: Hub.retract(name)
-
-  @doc "Parse a cron expression, or say why it cannot be parsed."
-  @spec parse_cron(String.t()) :: {:ok, term()} | {:error, term()}
-  def parse_cron(expression), do: Cron.parse(expression)
-
-  @doc "The next UTC instant a parsed cron fires after `after_utc`, in `tz`."
-  @spec next_fire(term(), String.t(), DateTime.t()) :: {:ok, term()} | {:error, term()}
-  def next_fire(cron, tz, after_utc), do: Cron.next_fire(cron, tz, after_utc)
-
   # `add/2` takes its fields as a map or a keyword list, so the audit reads the
   # name only when there is one to read.
   defp schedule_target([%{name: name} | _]), do: %{schedule: name}
