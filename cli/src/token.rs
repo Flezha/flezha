@@ -7,8 +7,7 @@ use crate::help;
 /// value is a number of seconds or the word `never`, which is what the registry
 /// stores for an entry that must not lapse — a runner credential is refused any
 /// other reading.
-const NEVER: &str = "never";
-const TTL: OptSpec = OptSpec::number_or("--ttl", "--ttl", "<seconds>|never", &[NEVER])
+const TTL: OptSpec = OptSpec::number_or("--ttl", "--ttl", "<seconds>|never")
     .doc("How long the token lives, in seconds, or never.");
 
 pub(crate) const TABLE: Command = Command {

@@ -206,11 +206,11 @@ impl Arg {
     }
 }
 
-/// A written word as its kind reads it. The walk refused a number that does not
-/// parse, so a number here is one.
+/// A written word as its kind reads it. The walk refused a `Number` that does
+/// not parse; a `NumberOr` that does not is sent as written.
 fn typed(kind: &Kind, written: &str) -> Value {
     match (kind, written.parse::<u64>()) {
-        (Kind::Number | Kind::NumberOr { .. }, Ok(number)) => Value::from(number),
+        (Kind::Number | Kind::NumberOr, Ok(number)) => Value::from(number),
         _ => Value::from(written),
     }
 }
@@ -406,9 +406,6 @@ mod tests {
     fn value_for(spec: &crate::args::OptSpec) -> &'static str {
         match &spec.kind {
             Kind::Number => "7",
-            // The word reading, so a value the walk parses as a number is not
-            // what proves the option is read by name.
-            Kind::NumberOr { words } => words[words.len() - 1],
             Kind::Choice { words, .. } => words[words.len() - 1],
             _ => "a\"b\\c\u{00e4}",
         }

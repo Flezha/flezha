@@ -55,8 +55,9 @@
 - `Flezha.SDK.TaskletTestHarness` runs one tasklet on one Cell with no controller: `feed/3`,
   `state/1`, `fire_timer/3`, `advance_event_time/2` and `replay_equals/1`.
 - **BREAKING (Python):** the module function `flezha.testing.replay_equals` is gone; drive a
-  `TaskletTestHarness` and call its `replay_equals()`. The harness no longer exposes the core
-  bridge methods (`spawn_request`, `effect_begin` and the rest).
+  `TaskletTestHarness` and call its `replay_equals()`. `TaskletTestHarness.apply_inputs` is
+  gone; call `feed` once per input. The harness no longer exposes the core bridge methods
+  (`spawn_request`, `effect_begin` and the rest).
 - **BREAKING (Ruby):** `Flezha::Testing::Harness` is `Flezha::Testing::TaskletTestHarness`,
   `replay_equals!` is `replay_equals` (it still raises on a mismatch),
   `Flezha::Testing.replay_equals?` is gone, and the harness no longer exposes the core bridge

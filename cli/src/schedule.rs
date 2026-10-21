@@ -1,7 +1,7 @@
 use crate::args::{OptSpec, Positional, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::help;
-use crate::relay::{first_channel, init_values, FIRST_CHANNEL, TEXT};
+use crate::relay::{init_values, FIRST_CHANNEL, TEXT};
 
 const CRON: OptSpec = OptSpec::text("--cron", "--cron", "<expr>")
     .required()
@@ -52,7 +52,7 @@ pub(crate) const TABLE: Command = Command {
                 ("plugins", Arg::Opt(&PLUGINS)),
                 ("init_values", Arg::Built(init_values)),
                 ("text", Arg::Opt(&FIRST_MESSAGE)),
-                ("channel", Arg::Built(first_channel)),
+                ("channel", Arg::Opt(&FIRST_CHANNEL)),
             ])])
             .calls(&["Schedule.add"]),
         Verb::door("list").calls(&["Schedule.list"]),

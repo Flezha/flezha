@@ -584,14 +584,14 @@ const CASES: &[(&[&str], Want)] = &[
         &["state", "retention", "MyClass", "abc"],
         Refused("invalid <hours> value 'abc'"),
     ),
-    // The five readers that already refused a bad number, each in its own
-    // words. They answer the shared sentence now, so the rule cannot depend on
-    // which verb was typed.
+    // A lifetime is the controller's to judge: a word that is no number and no
+    // `never` is sent as written, and refused there.
     (
         &["token", "issue", "p", "ns", "viewer", "--ttl", "abc"],
-        Refused("invalid --ttl value 'abc'"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Namespace.issue_token", "[\"p\",\"ns\",\"viewer\",{\"ttl\":\"abc\"}]", [])"#,
+        ),
     ),
-    // A range rule is the controller's: the parse is the only check here.
     (
         &["token", "issue", "p", "ns", "viewer", "--ttl", "0"],
         Rpc(
@@ -702,7 +702,7 @@ const CASES: &[(&[&str], Want)] = &[
         ),
     ),
     // A first message rides the options list as text, with the entry channel
-    // it names; a channel with no message names nothing.
+    // it names. A channel with no message is the controller's to refuse.
     (
         &[
             "relay",
@@ -725,7 +725,9 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["relay", "start", "echo", "--channel", "order"],
-        Refused("(relay.channel_without_text)"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Relay.start", "[\"default\",{\"channel\":\"order\",\"factory_id\":\"echo\"}]", [])"#,
+        ),
     ),
     (
         &["relay", "start", "my_echo", "echo"],
@@ -869,7 +871,9 @@ const CASES: &[(&[&str], Want)] = &[
             "--channel",
             "requests",
         ],
-        Refused("(relay.channel_without_text)"),
+        Rpc(
+            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"channel\":\"requests\",\"cron\":\"0 2 * * *\",\"factory_id\":\"report\",\"name\":\"nightly\",\"timezone\":\"UTC\"}]", [])"#,
+        ),
     ),
     (
         &[

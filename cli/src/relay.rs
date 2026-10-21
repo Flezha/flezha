@@ -90,7 +90,7 @@ pub(crate) const TABLE: Command = Command {
                     ("plugins", Arg::Opt(&PLUGINS)),
                     ("partitions", Arg::Opt(&PARTITIONS)),
                     ("text", Arg::Opt(&TEXT)),
-                    ("channel", Arg::Built(first_channel)),
+                    ("channel", Arg::Opt(&FIRST_CHANNEL)),
                 ]),
             ])
             .calls(&["Relay.start"])
@@ -224,19 +224,6 @@ pub(crate) fn init_values(read: &Reading) -> Option<Value> {
             ],
         )),
     }
-}
-
-/// The entry channel of the first message a `start` or a `schedule add`
-/// carries; `--channel` without `--text` is refused.
-pub(crate) fn first_channel(read: &Reading) -> Option<Value> {
-    let channel = read.opt(CHANNEL.long)?;
-    if read.opt(TEXT.long).is_none() {
-        rpc::fail(FlezhaError::new(
-            "relay.channel_without_text",
-            Default::default(),
-        ));
-    }
-    Some(Value::from(channel))
 }
 
 /// `flz relay scale <group> <partitions>` — rescale a partition group.
