@@ -416,6 +416,30 @@ defmodule Flezha.Convergence.LoopTest do
 
       assert {[], _} = Intent.intent_mismatch(intent_for([]), cache)
     end
+
+    # A stop takes its relay out of the intent before its state is gone.
+    test "evidence is a mismatch only once it outlives the unmet-intent grace", %{root: root} do
+      seed_cell(root, "btc_feed", "op", "k1")
+      grace = Flezha.Config.Durations.get(:convergence_unmet_intent_grace_ms)
+
+      assert {{[], since}, cache} = Intent.detect_mismatch(intent_for([]), {[], %{}}, nil, 0)
+      assert since == %{"btc_feed" => 0}
+
+      assert {{[], ^since}, cache} =
+               Intent.detect_mismatch(intent_for([]), {[], since}, cache, grace)
+
+      assert {{["btc_feed"], ^since}, cache} =
+               Intent.detect_mismatch(intent_for([]), {[], since}, cache, grace + 1)
+
+      # Intent again clears the clock with the entry.
+      assert {{[], %{}}, _} =
+               Intent.detect_mismatch(
+                 intent_for(["btc_feed"]),
+                 {["btc_feed"], since},
+                 cache,
+                 grace + 2
+               )
+    end
   end
 
   describe "Progress.progress_markers/0 — the tier cursors reach the classifier" do

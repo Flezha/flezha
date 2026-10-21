@@ -369,11 +369,21 @@ defmodule Flezha.Convergence.Loop do
 
   # Report-only /healthz inputs: the durable-evidence-vs-intent diff, which
   # feeds no heal decision.
-  defp report_pass(%State{} = state, intent, reality, _started_at) do
-    {mismatch, cache} =
-      Intent.detect_mismatch(intent, state.intent_mismatch, state.evidence_cache)
+  defp report_pass(%State{} = state, intent, reality, started_at) do
+    {{mismatch, since}, cache} =
+      Intent.detect_mismatch(
+        intent,
+        {state.intent_mismatch, state.intent_mismatch_since},
+        state.evidence_cache,
+        started_at
+      )
 
-    state = %{state | intent_mismatch: mismatch, evidence_cache: cache}
+    state = %{
+      state
+      | intent_mismatch: mismatch,
+        intent_mismatch_since: since,
+        evidence_cache: cache
+    }
 
     # Publish health over the FULL intent so /healthz reports the true
     # intended count, not just the recovery-ready subset. Returns state with

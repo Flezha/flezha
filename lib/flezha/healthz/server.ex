@@ -19,7 +19,8 @@ defmodule Flezha.Healthz.Server do
         STUCK — per-relay detail `wal_frozen | watermark_frozen |
         outbox_flat` in `stuck_relays`), when `intent_mismatch` is
         non-empty (durable state evidence for relays absent from the
-        live intended set — a wiped registry must never read healthy), or
+        live intended set past the unmet-intent grace — a wiped registry
+        must never read healthy), or
         when a periodic sensor has stopped completing passes
         (`sensor_stale`). None is a restart signal — kubelet must leave the
         pod alone while the Loop rebinds / the user resumes or deletes

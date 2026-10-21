@@ -96,8 +96,9 @@ defmodule Flezha.Convergence.Probe do
 
   @doc """
   The relay's Overwatch state, read under `relay_call_timeout_ms`; `:error`
-  when it does not answer. A relay already gone is not logged: one stopped
-  after it was listed is routine, and the next listing leaves it out.
+  when it does not answer. A relay already gone, or stopping as it is read, is
+  not logged: one stopped after it was listed is routine, and the next listing
+  leaves it out.
   """
   @spec overwatch(pid()) :: {:ok, map()} | :error
   def overwatch(pid) do
@@ -105,7 +106,7 @@ defmodule Flezha.Convergence.Probe do
 
     case SafeCall.bounded(pid, :get_overwatch_state, timeout,
            on_error: :error,
-           log: %{noproc: false}
+           log: %{noproc: false, orderly: false}
          ) do
       ow when is_map(ow) -> {:ok, ow}
       _ -> :error

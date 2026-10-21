@@ -62,6 +62,9 @@ defmodule Flezha.Convergence.Loop.State do
             # Relays with durable state evidence but no live intent — the
             # wiped-registry witness /healthz degrades on.
             intent_mismatch: [],
+            # relay_id => monotonic ms it was first seen with evidence and no
+            # intent; it joins `intent_mismatch` past the unmet-intent grace.
+            intent_mismatch_since: %{},
             # {state-root mtime, first-level dir listing} cache.
             evidence_cache: nil,
             # Monotonic ms when `bound < intended` first held; nil while met or

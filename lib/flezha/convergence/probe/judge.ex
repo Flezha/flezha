@@ -37,7 +37,7 @@ defmodule Flezha.Convergence.Probe.Judge do
     now = Map.get(context, :now) || System.monotonic_time(:millisecond)
 
     observations
-    |> roll_up_plugins()
+    |> roll_up_plugins(previous)
     |> Enum.map(fn {subject, facts} ->
       {subject, verdict(subject, facts, unreadable, now, Map.get(previous, subject))}
     end)
@@ -87,10 +87,10 @@ defmodule Flezha.Convergence.Probe.Judge do
   # and was not disabled, is its relay's divergence too — the plugin keeps its
   # own record and the relay carries the deepest one as a fact, so both
   # surfaces agree without either re-reading the other.
-  defp roll_up_plugins(observations) do
+  defp roll_up_plugins(observations, previous) do
     issues =
-      for {{:plugin, {ns, rid, plugin_id}}, facts} <- observations,
-          why = plugin_issue(facts),
+      for {{:plugin, {ns, rid, plugin_id}} = subject, facts} <- observations,
+          why = plugin_issue(facts, Map.has_key?(previous, subject)),
           reduce: %{} do
         acc -> Map.put_new(acc, {:relay, {ns, rid}}, {:plugin_unhealthy, plugin_id, why})
       end
@@ -101,13 +101,15 @@ defmodule Flezha.Convergence.Probe.Judge do
   end
 
   # A binding recorded not started is probed for its reason while it is not
-  # running, so the reason is read before the phase.
-  defp plugin_issue(facts) do
+  # running, so the reason is read before the phase. A binding the last tick
+  # did not judge may be one an enable has written and not yet subscribed, so
+  # it is not running only from the next tick on.
+  defp plugin_issue(facts, judged_before?) do
     cond do
       not is_nil(Map.get(facts, :down)) -> {:crashed, Map.get(facts, :down)}
       disabled?(facts) -> nil
       match?({:unhealthy, _}, Map.get(facts, :probe)) -> Map.get(facts, :probe)
-      not Map.get(facts, :running?, false) -> :not_running
+      not Map.get(facts, :running?, false) and judged_before? -> :not_running
       true -> nil
     end
   end

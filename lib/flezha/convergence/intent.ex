@@ -18,6 +18,7 @@ defmodule Flezha.Convergence.Intent do
   idempotent start authority.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
   alias Flezha.State.Completion
@@ -85,22 +86,29 @@ defmodule Flezha.Convergence.Intent do
   end
 
   @doc """
-  Relays with durable state evidence but no live intent, and the refreshed
-  evidence cache. `{prev_mismatch, cache}` in, `{mismatch, cache}` out; the
-  caller keeps both. A failure answers with what it was given, so the check can
-  never cost the tick its heals or its publish.
+  Relays whose durable state evidence has had no live intent for longer than
+  `convergence_unmet_intent_grace_ms`, and the refreshed evidence cache. A stop
+  takes its relay out of the intent before its state is gone, so a younger
+  mismatch is a stop still running. `{prev_mismatch, since}` is the last answer
+  and when each relay was first seen without intent; the caller keeps it and
+  the cache. A failure answers with what it was given, so the check can never
+  cost the tick its heals or its publish.
   """
-  @spec detect_mismatch(t(), [binary()], term()) :: {[binary()], term()}
-  def detect_mismatch(intent, prev_mismatch, cache) do
-    {mismatch, cache} = intent_mismatch(intent, cache)
+  @spec detect_mismatch(t(), {[binary()], %{binary() => integer()}}, term(), integer()) ::
+          {{[binary()], %{binary() => integer()}}, term()}
+  def detect_mismatch(intent, {prev_mismatch, since} = prev, cache, now) do
+    {candidates, cache} = intent_mismatch(intent, cache)
+    since = Map.new(candidates, &{&1, Map.get(since, &1, now)})
+    grace = Durations.get(:convergence_unmet_intent_grace_ms)
+    mismatch = Enum.filter(candidates, &(now - since[&1] > grace))
     note_intent_mismatch_transition(prev_mismatch, mismatch)
-    {mismatch, cache}
+    {{mismatch, since}, cache}
   rescue
     e ->
       Logger.warning("[convergence] intent-mismatch check skipped: #{Exception.message(e)}")
-      {prev_mismatch, cache}
+      {prev, cache}
   catch
-    _, _ -> {prev_mismatch, cache}
+    _, _ -> {prev, cache}
   end
 
   @doc false

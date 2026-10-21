@@ -265,15 +265,20 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       assert is_integer(ms)
     end
 
-    test "a relay whose declared plugin is not running is degraded" do
-      records =
-        judged(
+    test "a relay whose declared plugin is still not running a tick later is degraded" do
+      context =
+        context_for(
           one("pluginless", bound_runner: "e1", running_plugins: [], subscribed_plugins: []),
           MapSet.new(["e1"]),
           %{},
           [{"src", %{}}]
         )
 
+      # The first tick may catch an enable between its binding and its subscribe.
+      first = Judge.judge(context, %{})
+      assert first[{:relay, {"ns", "pluginless"}}].state == :healthy
+
+      records = Judge.judge(context, first)
       assert records[{:relay, {"ns", "pluginless"}}].state == :degraded
       assert records[{:plugin, {"ns", "pluginless", "src"}}].state == :degraded
     end
@@ -510,7 +515,8 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       }
     }
 
-    base = Judge.judge(Probe.context(intent, reality, signals, 1_000), %{})
+    context = Probe.context(intent, reality, signals, 1_000)
+    base = Judge.judge(context, Judge.judge(context, %{}))
 
     # The two states no single context can hold at once: a plugin the loop
     # could not probe at all, and a driver whose own reader failed.
