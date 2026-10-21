@@ -28,11 +28,11 @@ bench/acceptance/run.sh --profile soak
 
 Each run boots its own controller from the repository, under `app_data/`. When
 another controller on the machine already holds that state root, give the runs
-private settings first:
-
-```bash
-source "$(wip/tools/env.sh vars)" && bench/acceptance/run.sh --profile quick --repeat 1
-```
+private settings first: their own `FLEZHA_STATE_DIR`, `FLEZHA_SOCKET_FILES_PATH`,
+`FLEZHA_NODE_NAME`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_DLQ_DIR`,
+`FLEZHA_PROCESS_HUB_REGISTRY_ROOT` and free `FLEZHA_HEALTHZ_PORT`,
+`FLEZHA_PROMETHEUS_PORT` and `FLEZHA_QUIC_LISTEN_ADDRESS`, exported before
+`bench/acceptance/run.sh`.
 
 ## Flags
 

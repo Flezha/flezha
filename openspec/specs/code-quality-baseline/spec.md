@@ -1251,8 +1251,8 @@ because the sources it judges are not tracked in the same tree, or because an
 untracked file must still be judged — SHALL declare that as an option on the
 runner rather than implement a second walk.
 
-The runner's list SHALL be the only gate list. The campaign bar (`wip/tools/clean-run.sh`),
-the item check (`wip/tools/verify.sh`) and every CI workflow's check steps SHALL each select rows
+The runner's list SHALL be the only gate list. Every local check script and every CI
+workflow's check steps SHALL each select rows
 by group (`--run @<group>`) and SHALL NOT spell a check of their own; a script that mirrors CI
 by re-listing its commands SHALL NOT exist. A row MAY declare its working directory, environment,
 time limit and whether its output must be quiet; the runner SHALL own the per-gate log, the time
@@ -1457,7 +1457,7 @@ repaired, before it is trusted.
 ### Requirement: The size ceilings SHALL be a gate row whose baseline only shrinks
 
 The gate list SHALL carry a `ceilings` row that measures every production source file in the
-scope `wip/tools/prod-lines.sh` counts: a file over 800 lines, a function over 50 lines, and, for
+scope `scripts/production_code.py` defines: a file over 800 lines, a function over 50 lines, and, for
 the controller, the cycles `mix xref graph --format cycles` reports (their number and the size of
 the largest). Rust test code (`#[cfg(test)]` items, `*_tests.rs`) and generated files SHALL NOT be
 measured. Every breaker present when the row lands SHALL be recorded in

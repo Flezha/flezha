@@ -100,20 +100,3 @@ stash/*
 /local_dev/
 # Agent coding-fleet prototype: own git repo, extracted to flezha-agents when its shape settles.
 /examples/coding-fleet/
-
-# Work in progress. The STRUCTURE is tracked: the readme, the invariants every
-# session follows, the board templates, the worker briefs, the three scripts and the
-# tools kit (its build cache is not).
-# The WORK is not: the live boards and the campaign archive are one team's notes
-# on one day and are never a shipped artifact. Ignore everything, then allow the
-# structure back, so a new working file is ignored by default.
-/wip/*
-!/wip/README.md
-!/wip/INVARIANTS.md
-!/wip/templates/
-!/wip/briefs/
-!/wip/status.py
-!/wip/reap.sh
-!/wip/reset.sh
-!/wip/tools/
-/wip/tools/.cache/

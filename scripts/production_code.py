@@ -1,8 +1,7 @@
 """Production code: the one definition the line budget and the ceiling gate read.
 
-`wip/tools/prod-lines.sh` prints the production lines per repository and a total
-from it; `scripts/check_ceilings.py` measures the size ceilings over the same
-files. Left out of production:
+A line count prints the production lines per repository and a total from it;
+`scripts/check_ceilings.py` measures the size ceilings over the same files. Left out of production:
 
 - tests, fixtures, examples, benches and docs, by path (EXCLUDE);
 - generated files: `@generated` in the first five lines (prost output);
