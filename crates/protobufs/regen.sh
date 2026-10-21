@@ -2,7 +2,7 @@
 # Regenerates the prost module flz_core compiles in from runner_commands.proto.
 # Needs protoc on PATH. The output is committed: a source build never runs this.
 #
-#   protobufs/regen.sh [--out DIR]   (default: flz_core/src/generated)
+#   crates/protobufs/regen.sh [--out DIR]   (default: crates/flz_core/src/generated)
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -14,5 +14,5 @@ case "${1:-}" in
 esac
 
 mkdir -p "$out"
-cargo run --quiet --locked --manifest-path "$root/protobufs/prost_gen/Cargo.toml" \
+cargo run --quiet --locked --manifest-path "$root/crates/protobufs/prost_gen/Cargo.toml" \
   --target-dir "$root/_build/.target/prost_gen" -- "$out"

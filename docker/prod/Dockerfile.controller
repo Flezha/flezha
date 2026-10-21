@@ -74,7 +74,7 @@ ENV RUSTLER_SKIP_COMPILATION=true \
 
 COPY config ./config
 COPY rel ./rel
-COPY protobufs ./protobufs
+COPY crates/protobufs ./crates/protobufs
 # The error catalogue the controller and the SDK compile their codes from.
 COPY crates/flz_transport/errors.json ./crates/flz_transport/errors.json
 COPY lib ./lib

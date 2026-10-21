@@ -1492,7 +1492,7 @@ denied, which is the reading `docs/public/contributing/code_standards.md` names 
 ### Requirement: The committed protobuf code SHALL equal its generator's output
 
 The prost output `crates/flz_core/src/generated/runner_commands.rs` SHALL stay committed, and its generator
-SHALL live beside `protobufs/runner_commands.proto` with every prost attribute in one
+SHALL live beside `crates/protobufs/runner_commands.proto` with every prost attribute in one
 configuration. A gate row SHALL regenerate the output into a temporary directory and fail on any
 difference from the committed file. No generator SHALL live in an SDK repository or rewrite another
 crate's manifest to run.

@@ -695,7 +695,7 @@ tag. Every end-to-end scenario SHALL stay in this tree.
 ### Requirement: The fixtures are a named set an SDK vendors
 
 `test/fixtures/contract.txt` SHALL list every cross-language fixture and
-`protobufs/runner_commands.proto` with its purpose, and the static gate SHALL
+`crates/protobufs/runner_commands.proto` with its purpose, and the static gate SHALL
 fail when the list and the directory disagree. The release SHALL publish the
 set as one archive with its checksum. Each SDK's tests SHALL resolve the fixture
 directory once, in this order: the directory `FLEZHA_CONTRACT_DIR` names, else

@@ -78,7 +78,7 @@ The system SHALL provide a synchronous request path for callers to send an envel
 
 ### Requirement: New control-channel command `RelayMessage`
 
-The system SHALL extend `protobufs/runner_commands.proto` with two messages: `RelayMessage { string relay_id = 1; bytes payload = 2; }` and `RelayMessageResponse { bytes payload = 1; string error = 2; }`. `RelayMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `CellState`.
+The system SHALL extend `crates/protobufs/runner_commands.proto` with two messages: `RelayMessage { string relay_id = 1; bytes payload = 2; }` and `RelayMessageResponse { bytes payload = 1; string error = 2; }`. `RelayMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `CellState`.
 
 The message is named for the Relay because it addresses one: it carries `relay_id` and no tasklet or cell identifier. The former name asserted a level it never targeted.
 

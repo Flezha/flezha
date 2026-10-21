@@ -346,7 +346,7 @@ is the name. Every member is listed there with its repository-relative path and
 what reads it: the declaration keys, the knob parse rule, the reference
 topologies, the channel codecs, the local-mode scenario, the durable frame, the
 layout rows, the connect environment, the C ABI surface,
-`protobufs/runner_commands.proto`, and the few files that are still written as
+`crates/protobufs/runner_commands.proto`, and the few files that are still written as
 Rust tables and read as data. The gate holds the list and the directory equal,
 so a fixture the tree gains and the list does not name fails by name.
 

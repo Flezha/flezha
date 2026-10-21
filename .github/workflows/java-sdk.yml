@@ -7,7 +7,7 @@ on:
       - "crates/flz_core/**"
       - "crates/flz_core_ffi/**"
       - "crates/flz_transport/**"
-      - "protobufs/**"
+      - "crates/protobufs/**"
       - "test/fixtures/jni_surface.txt"
       - "lib/flezha/runner/fleet_manager.ex"
       - "lib/flezha/relay/overwatch.ex"

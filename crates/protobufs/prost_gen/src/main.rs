@@ -1,5 +1,5 @@
 //! Writes the prost module for `runner_commands.proto` into the directory named
-//! by the one argument. Run through `protobufs/regen.sh`.
+//! by the one argument. Run through `crates/protobufs/regen.sh`.
 
 use std::path::Path;
 

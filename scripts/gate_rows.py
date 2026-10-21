@@ -507,11 +507,11 @@ GATES += (
     *_plugins(), *_rust(), *_sdk_java(), *_sdk_node(), *_sdk_python(), *_sdk_ruby(),
     *_sdk_php(), *_sdk_elixir(),
     _bar("ledgers", "ledgers", "python3", "local_dev/dev_notes/known-bugs.py", "check"),
-    # The committed prost output is what protobufs/regen.sh writes. A
+    # The committed prost output is what crates/protobufs/regen.sh writes. A
     # generator that cannot run is not a stale file: only diff's 1 is a finding.
     _bar("proto-fresh", "contract", "bash", "-c",
          'd=$(mktemp -d) && trap \'rm -rf "$d"\' EXIT && '
-         '{ protobufs/regen.sh --out "$d" || exit 255; } && '
+         '{ crates/protobufs/regen.sh --out "$d" || exit 255; } && '
          'diff -u crates/flz_core/src/generated/runner_commands.rs "$d/runner_commands.rs"',
          finding="status:1", tools=["protoc:apt install protobuf-compiler"]),
     # The controller images' size budgets (docker/prod/README.md), measured on
@@ -520,7 +520,7 @@ GATES += (
     # The prost generator is its own workspace, outside the whole-workspace check.
     _bar("prost-gen-fmt", "format", "bash", "-c",
          'n=$(scripts/manifest_pin.sh .github/toolchains.json rust_nightly) || exit 255; '
-         'cargo +"$n" fmt --manifest-path protobufs/prost_gen/Cargo.toml -- --check',
+         'cargo +"$n" fmt --manifest-path crates/protobufs/prost_gen/Cargo.toml -- --check',
          finding="says:Diff in "),
     # What an item is committed on: the specs, the naming gates, a warnings-as-
     # errors compile and the AI kit's freshness (a docs page edited without

@@ -53,7 +53,7 @@ if [ -z "${RUNTIME_IMAGE:-}" ] || [ -z "${ARCHIVE:-}" ]; then
   mkdir -p "$WORK/src" "$WORK/out"
   (cd "$REPO_ROOT" && tar -cf - \
     --exclude='_build' --exclude='deps' --exclude='target' \
-    mix.exs mix.lock config lib protobufs rel \
+    mix.exs mix.lock config lib crates/protobufs rel \
     crates/flz_transport/errors.json crates/flz_core/src/schema.rs crates/flz_core_ffi/src/veneer/shape.rs \
     openspec/specs/java-sdk/spec.md test/fixtures sdk/elixir test/apps/example_plugin) \
     | tar -xf - -C "$WORK/src"

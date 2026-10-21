@@ -16,7 +16,7 @@ on:
       - "crates/flz_nif/**"
       - "lib/flezha/**"
       - "lib/mix/tasks/bench**"
-      - "protobufs/**"
+      - "crates/protobufs/**"
       - ".github/workflows/bench.yml"
   workflow_dispatch:
 

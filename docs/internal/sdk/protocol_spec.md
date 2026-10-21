@@ -342,8 +342,8 @@ header straight off the input slice without copying.
 Control-plane commands are Protocol Buffers v3 (`proto3`, package
 `runner_commands`). The authoritative definition, with every message and
 field this document names, is
-[`protobufs/runner_commands.proto`](../../../protobufs/runner_commands.proto); the generated Rust module is
-`flz_core/src/generated/runner_commands.rs`, written by `protobufs/regen.sh`
+[`crates/protobufs/runner_commands.proto`](../../../crates/protobufs/runner_commands.proto); the generated Rust module is
+`crates/flz_core/src/generated/runner_commands.rs`, written by `crates/protobufs/regen.sh`
 (the `proto-fresh` gate fails when it is stale), and the controller's Elixir
 decoder is `Flezha.Runner.CommandsProto` (Protox).
 
@@ -1402,7 +1402,7 @@ its parts from `0` again.
 ### Control command `RestoreInitState` (controller → runner)
 
 `RestoreInitState` and its reply `RestoreInitStateResponse` are defined in
-[`runner_commands.proto`](../../../protobufs/runner_commands.proto). The request names the Cell by its structured
+[`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto). The request names the Cell by its structured
 identity bytes (`cell_id`) and ships its full `snapshot_bytes` (empty when
 none) with the snapshot's stored 16-byte `snapshot_header`, its WAL tail as
 `change_log_bytes`, the saga crash-resume markers `has_compensation_intent` and
@@ -1486,7 +1486,7 @@ it never declared.
 ### Control command `CompactCell` (controller → runner)
 
 `CompactCell { cell_id }` is answered with `CompactCellResponse { cell_id,
-snapshot_seq, snapshot_bytes_size }` ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)).
+snapshot_seq, snapshot_bytes_size }` ([`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto)).
 
 Issued when the Cell's un-snapshotted WAL exceeds its compaction trigger
 (`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridden per class through
@@ -1501,7 +1501,7 @@ drained state stands at — the writer treats it as a truncation point.
 ### Control command `CellMailboxStatus` (controller → runner)
 
 `CellMailboxStatus { cell_id, status }` carries `status` `"full"` or
-`"open"` ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)).
+`"open"` ([`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto)).
 
 One-way back-pressure signal for sessions that are **not** credit-speaking
 (an SDK that never acked `CreditWindowInit`, or a controller with
@@ -1516,7 +1516,7 @@ and drops it — its send path is already bounded by the mailbox policies.
 credit-session id, fresh per attach, and the stream's un-fsynced byte budget;
 the runner answers `CreditWindowAck { stream_id }` as `raw_data`, and the
 controller then returns credit as `CreditGrant { stream_id, bytes }`
-([`runner_commands.proto`](../../../protobufs/runner_commands.proto)). Field 3 of `CreditWindowInit` is reserved:
+([`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto)). Field 3 of `CreditWindowInit` is reserved:
 the low watermark grants are batched on is the controller's own.
 
 Offered on the **first** `cell_state_change` frame of a stream attach, with
@@ -1546,7 +1546,7 @@ ledger is a protocol violation: the controller sheds it
 
 ### Control command `ParkPayloadAck` (controller → runner)
 
-`ParkPayloadAck { park_id }` echoes `ParkBody.park_id` ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)).
+`ParkPayloadAck { park_id }` echoes `ParkBody.park_id` ([`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto)).
 
 One-way durability ack for a `park_payload` frame, sent only after the DLQ
 entry is fsynced. On receipt the runner wakes the dispatch thread blocked in
@@ -1555,7 +1555,7 @@ receives it keeps the Cell held and re-sends the park — delay, never loss.
 
 ### Control command `AddRelay.task_journal` (controller → runner)
 
-`AddRelay.task_journal` is a `TaskJournalState` ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)):
+`AddRelay.task_journal` is a `TaskJournalState` ([`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto)):
 `committed_task_idxs`, the tasks committed inside the in-flight iteration,
 which are skipped; `iter`, the iteration to resume at; `handoff`, the previous
 iteration's terminal batch, each `TaskHandoffItem` a channel id and the
@@ -1596,7 +1596,7 @@ the instance.
 ### Control command `TaskCommit` (runner → controller)
 
 `TaskCommit`, `CommittedCell`, `TimerTrigger` and `TaskCommitResponse` are
-defined in [`runner_commands.proto`](../../../protobufs/runner_commands.proto). A `TaskCommit` names `relay_id`,
+defined in [`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto). A `TaskCommit` names `relay_id`,
 `task_idx` and `iter` (0 for the single-pass chain), the `cells_ran`, the
 `handoff`, `compensating` (an undo record, not forward progress), `completes`
 and `result` (the tasklet called `ctx.complete`, with this result) and, on the
@@ -1686,7 +1686,7 @@ flow relay's do.
 ### Control command `IterCommit` (runner → controller)
 
 `IterCommit`, `DeadLetter` and `IterCommitResponse` are defined in
-[`runner_commands.proto`](../../../protobufs/runner_commands.proto). An `IterCommit` names `relay_id` and `iter`,
+[`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto). An `IterCommit` names `relay_id` and `iter`,
 the `consumed_offset` (the `flz.offset` of the input the iteration consumed;
 absent: none), the iteration's terminal `handoff`, `completes` and `result` (a
 tasklet of the iteration called `ctx.complete`; the resolved result the
@@ -1732,7 +1732,7 @@ set per tasklet, no done markers) and takes the next message as `iter + 1`.
 
 ### Control command `IterPark` (runner → controller)
 
-`IterPark` ([`runner_commands.proto`](../../../protobufs/runner_commands.proto)) names `relay_id`, `iter` (the last
+`IterPark` ([`runner_commands.proto`](../../../crates/protobufs/runner_commands.proto)) names `relay_id`, `iter` (the last
 committed iteration; 0 for a flow relay), `wake_deadline_ms` (the earliest
 pending processing-time timer; 0 wakes on input only) and `consumed_offset`
 (the last message parked unread; absent: none).

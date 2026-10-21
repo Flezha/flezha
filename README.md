@@ -160,7 +160,7 @@ next to it cover [setting up a checkout](docs/public/contributing/setting_up.md)
 | Path | License |
 |---|---|
 | Everything not listed below: the controller (`lib/`), `cli/`, `flz_nif/`, `config/`, `rel/`, `docker/`, `kubernetes/`, `test/`, `docs/`, `scripts/`, `bench/` | [MPL-2.0](LICENSE) |
-| The SDK side: `sdk/`, `flz_core/`, `flz_core_ffi/`, `flz_transport/`, `protobufs/`; and the examples, `examples/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
+| The SDK side: `sdk/`, `crates/flz_core/`, `crates/flz_core_ffi/`, `crates/flz_transport/`, `crates/protobufs/`; and the example plugin, `test/apps/example_plugin/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
 | The plugins that ship with Flezha, `plugins/`: each is its own repository with its own license file | Apache-2.0 |
 
 In short: build on the SDKs, the plugins and the examples freely, and copy
