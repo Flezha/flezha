@@ -10,7 +10,7 @@ and [Writing a plugin](../writing_a_plugin.html) how to write your own.
 > {: .step}
 
 ```sh
-$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f docker/prod/Dockerfile.controller .
+$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f deploy/docker/prod/Dockerfile.controller .
 $ docker run --rm -v "$PWD:/src" -w /src/plugins/flezha_http_plugin flezha/plugin-builder:0.1.0 sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
 

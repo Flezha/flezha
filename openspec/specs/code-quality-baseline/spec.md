@@ -1654,7 +1654,7 @@ the line.
 ### Requirement: The keys seam SHALL walk every reader of a knob
 
 `test/flezha/config/keys_seam_test.exs` SHALL walk `crates/cli/src`, every Java SDK module, `rel/`,
-`kubernetes/`, multi-line Elixir reads and Rust reads through a named constant, and SHALL fail on a
+`deploy/kubernetes/`, multi-line Elixir reads and Rust reads through a named constant, and SHALL fail on a
 name read with no row and a row no runtime reads, for every runtime a row names.
 
 #### Scenario: A read through a constant

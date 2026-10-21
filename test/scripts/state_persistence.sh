@@ -39,7 +39,7 @@
 # Layout:
 #   * dedicated compose project name so it does not collide with the
 #     dev stack a developer might already have running
-#   * uses `docker/dev/docker-compose.yml` plus a small testing-only
+#   * uses `deploy/docker/dev/docker-compose.yml` plus a small testing-only
 #     overlay (`docker-compose.testing.yml`) that adds `stdin_open: true`
 #     to the rust service so the runner's `std_keeper` doesn't EOF
 #   * starts the BEAM by `docker compose exec -d controller bash -c
@@ -124,7 +124,7 @@ dump_rust_logs() {
   docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
 }
 
-# `docker/dev/docker-compose.yml` pins hardcoded container_name values
+# `deploy/docker/dev/docker-compose.yml` pins hardcoded container_name values
 # (the controller, the broker stack and the rust runner). Those names are global on the Docker daemon —
 # `docker compose down` only removes containers labelled with this
 # script's project name, so a leftover from a previous interrupted run

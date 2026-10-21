@@ -45,7 +45,7 @@ network, and no test uses it.
 
 ### The build image
 
-`docker/build/Dockerfile.dist` holds every tool the cross-build needs, so the
+`deploy/docker/build/Dockerfile.dist` holds every tool the cross-build needs, so the
 result does not depend on what your machine has installed:
 
 | Tool | Where it lands |
@@ -73,7 +73,7 @@ it, so the release notes say so.
 
 The controller image is built per architecture and published as one
 multi-architecture image:
-[the production Docker README](https://github.com/flezha/flezha/blob/main/docker/prod/README.md)
+[the production Docker README](https://github.com/flezha/flezha/blob/main/deploy/docker/prod/README.md)
 has the steps, the image size budget and the platforms. The development images
 are built with the `make` targets in
 [Setting up a checkout](setting_up.md#the-images), and published the same way.

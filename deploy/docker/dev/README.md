@@ -2,4 +2,4 @@
 
 The toolchain container for working on Flezha, the services the plugin packages
 are tested against, and the development images. How to use them:
-[`docs/public/contributing/setting_up.md`](../../docs/public/contributing/setting_up.md#in-the-development-containers).
+[`docs/public/contributing/setting_up.md`](../../../docs/public/contributing/setting_up.md#in-the-development-containers).

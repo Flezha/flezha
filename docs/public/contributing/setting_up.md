@@ -59,7 +59,7 @@ platforms are a release concern, covered in [Releasing](releasing.md).
 
 ## In the development containers
 
-`docker/dev/docker-compose.yml` runs a container with the whole toolchain
+`deploy/docker/dev/docker-compose.yml` runs a container with the whole toolchain
 (Elixir, Rust, Node.js and protoc) against your checkout, mounted at `/flezha`,
 next to the services the plugin packages are tested against. `scripts/dev.sh`
 drives it from the project root:
@@ -89,15 +89,15 @@ On its first run it creates `.env` from `.env.example` and the
 To start one service alone:
 
 ```sh
-$ docker compose -f docker/dev/docker-compose.yml up -d rabbitmq
+$ docker compose -f deploy/docker/dev/docker-compose.yml up -d rabbitmq
 ```
 
 ### The images
 
 | Image | Dockerfile | Built with |
 |---|---|---|
-| `flezha/flezha:latest-toolchain`, the development container | `docker/dev/Dockerfile.toolchain` | `make docker-build-toolchain` |
-| `flezha/flezha:latest-dev`, the release plus Node.js and the WebSocket test server | `docker/dev/Dockerfile.runtime` | `make docker-build-dev` |
+| `flezha/flezha:latest-toolchain`, the development container | `deploy/docker/dev/Dockerfile.toolchain` | `make docker-build-toolchain` |
+| `flezha/flezha:latest-dev`, the release plus Node.js and the WebSocket test server | `deploy/docker/dev/Dockerfile.runtime` | `make docker-build-dev` |
 
 `Dockerfile.runtime` starts from `flezha/flezha:latest`, so build that first
 with `make docker-build VERSION=latest`, or pull it.

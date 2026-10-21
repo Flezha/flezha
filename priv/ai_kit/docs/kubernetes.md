@@ -7,7 +7,7 @@ a volume that outlives the pod, probes, and a service in front of a plugin's por
 
 There are two shapes. A small application can put a controller and its runner in one pod,
 which the agentdesk example does. A cluster runs a controller on every node with the
-reference manifests in [`kubernetes/`](https://github.com/flezha/flezha/tree/main/kubernetes),
+reference manifests in [`deploy/kubernetes/`](https://github.com/flezha/flezha/tree/main/deploy/kubernetes),
 and its runners as deployments beside it.
 
 ## How it works
@@ -290,10 +290,10 @@ service "agentdesk" deleted from agentdesk namespace
 
 The example is one controller with authorization off and nothing encrypted, not a production
 setup. The reference manifests in
-[`kubernetes/`](https://github.com/flezha/flezha/tree/main/kubernetes) run a controller on
+[`deploy/kubernetes/`](https://github.com/flezha/flezha/tree/main/deploy/kubernetes) run a controller on
 every node as a DaemonSet, with a namespace, role, service account and role binding, and a
 template for the runners' deployments. Their
-[README](https://github.com/flezha/flezha/blob/main/kubernetes/README.md) has the details;
+[README](https://github.com/flezha/flezha/blob/main/deploy/kubernetes/README.md) has the details;
 in short:
 
 - **The cookie Secret comes first.** The controllers form one cluster only with the same

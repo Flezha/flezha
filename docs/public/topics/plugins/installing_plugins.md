@@ -167,10 +167,10 @@ controller that has the package.
   `docker restart <c>`; or set `FLEZHA_PLUGINS`, which the entrypoint syncs before it
   starts the controller, exiting non-zero without starting it when the sync fails; or build
   a derived image that copies the archives into its plugin root, with no volume over it.
-  [The production Docker README](https://github.com/flezha/flezha/blob/main/docker/prod/README.md) has the commands.
+  [The production Docker README](https://github.com/flezha/flezha/blob/main/deploy/docker/prod/README.md) has the commands.
 - **Kubernetes:** the reference ConfigMap puts `FLEZHA_PLUGIN_ROOT` on the recovery volume
   and declares `FLEZHA_PLUGINS`; a change is a `kubectl rollout restart`.
-  [The Kubernetes README](https://github.com/flezha/flezha/blob/main/kubernetes/README.md) has the steps, and
+  [The Kubernetes README](https://github.com/flezha/flezha/blob/main/deploy/kubernetes/README.md) has the steps, and
   [`kubernetes.md`](../deploying/kubernetes.md) the deployment.
 
 ### Signed packages
@@ -214,7 +214,7 @@ repository with its submodules:
 ```sh
 $ git clone --recurse-submodules https://github.com/flezha/flezha
 $ cd flezha
-$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f docker/prod/Dockerfile.controller .
+$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f deploy/docker/prod/Dockerfile.controller .
 $ docker run --rm -v "$PWD:/src" -w /src/plugins/flezha_http_plugin flezha/plugin-builder:0.1.0 sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
 

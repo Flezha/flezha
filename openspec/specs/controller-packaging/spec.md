@@ -6,15 +6,15 @@ The controller-packaging capability defines what the Flezha agent ships as. Thre
 
 | Tag                                | Dockerfile                          | Purpose                                                            |
 |------------------------------------|-------------------------------------|--------------------------------------------------------------------|
-| `flezha/flezha:latest`           | `docker/prod/Dockerfile.controller`      | Prod runtime — Mix release + graceful-restart entrypoint           |
-| `flezha/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | Runtime + Node.js + pre-built testnet WS server                    |
-| `flezha/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
+| `flezha/flezha:latest`           | `deploy/docker/prod/Dockerfile.controller`      | Prod runtime — Mix release + graceful-restart entrypoint           |
+| `flezha/flezha:latest-dev`       | `deploy/docker/dev/Dockerfile.runtime`     | Runtime + Node.js + pre-built testnet WS server                    |
+| `flezha/flezha:latest-toolchain` | `deploy/docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
 
 The capability defines the prod runtime image base, layer composition, supported architectures, exposed binaries, and the explicitly excluded surface (no Node.js, no testnet, no full Elixir installation, no extra arches). It also covers the runtime-dev image contract (prod runtime + Node + pre-built testnet, for downstream consumers), the toolchain image contract (host-arch only, full dev toolchain bundled, for hacking on Flezha itself), and the build-context discipline (Java SDK natives and fat jars are committed artefacts; CI never cross-compiles them).
 ## Requirements
 ### Requirement: Prod runtime image SHALL be based on `debian:bookworm-slim`
 
-The final stage of `docker/prod/Dockerfile.controller` SHALL use `debian:bookworm-slim` (or a pinned digest of it) as its base image. The runtime image SHALL NOT contain a system-installed Elixir, Erlang, or build toolchain. Instead, the agent SHALL run from the Mix release's bundled ERTS (`include_erts: true` in `mix.exs`).
+The final stage of `deploy/docker/prod/Dockerfile.controller` SHALL use `debian:bookworm-slim` (or a pinned digest of it) as its base image. The runtime image SHALL NOT contain a system-installed Elixir, Erlang, or build toolchain. Instead, the agent SHALL run from the Mix release's bundled ERTS (`include_erts: true` in `mix.exs`).
 
 The runtime image SHALL apt-install only the following packages: `libssl3`, `libstdc++6`, `libtinfo6`, `locales`, `ca-certificates`, `tini`. After installation, the apt cache SHALL be cleaned (`rm -rf /var/lib/apt/lists/*`).
 
@@ -122,10 +122,10 @@ The TypeScript source under `test/apps/testnet/` SHALL NOT be copied into the pr
 
 ### Requirement: Toolchain Docker image SHALL bundle the full toolchain
 
-`docker/dev/Dockerfile.toolchain` SHALL ship as `flezha/flezha:latest-toolchain`
+`deploy/docker/dev/Dockerfile.toolchain` SHALL ship as `flezha/flezha:latest-toolchain`
 and SHALL include Elixir+OTP, Rust, `protobuf-compiler`, Node.js, npm,
 and a global TypeScript install. The container SHALL be runnable against
-bind-mounted source via `docker compose -f docker/dev/docker-compose.yml
+bind-mounted source via `docker compose -f deploy/docker/dev/docker-compose.yml
 up` with no further per-host setup. This image is intended for hacking on
 Flezha itself, not for downstream consumption.
 
@@ -143,12 +143,12 @@ under that path are wasted). The build is left to a one-time
 #### Scenario: Toolchain image is built and pushed under the toolchain tag
 
 - **GIVEN** a clean checkout
-- **WHEN** the runner runs `docker build -f docker/dev/Dockerfile.toolchain -t flezha/flezha:latest-toolchain .`
+- **WHEN** the runner runs `docker build -f deploy/docker/dev/Dockerfile.toolchain -t flezha/flezha:latest-toolchain .`
 - **THEN** the build completes with exit 0 and the resulting tag is `flezha/flezha:latest-toolchain` (NOT `:latest`, which is the prod runtime, nor `:latest-dev`, which is the runtime + Node + testnet image)
 
 ### Requirement: Runtime-dev Docker image SHALL bundle Node.js and a pre-built testnet WS server
 
-`docker/dev/Dockerfile.runtime` SHALL ship as `flezha/flezha:latest-dev`.
+`deploy/docker/dev/Dockerfile.runtime` SHALL ship as `flezha/flezha:latest-dev`.
 It SHALL `FROM flezha/flezha:latest` (the prod runtime), then layer:
 
 1. Node.js + npm via apt.
@@ -225,7 +225,7 @@ The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_
 
 ### Requirement: docker-compose controller services SHALL declare an explicit stop signal and grace period
 
-Every controller service in `docker/prod/docker-compose.yml`, `docker/dev/docker-compose.yml`, `docker/dev/docker-compose.healing.yml`, and `docker/dev/docker-compose.testing.yml` SHALL declare:
+Every controller service in `deploy/docker/prod/docker-compose.yml`, `deploy/docker/dev/docker-compose.yml`, `deploy/docker/dev/docker-compose.healing.yml`, and `deploy/docker/dev/docker-compose.testing.yml` SHALL declare:
 
 - `stop_signal: SIGTERM` — explicit; matches docker's default but documents intent.
 - `stop_grace_period: 75s` — long enough for `Flezha.Shutdown.Coordinator`'s 60 s drain budget plus 15 s headroom for finalise and BEAM exit.
@@ -234,18 +234,18 @@ Users changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_per
 
 #### Scenario: `docker compose stop` lets the BEAM drain without SIGKILL
 
-- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting one Relay and a peer service running
+- **GIVEN** a `docker compose up` of `deploy/docker/prod/docker-compose.yml` with a controller hosting one Relay and a peer service running
 - **WHEN** the user runs `docker compose stop`
 - **THEN** docker sends SIGTERM (per `stop_signal`); the controller drains within 60 s; the 75 s `stop_grace_period` elapses without docker escalating to SIGKILL; the controller exits cleanly; the Relay is running on the peer
 
 ### Requirement: K8s DaemonSet SHALL declare a preStop hook and a tuned termination grace period
 
-`kubernetes/flezha-daemonset.yaml`'s controller container SHALL declare:
+`deploy/kubernetes/flezha-daemonset.yaml`'s controller container SHALL declare:
 
 - `lifecycle.preStop.exec.command: ["/flezha/bin/flz", "controller", "stop", "--timeout-ms", "$(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS)"]` — the **primary** path for k8s pod termination; runs synchronously before k8s issues SIGTERM.
 - `terminationGracePeriodSeconds: 75` — `(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000) + 15` headroom; default value matches the configmap default of `60000`.
 
-`kubernetes/flezha-configmap.yaml` SHALL declare `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` (default `60000`). The DaemonSet SHALL `envFrom` the configmap so the BEAM and the preStop command read the same value. Users tuning the value MUST also bump `terminationGracePeriodSeconds` to maintain the 15 s headroom.
+`deploy/kubernetes/flezha-configmap.yaml` SHALL declare `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` (default `60000`). The DaemonSet SHALL `envFrom` the configmap so the BEAM and the preStop command read the same value. Users tuning the value MUST also bump `terminationGracePeriodSeconds` to maintain the 15 s headroom.
 
 #### Scenario: K8s pod deletion runs preStop, then SIGTERM, exits within grace
 
@@ -255,7 +255,7 @@ Users changing `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` MUST update `stop_grace_per
 
 #### Scenario: User-tuned timeout takes effect via configmap
 
-- **GIVEN** a user updates `kubernetes/flezha-configmap.yaml` to set `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=120000` AND updates the DaemonSet's `terminationGracePeriodSeconds` to `135`
+- **GIVEN** a user updates `deploy/kubernetes/flezha-configmap.yaml` to set `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=120000` AND updates the DaemonSet's `terminationGracePeriodSeconds` to `135`
 - **WHEN** the DaemonSet is reapplied
 - **THEN** preStop resolves to `flz controller stop --timeout-ms 120000` and pods get a 135 s grace window — the BEAM's coordinator and k8s's wall-clock budget agree
 
@@ -321,7 +321,7 @@ the pin are shared.
 - **GIVEN** the merged set of CI workflows
 - **WHEN** every `setup-beam` step is inspected
 - **THEN** every step's `otp-version` and `elixir-version` SHALL match the pair
-  used in `docker/prod/Dockerfile.controller`
+  used in `deploy/docker/prod/Dockerfile.controller`
 
 #### Scenario: A version literal in a workflow is refused
 
@@ -346,7 +346,7 @@ the pin are shared.
 
 ### Requirement: A CI gate SHALL prevent prod-image size regressions
 
-A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) SHALL build the prod image on every PR that touches `docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or `flz_nif/**`, and SHALL fail the PR if the image size exceeds a configured threshold. The initial threshold SHALL be 300 MB. The workflow SHALL emit the measured size to the GitHub step summary regardless of pass/fail.
+A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) SHALL build the prod image on every PR that touches `deploy/docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or `crates/flz_nif/**`, and SHALL fail the PR if the image size exceeds a configured threshold. The initial threshold SHALL be 300 MB. The workflow SHALL emit the measured size to the GitHub step summary regardless of pass/fail.
 
 #### Scenario: PR that bloats the image fails the gate
 
@@ -362,7 +362,7 @@ A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) S
 
 ### Requirement: Dev harness containers SHALL run unprivileged
 
-`docker/dev/Dockerfile.toolchain` SHALL create every directory that a
+`deploy/docker/dev/Dockerfile.toolchain` SHALL create every directory that a
 harness compose file mounts a named volume onto — the in-repo build,
 deps and cargo-target paths, the container-local `MIX_BUILD_PATH` /
 `MIX_DEPS_PATH` paths under `/home/flezha`, and the socket-data mount
@@ -389,7 +389,7 @@ tool or as a handshake timeout.
 
 #### Scenario: Fresh named volume is writable without root
 
-- **GIVEN** a toolchain image built from `docker/dev/Dockerfile.toolchain`
+- **GIVEN** a toolchain image built from `deploy/docker/dev/Dockerfile.toolchain`
 - **WHEN** a freshly-provisioned named volume is mounted at a harness build or deps path and the container runs as the unprivileged uid
 - **THEN** that path is writable, and no recursive `chown` runs at boot
 
@@ -546,7 +546,7 @@ The default `mix test` suite SHALL check this for every release `mix.exs` define
 
 ### Requirement: The prod image entrypoint SHALL sync a declared plugin list before starting the controller
 
-`docker/prod/controller-entrypoint.sh` SHALL run `/flezha/bin/flz plugin sync` before it
+`deploy/docker/prod/controller-entrypoint.sh` SHALL run `/flezha/bin/flz plugin sync` before it
 starts `bin/flzvm` whenever `FLEZHA_PLUGINS` is set in the container's environment, even to
 an empty value, and SHALL exit non-zero, naming the failure and without starting the
 controller, when the sync fails. When the variable is unset, the entrypoint SHALL start the
@@ -591,7 +591,7 @@ release SHALL stay stripped.
 
 ### Requirement: A plugin-builder stage SHALL share the controller build's toolchain
 
-`docker/prod/Dockerfile.controller` SHALL define a `plugin-builder` stage whose base image
+`deploy/docker/prod/Dockerfile.controller` SHALL define a `plugin-builder` stage whose base image
 is the same `hexpm/elixir` tag as the stage that builds the release, written once in an
 `ARG` both stages read. The stage SHALL hold Hex, rebar and every tool compiling `flezha`
 as a dependency needs (`git`, `cmake`, `build-essential`, `protobuf-compiler`), SHALL set

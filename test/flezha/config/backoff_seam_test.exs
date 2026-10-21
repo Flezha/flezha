@@ -389,12 +389,15 @@ defmodule Flezha.Config.BackoffSeamTest do
       seconds = div(Durations.default(:orchestrator_grace_ms), 1_000)
 
       assert manifest_value(
-               "kubernetes/flezha-daemonset.yaml",
+               "deploy/kubernetes/flezha-daemonset.yaml",
                ~r/terminationGracePeriodSeconds:\s*(\d+)/
              ) ==
                seconds
 
-      for file <- ["docker/prod/docker-compose.yml", "docker/dev/docker-compose.yml"] do
+      for file <- [
+            "deploy/docker/prod/docker-compose.yml",
+            "deploy/docker/dev/docker-compose.yml"
+          ] do
         assert manifest_value(file, ~r/stop_grace_period:\s*(\d+)s/) == seconds,
                "#{file} departs from the orchestrator_grace_ms row"
       end

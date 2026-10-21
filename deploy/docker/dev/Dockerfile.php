@@ -7,8 +7,8 @@
 # packages; it exists so the threaded arm is a container away rather than a
 # local source build.
 #
-#   docker build -f docker/dev/Dockerfile.php --target nts -t flezha-php .
-#   docker build -f docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
+#   docker build -f deploy/docker/dev/Dockerfile.php --target nts -t flezha-php .
+#   docker build -f deploy/docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
 #
 # Neither target carries a Rust toolchain: the SDK loads `libflz_core_ffi`
 # through `ext-ffi`, so the library is built once on the host (or by

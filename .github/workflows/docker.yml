@@ -13,8 +13,8 @@ name: Docker
 on:
   pull_request:
     paths:
-      - "docker/prod/**"
-      - "docker/dev/Dockerfile.runtime"
+      - "deploy/docker/prod/**"
+      - "deploy/docker/dev/Dockerfile.runtime"
       - "test/apps/testnet"
       - "test/apps/testnet/**"
       - "mix.exs"
@@ -38,14 +38,14 @@ jobs:
       - name: Build prod image
         run: |
           docker build \
-            -f docker/prod/Dockerfile.controller \
+            -f deploy/docker/prod/Dockerfile.controller \
             -t flezha/flezha:latest \
             .
 
       - name: Build runtime-dev image (FROM :latest)
         run: |
           docker build \
-            -f docker/dev/Dockerfile.runtime \
+            -f deploy/docker/dev/Dockerfile.runtime \
             -t flezha/flezha:latest-dev \
             .
 

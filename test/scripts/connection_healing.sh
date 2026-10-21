@@ -43,7 +43,7 @@ REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
 
 # Use a dedicated compose project so this test never collides with the
-# developer's normal `docker/dev` stack (containers, volumes, network IDs
+# developer's normal `deploy/docker/dev` stack (containers, volumes, network IDs
 # are all namespaced by project). Override via PROJECT=foo to pin the name.
 PROJECT="${PROJECT:-flezha_healing}"
 

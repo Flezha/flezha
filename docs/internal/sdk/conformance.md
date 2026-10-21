@@ -45,7 +45,7 @@ PATH="$HOME/.rbenv/versions/3.4.10/bin:$PATH" \
 **PHP** — `test/apps/php_runner/conformance.json` runs `php {artifact}`, and the
 SDK needs `ext-ffi` (`sdk/php/composer.json`); `FLEZHA_PHP_EXECUTOR=swoole`
 additionally needs a ZTS build carrying `Swoole\Thread` with `ffi.enable=true`,
-which `docker/dev/Dockerfile.php --target zts` builds. A host whose `php` does
+which `deploy/docker/dev/Dockerfile.php --target zts` builds. A host whose `php` does
 not satisfy the arm runs it through a `php` shim on `PATH` that execs that
 image:
 

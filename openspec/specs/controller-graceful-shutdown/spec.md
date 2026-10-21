@@ -233,7 +233,7 @@ The controller SHALL expose two configuration knobs, readable from both `config/
 - `:flezha, :graceful_shutdown_enabled` — boolean, default `true`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` (truthy values: `1, true, yes, on`; falsy: `0, false, no, off`; case-insensitive).
 - `:flezha, :graceful_shutdown_timeout_ms` — positive integer, default `60_000`. Env: `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. The default SHALL be declared once, as the `graceful_shutdown_timeout_ms` row of `Flezha.Config.Durations`; `runtime.exs` translates the env name and carries no default of its own.
 
-`kubernetes/flezha-configmap.yaml` SHALL declare the timeout knob so that the BEAM and the entrypoint shell read it from one place. The DaemonSet's `terminationGracePeriodSeconds` and the docker-compose `stop_grace_period` SHALL be set 15 seconds longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000` to leave headroom for finalise and supervision-tree shutdown — users changing one MUST change the others. The pairing SHALL be a derived row of the same table (`orchestrator_grace_ms`, the timeout plus 15 s of headroom) and a test SHALL read the DaemonSet and both compose files and fail when either departs from it. The pairing is documented in `docs/public/topics/deploying/deploying_a_controller.md`.
+`deploy/kubernetes/flezha-configmap.yaml` SHALL declare the timeout knob so that the BEAM and the entrypoint shell read it from one place. The DaemonSet's `terminationGracePeriodSeconds` and the docker-compose `stop_grace_period` SHALL be set 15 seconds longer than `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS / 1000` to leave headroom for finalise and supervision-tree shutdown — users changing one MUST change the others. The pairing SHALL be a derived row of the same table (`orchestrator_grace_ms`, the timeout plus 15 s of headroom) and a test SHALL read the DaemonSet and both compose files and fail when either departs from it. The pairing is documented in `docs/public/topics/deploying/deploying_a_controller.md`.
 
 #### Scenario: Default boot has graceful shutdown enabled
 
@@ -256,7 +256,7 @@ The controller SHALL expose two configuration knobs, readable from both `config/
 #### Scenario: A manifest that breaks the pairing fails a test
 
 - **GIVEN** `graceful_shutdown_timeout_ms` at its default of `60_000`
-- **WHEN** `kubernetes/flezha-daemonset.yaml`'s `terminationGracePeriodSeconds` or a compose file's `stop_grace_period` is set to anything but 75 seconds
+- **WHEN** `deploy/kubernetes/flezha-daemonset.yaml`'s `terminationGracePeriodSeconds` or a compose file's `stop_grace_period` is set to anything but 75 seconds
 - **THEN** the pairing test SHALL fail naming the file and the value the derived row expects
 
 ### Requirement: Graceful shutdown SHALL be observable via structured logs and telemetry
@@ -298,13 +298,13 @@ Structured log lines (INFO unless noted) SHALL accompany each event:
 - **WHEN** the coordinator finishes its abbreviated finalise-only path
 - **THEN** the `:complete` telemetry event has `%{outcome: :forced, reason: :force}`
 
-### Requirement: `kubernetes/flezha-daemonset.yaml` SHALL set a preStop hook and termination grace period
+### Requirement: `deploy/kubernetes/flezha-daemonset.yaml` SHALL set a preStop hook and termination grace period
 
 The DaemonSet's controller container SHALL declare:
 
 - `lifecycle.preStop.exec.command: ["/flezha/bin/flz", "controller", "stop", "--timeout-ms", "$(FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS)"]`. The preStop runs synchronously before k8s sends SIGTERM and is the **primary** path for k8s pod termination.
 - `terminationGracePeriodSeconds: 75` (the default — `graceful_shutdown_timeout_ms / 1000` + 15 s headroom for finalise + supervision-tree shutdown).
-- `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` SHALL be sourced from `kubernetes/flezha-configmap.yaml` so a single change adjusts both BEAM and entrypoint behaviour.
+- `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` SHALL be sourced from `deploy/kubernetes/flezha-configmap.yaml` so a single change adjusts both BEAM and entrypoint behaviour.
 
 #### Scenario: K8s pod stop runs preStop, then SIGTERM, exits within grace
 
@@ -314,13 +314,13 @@ The DaemonSet's controller container SHALL declare:
 
 #### Scenario: PreStop timeout knob honoured by configmap
 
-- **GIVEN** a user updates `kubernetes/flezha-configmap.yaml` to set `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=120000`
+- **GIVEN** a user updates `deploy/kubernetes/flezha-configmap.yaml` to set `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=120000`
 - **WHEN** the DaemonSet is reapplied
 - **THEN** the preStop command resolves to `flz controller stop --timeout-ms 120000`; the user MUST also bump `terminationGracePeriodSeconds` to `135` to keep the 15 s headroom (documented invariant)
 
 ### Requirement: `docker/{prod,dev}/docker-compose.yml` SHALL set explicit stop signal and grace period
 
-Every controller service entry in `docker/prod/docker-compose.yml`, `docker/dev/docker-compose.yml`, `docker/dev/docker-compose.healing.yml`, and `docker/dev/docker-compose.testing.yml` SHALL declare:
+Every controller service entry in `deploy/docker/prod/docker-compose.yml`, `deploy/docker/dev/docker-compose.yml`, `deploy/docker/dev/docker-compose.healing.yml`, and `deploy/docker/dev/docker-compose.testing.yml` SHALL declare:
 
 - `stop_signal: SIGTERM` (explicit; equals docker's default — documents intent)
 - `stop_grace_period: 75s` (matches the k8s default; docker-compose default is 10 s, far too short)
@@ -329,7 +329,7 @@ Users tuning `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` away from `60000` SHALL updat
 
 #### Scenario: `docker compose stop` allows graceful shutdown to complete
 
-- **GIVEN** a `docker compose up` of `docker/prod/docker-compose.yml` with a controller hosting a Relay and a peer service available
+- **GIVEN** a `docker compose up` of `deploy/docker/prod/docker-compose.yml` with a controller hosting a Relay and a peer service available
 - **WHEN** the user runs `docker compose stop`
 - **THEN** docker sends SIGTERM, the controller's SignalHandler picks it up, the coordinator drains in ≤ 60 s; docker's 75 s grace period elapses without a SIGKILL; the controller exits cleanly with the Relay migrated to the peer
 

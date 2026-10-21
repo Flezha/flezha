@@ -35,7 +35,7 @@
 #   --host    (default) Run on the host. Auto-installs cargo-zigbuild and
 #             zig if missing; uses an isolated CARGO_TARGET_DIR so a
 #             root-owned target/ can't block the build.
-#   --docker  Run inside a pinned container (docker/build/Dockerfile.dist).
+#   --docker  Run inside a pinned container (deploy/docker/build/Dockerfile.dist).
 #             No host toolchain required — only docker. Builds the image
 #             on first run; cached afterward. Bind-mounts the repo and a
 #             persistent named volume for cargo + maven caches.

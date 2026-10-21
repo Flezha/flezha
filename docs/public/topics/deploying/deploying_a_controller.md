@@ -128,7 +128,7 @@ That builds the production image for the host's architecture.
 ### Kubernetes
 
 The reference manifests are in
-[`kubernetes/`](https://github.com/flezha/flezha/tree/main/kubernetes):
+[`deploy/kubernetes/`](https://github.com/flezha/flezha/tree/main/deploy/kubernetes):
 `make k8s-apply` applies the six manifests in dependency order, and
 `make k8s-delete` deletes the DaemonSet and ConfigMap. The walk-through is
 [`kubernetes.md`](kubernetes.md).
@@ -400,11 +400,11 @@ its child about two seconds later, whatever the timeouts say.
 > with 75 s, 120 000 ms with 135 s. The 15 s are headroom for finalise and
 > container teardown. Change both together, or the controller is killed in the
 > middle of its drain. In the shipped files the pair is
-> `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` in `kubernetes/flezha-configmap.yaml`
+> `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` in `deploy/kubernetes/flezha-configmap.yaml`
 > with `terminationGracePeriodSeconds: 75` in
-> `kubernetes/flezha-daemonset.yaml`, and `stop_grace_period: 75s` in
+> `deploy/kubernetes/flezha-daemonset.yaml`, and `stop_grace_period: 75s` in
 > `docker/{prod,dev}/docker-compose.yml` and
-> `docker/dev/docker-compose.healing.yml`.
+> `deploy/docker/dev/docker-compose.healing.yml`.
 
 - `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED`: `1`, `true`, `yes` or `on` (any case) is true; anything else turns graceful shutdown off.
 - `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`: Bounds the whole sequence.

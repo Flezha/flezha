@@ -6,22 +6,22 @@ Run the following commands from the **flezha project root** directory.
 
 | Tag                                | Built from                          | Notes |
 |------------------------------------|-------------------------------------|-------|
-| `flezha/flezha:<version>`        | `docker/prod/Dockerfile.controller` | Prod runtime, immutable. Version comes from `mix.exs`. **This is what clusters run.** |
-| `flezha/flezha:latest`           | `docker/prod/Dockerfile.controller` | Same build, mutable convenience tag. Never pin a cluster to it. |
-| `flezha/flezha:latest-dev`       | `docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
-| `flezha/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
-| `flezha/plugin-builder:<version>` | `docker/prod/Dockerfile.controller`, `--target plugin-builder` | The release's toolchain, for building plugin packages this image loads. Built locally, not published before go-live. |
+| `flezha/flezha:<version>`        | `deploy/docker/prod/Dockerfile.controller` | Prod runtime, immutable. Version comes from `mix.exs`. **This is what clusters run.** |
+| `flezha/flezha:latest`           | `deploy/docker/prod/Dockerfile.controller` | Same build, mutable convenience tag. Never pin a cluster to it. |
+| `flezha/flezha:latest-dev`       | `deploy/docker/dev/Dockerfile.runtime`     | `FROM :latest` + Node.js + pre-built testnet WS server. |
+| `flezha/flezha:latest-toolchain` | `deploy/docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir + Rust + Node + protoc, source-mounted). |
+| `flezha/plugin-builder:<version>` | `deploy/docker/prod/Dockerfile.controller`, `--target plugin-builder` | The release's toolchain, for building plugin packages this image loads. Built locally, not published before go-live. |
 
 **On every controller release**: bump `version:` in `mix.exs`, run
 `scripts/publish-image.sh` on each architecture, then bump the pinned tag in
-`kubernetes/flezha-daemonset.yaml` (`image:` and the
+`deploy/kubernetes/flezha-daemonset.yaml` (`image:` and the
 `app.kubernetes.io/version` labels) to match. The reference manifests must never
 point at `:latest` — with `imagePullPolicy: IfNotPresent`, a mutable tag leaves nodes
 running whatever they happened to cache.
 
 ## Image layout
 
-`docker/prod/Dockerfile.controller` is a three-stage build, plus a
+`deploy/docker/prod/Dockerfile.controller` is a three-stage build, plus a
 `plugin-builder` target the runtime image never includes. The Elixir/OTP image
 tag is written once, in the `ELIXIR_IMAGE` argument, and read by both the
 release stage and the builder:
@@ -45,12 +45,12 @@ release stage and the builder:
 
 What the container does when it starts and stops, what to mount, Compose, `flz` in
 the container, and VM flags:
-[`docs/public/topics/deploying/docker.md`](../../docs/public/topics/deploying/docker.md).
+[`docs/public/topics/deploying/docker.md`](../../../docs/public/topics/deploying/docker.md).
 
 ## Image size budget
 
 `.github/workflows/docker.yml` runs `docker-size-gate` on PRs that touch
-`docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or
+`deploy/docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or
 `crates/flz_nif/**`. The job builds the prod and runtime-dev images, then runs the
 gate row `image-size` (`python3 scripts/naming_gate.py --run @docker`), which
 prints their sizes to the GitHub step summary and fails if either exceeds its
@@ -113,7 +113,7 @@ takes effect at the next start. Build a package for this image in the builder:
 
 ```bash
 docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 \
-  -f docker/prod/Dockerfile.controller .
+  -f deploy/docker/prod/Dockerfile.controller .
 docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.0 \
   sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
@@ -130,4 +130,4 @@ Three ways to give a container its packages:
 - **Bake a derived image**: `FROM flezha/flezha:<version>` and `COPY *.fpz
   /flezha/storage/app/plugins/`, run with no volume over that directory.
 
-[`docs/public/topics/plugins/installing_plugins.md`](../../docs/public/topics/plugins/installing_plugins.md) covers statuses, errors and signing.
+[`docs/public/topics/plugins/installing_plugins.md`](../../../docs/public/topics/plugins/installing_plugins.md) covers statuses, errors and signing.

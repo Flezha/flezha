@@ -434,7 +434,7 @@ def _sdk_ruby():
 PHP_ZTS = r"""
   set -euo pipefail
   docker image inspect flezha-php-zts >/dev/null 2>&1 ||
-    docker build -f docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
+    docker build -f deploy/docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
   docker run --rm flezha-php-zts php -r '
     assert(PHP_ZTS, "not a thread-safe build");
     assert(class_exists("Swoole\\Thread"), "no Swoole\\Thread");
@@ -514,7 +514,7 @@ GATES += (
          '{ crates/protobufs/regen.sh --out "$d" || exit 255; } && '
          'diff -u crates/flz_core/src/generated/runner_commands.rs "$d/runner_commands.rs"',
          finding="status:1", tools=["protoc:apt install protobuf-compiler"]),
-    # The controller images' size budgets (docker/prod/README.md), measured on
+    # The controller images' size budgets (deploy/docker/prod/README.md), measured on
     # images built before the row runs; the table also goes to a CI step summary.
     _bar("image-size", "docker", "bash", "-c", IMAGE_SIZE),
     # The prost generator is its own workspace, outside the whole-workspace check.

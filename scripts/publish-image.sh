@@ -56,13 +56,13 @@ esac
 cd "$(dirname "$0")/.."
 
 if [ "$mode" = "prod" ]; then
-  dockerfile="docker/prod/Dockerfile.controller"
+  dockerfile="deploy/docker/prod/Dockerfile.controller"
   version=$(sed -n 's/^ *version: *"\([^"]*\)".*/\1/p' mix.exs | head -1)
   [ -n "$version" ] || { echo "ERROR: could not read version from mix.exs" >&2; exit 1; }
   # The immutable version tag first: it is what the k8s manifests pin.
   families=("$version" "latest")
 else
-  dockerfile="docker/dev/Dockerfile.runtime"
+  dockerfile="deploy/docker/dev/Dockerfile.runtime"
   families=("latest-dev")
 fi
 

@@ -19,7 +19,7 @@ on:
       - "crates/flz_transport/**"
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-php-sdk.sh"
-      - "docker/dev/Dockerfile.php"
+      - "deploy/docker/dev/Dockerfile.php"
       - ".github/workflows/php-sdk.yml"
       - "scripts/gate_rows.py"
   push:
@@ -31,7 +31,7 @@ on:
       - "crates/flz_transport/**"
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-php-sdk.sh"
-      - "docker/dev/Dockerfile.php"
+      - "deploy/docker/dev/Dockerfile.php"
       - ".github/workflows/php-sdk.yml"
       - "scripts/gate_rows.py"
 
@@ -62,7 +62,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: /tmp/php-zts-image
-          key: php-zts-${{ hashFiles('docker/dev/Dockerfile.php') }}
+          key: php-zts-${{ hashFiles('deploy/docker/dev/Dockerfile.php') }}
 
       - name: Build or restore the ZTS image
         run: |
@@ -70,7 +70,7 @@ jobs:
           if [ -f /tmp/php-zts-image/image.tar ]; then
             docker load -i /tmp/php-zts-image/image.tar
           else
-            docker build -f docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
+            docker build -f deploy/docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
             mkdir -p /tmp/php-zts-image
             docker save -o /tmp/php-zts-image/image.tar flezha-php-zts
           fi

@@ -1,9 +1,9 @@
 defmodule FlezhaTest.Helper.Minio do
   @moduledoc """
-  The MinIO in `docker/dev/docker-compose.yml`, for the tests tagged
+  The MinIO in `deploy/docker/dev/docker-compose.yml`, for the tests tagged
   `:s3_integration`. The default `mix test` skips them; run one with
 
-      docker compose -f docker/dev/docker-compose.yml up -d minio
+      docker compose -f deploy/docker/dev/docker-compose.yml up -d minio
       S3_INTEGRATION=1 mix test --include s3_integration <file>
 
   MinIO listens on localhost:9100 with user and password

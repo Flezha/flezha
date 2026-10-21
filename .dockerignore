@@ -26,10 +26,8 @@ TODO.md
 .vscode
 .idea
 .openspec.yaml
-docker
+deploy
 docs
-examples
-kubernetes
 openspec
 scripts
 
@@ -71,7 +69,7 @@ sdk/elixir/test_app/_build
 local_dev
 
 # Test tree — kept out of the prod context except for the testnet TS app
-# (consumed by docker/dev/Dockerfile.runtime to bake the WS server into
+# (consumed by deploy/docker/dev/Dockerfile.runtime to bake the WS server into
 # :latest-dev). The reference runner is a cargo workspace member whose
 # Cargo.toml is read during metadata resolution even when only -p flz_nif -p flz
 # is built, and it lives in `sdk/rust/test_app`.

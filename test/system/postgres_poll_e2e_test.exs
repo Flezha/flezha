@@ -15,7 +15,7 @@ defmodule FlezhaTest.System.PostgresPollE2ETest do
       POSTGRES_INTEGRATION=1 mix test --include system \\
         test/system/postgres_poll_e2e_test.exs
 
-  Pre-req: `docker compose -f docker/dev/docker-compose.yml up -d postgres-sink`.
+  Pre-req: `docker compose -f deploy/docker/dev/docker-compose.yml up -d postgres-sink`.
   """
 
   use FlezhaTest.SystemCase, capability: :effectively_once

@@ -12,7 +12,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   |---|---|
   | `GET /readyz` | the bound listener, over a real TCP socket |
   | `flz boot await --timeout 0` | the verb the CLI's RPC dispatches to |
-  | the image `HEALTHCHECK` | the `CMD` argv read out of `docker/prod/Dockerfile.controller` |
+  | the image `HEALTHCHECK` | the `CMD` argv read out of `deploy/docker/prod/Dockerfile.controller` |
 
   The third column is the point of reading the Dockerfile rather than copying
   its string: a `HEALTHCHECK` edited to key on something other than the verdict
@@ -38,7 +38,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @dockerfile "docker/prod/Dockerfile.controller"
+  @dockerfile "deploy/docker/prod/Dockerfile.controller"
   @ready_within_ms 10_000
 
   setup do

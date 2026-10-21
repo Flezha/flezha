@@ -1,13 +1,13 @@
 defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
   @moduledoc """
   The Postgres durability backend against a real Postgres in
-  `docker/dev/docker-compose.yml`. Tagged `:postgres_integration` so the
+  `deploy/docker/dev/docker-compose.yml`. Tagged `:postgres_integration` so the
   default `mix test` skips it — run with:
 
       POSTGRES_INTEGRATION=1 mix test --include postgres_integration \\
         test/flezha/state/durability_tier_postgres_test.exs
 
-  Pre-req: `docker compose -f docker/dev/docker-compose.yml up -d postgres-sink`
+  Pre-req: `docker compose -f deploy/docker/dev/docker-compose.yml up -d postgres-sink`
   (reachable at localhost:5433, user/db/password `flezha`/`flezha_test`).
 
   What matters here is the blob contract and, above all, the conditional write:

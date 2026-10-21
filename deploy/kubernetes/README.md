@@ -35,7 +35,7 @@ controller release**; `scripts/publish-image.sh` publishes the version tag (read
 
 ### Registry credentials
 
-The image is public: `kubectl apply -f kubernetes/` works on any cluster with Docker Hub
+The image is public: `kubectl apply -f deploy/kubernetes/` works on any cluster with Docker Hub
 egress, with **no pull secret to create first**. `imagePullSecrets` is left commented out
 in `flezha-daemonset.yaml` and `service-template.yaml`.
 
@@ -63,7 +63,7 @@ scripts/publish-image.sh --dev    # dev  :latest-dev
 
 Each run pushes the host-arch tag and rebuilds the manifest list from the
 per-arch tags on Docker Hub, so amd64 and arm64 never overwrite each other.
-See `docker/prod/README.md` for details.
+See `deploy/docker/prod/README.md` for details.
 
 ## Setup
 - Apply the namespace: `kubectl apply -f flezha-namespace.yaml`
@@ -72,8 +72,8 @@ See `docker/prod/README.md` for details.
 - Apply the role binding: `kubectl apply -f flezha-rolebinding.yaml`
 
 ## Deploy
-- Apply the daemonset for the flezha controllers: `kubectl apply -f kubernetes/flezha-daemonset.yaml`
-- Apply the deployments for X(runners) services: `kubectl apply -f kubernetes/service-template.yaml`
+- Apply the daemonset for the flezha controllers: `kubectl apply -f deploy/kubernetes/flezha-daemonset.yaml`
+- Apply the deployments for X(runners) services: `kubectl apply -f deploy/kubernetes/service-template.yaml`
 
 ## Resources
 
@@ -145,7 +145,7 @@ mount. Those are:
 
 The socket directory is one of the paths a runner can also discover on its own,
 through the ladder in
-[`../docs/public/configuration/files_and_sockets.md`](../docs/public/configuration/files_and_sockets.md#the-socket-directory-ladder).
+[`../../docs/public/configuration/files_and_sockets.md`](../../docs/public/configuration/files_and_sockets.md#the-socket-directory-ladder).
 These manifests need no change for that: both the DaemonSet and
 `service-template.yaml` set `FLEZHA_SOCKET_FILES_PATH` explicitly, which is the
 ladder's first rung and wins outright — a default moving underneath them
@@ -192,7 +192,7 @@ It carries **everything the controller must not lose**:
 - Installed plugin packages (`FLEZHA_PLUGIN_ROOT`), see "Plugins" below.
 
 Losing this volume reverts a controller to an empty recovery on restart. See the
-top-level [README.md](../README.md#failure-recovery) for the per-provider
+top-level [README.md](../../README.md#failure-recovery) for the per-provider
 recoverability table.
 
 ### One controller per node
@@ -201,7 +201,7 @@ A DaemonSet is one pod per node by construction, so every controller here has th
 node's `/var/lib/flezha` to itself and none of the co-location variables need
 per-instance values. Running several controllers on one machine is a bare-metal and
 Docker arrangement; the variable set each instance must own is in
-[Several controllers on one machine](../docs/public/topics/deploying/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
+[Several controllers on one machine](../../docs/public/topics/deploying/deploying_a_controller.md#several-controllers-on-one-machine). A second pod landing on a node — a
 mis-scaled Deployment beside the DaemonSet, or two DaemonSets sharing one `hostPath`
 — refuses to boot rather than sharing the state root, naming the process that holds
 it.
@@ -307,7 +307,7 @@ volatile `/run`) and will not panic-reboot on a >120s kernel hang.
 
 ```bash
 # Copy to each node and run as root, e.g.
-scp kubernetes/node-hardening.sh <node>:/tmp/
+scp deploy/kubernetes/node-hardening.sh <node>:/tmp/
 ssh <node> 'sudo bash /tmp/node-hardening.sh'
 ```
 

@@ -13,7 +13,7 @@
 #     library, so this image needs no cargo, no bindgen and no clang.
 #
 # Build (from the repository root, after `rake native gem` in `sdk/ruby`):
-#   docker build -f docker/prod/Dockerfile.ruby-runner -t flezha-ruby-runner .
+#   docker build -f deploy/docker/prod/Dockerfile.ruby-runner -t flezha-ruby-runner .
 # `APP_DIR` is the directory holding your relay classes and the entry point
 # that registers them; it defaults to this repository's own test app, so the
 # image is buildable and runnable straight from a checkout.

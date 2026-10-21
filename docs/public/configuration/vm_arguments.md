@@ -62,7 +62,7 @@ file does set. **Use `ERL_FLAGS`.**
 
 | Deployment | Route |
 |---|---|
-| A pulled image | `docker run -e ERL_FLAGS="+S 4:4"`, or the commented `ERL_FLAGS` key in `kubernetes/flezha-configmap.yaml`, which the pod already reads through `envFrom` |
+| A pulled image | `docker run -e ERL_FLAGS="+S 4:4"`, or the commented `ERL_FLAGS` key in `deploy/kubernetes/flezha-configmap.yaml`, which the pod already reads through `envFrom` |
 | A read-only root filesystem | Mount an args file and set `RELEASE_VM_ARGS` to its path. The image's own file cannot be edited in place, and the shipped DaemonSet sets `readOnlyRootFilesystem: true` |
 | Bare metal | Either, plus editing the assembled `releases/<vsn>/vm.args` directly |
 

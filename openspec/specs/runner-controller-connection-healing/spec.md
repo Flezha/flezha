@@ -73,7 +73,7 @@ This requirement is a precondition for the existing "Runner → Controller data 
 
 #### Scenario: Controller closes the control socket cleanly, SDK reconnects without panic
 - **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and Relays steadily streaming
-- **AND** `$MARKET_COMPOSE` names `docker/dev/docker-compose.yml` in the user's own checkout of the separate `flezha_market` repository — the stack every `docker compose ...` in this scenario selects
+- **AND** `$MARKET_COMPOSE` names `deploy/docker/dev/docker-compose.yml` in the user's own checkout of the separate `flezha_market` repository — the stack every `docker compose ...` in this scenario selects
 - **AND** the user captures the Runner's PID before the test: `RUNNER_PID=$(docker compose -f "$MARKET_COMPOSE" exec -T market-executor cat /var/run/market-executor.pid)`
 - **WHEN** the user runs `docker compose -f "$MARKET_COMPOSE" restart flezha-controller`
 - **AND** the new Controller process reaches ready
@@ -197,7 +197,7 @@ The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across re
 
 ### Requirement: A dev-compose integration test SHALL exercise both restart paths end to end
 
-The repository SHALL include an integration test that uses `docker/dev/docker-compose.yml` (extended with the `rust` runner service that is currently commented out) to exercise the agent-restart and runner-restart healing paths end-to-end. The test MUST use the existing dev compose stack and SHALL NOT introduce new Docker contexts or `docker run` invocations.
+The repository SHALL include an integration test that uses `deploy/docker/dev/docker-compose.yml` (extended with the `rust` runner service that is currently commented out) to exercise the agent-restart and runner-restart healing paths end-to-end. The test MUST use the existing dev compose stack and SHALL NOT introduce new Docker contexts or `docker run` invocations.
 
 #### Scenario: Agent-restart path
 - **GIVEN** the dev compose stack is up with one agent, one Rust runner, and one relay producing data to a Kafka topic
@@ -213,10 +213,10 @@ The repository SHALL include an integration test that uses `docker/dev/docker-co
 
 ### Requirement: A k8s manifest sanity test SHALL prevent volume/env-var drift
 
-The repository SHALL include a unit test that loads `kubernetes/flezha-daemonset.yaml` and `kubernetes/flezha-configmap.yaml` and asserts the volumes and env vars this change relies on are present and well-formed, so that future deployment-manifest edits cannot silently break the dev/k8s parity.
+The repository SHALL include a unit test that loads `deploy/kubernetes/flezha-daemonset.yaml` and `deploy/kubernetes/flezha-configmap.yaml` and asserts the volumes and env vars this change relies on are present and well-formed, so that future deployment-manifest edits cannot silently break the dev/k8s parity.
 
 #### Scenario: Required volumes and env vars are present
-- **GIVEN** the k8s manifests at `kubernetes/flezha-daemonset.yaml` and `kubernetes/flezha-configmap.yaml`
+- **GIVEN** the k8s manifests at `deploy/kubernetes/flezha-daemonset.yaml` and `deploy/kubernetes/flezha-configmap.yaml`
 - **WHEN** the manifest sanity test runs
 - **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_RUNNER_REMOVAL_GRACE_MS` with a positive integer (in milliseconds)
 - **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails

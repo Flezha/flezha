@@ -1,7 +1,7 @@
 defmodule Flezha.Plugin.Provider.PostgresPollIntegrationTest do
   @moduledoc """
   The Postgres poll source against the `postgres-sink` service of
-  `docker/dev/docker-compose.yml`. Tagged `:postgres_integration`, so the
+  `deploy/docker/dev/docker-compose.yml`. Tagged `:postgres_integration`, so the
   default `mix test` skips it:
 
       POSTGRES_INTEGRATION=1 mix test --include postgres_integration \\

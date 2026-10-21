@@ -108,7 +108,7 @@ volumes:
   [Variables a deployment sets](deploying_a_controller.md#variables-a-deployment-sets) has
   what a real deployment sets instead.
 
-For a Ruby runner, `docker/prod/Dockerfile.ruby-runner` is a reference image: it preloads
+For a Ruby runner, `deploy/docker/prod/Dockerfile.ruby-runner` is a reference image: it preloads
 jemalloc, which keeps a long-running Ruby process from growing through fragmentation.
 
 ## flz in the container
@@ -169,7 +169,7 @@ the builder image a package for this image is built in.
 
 - **Pin the version.** `latest` moves, so two hosts that pulled it at different times run
   different controllers.
-- **`docker/prod/docker-compose.yml` is a smoke test,** not a template: it starts Kafka
+- **`deploy/docker/prod/docker-compose.yml` is a smoke test,** not a template: it starts Kafka
   beside the controller and turns the durability backend off.
 - **A container is one machine's worth of state.** Without a durability backend, losing
   the volume loses the state ([Durability](../core/durability.md)).

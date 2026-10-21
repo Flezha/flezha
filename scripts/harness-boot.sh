@@ -2,7 +2,7 @@
 # Shared entrypoint for the chaos and dev-healing compose stacks: make the
 # mounted paths usable, then exec the service command.
 #
-# `docker/dev/Dockerfile.toolchain` creates every named-volume mountpoint
+# `deploy/docker/dev/Dockerfile.toolchain` creates every named-volume mountpoint
 # owned by uid 1000, and Docker initialises a fresh volume from the image
 # directory, ownership included — so the normal path needs no privileges.
 # Two cases remain:

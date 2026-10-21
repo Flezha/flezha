@@ -511,7 +511,7 @@ is what lifts that. It needs:
 
 All three are checked by `Executors::swoole()` before the runner connects, and
 the failure names what is missing and how to get it.
-`docker/dev/Dockerfile.php --target zts` builds an image with all three.
+`deploy/docker/dev/Dockerfile.php --target zts` builds an image with all three.
 
 How many threads is the core's pool governor's
 ([`poll_core.md`](poll_core.md#the-core-decides-the-sdk-brings-the-threads)),

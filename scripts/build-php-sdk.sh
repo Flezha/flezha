@@ -52,7 +52,7 @@ elif docker image inspect flezha-php-zts >/dev/null 2>&1; then
     flezha-php-zts composer install --no-interaction --no-progress
 else
   echo "neither composer nor the flezha-php-zts image is available: install composer," \
-    "or build the image from docker/dev/Dockerfile.php (target zts)" >&2
+    "or build the image from deploy/docker/dev/Dockerfile.php (target zts)" >&2
   exit 1
 fi
 

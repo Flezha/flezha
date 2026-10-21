@@ -48,7 +48,7 @@ services:
     # to recompile from scratch (8+ min). With the bind mount alone, compile
     # artifacts persist on the host across runs.
     volumes:
-      - ../../:/flezha
+      - ../../../:/flezha
     networks:
       - flezha_network
 
@@ -80,7 +80,7 @@ services:
       RUSTUP_HOME: /home/flezha/.rustup
       PATH: /home/flezha/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
-      - ../../:/flezha
+      - ../../../:/flezha
     networks:
       - flezha_network
 

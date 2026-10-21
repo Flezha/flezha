@@ -48,7 +48,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # never needs root to fix it at boot. A mountpoint missing from this list
 # is provisioned root-owned instead, which is what forces a boot-time
 # `chown` and the privilege-drop wrapper that goes with it. Same contract
-# `docker/prod/Dockerfile.controller` applies to the prod volume mounts.
+# `deploy/docker/prod/Dockerfile.controller` applies to the prod volume mounts.
 RUN mkdir -p /flezha/socket_data /socket_data \
              /flezha/_build /flezha/deps /flezha/_build/.target \
              /home/flezha/_build /home/flezha/deps \

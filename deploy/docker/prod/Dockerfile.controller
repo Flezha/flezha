@@ -97,7 +97,7 @@ RUN --mount=type=cache,target=/root/.hex \
 # `mix flezha.plugin.package` in a plugin project mounted at /src. A plugin build
 # never needs the controller's NIF, so rustler skips it.
 #   docker build --target plugin-builder -t flezha/plugin-builder:<version> \
-#     -f docker/prod/Dockerfile.controller .
+#     -f deploy/docker/prod/Dockerfile.controller .
 FROM ${ELIXIR_IMAGE} AS plugin-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -151,7 +151,7 @@ COPY --from=elixir-build /app/_build/prod/rel/flezha /flezha/
 # Graceful-restart entrypoint. See the controller-packaging spec
 # ("Prod image entrypoint SHALL provide graceful-restart lifecycle")
 # for the full env-var contract.
-COPY docker/prod/controller-entrypoint.sh /usr/local/bin/controller-entrypoint.sh
+COPY deploy/docker/prod/controller-entrypoint.sh /usr/local/bin/controller-entrypoint.sh
 RUN chmod +x /usr/local/bin/controller-entrypoint.sh
 
 # Named volumes inherit the mount-point's image-time ownership, so each

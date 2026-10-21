@@ -99,7 +99,7 @@ spec:
           # Multi-arch image published by scripts/publish-image.sh.
           # Pinned, never `:latest` — with imagePullPolicy: IfNotPresent a
           # mutable tag silently leaves a node running a stale controller.
-          # Bump on every controller release (see docker/prod/README.md).
+          # Bump on every controller release (see deploy/docker/prod/README.md).
           image: flezha/flezha:0.1.0
           imagePullPolicy: IfNotPresent
           ports:

@@ -63,7 +63,7 @@ the first target in the Makefile, so a bare `make` does the same as
 | `clean` | `cargo clean`, `mix clean`, remove `_build`, `deps`, `priv/native/*.so` |
 | `docker-build` | Prod image for the host architecture; requires `VERSION=x.y.z` |
 | `docker-publish` | `scripts/publish-image.sh $(ARGS)` — native per-arch build, push, manifest rebuild |
-| `docker-build-dev` | `flezha/flezha:latest-dev` from `docker/dev/Dockerfile.runtime` (needs `:latest` in the local cache) |
-| `docker-build-toolchain` | `flezha/flezha:latest-toolchain` from `docker/dev/Dockerfile.toolchain` |
+| `docker-build-dev` | `flezha/flezha:latest-dev` from `deploy/docker/dev/Dockerfile.runtime` (needs `:latest` in the local cache) |
+| `docker-build-toolchain` | `flezha/flezha:latest-toolchain` from `deploy/docker/dev/Dockerfile.toolchain` |
 | `k8s-apply` | Apply the six manifests in dependency order |
 | `k8s-delete` | Delete the DaemonSet and ConfigMap (`--ignore-not-found`) |

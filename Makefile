@@ -56,13 +56,13 @@ clean:
 docker-build:
 	docker build \
 	  -t flezha/flezha:$(VERSION) \
-	  -f docker/prod/Dockerfile.controller \
+	  -f deploy/docker/prod/Dockerfile.controller \
 	  .
 
 # Publish a controller image to Docker Hub. Builds NATIVELY on the host arch
 # (no QEMU/buildx), pushes the per-arch tag, and rebuilds the manifest list.
 # `make docker-publish` → prod (:latest); `make docker-publish ARGS=--dev` → dev.
-# Run once per architecture host. See docker/prod/README.md.
+# Run once per architecture host. See deploy/docker/prod/README.md.
 docker-publish:
 	scripts/publish-image.sh $(ARGS)
 
@@ -73,30 +73,30 @@ docker-publish:
 docker-build-dev:
 	docker build \
 	  -t flezha/flezha:latest-dev \
-	  -f docker/dev/Dockerfile.runtime \
+	  -f deploy/docker/dev/Dockerfile.runtime \
 	  .
 
 # Build the toolchain image (`:latest-toolchain`) for the current host arch.
-# Used by `docker/dev/docker-compose.yml` to give a developer a ready-to-go
+# Used by `deploy/docker/dev/docker-compose.yml` to give a developer a ready-to-go
 # shell against bind-mounted source while hacking on Flezha itself.
 docker-build-toolchain:
 	docker build \
 	  -t flezha/flezha:latest-toolchain \
-	  -f docker/dev/Dockerfile.toolchain \
+	  -f deploy/docker/dev/Dockerfile.toolchain \
 	  .
 
 # ── Kubernetes ───────────────────────────────────────────────────────────────
 
 # Apply all K8s manifests (order matters for dependencies)
 k8s-apply:
-	kubectl apply -f kubernetes/flezha-namespace.yaml
-	kubectl apply -f kubernetes/flezha-serviceaccount.yaml
-	kubectl apply -f kubernetes/flezha-role.yaml
-	kubectl apply -f kubernetes/flezha-rolebinding.yaml
-	kubectl apply -f kubernetes/flezha-configmap.yaml
-	kubectl apply -f kubernetes/flezha-daemonset.yaml
+	kubectl apply -f deploy/kubernetes/flezha-namespace.yaml
+	kubectl apply -f deploy/kubernetes/flezha-serviceaccount.yaml
+	kubectl apply -f deploy/kubernetes/flezha-role.yaml
+	kubectl apply -f deploy/kubernetes/flezha-rolebinding.yaml
+	kubectl apply -f deploy/kubernetes/flezha-configmap.yaml
+	kubectl apply -f deploy/kubernetes/flezha-daemonset.yaml
 
 # Delete K8s resources (namespace last to avoid dependency errors)
 k8s-delete:
-	kubectl delete -f kubernetes/flezha-daemonset.yaml --ignore-not-found
-	kubectl delete -f kubernetes/flezha-configmap.yaml --ignore-not-found
+	kubectl delete -f deploy/kubernetes/flezha-daemonset.yaml --ignore-not-found
+	kubectl delete -f deploy/kubernetes/flezha-configmap.yaml --ignore-not-found

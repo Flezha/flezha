@@ -49,7 +49,7 @@ set -e
 #
 #   Kafka UI is available at: http://localhost:8080/
 
-COMPOSE_FILE="docker/dev/docker-compose.yml"
+COMPOSE_FILE="deploy/docker/dev/docker-compose.yml"
 CONTAINER_NAME="flezha_controller_dev"
 NETWORK_NAME="flezha_network"
 

@@ -4,8 +4,8 @@ Three image stacks, one per concern. Don't mix them up.
 
 | Directory  | Purpose                                                              | Used by                                       |
 |------------|----------------------------------------------------------------------|-----------------------------------------------|
-| `dev/`     | Local dev/runtime: controller + Rust compute engine + Kafka UI + testnet  | `docker compose -f docker/dev/docker-compose.yml up` |
-| `prod/`    | Production controller image                                               | `docker compose -f docker/prod/docker-compose.yml up` |
+| `dev/`     | Local dev/runtime: controller + Rust compute engine + Kafka UI + testnet  | `docker compose -f deploy/docker/dev/docker-compose.yml up` |
+| `prod/`    | Production controller image                                               | `docker compose -f deploy/docker/prod/docker-compose.yml up` |
 | `build/`   | Pinned cross-compile toolchain for `scripts/build-dist.sh --docker`  | release artifact build; never long-running    |
 
 The distribution artifacts a release publishes (5× native binaries + 2 Java fat
@@ -38,7 +38,7 @@ up empty and waits for SDK clients to reissue `AddRelay` and
 
 Set `FLEZHA_AUTO_RESTORE_ENABLED=false` to disable the boot-time replay while
 still persisting registry mutations. See
-[`../docs/public/topics/core/running_and_testing.md`](../docs/public/topics/core/running_and_testing.md)
+[`../../docs/public/topics/core/running_and_testing.md`](../../docs/public/topics/core/running_and_testing.md)
 for the recovery contract and its one tolerated loss, and
-[`../docs/internal/state_persistence.md`](../docs/internal/state_persistence.md)
+[`../../docs/internal/state_persistence.md`](../../docs/internal/state_persistence.md)
 for the on-disk layout.

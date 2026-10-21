@@ -1,13 +1,13 @@
 defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
   @moduledoc """
   Integration tests for the transactional Postgres sink against a real
-  Postgres in `docker/dev/docker-compose.yml`. Tagged
+  Postgres in `deploy/docker/dev/docker-compose.yml`. Tagged
   `:postgres_integration` so the default `mix test` skips them — run with:
 
       POSTGRES_INTEGRATION=1 mix test --include postgres_integration \\
         test/plugin/provider/postgres_sink_test.exs
 
-  Pre-req: `docker compose -f docker/dev/docker-compose.yml up -d postgres-sink`
+  Pre-req: `docker compose -f deploy/docker/dev/docker-compose.yml up -d postgres-sink`
   (reachable at localhost:5433, user/db/password `flezha`/`flezha_test`).
   """
 
