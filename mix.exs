@@ -609,8 +609,8 @@ defmodule Flezha.MixProject do
     File.cp!("target/#{env}/flz", Path.join(release.path, "bin/flz"))
     File.rename!(Path.join(release.path, "bin/flezha"), Path.join(release.path, "bin/flzvm"))
 
-    for file <- ~w(LICENSE NOTICE THIRD_PARTY_NOTICES.md),
-        do: File.cp!(file, Path.join(release.path, file))
+    for file <- ~w(LICENSE rel/third_party/THIRD_PARTY_NOTICES.md),
+        do: File.cp!(file, Path.join(release.path, Path.basename(file)))
 
     File.cp_r!("LICENSES", Path.join(release.path, "LICENSES"))
 

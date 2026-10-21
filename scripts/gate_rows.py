@@ -149,8 +149,8 @@ GATES = (
               'g="${TMPDIR:-/tmp}/third_party_notices.md"; '
               # A generator that cannot run is not a stale notices file: keep
               # its status out of diff's, whose 1 is the only finding here.
-              'cargo about generate about.hbs -o "$g" || exit 255; '
-              'diff -u THIRD_PARTY_NOTICES.md "$g"']},
+              'cargo about generate -c rel/third_party/about.toml rel/third_party/about.hbs -o "$g" || exit 255; '
+              'diff -u rel/third_party/THIRD_PARTY_NOTICES.md "$g"']},
 )
 
 # `scripts/check-feature-symbols.sh` is deliberately not a row. It is not a gate

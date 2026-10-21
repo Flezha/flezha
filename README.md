@@ -149,12 +149,11 @@ Each one is also a git submodule of this repository, under `sdk/<language>`.
 
 ## Contributing
 
-Contributions are welcome, and each one needs a signed [CLA](CLA.md).
+Contributions are welcome, and each one needs a signed [CLA](docs/public/contributing/cla.md).
 [Contributing](docs/public/contributing/contributing.md) has the rules, and the pages
 next to it cover [setting up a checkout](docs/public/contributing/setting_up.md),
 [running the tests](docs/public/contributing/testing.md) and the
-[code standards](docs/public/contributing/code_standards.md). Report security issues
-privately, as [SECURITY.md](SECURITY.md) describes.
+[code standards](docs/public/contributing/code_standards.md).
 
 ## License
 
@@ -174,4 +173,4 @@ Apache-2.0 §7-8). Read [Durability](docs/public/topics/core/durability.md) befo
 trusting it with data. The licenses grant no trademark rights: a fork, derived
 work or hosted service must not use the name "Flezha" or one confusingly similar.
 Third-party components in binary distributions are listed in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+[`rel/third_party/THIRD_PARTY_NOTICES.md`](rel/third_party/THIRD_PARTY_NOTICES.md).

@@ -79,7 +79,7 @@ COPY protobufs ./protobufs
 COPY flz_transport/errors.json ./flz_transport/errors.json
 COPY lib ./lib
 COPY sdk/elixir ./sdk/elixir
-COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
+COPY LICENSE rel/third_party/THIRD_PARTY_NOTICES.md ./
 COPY LICENSES ./LICENSES
 # What `flz mcp`'s knowledge tools serve.
 COPY priv/ai_kit ./priv/ai_kit

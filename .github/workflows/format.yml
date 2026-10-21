@@ -3,8 +3,8 @@ name: Format
 # Source-shape gate. Installs every toolchain the formatters need, then calls
 # the gate runner once for the `format` group: every formatter in check mode,
 # `reuse lint` (the per-path license map) and a freshness diff of the generated
-# THIRD_PARTY_NOTICES.md. Failure blocks merge. Locally the same call is
-# `python3 scripts/naming_gate.py --run @format`; auto-fix with
+# rel/third_party/THIRD_PARTY_NOTICES.md. Failure blocks merge. Locally the
+# same call is `python3 scripts/naming_gate.py --run @format`; auto-fix with
 # `scripts/format-apply.sh`.
 #
 # CI keeps no list of its own, of formatters or of checks. Two lists drift: for

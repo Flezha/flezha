@@ -122,21 +122,6 @@ The script and the runner SHALL exit non-zero when anything is unformatted, non-
 - **WHEN** a developer runs `scripts/format-apply.sh`
 - **THEN** `a.rs` SHALL be formatted, `b.rs` SHALL be byte-identical afterwards, and `python3 scripts/naming_gate.py --run @format` SHALL still report `b.rs`
 
-### Requirement: Project SHALL track bulk-format SHAs in `.git-blame-ignore-revs`
-
-The repository SHALL maintain a `.git-blame-ignore-revs` file at the project root listing every commit whose sole purpose was a mechanical formatter sweep (initial pass, formatter version bumps, etc). The file SHALL be in the format `git blame --ignore-revs-file` recognizes (one full SHA per line, optional comments).
-
-#### Scenario: `git blame` after a formatter bump
-
-- **WHEN** a developer runs `git blame --ignore-revs-file .git-blame-ignore-revs <file>` on any source file
-- **THEN** lines whose only change was a formatter-applied reflow are attributed to the previous human author rather than to the bulk-format commit
-
-#### Scenario: GitHub blame UI
-
-- **WHEN** a developer views a file's blame on github.com
-- **THEN** the GitHub blame UI honors `.git-blame-ignore-revs` automatically
-- **AND** lines reflowed by the bulk-format pass do not appear as authored by the format-pass commit
-
 ### Requirement: Format pass SHALL be purely mechanical
 
 A formatter sweep landed under this capability SHALL NOT introduce semantic changes. No public API SHALL be renamed, no test SHALL be modified beyond whitespace, no behavior SHALL be altered. Reviewers SHALL be able to verify a format-pass PR by confirming `cargo fmt --all`, `mix format`, and `mvn spotless:apply` reproduce the diff exactly.

@@ -158,7 +158,7 @@ command -v cargo-about >/dev/null 2>&1 || {
   echo "  cargo install cargo-about --locked --features cli" >&2
   exit 1
 }
-(cd "${REPO_ROOT}" && cargo about generate about.hbs -o THIRD_PARTY_NOTICES.md)
-echo "    -> ${REPO_ROOT}/THIRD_PARTY_NOTICES.md"
+(cd "${REPO_ROOT}" && cargo about generate -c rel/third_party/about.toml rel/third_party/about.hbs -o rel/third_party/THIRD_PARTY_NOTICES.md)
+echo "    -> ${REPO_ROOT}/rel/third_party/THIRD_PARTY_NOTICES.md"
 
 echo "Done. Binaries staged under: ${OUTPUT_DIR}"

@@ -12,15 +12,12 @@ rules a contribution follows. The pages after it cover the practical side:
 
 ## Before you start
 
-- **Report a security issue privately.** Never in a public issue:
-  [the security policy](https://github.com/flezha/flezha/blob/main/SECURITY.md) says
-  where to send it.
 - **Open an issue before a large change.** A new feature, a change to the wire
   protocol or to what every SDK carries, or a rework of a part of the
   controller is easier to agree on before the code exists. A small fix needs no
   issue first.
 - **Sign the CLA.** Every contribution needs a signed
-  [Individual CLA](https://github.com/flezha/flezha/blob/main/CLA.md). The
+  [Individual CLA](https://github.com/flezha/flezha/blob/main/docs/public/contributing/cla.md). The
   cla-assistant bot asks for it on your first pull request, and one signature
   covers every later one. A contribution is licensed under the license of the
   path it lands in, MPL-2.0 or Apache-2.0, as

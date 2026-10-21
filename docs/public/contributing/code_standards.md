@@ -146,8 +146,7 @@ whole Rust workspace; formatting touches only the Rust files your tree changed
 against `HEAD` or added, so it never rewrites a file someone else is editing. The script names the
 nightly it uses. Each SDK other than Rust and Elixir is formatted in its own
 repository. A formatter that is not installed drops its language from the
-report and nothing else. The commits that only reformatted code are listed in
-`.git-blame-ignore-revs`, so `git blame` skips them.
+report and nothing else.
 
 ## The gates
 
