@@ -423,6 +423,8 @@ defmodule Flezha.Relay.Lifecycle do
   """
   @spec bind_to_runner(Overwatch.t(), binary(), binary(), pid()) :: Overwatch.t()
   def bind_to_runner(%Overwatch{} = state, relay_id, runner_id, owner \\ self()) do
+    :ok = Replay.redrive_outboxes(state, owner)
+
     _ =
       ClassRegistry.put_overwatch(
         Overwatch.relay_class(state),

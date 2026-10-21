@@ -100,11 +100,6 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
     # durable output with its original identity, and the sink must converge
     # to the same changelog regardless.
     stale_cursor_and_crash_writers(relay_id, cell_id)
-
-    # The rebooted writer casts its re-drive to the live Overwatch; killing it
-    # with that batch unrun leaves the entries to the resettle tick
-    # (`outbox_resettle_ms`, 60 s), past this test's drain bound.
-    assert await_outbox_drained(relay_id), "the re-drive never settled"
     force_fresh_rebind(namespace, relay_id)
 
     send_inputs(relay_id, namespace, ["k1:c"])

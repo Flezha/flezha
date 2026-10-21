@@ -195,6 +195,10 @@ defmodule Flezha.State.WalWriter do
           non_neg_integer() | {:error, term()}
   def redrive_calls(server, started, id), do: call(server, {:redrive_calls, started, id})
 
+  @doc "Re-dispatch now, to the relay's new `overwatch`, every entry the resettle tick would."
+  @spec redrive(GenServer.server(), pid()) :: :ok | {:error, term()}
+  def redrive(server, overwatch), do: call(server, {:redrive, overwatch})
+
   @doc "Re-dispatch now every answer to `caller` (`:all`, any caller) whose delivery is open."
   @spec redrive_answers(GenServer.server(), binary() | :all) :: :ok
   def redrive_answers(server, caller), do: GenServer.cast(server, {:redrive_answers, caller})
@@ -453,6 +457,9 @@ defmodule Flezha.State.WalWriter do
     {count, state} = Settlement.redrive_calls(state, started, id)
     {:reply, count, state}
   end
+
+  def handle_call({:redrive, overwatch}, _from, state),
+    do: {:reply, :ok, Settlement.redrive(state, overwatch)}
 
   def handle_call({:correction_baseline, target}, _from, state) do
     {:reply, Epoch.scan_correction_baseline(state, target), state}

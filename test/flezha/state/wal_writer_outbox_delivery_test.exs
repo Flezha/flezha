@@ -8,6 +8,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
   use FlezhaTest.OutboxCase, async: false
 
   alias Flezha.Relay.Calls.Token
+  alias Flezha.Relay.{Builder, Lifecycle, Overwatch}
 
   test "stall_status reports the outbox cursors producing-liveness compares", %{
     rc: rc,
@@ -222,6 +223,31 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     # The status call queues behind the tick, so it answers only once the tick ran.
     send(pid, :outbox_retry)
     assert %{awaiting: 1} = WalWriter.outbox_status(pid)
+  end
+
+  test "a new Overwatch gets what the killed one never ran before anything newer", %{
+    rc: rc,
+    cell_id: cell_id
+  } do
+    killed = spawn(fn -> Process.sleep(:infinity) end)
+    ClassRegistry.put_overwatch(rc, killed, nil)
+    pid = start_writer(cell_id)
+
+    append_effect(pid, 0, [output("k1", "a")], 1)
+    append_effect(pid, 1, [output("k1", "b")], 2)
+    assert {:message_queue_len, 2} = Process.info(killed, :message_queue_len)
+
+    ref = Process.monitor(killed)
+    Process.exit(killed, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^killed, :killed}
+
+    overwatch = %Overwatch{id: rc, builder: %Builder{id: rc, factory_id: "f", opts: []}}
+    Lifecycle.bind_to_runner(overwatch, rc, "runner_b", self())
+    append_effect(pid, 2, [output("k1", "c")], 3)
+
+    assert {"a", _md, _ack} = next_output()
+    assert {"b", _md, _ack} = next_output()
+    assert {"c", _md, _ack} = next_output()
   end
 
   test "a held call is re-dispatched until its caller answers it; any other hold waits", %{
@@ -535,11 +561,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
     assert %{outbox_flushed_seq: -1, awaiting: 2} = WalWriter.outbox_status(pid)
 
-    # The resettle re-dispatches both under identical identity.
+    # The resettle re-dispatches both under identical identity, in seq order.
     redriven = assert_batch(3_000)
-
-    assert [{"a", %{"flz.seq" => "0.0"}, _}, {"b", %{"flz.seq" => "1.0"}, _}] =
-             Enum.sort_by(redriven, fn {payload, _metadata, _ack} -> payload end)
+    assert [{"a", %{"flz.seq" => "0.0"}, _}, {"b", %{"flz.seq" => "1.0"}, _}] = redriven
 
     run_batch(redriven)
     :ok = WalWriter.fsync(pid)

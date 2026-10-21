@@ -280,6 +280,20 @@ defmodule Flezha.Relay.Replay do
   def seed_steps_outboxes(%Overwatch{}), do: :ok
 
   @doc """
+  Hand a new `owner`, before it is recorded, what the Cell writers sent an
+  Overwatch now dead and never saw run, so it lands ahead of anything newer.
+  """
+  @spec redrive_outboxes(Overwatch.t(), pid()) :: :ok
+  def redrive_outboxes(%Overwatch{} = state, owner) do
+    class = Overwatch.relay_class(state)
+
+    if ClassRegistry.overwatch_pid(class) == :error,
+      do: Enum.each(Flezha.State.Supervisor.live_writers(class), &WalWriter.redrive(&1, owner))
+
+    :ok
+  end
+
+  @doc """
   Ask this relay's running Cell writers to dispatch again, now, every call
   their outboxes hold from before this Overwatch started: how many entries hold
   call `id` still to reach it. An Overwatch restarted alone relearns its calls

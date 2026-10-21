@@ -467,6 +467,15 @@ defmodule Flezha.State.WalWriter.Settlement do
   end
 
   @doc """
+  Re-dispatch now, to `overwatch`, every entry the resettle tick re-dispatches
+  once it is due: the relay's new Overwatch, before it is published as the
+  dispatch target, so what the one before it never ran reaches it ahead of
+  anything newer.
+  """
+  @spec redrive(State.t(), pid()) :: State.t()
+  def redrive(state, overwatch), do: resettle(state, &unanswered?/1, {:ok, overwatch})
+
+  @doc """
   Re-dispatch now every entry with an open delivery hold that answers `caller`
   (`:all`: any relay caller): the call router lost the delivery worker that
   held it, which retried it until then.
@@ -479,11 +488,18 @@ defmodule Flezha.State.WalWriter.Settlement do
 
   defp resettle(state, due?) do
     {rc, _sh, _pk} = state.cell_id
-    overwatch = Lookup.overwatch(rc)
+    resettle(state, due?, Lookup.overwatch(rc))
+  end
 
+  # In seq order: the awaiting map's own order is its keys', and a renamed
+  # entry's numbered key sorts ahead of every `:cursor` one.
+  defp resettle(state, due?, overwatch) do
     {state, chunks, renamed} =
-      Enum.reduce(state.outbox_awaiting, {state, [], %{}}, fn {key, tally}, acc ->
-        if due?.(tally), do: resettle_entry(overwatch, acc, key, tally), else: acc
+      state.outbox_awaiting
+      |> Enum.filter(fn {_key, tally} -> due?.(tally) end)
+      |> Enum.sort_by(fn {{_n, seq}, _tally} -> seq end)
+      |> Enum.reduce({state, [], %{}}, fn {key, tally}, acc ->
+        resettle_entry(overwatch, acc, key, tally)
       end)
 
     with {:ok, pid} <- overwatch, do: Outbox.dispatch(pid, in_dispatch_order(chunks))
