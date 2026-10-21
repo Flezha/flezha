@@ -10,21 +10,23 @@ It extracts CALL SITES, never module names used as values. The distinction is
 load-bearing: the consumer's fixtures carry controller modules as provider
 atoms, and a resolver fed those would report two breaks for ever until the
 reader learned to ignore it. So a name counts only where it is called —
-`Mod.fun(...)`, `&Mod.fun/N`, or a name passed to one of the consumer's five
+`Mod.fun(...)`, `&Mod.fun/N`, or a name passed to one of the consumer's six
 `:erpc` helpers — and only under the consumer's `lib/`, since a fixture is not
 a call the console makes.
 
-The five helpers and the arity each implies:
+The six helpers and the arity each implies:
 
     erpc_call(Mod, :fun, [args])                        -> length(args)
     list_call(Mod, :fun, [args])                        -> length(args)
     authorized_call(token, Mod, :fun, [args])           -> length(args) + 1
     authorized_list_call(token, Mod, :fun, [args])      -> length(args) + 1
     authorized_stream(token, Mod, :fun, [args], pid)    -> length(args) + 1
+    door(context, Mod, :fun, [args])                    -> length(args) + 1
 
-The three authorized helpers append the caller context to the argument list, so
-their arity is one more than the site spells. The stream helper's trailing pid
-travels inside that context as its `:emit`, not as an argument. Both helper definitions take
+The three authorized helpers and `door` run the published function through
+`Flezha.Service.Admin.run/4` with the caller context, so their arity is one
+more than the site spells. The stream helper's trailing pid
+travels inside that context as its `:emit`, not as an argument. The helper definitions take
 `module` and `function` as parameters, which carry no `Flezha.` prefix and are
 therefore skipped without needing a rule.
 
@@ -48,6 +50,7 @@ HELPERS = {
     "authorized_call": (1, 1),
     "authorized_list_call": (1, 1),
     "authorized_stream": (1, 1),
+    "door": (1, 1),
 }
 
 HELPER_CALL = re.compile(r"\b(" + "|".join(HELPERS) + r")\s*\(")
@@ -105,7 +108,7 @@ def line_of(text, index):
 
 
 def helper_sites(text):
-    """Every `Module.function/arity` reached through one of the five helpers."""
+    """Every `Module.function/arity` reached through one of the six helpers."""
     for match in HELPER_CALL.finditer(text):
         helper = match.group(1)
         module_at, added = HELPERS[helper]
