@@ -596,6 +596,18 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   @doc """
+  Run `fun` and return its result with every entry logged meanwhile, one
+  string per entry.
+  """
+  @spec with_log_entries((-> result)) :: {result, [String.t()]} when result: var
+  def with_log_entries(fun) do
+    # Uncoloured: in a terminal each entry would start with a colour code, not
+    # its timestamp, and the split would fold the entries into one.
+    {result, log} = ExUnit.CaptureLog.with_log([colors: [enabled: false]], fun)
+    {result, String.split(log, ~r/^(?=\d\d:\d\d:\d\d\.\d{3} )/m, trim: true)}
+  end
+
+  @doc """
   Run `fun`, which provokes log lines on purpose, and return its result.
 
   Every entry logged meanwhile must match one of `expected`, so the capture
@@ -607,8 +619,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   @spec with_only_logged([{Regex.t(), :always | :maybe}], (-> result)) :: result
         when result: var
   def with_only_logged(expected, fun) do
-    {result, log} = ExUnit.CaptureLog.with_log(fun)
-    entries = String.split(log, ~r/^(?=\d\d:\d\d:\d\d\.\d{3} )/m, trim: true)
+    {result, entries} = with_log_entries(fun)
 
     for entry <- entries do
       assert Enum.any?(expected, fn {pattern, _} -> entry =~ pattern end),
@@ -617,7 +628,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     for {pattern, :always} <- expected do
       assert Enum.any?(entries, &(&1 =~ pattern)),
-             "the provoked line #{inspect(pattern)} was never logged; the log was:\n#{log}"
+             "the provoked line #{inspect(pattern)} was never logged; the log was:\n#{Enum.join(entries)}"
     end
 
     result

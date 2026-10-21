@@ -20,8 +20,8 @@ defmodule Flezha.Service.PortPilotTest do
   defp pilot_logging(command, last_line) do
     restore = TestHelpers.override_env(:external_processes, [command])
 
-    {_, log} =
-      ExUnit.CaptureLog.with_log(fn ->
+    {_, entries} =
+      NodeTestHelper.with_log_entries(fn ->
         {:ok, pilot} = GenServer.start(PortPilot, nil)
         restore.()
         :erlang.trace(pilot, true, [:receive])
@@ -30,7 +30,7 @@ defmodule Flezha.Service.PortPilotTest do
         GenServer.stop(pilot)
       end)
 
-    String.split(log, ~r/^(?=\d\d:\d\d:\d\d\.\d{3} )/m, trim: true)
+    entries
   end
 
   test "a line longer than the line limit is logged whole, and a stderr line at its level",

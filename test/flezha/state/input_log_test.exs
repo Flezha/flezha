@@ -596,13 +596,12 @@ defmodule Flezha.State.InputLogTest do
     test "a log that stops answers what its last sync made durable",
          %{class: class, batcher: batcher} do
       {:ok, 0} = InputLog.append(class, "seed", %{})
-      {:ok, log} = Supervisor.lookup({class, :input_log})
       :ok = :sys.suspend(batcher)
 
       reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
       assert :timeout = :gen_server.wait_response(reqids, 150, true)
 
-      :ok = GenServer.stop(log)
+      stop_log(class)
       assert {{:reply, {:ok, 1}}, :m1, _} = :gen_server.wait_response(reqids, 1_000, true)
       :ok = :sys.resume(batcher)
       assert InputLog.read_range(class, 0, 1) |> Enum.map(&elem(&1, 1)) == ["seed", "m1"]

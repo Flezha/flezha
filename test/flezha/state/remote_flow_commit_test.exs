@@ -19,6 +19,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   alias Flezha.State.DurabilityTier.{Manifest, Shipper}
   alias Flezha.State.WalWriter.RemoteGate
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.TierE2EHarness
 
@@ -122,28 +123,30 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
     )
 
-    Stub.set_down(true)
-    remote = armed_writer(ctx.rc, ctx.cell_id)
-    local = armed_writer(local_rc, local_cell)
-
-    append_effect(remote, 0, [output("k1", "remote")], 0)
-    append_effect(local, 0, [output("k1", "local")], 0)
-
-    assert {"local", _, _} = next_output(5_000)
-    assert wait_until(fn -> InputLog.watermark(local_rc) == 0 end, 5_000)
-
-    # The remote class's ship has failed at least once, so its gate has
-    # answered: it holds the acknowledgement, and the RPO alarm names it.
     ref = {:cell, ctx.cell_id}
 
-    assert wait_until(fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
-    assert wait_until(fn -> failures(ref) > 0 end, 5_000)
-    refute_dispatched(0)
-    assert InputLog.watermark(ctx.rc) == nil
+    while_rpo_breached(ref, fn ->
+      Stub.set_down(true)
+      remote = armed_writer(ctx.rc, ctx.cell_id)
+      local = armed_writer(local_rc, local_cell)
 
-    Stub.set_down(false)
-    assert {"remote", _, _} = next_output(10_000)
-    assert wait_until(fn -> InputLog.watermark(ctx.rc) == 0 end, 5_000)
+      append_effect(remote, 0, [output("k1", "remote")], 0)
+      append_effect(local, 0, [output("k1", "local")], 0)
+
+      assert {"local", _, _} = next_output(5_000)
+      assert wait_until(fn -> InputLog.watermark(local_rc) == 0 end, 5_000)
+
+      # The remote class's ship has failed at least once, so its gate has
+      # answered: it holds the acknowledgement, and the RPO alarm names it.
+      assert wait_until(fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
+      assert wait_until(fn -> failures(ref) > 0 end, 5_000)
+      refute_dispatched(0)
+      assert InputLog.watermark(ctx.rc) == nil
+
+      Stub.set_down(false)
+      assert {"remote", _, _} = next_output(10_000)
+      assert wait_until(fn -> InputLog.watermark(ctx.rc) == 0 end, 5_000)
+    end)
   end
 
   test "the controller status shows each running class's level beside the RPO", ctx do
@@ -525,17 +528,23 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     peer = %{Manifest.new(ref) | owner: "peer", claim: 1}
     :ok = Stub.put_if(Manifest.key(ref), Manifest.encode(peer), {:claim, 1}, [])
 
-    pid = armed_writer(ctx.rc, ctx.cell_id)
-    append_effect(pid, 0, [output("k1", "v0")], 0)
+    while_rpo_breached(ref, fn ->
+      pid = armed_writer(ctx.rc, ctx.cell_id)
+      append_effect(pid, 0, [output("k1", "v0")], 0)
 
-    assert wait_until(fn -> match?(%{superseded_by: "peer"}, status(ref)) end, 5_000)
-    assert wait_until(fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
-    refute_dispatched(0)
+      assert wait_until(fn -> match?(%{superseded_by: "peer"}, status(ref)) end, 5_000)
+      assert wait_until(fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
+      refute_dispatched(0)
 
-    # Once nothing waits, a lineage another controller ships is not this
-    # node's breach.
-    close_writer(pid, ctx.cell_id)
-    assert wait_until(fn -> not Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
+      # Once nothing waits, a lineage another controller ships is not this
+      # node's breach.
+      close_writer(pid, ctx.cell_id)
+
+      assert wait_until(
+               fn -> not Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end,
+               5_000
+             )
+    end)
   end
 
   defp credit(bytes), do: %{channel: self(), session: "s", wire_size: bytes}
@@ -571,6 +580,13 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   end
 
   defp status(ref), do: Enum.find(Shipper.status(), &(&1.ref == ref))
+
+  # Runs `fun` across a 1 ms RPO target's breach of `ref`, which the
+  # Watchdog's timer reports whenever it happens to sweep inside it.
+  defp while_rpo_breached(ref, fun) do
+    alarm = ~r/\[flezha_durability\] rpo_exceeded ref=#{Regex.escape(inspect(ref))} /
+    NodeTestHelper.with_only_logged([{alarm, :maybe}], fun)
+  end
 
   # The disk dies with the controller: the Cell, the input log and the floor
   # this node held in memory.
