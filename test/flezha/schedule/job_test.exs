@@ -294,7 +294,7 @@ defmodule Flezha.Schedule.JobTest do
           _ = :sys.get_state(pid)
         end)
 
-      assert log =~ "plugin spec did not decode"
+      assert log =~ "step=decode_plugin_spec"
       assert log =~ "retired_provider"
       assert Process.alive?(pid)
     end
