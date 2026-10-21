@@ -21,9 +21,9 @@ defmodule Flezha.Config.Keys do
       back to the default rather than raising. `test/fixtures/knob_parse_cases.txt`
       is the same rule fed to every runtime's own reader.
     * **One reader per runtime.** The controller reads `Flezha.Config`; the
-      Elixir SDK reads `Flezha.SDK.Knob`; the crates read `flz_transport::env`;
-      Java reads `FlezhaEnv`. They share the names in this table, never a
-      process — a runner reads its own environment, and the controller reads the
+      Elixir SDK has an environment reader of its own; the crates read
+      `flz_transport::env`; Java reads `FlezhaEnv`. They share the names in
+      this table, never a process — a runner reads its own environment, and the controller reads the
       application env its boot filled.
 
   `Flezha.Config.Durations` is the typed view over the `:ms` rows: it keeps the

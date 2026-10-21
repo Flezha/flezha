@@ -330,6 +330,17 @@ def _rust():
         _bar("rust-test-runner", "rust", "cargo", "test", "-p", "flezha_runner",
              "--features", "bench-internals,testing", "--lib", "--tests",
              env={"CARGO_TERM_QUIET": "true", "NO_COLOR": "1"}),
+        # The runner's public surface is its recorded baseline; a change that
+        # means to move it re-records it (sdk/rust/README.md, "Public API workflow").
+        # The rustdoc build's own output is shown only when it fails: this row
+        # judges the surface, not the doc links.
+        _bar("rust-public-api", "rust", "bash", "-c",
+             'n=$(scripts/manifest_pin.sh .github/toolchains.json rust_nightly) || exit 255; '
+             'd=$(mktemp -d) && trap \'rm -rf "$d"\' EXIT && '
+             '{ cargo +"$n" public-api -p flezha_runner --features testing '
+             '>"$d/api" 2>"$d/err" || { cat "$d/err"; exit 255; }; } && '
+             'diff -u sdk/rust/public-api.txt "$d/api"',
+             finding="status:1", tools=["cargo-public-api:cargo install cargo-public-api"]),
         _bar("rust-test-macros", "rust", "cargo", "test", "--quiet", "-p", "flezha-macros"),
         _bar("rust-test-app", "rust", "cargo", "test", "--quiet", "-p", "rust_runner"),
         # The ABI scenario through each veneer, and the crate with none of them.

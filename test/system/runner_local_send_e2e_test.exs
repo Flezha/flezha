@@ -3,7 +3,9 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
   `local_send`: application code on a runner sends to a relay bound on that
   runner with its SDK's `local` option, for each kind of relay. The runner is then SIGKILLed and a second one started: the relay
   rebinds and carries on, the local input is never replayed (it is in no input
-  log), and input that came through the controller keeps its guarantee.
+  log), and input that came through the controller keeps its guarantee. An
+  Elixir runner's send through the controller carries bytes that are not text
+  as they are.
 
   The sends are made by the test app's own code (its local-send drill,
   `FLEZHA_LOCAL_SEND_SCRIPT`), each once the test creates its trigger file: the
@@ -54,12 +56,32 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
     assert info.runner_id == exec_b
 
     {port_a, _exec_a} =
-      boot_runner(namespace, unique_id_path(), env: drill(relay_id, "x", go))
+      boot_runner(namespace, unique_id_path(), env: drill(relay_id, %{message: "x"}, go))
 
     File.touch!(go)
 
-    assert local_send_answer(port_a) == "err runtime.relay_not_local"
+    assert drill_answer(port_a, "local_send") == "err runtime.relay_not_local"
     refute_receive {:message_forward, _, _}, 1_000
+  end
+
+  # The test app's drill decodes `bytes` only in the Elixir SDK, whose byte
+  # strings need not be text, so this scenario runs its runner whatever
+  # runtime the run selects.
+  test "an Elixir runner's send through the controller reaches the relay byte for byte" do
+    NodeTestHelper.put_spawn_runtime(:elixir)
+    namespace = unique("send_bytes")
+    relay_id = unique("bytes")
+    go = trigger_path()
+    on_exit(fn -> stop_namespace(namespace) end)
+
+    entry = %{bytes: Base.encode64(<<0xFF, 0x00, 0x7F>>), local: false}
+    {port, _exec} = boot_runner(namespace, unique_id_path(), env: drill(relay_id, entry, go))
+    {:ok, _info} = start(namespace, relay_id, "store_input", :on_input)
+
+    File.touch!(go)
+
+    assert drill_answer(port, "send") == "ok"
+    assert_receive {:message_forward, <<0xFF, 0x00, 0x7F>>, _metadata}, 30_000
   end
 
   # Prove the sink live with a controller input, send locally, kill the
@@ -75,7 +97,7 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
     on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
 
     {port_a, exec_a} =
-      boot_runner(namespace, id_path, env: drill(relay_id, "l:1", go))
+      boot_runner(namespace, id_path, env: drill(relay_id, %{message: "l:1"}, go))
 
     {:ok, info} = start(namespace, relay_id, factory)
     assert info.runner_id == exec_a
@@ -84,7 +106,7 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
            "the relay's sink never went live"
 
     File.touch!(go)
-    assert local_send_answer(port_a) == "ok"
+    assert drill_answer(port_a, "local_send") == "ok"
 
     assert wait_until(fn -> seen(output.("l:1")) == 1 end, 30_000),
            "the local input was not handled"
@@ -108,14 +130,14 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
     assert seen(output.("l:1")) == 1, "the local input was replayed: #{inspect(peek_outputs())}"
   end
 
-  defp start(namespace, relay_id, factory) do
+  defp start(namespace, relay_id, factory, hook \\ :on_output) do
     sink = %Flezha.Plugin{
       id: "local_send_sink",
       namespace: namespace,
       relay_id: relay_id,
       provider: Flezha.Plugin.Provider.BeamMsgForward,
       opts: %{recv_pid: self(), include_metadata: true},
-      hooks: [{:on_output, []}]
+      hooks: [{hook, []}]
     }
 
     RelayManager.start_relay(namespace, %Builder{
@@ -126,8 +148,8 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
     })
   end
 
-  defp drill(relay_id, message, go) do
-    script = [%{relay: relay_id, channel: "input", message: message, when: go}]
+  defp drill(relay_id, entry, go) do
+    script = [Map.merge(%{relay: relay_id, channel: "input", when: go}, entry)]
     [{"FLEZHA_LOCAL_SEND_SCRIPT", Jason.encode!(script)}]
   end
 
@@ -137,10 +159,11 @@ defmodule FlezhaTest.System.RunnerLocalSendE2ETest do
     Path.join(dir, "go")
   end
 
-  # The drill's one answer line: `local_send <relay> ok | err <code>`.
-  defp local_send_answer(port) do
-    seen = NodeTestHelper.read_port(port, &(&1 =~ ~r/^local_send \S+ .+$/m), 60_000, "")
-    [_, answer] = Regex.run(~r/^local_send \S+ (.+)$/m, seen) || [nil, "none in:\n#{seen}"]
+  # The drill's one answer line: `<verb> <relay> ok | err <code>`.
+  defp drill_answer(port, verb) do
+    line = ~r/^#{verb} \S+ (.+)$/m
+    seen = NodeTestHelper.read_port(port, &(&1 =~ line), 60_000, "")
+    [_, answer] = Regex.run(line, seen) || [nil, "none in:\n#{seen}"]
     String.trim(answer)
   end
 

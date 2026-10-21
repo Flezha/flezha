@@ -7,8 +7,8 @@ defmodule Flezha.Config.Environment do
   into the application-env key its row names, every per-run resource derived
   from the one run token, every environment's own default applied. `check!/1`
   then holds the application environment the boot ended with to the table. A
-  scalar type parses by the Elixir SDK's own reader, `Flezha.SDK.Knob.parse/2`,
-  which is what makes a runner and a boot answer one text the same way.
+  scalar type parses by the Elixir SDK's own environment reader, which is what
+  makes a runner and a boot answer one text the same way.
 
   The parse rule is the same one every runtime repeats;
   `test/fixtures/knob_parse_cases.txt` is it written down, and each runtime's

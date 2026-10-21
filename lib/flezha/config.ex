@@ -10,10 +10,10 @@ defmodule Flezha.Config do
   answer differently from another because it was started with a different
   environment.
 
-  A runner is a different process and reads its own: `Flezha.SDK.Knob` for the
-  Elixir SDK, and `flz_transport::env` for the crates and, through the core's
-  knob entry, every other SDK. They share the names in the table, never this
-  reader.
+  A runner is a different process and reads its own: the Elixir SDK through an
+  environment reader of its own, and `flz_transport::env` for the crates and,
+  through the core's knob entry, every other SDK. They share the names in the
+  table, never this reader.
   """
 
   alias Flezha.Config.Keys
