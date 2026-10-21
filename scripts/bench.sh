@@ -23,7 +23,7 @@
 # response); the receive-only window is reported beside it. They differ by the
 # send window and are not interchangeable.
 #
-# Every run also writes bench/reports/bench-<runtime>-<shape>-<run_id>.json
+# Every run also writes local_dev/bench/reports/bench-<runtime>-<shape>-<run_id>.json
 # with every header, warning and metric field. That report is the machine
 # contract — CI reads metrics.throughput_msg_per_sec from it.
 #
@@ -87,7 +87,7 @@ Environment:
   FLEZHA_BENCH_SKIP_BUILD 1 skips the runtime's bench build; the run warns
   FLEZHA_DURABILITY_BACKEND  Defaults to `none` here; the run warns
 
-Every run writes bench/reports/bench-<runtime>-<shape>-<run_id>.json, which
+Every run writes local_dev/bench/reports/bench-<runtime>-<shape>-<run_id>.json, which
 carries the header, the warnings and every metric. It is what CI reads.
 
 Switching combinations are independent:

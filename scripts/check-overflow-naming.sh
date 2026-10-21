@@ -73,10 +73,10 @@ ALLOWED = [
     # mention, not a use — bare prose naming the policy is still caught, which
     # is the only shape that could reintroduce it.
     ("docs/known_issues.md", re.compile(r"""['"`]OverflowPolicy::Block['"`]""")),
-    # `docs/refactor/STATE.md` is the programme board: it has to quote the
+    # `local_dev/dev_notes/refactor/STATE.md` is the programme board: it has to quote the
     # retired spelling to name the work that retires it, and a backticked span
     # is a quotation. Bare prose naming the policy is still caught.
-    ("docs/refactor/STATE.md", re.compile(r"`[^`\n]*:block[^`\n]*`")),
+    ("local_dev/dev_notes/refactor/STATE.md", re.compile(r"`[^`\n]*:block[^`\n]*`")),
 ]
 
 # Inside the Kafka producer's page and spec, a bare `:block` / `"block"` names

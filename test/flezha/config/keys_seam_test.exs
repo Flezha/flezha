@@ -214,7 +214,6 @@ defmodule Flezha.Config.KeysSeamTest do
       restated =
         for path <- Path.wildcard("docs/**/*.md"),
             not Map.has_key?(@reference, path),
-            not String.starts_with?(path, ["docs/refactor/", "docs/dev_notes/"]),
             where <- restated_rows(path),
             do: where
 

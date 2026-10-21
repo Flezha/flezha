@@ -120,7 +120,7 @@ measured nothing.
 
 ### The structured report
 
-Every run writes `bench/reports/bench-<runtime>-<shape>-<run_id>.json`.
+Every run writes `local_dev/bench/reports/bench-<runtime>-<shape>-<run_id>.json`.
 It carries the `run`, `system`,
 `artifacts` and `warnings` blocks plus a `metrics` block with every measured
 value.
@@ -130,7 +130,7 @@ matching printed prose, so the rendering above can change without touching a
 CI job: `metrics.throughput_msg_per_sec` (the end-to-end headline) and
 `metrics.receive_window_msg_per_sec` for the regression run,
 `metrics.scaling_ratio` for the cell sweep.
-`bench/reports/` is gitignored.
+`local_dev/bench/reports/` is gitignored.
 
 `FLEZHA_BENCH_LOG` sets the logger level for a run (default `warning`).
 Nothing in the harness filters or rewrites a log line: a warning a bench
@@ -209,9 +209,9 @@ Measures the paths a flow relay never takes: instance lifecycle (spawn → chain
 completion), the durable task barrier, the chat turn (iteration commit),
 suspension and the wake paths. Runs in the scratch namespace `bench_steps`
 against any of the seven runtimes (`--runtime`, default `rust`).
-`bench/acceptance/run.sh` runs it over fixed case sets, one chain case per SDK
+`local_dev/bench/acceptance/run.sh` runs it over fixed case sets, one chain case per SDK
 among them, and compares the medians with a baseline per case and runtime
-(`bench/acceptance/README.md`).
+(`local_dev/bench/acceptance/README.md`).
 
 ```sh
 mix bench.steps --scenario chain -n 1000 --tasks 4 -c 100
@@ -291,7 +291,7 @@ mix bench.extension --case door [--iterations N]
 
 # The Kafka producer's admission over two partition lanes, no broker
 # (from plugins/flezha_kafka_plugin).
-mix run --no-start bench/admission.exs [records]
+mix run --no-start local_dev/bench/admission.exs [records]
 
 # Observability bus emit against zero interested sinks (ns per emit, default 1_000_000).
 mix flezha.bench.observability [iterations]
@@ -565,14 +565,14 @@ The same measurement on the CLI's node, which the release sizes separately, is
 ## Triage when `bench-regression` fails
 
 No throughput number fails the job. It fails in three ways, and the uploaded
-artifact (`bench-regression.log` and `bench/reports/`) carries the evidence for
+artifact (`bench-regression.log` and `local_dev/bench/reports/`) carries the evidence for
 each:
 
 1. **The bench run failed.** A build that failed, a runner that never
    connected, every relay start refused, or `Timeout waiting for messages`.
    The reason is in `bench-regression.log`, and the preflight warnings at the
    top of the run say what was unusual about the host.
-2. **No report was written.** The step's `ls` of `bench/reports/` fails: the
+2. **No report was written.** The step's `ls` of `local_dev/bench/reports/` fails: the
    run ended before it wrote its report. Read the log for why.
 3. **The report carries no rate.** The job names the report and prints the last
    50 lines of the log.

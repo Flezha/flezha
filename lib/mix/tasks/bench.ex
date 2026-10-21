@@ -76,7 +76,7 @@ defmodule Mix.Tasks.Bench do
   **end-to-end** window (first input to last response) and the receive-only
   window is reported beside it.
 
-  Every run also writes `bench/reports/bench-<runtime>-<shape>-<run_id>.json`,
+  Every run also writes `local_dev/bench/reports/bench-<runtime>-<shape>-<run_id>.json`,
   which carries every header, warning and metric field. That report is the
   machine contract — CI reads `metrics.throughput_msg_per_sec` from it rather
   than matching a line of printed output.

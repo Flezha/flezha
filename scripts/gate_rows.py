@@ -506,7 +506,7 @@ GATES += (
               env={"FLEZHA_E2E_RUNTIME": "rust"}, timeout=1800),
     *_plugins(), *_rust(), *_sdk_java(), *_sdk_node(), *_sdk_python(), *_sdk_ruby(),
     *_sdk_php(), *_sdk_elixir(),
-    _bar("ledgers", "ledgers", "python3", "docs/known-bugs.py", "check"),
+    _bar("ledgers", "ledgers", "python3", "local_dev/dev_notes/known-bugs.py", "check"),
     # The committed prost output is what protobufs/regen.sh writes. A
     # generator that cannot run is not a stale file: only diff's 1 is a finding.
     _bar("proto-fresh", "contract", "bash", "-c",

@@ -50,7 +50,7 @@ jobs:
           # The run's structured report is the machine contract: the printed
           # rendering is for humans and is free to change without breaking
           # this job. Under `pipefail` a run that wrote no report fails here.
-          REPORT=$(ls -1t bench/reports/bench-rust-regression-*.json | head -1)
+          REPORT=$(ls -1t local_dev/bench/reports/bench-rust-regression-*.json | head -1)
           END_TO_END=$(jq -r '.metrics.throughput_msg_per_sec' "$REPORT")
           RECEIVE=$(jq -r '.metrics.receive_window_msg_per_sec' "$REPORT")
           if [[ "$END_TO_END" == "null" || "$RECEIVE" == "null" ]]; then
@@ -75,7 +75,7 @@ jobs:
           name: bench-regression-${{ github.sha }}
           path: |
             bench-regression.log
-            bench/reports/
+            local_dev/bench/reports/
           retention-days: 30
 
   bench-cell-scaling:
@@ -105,7 +105,7 @@ jobs:
           set -euo pipefail
           MIX_ENV=prod mix bench --runtime rust --shape cell --pool-sizes 1,8 \
             2>&1 | tee bench-scaling.log
-          REPORT=$(ls -1t bench/reports/bench-rust-cell-*.json 2>/dev/null | head -1 || true)
+          REPORT=$(ls -1t local_dev/bench/reports/bench-rust-cell-*.json 2>/dev/null | head -1 || true)
           RATIO=$(jq -r '.metrics.scaling_ratio // empty' "${REPORT:-/dev/null}" 2>/dev/null || true)
           if [[ -z "$RATIO" ]]; then
             echo "::warning::Could not parse 'ratio (max/min)' from scaling output"

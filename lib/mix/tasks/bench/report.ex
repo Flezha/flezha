@@ -242,7 +242,7 @@ defmodule Mix.Tasks.Bench.Report do
 
   @doc """
   Write the run's report. `name_or_path` is either a bare stem — placed under
-  `bench/reports/` and stamped with the run id — or a full path, for a report
+  `local_dev/bench/reports/` and stamped with the run id — or a full path, for a report
   with consumers at a fixed location.
   """
   @spec finish(String.t(), map()) :: String.t()
@@ -252,7 +252,8 @@ defmodule Mix.Tasks.Bench.Report do
     path =
       if String.ends_with?(name_or_path, ".json"),
         do: name_or_path,
-        else: Path.join("bench/reports", "#{name_or_path}-#{state[:id] || run_id()}.json")
+        else:
+          Path.join("local_dev/bench/reports", "#{name_or_path}-#{state[:id] || run_id()}.json")
 
     write(path, Map.merge(state[:header] || empty_header(), sections))
   end

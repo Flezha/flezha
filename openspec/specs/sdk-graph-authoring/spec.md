@@ -441,5 +441,5 @@ Plugin egress SHALL be declared by exactly one builder method in every SDK, taki
 #### Scenario: No user-visible sink remains
 
 - **WHEN** the repository's SDK sources, docs, CLI help, error catalogue and specs are searched for `.sink(`, `sink_named`, `sink_with`, "sink plugin", "source plugin" and the renamed error codes and provider ids
-- **THEN** only `docs/dev_notes/`, `openspec/changes/archive/` and the observability layer's sinks SHALL match
+- **THEN** only `local_dev/dev_notes/`, `openspec/changes/archive/` and the observability layer's sinks SHALL match
 

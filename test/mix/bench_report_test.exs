@@ -260,14 +260,14 @@ defmodule Mix.Tasks.Bench.ReportTest do
       assert output |> String.split("=== test bench ===") |> length() == 2
     end
 
-    test "finish stamps a bare stem with the run id and places it under bench/reports" do
+    test "finish stamps a bare stem with the run id and places it under local_dev/bench/reports" do
       ExUnit.CaptureIO.capture_io(fn ->
         Report.open("test bench", [])
         Report.emit()
         path = Report.finish("stem-#{System.unique_integer([:positive])}", %{metrics: %{}})
         on_exit(fn -> File.rm_rf!(path) end)
 
-        assert Path.dirname(path) == "bench/reports"
+        assert Path.dirname(path) == "local_dev/bench/reports"
         assert File.exists?(path)
       end)
     end

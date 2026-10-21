@@ -24,7 +24,7 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
   another, and a provider's path is assembled from its own identifier, so a walk
   that reads only the execute call sees neither. It saw neither for a long time,
   and eight live event names reached no exporter while this gate was green:
-  `docs/dev_notes/telemetry-bridge.md`.
+  `local_dev/dev_notes/telemetry-bridge.md`.
   """
 
   use ExUnit.Case, async: true

@@ -67,9 +67,8 @@ sdk/elixir/priv
 sdk/elixir/examples
 sdk/elixir/test_app/_build
 
-# Bench run outputs. `bench/` itself is source (the harness); its reports are
-# logs, and one of them is 70 MB.
-bench/*/reports
+# Local-only working material: boards, notes, the bench and chaos harnesses.
+local_dev
 
 # Test tree — kept out of the prod context except for the testnet TS app
 # (consumed by docker/dev/Dockerfile.runtime to bake the WS server into

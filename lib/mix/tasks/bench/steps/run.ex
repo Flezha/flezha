@@ -410,7 +410,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
     # sampler, no /proc, no observer effect.
     kv = kv ++ [peak_mb: mem_peak_mb(), fsync_p99_ms: Tally.fsync_p99_ms()]
     fields = Enum.map_join(kv, " ", fn {k, v} -> "#{k}=#{Report.decimal(v, 2)}" end)
-    # `bench/acceptance/run.sh` parses this line; the JSON report below is the
+    # `local_dev/bench/acceptance/run.sh` parses this line; the JSON report below is the
     # newer contract, and both name the same numbers.
     IO.puts("BENCH_RESULT #{fields}")
 

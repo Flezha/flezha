@@ -51,7 +51,7 @@
 #   A path rooted where the repository carries nothing — `deps/`,
 #   `flezha_market/`, `META-INF/` — cannot be checked against this tree. So can
 #   a path the repository ignores by policy (`openspec/changes/`,
-#   `docs/dev_notes/`): those directories are working material kept out of git,
+#   `local_dev/`): those directories are working material kept out of git,
 #   and a citation into one is unresolvable here rather than wrong.
 #
 #   A changelog is a dated record. Its removal entries necessarily name what no
