@@ -1,0 +1,9 @@
+# Build output lives under `_build/`, beside Mix's. The leading dot keeps it out
+# of `mix clean --deps`, which removes every `_build/*` it can see.
+[build]
+target-dir = "_build/.target"
+
+# The clippy thresholds sit with the crates; every cargo run in this tree reads
+# them from there, the SDK crates under `sdk/` included.
+[env]
+CLIPPY_CONF_DIR = { value = "crates", relative = true }

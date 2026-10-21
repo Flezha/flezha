@@ -58,7 +58,7 @@ note() {
 }
 
 flz() {
-  "${COMPOSE[@]}" exec -T controller /flezha/target/release/flz "$@"
+  "${COMPOSE[@]}" exec -T controller /flezha/_build/.target/release/flz "$@"
 }
 
 SOCKETS_DIR="${REPO_ROOT}/storage/app/sockets"

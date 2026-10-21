@@ -63,7 +63,7 @@ jobs:
 
       - name: Run correctness bench (fail if any invariant violated)
         run: |
-          BIN=$(ls target/release/deps/correctness-* | grep -v '\.d$' | head -1)
+          BIN=$(ls _build/.target/release/deps/correctness-* | grep -v '\.d$' | head -1)
           "$BIN"
 
       - name: Run dispatch bench — baseline "pr" (PRs) or "main" (push)
@@ -82,7 +82,7 @@ jobs:
 
       # ---------------------------------------------------------------------
       # PR gate: download the main baseline (if available) and diff.
-      # The Criterion output under `target/criterion/<bench>/<id>/change/`
+      # The Criterion output under `_build/.target/criterion/<bench>/<id>/change/`
       # contains the change percentage; we parse those and fail if any
       # exceeds the tolerance.
       # ---------------------------------------------------------------------
@@ -91,7 +91,7 @@ jobs:
         uses: actions/cache/restore@v5
         id: restore-main
         with:
-          path: target/criterion
+          path: _build/.target/criterion
           key: rust-sdk-perf-main-${{ github.sha }}
           restore-keys: |
             rust-sdk-perf-main-
@@ -132,7 +132,7 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         uses: actions/cache/save@v5
         with:
-          path: target/criterion
+          path: _build/.target/criterion
           key: rust-sdk-perf-main-${{ github.sha }}
 
       - name: Upload Criterion report as artifact
@@ -140,5 +140,5 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: criterion-report-${{ github.sha }}
-          path: target/criterion
+          path: _build/.target/criterion
           retention-days: 30

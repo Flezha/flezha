@@ -167,7 +167,7 @@ GATES = (
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNTIMES = sorted(os.path.basename(os.path.dirname(path))[:-len("_runner")]
                   for path in glob.glob(f"{ROOT}/test/apps/*_runner/conformance.json"))
-FAKE = f"{ROOT}/target/debug/flz-fake-controller"
+FAKE = f"{ROOT}/_build/.target/debug/flz-fake-controller"
 # The runtimes the bar runs the `:system` tier under: the nightly's schedule and elixir.
 E2E_RUNTIMES = ("elixir", "rust", "java")
 
@@ -359,7 +359,7 @@ def _rust():
              "--", "-D", "warnings"),
         _bar("sdk-fake-controller", "rust", "cargo", "build", "--quiet", "-p", "flz_core_ffi",
              "--features", "fake-controller", "--bin", "flz-fake-controller", stderr_ok=True),
-        _smoke("rust-smoke", "rust", "sdk/rust", f"{ROOT}/target/debug/rust_runner", "smoke"),
+        _smoke("rust-smoke", "rust", "sdk/rust", f"{ROOT}/_build/.target/debug/rust_runner", "smoke"),
     ]
 
 

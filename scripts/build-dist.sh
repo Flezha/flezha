@@ -175,7 +175,7 @@ RELEASE_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "${REPO_ROOT}/Ca
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
 TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
 
-# Isolated cargo target dir — works around a root-owned ./target/release/
+# Isolated cargo target dir — works around a root-owned ./_build/.target/release/
 # left over from a prior dev-container run.
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${HOME}/.cache/flezha-cargo}"
 export CARGO_TARGET_DIR

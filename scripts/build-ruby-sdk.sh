@@ -83,7 +83,7 @@ dlext="$(ruby -e 'print RbConfig::CONFIG["DLEXT"]')"
 soext="$(ruby -e 'print RbConfig::CONFIG["SOEXT"] || "so"')"
 echo "==> installing the $profile veneer as flz_core_ffi.$dlext"
 mkdir -p "$sdk/lib/flezha"
-cp "$root/target/$profile/libflz_core_ffi.$soext" "$sdk/lib/flezha/flz_core_ffi.$dlext"
+cp "$root/_build/.target/$profile/libflz_core_ffi.$soext" "$sdk/lib/flezha/flz_core_ffi.$dlext"
 
 echo "==> installing gem dependencies"
 (cd "$sdk" && gem install --conservative --no-document msgpack >/dev/null)

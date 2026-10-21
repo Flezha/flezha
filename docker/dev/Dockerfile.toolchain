@@ -50,7 +50,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # `chown` and the privilege-drop wrapper that goes with it. Same contract
 # `docker/prod/Dockerfile.controller` applies to the prod volume mounts.
 RUN mkdir -p /flezha/socket_data /socket_data \
-             /flezha/_build /flezha/deps /flezha/target \
+             /flezha/_build /flezha/deps /flezha/_build/.target \
              /home/flezha/_build /home/flezha/deps \
     && chown -R flezha:flezha /flezha /socket_data \
     && chown flezha:flezha /home/flezha/_build /home/flezha/deps \

@@ -60,6 +60,7 @@ runs:
         path: |
           deps
           _build
+          !_build/.target
         key: elixir-${{ runner.os }}-otp${{ steps.resolve.outputs.otp }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           elixir-${{ runner.os }}-otp${{ steps.resolve.outputs.otp }}-

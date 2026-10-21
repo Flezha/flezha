@@ -6,7 +6,7 @@
 #
 # Usage:
 #   scripts/check-feature-symbols.sh <artifact> <feature>
-#   scripts/check-feature-symbols.sh target/debug/libflz_core_ffi.so napi
+#   scripts/check-feature-symbols.sh _build/.target/debug/libflz_core_ffi.so napi
 #
 # <artifact> is the cdylib each build writes; it is an argument rather than a
 # constant so the check can be driven against a staged copy. <feature> is the

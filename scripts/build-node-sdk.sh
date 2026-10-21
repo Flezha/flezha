@@ -34,7 +34,7 @@ npm ci --no-audit --no-fund --silent
 # which fetches the core at a tag. In this tree the core IS the workspace that
 # was just built, so the staged library is named rather than fetched.
 echo "==> installing the $profile addon"
-built="$root/target/$profile/libflz_core_ffi.so"
+built="$root/_build/.target/$profile/libflz_core_ffi.so"
 if [[ "$profile" == "release" ]]; then
   node scripts/install-native.mjs --from "$built"
 else

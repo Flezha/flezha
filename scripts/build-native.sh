@@ -139,7 +139,7 @@ for triple in "${TRIPLES[@]}"; do
     (cd "${REPO_ROOT}" && cargo zigbuild --release -p flz_core_ffi --features "${FEATURES}" --target "${triple}")
   fi
 
-  SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}flz_core_ffi.${EXT}"
+  SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/_build/.target}/${triple}/release/${PREFIX}flz_core_ffi.${EXT}"
   if [[ ! -f "${SRC}" ]]; then
     echo "Expected build output not found: ${SRC}" >&2
     exit 1

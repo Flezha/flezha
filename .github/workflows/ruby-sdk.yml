@@ -69,7 +69,7 @@ jobs:
         # Asserted rather than reviewed, because the Java SDK ships a binary
         # built from this crate. The same assertion holds for every veneer
         # feature, so the script is the one place that spells it.
-        run: scripts/check-feature-symbols.sh target/debug/libflz_core_ffi.so ruby
+        run: scripts/check-feature-symbols.sh _build/.target/debug/libflz_core_ffi.so ruby
 
   # End to end, which is the half the gem's repository cannot run: it needs the
   # controller. The submodule is what this job runs the Ruby runtime from, at the

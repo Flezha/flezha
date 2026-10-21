@@ -15,4 +15,4 @@ esac
 
 mkdir -p "$out"
 cargo run --quiet --locked --manifest-path "$root/protobufs/prost_gen/Cargo.toml" \
-  --target-dir "$root/target/prost_gen" -- "$out"
+  --target-dir "$root/_build/.target/prost_gen" -- "$out"

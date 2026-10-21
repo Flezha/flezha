@@ -43,7 +43,7 @@ services:
       retries: 60
       start_period: 30s
     # Direct bind mount only — DO NOT pull in the parent compose's named
-    # volumes for /flezha/_build, /flezha/deps, /flezha/target. Those start
+    # volumes for /flezha/_build, /flezha/deps, /flezha/_build/.target. Those start
     # empty, defeating the host's existing build cache and forcing every run
     # to recompile from scratch (8+ min). With the bind mount alone, compile
     # artifacts persist on the host across runs.
@@ -68,10 +68,10 @@ services:
         ns="$$FLEZHA_DEMO_NAMESPACE"
         : "$${ns:=default}"
         echo "[rust] starting compute engine for namespace=$$ns"
-        exec cargo run --quiet --manifest-path=/flezha/sdk/rust/test_app/Cargo.toml --target-dir=/flezha/target -- "$$ns"
+        exec cargo run --quiet --manifest-path=/flezha/sdk/rust/test_app/Cargo.toml --target-dir=/flezha/_build/.target -- "$$ns"
     environment:
       FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
-      FLEZHA_HARNESS_PATHS: /flezha/target /flezha/app_data
+      FLEZHA_HARNESS_PATHS: /flezha/_build/.target /flezha/storage/app
       FLEZHA_HARNESS_WAIT_SOCKET: /flezha/storage/app/sockets/runner_control_channel.sock
       FLEZHA_SOCKET_FILES_PATH: /flezha/storage/app/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}

@@ -168,7 +168,7 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
   end
 
   defp flz_binary() do
-    ["target/debug/flz", "target/release/flz"]
+    ["_build/.target/debug/flz", "_build/.target/release/flz"]
     |> Enum.map(&Path.expand/1)
     |> Enum.find(&File.exists?/1) ||
       flunk("no `flz` binary built; run `cargo build -p flz`")

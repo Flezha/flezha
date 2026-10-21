@@ -376,7 +376,7 @@ defmodule Flezha.Config.Environment do
 
     command =
       "cargo run --quiet --manifest-path=#{cwd}/sdk/rust/test_app/Cargo.toml " <>
-        "--target-dir=./target"
+        "--target-dir=./_build/.target"
 
     [command, command]
   end

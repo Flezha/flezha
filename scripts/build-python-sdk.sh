@@ -26,7 +26,7 @@ cargo build -p flz_core_ffi --features python-extension "${cargo_args[@]}"
 # addon and the Ruby extension are.
 suffix="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
 echo "==> installing the $profile veneer as flezha/flz_core_ffi$suffix"
-cp "$root/target/$profile/libflz_core_ffi.so" "$sdk/src/flezha/flz_core_ffi$suffix"
+cp "$root/_build/.target/$profile/libflz_core_ffi.so" "$sdk/src/flezha/flz_core_ffi$suffix"
 
 # A checkout-local interpreter, so the e2e app and the unit suite run against
 # this SDK's declared dependencies without installing anything system-wide —

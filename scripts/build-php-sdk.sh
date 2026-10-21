@@ -39,7 +39,7 @@ esac
 
 echo "==> installing the $profile library for $os-$arch"
 mkdir -p "$sdk/lib/$os-$arch"
-cp "$root/target/$profile/libflz_core_ffi.$ext" "$sdk/lib/$os-$arch/"
+cp "$root/_build/.target/$profile/libflz_core_ffi.$ext" "$sdk/lib/$os-$arch/"
 
 echo "==> installing composer dependencies"
 if command -v composer >/dev/null 2>&1; then

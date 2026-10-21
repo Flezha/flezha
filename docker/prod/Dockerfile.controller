@@ -21,11 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/workspace/target \
+    --mount=type=cache,target=/workspace/_build/.target \
     cargo build --release -p flz_nif -p flz \
     && mkdir -p /artifacts \
-    && cp target/release/libflz_nif.so /artifacts/flz_nif.so \
-    && cp target/release/flz /artifacts/flz
+    && cp _build/.target/release/libflz_nif.so /artifacts/flz_nif.so \
+    && cp _build/.target/release/flz /artifacts/flz
 
 # Stage 2 — Elixir builder. Assembles the Mix release using the
 # pre-built NIF + CLI from Stage 1; cargo is not invoked here.
@@ -84,9 +84,9 @@ COPY LICENSES ./LICENSES
 # What `flz mcp`'s knowledge tools serve.
 COPY priv/ai_kit ./priv/ai_kit
 
-RUN mkdir -p priv/native target/release
+RUN mkdir -p priv/native _build/.target/release
 COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so
-COPY --from=rust-build /artifacts/flz         ./target/release/flz
+COPY --from=rust-build /artifacts/flz         ./_build/.target/release/flz
 
 RUN --mount=type=cache,target=/root/.hex \
     ERL_FLAGS="+JMsingle true" mix compile \

@@ -51,7 +51,7 @@ jobs:
         # than reviewed, because the Java SDK ships a binary built from this
         # crate. The same assertion holds for every veneer feature, so the
         # script is the one place that spells it.
-        run: scripts/check-feature-symbols.sh target/debug/libflz_core_ffi.so napi
+        run: scripts/check-feature-symbols.sh _build/.target/debug/libflz_core_ffi.so napi
 
   # End to end, which is the half an SDK repository cannot run: it needs the
   # controller. The submodule is what this job runs the Node runtime from, at

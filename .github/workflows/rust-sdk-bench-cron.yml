@@ -84,7 +84,7 @@ jobs:
       - uses: actions/upload-artifact@v5
         with:
           name: criterion-weekly
-          path: target/criterion
+          path: _build/.target/criterion
 
   summary:
     needs: [matrix-bench, criterion]

@@ -45,7 +45,7 @@ services:
       - ../../:/flezha
       - flezha_build:/flezha/_build
       - flezha_deps:/flezha/deps
-      - flezha_cargo_target:/flezha/target
+      - flezha_cargo_target:/flezha/_build/.target
     networks:
       - flezha_network
 
@@ -216,7 +216,7 @@ services:
     volumes:
       - socket_data:/socket_data
       - ../../:/flezha
-      - flezha_cargo_target:/flezha/target
+      - flezha_cargo_target:/flezha/_build/.target
     networks:
       - flezha_network
 

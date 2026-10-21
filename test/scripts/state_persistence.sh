@@ -227,7 +227,7 @@ build_step() {
 start_beam() {
   # `flz` is a release artifact at `_build/dev/rel/flezha/bin/flz`.
   # `mix release` does NOT build it — see `copy_cli_commands` in
-  # `mix.exs`, which only copies a pre-built `target/debug/flz`
+  # `mix.exs`, which only copies a pre-built `_build/.target/debug/flz`
   # into the release. The host's copy of that file is the one
   # exposed inside the container via the `../../:/flezha` bind mount,
   # and on a host with a newer GLIBC than the toolchain image (e.g.
@@ -235,8 +235,8 @@ start_beam() {
   # binary will run with `version GLIBC_2.39 not found`.
   #
   # So `flz` is built *inside the container*, and built BEFORE the release:
-  # `copy_cli_commands` copies whatever `target/debug/flz` holds, and the
-  # compose mounts `/flezha/target` as a named volume that starts empty, so
+  # `copy_cli_commands` copies whatever `_build/.target/debug/flz` holds, and the
+  # compose mounts `/flezha/_build/.target` as a named volume that starts empty, so
   # a release run ahead of the cargo build fails outright. Cargo writes to
   # that volume, never to the host's `target/`.
   build_step "building flz CLI inside container (matches container GLIBC)" \
