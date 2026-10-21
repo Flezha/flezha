@@ -2,29 +2,29 @@
 
 ## Purpose
 
-The relay-state-persistence capability provides agent-side, per-Cell durability for Relay state. The agent maintains an append-only write-ahead log (WAL) per Cell under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Cell reconnect, the agent assembles a `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Relay-class opt-in via runtime config or a Relay-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`cell_state_change`, `cell_state_snapshot`) flow alongside the existing protocol; no SDK or runner code outside this capability is required.
+The relay-state-persistence capability provides agent-side, per-Cell durability for Relay state. The agent maintains an append-only write-ahead log (WAL) per Cell under `storage/app/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Cell reconnect, the agent assembles a `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Relay-class opt-in via runtime config or a Relay-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`cell_state_change`, `cell_state_snapshot`) flow alongside the existing protocol; no SDK or runner code outside this capability is required.
 ## Requirements
 ### Requirement: Per-Cell append-only WAL on the agent
 
-Each Cell whose Relay has `keeps_state = true` and whose Tasklet's `Change` is not `NoChange` SHALL have a per-Cell write-ahead log on the Controller at `app_data/state/{relay_class}/{tasklet_id}/{cell_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Cell whose Relay has `keeps_state = true` and whose Tasklet's `Change` is not `NoChange` SHALL have a per-Cell write-ahead log on the Controller at `storage/app/state/{relay_class}/{tasklet_id}/{cell_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
 `seq` SHALL be strictly monotonic per Cell and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Cell; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
 
 - **Populated WAL** (`last_persisted_seq >= 0`) and not a runner-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
 - **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for a Cell the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Cell, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive a `CompactCell` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `cell_state_snapshot` establishes the baseline. The pull SHALL be retried on a bounded interval for as long as the Cell remains awaiting-baseline: a pull that fails to dispatch (for example a torn control channel answering `:no_control_channel`) MUST NOT strand the Cell, because no snapshot will arrive to clear the awaiting-baseline state and every subsequent frame would be shed indefinitely. Retries SHALL be rate-limited so a per-frame gap flood cannot fan out into unbounded concurrent pulls.
 
-A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Cell `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{runner_id}/{relay_class}/{tasklet_id}/` and atomically move its contents into `{relay_class}/{tasklet_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
+A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Cell `WalWriter`. The migrator SHALL walk every directory under `storage/app/state/` of the form `{runner_id}/{relay_class}/{tasklet_id}/` and atomically move its contents into `{relay_class}/{tasklet_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
 
 #### Scenario: WAL path uses flat layout
 
 - **WHEN** a Cell `p1` with tasklet `s1` and cell_key `k1` belonging to Relay class `MarketRelay` is running and persistence is enabled
-- **THEN** the Controller SHALL write its WAL to `app_data/state/MarketRelay/s1/k1.wal`
+- **THEN** the Controller SHALL write its WAL to `storage/app/state/MarketRelay/s1/k1.wal`
 - **AND** the path SHALL NOT contain any `runner_id` component regardless of which runner currently hosts the Relay
 
 #### Scenario: WAL allocated lazily on first append
 
 - **WHEN** the agent receives the first `cell_state_change` frame for a Cell that does not yet have a WAL file
-- **THEN** the persistence module SHALL create the directory `app_data/state/{relay}/{tasklet}/`, open the WAL file at `{cell_key}.wal` with `[:raw, :read, :write, :binary, :append]`, and start a `WalWriter` GenServer for the Cell
+- **THEN** the persistence module SHALL create the directory `storage/app/state/{relay}/{tasklet}/`, open the WAL file at `{cell_key}.wal` with `[:raw, :read, :write, :binary, :append]`, and start a `WalWriter` GenServer for the Cell
 
 #### Scenario: Strictly monotonic seq accepted in order
 
@@ -62,9 +62,9 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 
 #### Scenario: One-time migration from runner_id-keyed layout
 
-- **GIVEN** a controller running pre-change code wrote files under `app_data/state/exec-9/MarketRelay/btc/M1.wal` and `app_data/state/exec-12/PriceRelay/eth/M5.wal`
+- **GIVEN** a controller running pre-change code wrote files under `storage/app/state/exec-9/MarketRelay/btc/M1.wal` and `storage/app/state/exec-12/PriceRelay/eth/M5.wal`
 - **WHEN** the controller is upgraded and `Flezha.Boot.StatePathMigrator.migrate/0` runs at boot
-- **THEN** the files SHALL be moved to `app_data/state/MarketRelay/btc/M1.wal` and `app_data/state/PriceRelay/eth/M5.wal`
+- **THEN** the files SHALL be moved to `storage/app/state/MarketRelay/btc/M1.wal` and `storage/app/state/PriceRelay/eth/M5.wal`
 - **AND** the now-empty `exec-9/` and `exec-12/` directories SHALL be removed
 - **AND** if the migrator runs again on a subsequent boot, it SHALL skip silently because the flat layout already exists
 
@@ -560,7 +560,7 @@ back-pressure.
 
 ### Requirement: Crash-safe persistence on agent reboot
 
-On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `app_data/state/{relay}/{tasklet}/` directory and reconstruct the in-memory persistence state:
+On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `storage/app/state/{relay}/{tasklet}/` directory and reconstruct the in-memory persistence state:
 
 - For each `cell_key.wal` file: start a `WalWriter` GenServer; `WalWriter::scan_for_last_valid_seq/1` runs at `init/1` to recover `last_persisted_seq` and truncate any partial-write tail.
 - For each `cell_key.snap.{seq}` file (latest): record the `snapshot_seq` counter.
@@ -637,12 +637,12 @@ The agent SHALL expose a `flz state` CLI subcommand tree, using relay vocabulary
 
 ### Requirement: Snapshot files use flat path
 
-The Controller SHALL store snapshot files at `app_data/state/{relay_class}/{tasklet_id}/{cell_key}.snap.{seq}`. The on-disk path SHALL NOT include `runner_id`. The on-the-wire payload-id SHALL be `cell_state_snapshot`.
+The Controller SHALL store snapshot files at `storage/app/state/{relay_class}/{tasklet_id}/{cell_key}.snap.{seq}`. The on-disk path SHALL NOT include `runner_id`. The on-the-wire payload-id SHALL be `cell_state_snapshot`.
 
 #### Scenario: Snapshot path is flat
 
 - **WHEN** the Controller compacts the WAL of Cell `p1` (Relay class `MarketRelay`, tasklet `s1`, cell_key `k1`) and assigns snapshot seq=42
-- **THEN** the resulting file SHALL be at `app_data/state/MarketRelay/s1/k1.snap.42`
+- **THEN** the resulting file SHALL be at `storage/app/state/MarketRelay/s1/k1.snap.42`
 
 ### Requirement: SDK serializes Relay state on `CellState` request via the Decision-10 JSON shape
 
@@ -955,7 +955,7 @@ dispatches is asserting a coincidence of scheduling, not this requirement.
 
 ### Requirement: Per-Cell state is deleted on dynamic-mode eviction
 
-When the SDK evicts a Cell due to dynamic-mode idle-TTL eviction (see `relay-tasklet-cell-model` "Per-Tasklet idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Relay class, the SDK SHALL ship a `delete_cell_state{cell_id}` frame under the durable guarantee class, held for the next bound stream when none is bound, so the agent removes the per-Cell WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{relay}/{tasklet}/`). A subsequent input for the same key SHALL cold-start a fresh Cell (new WAL from seq 0); the SDK SHALL NOT restore the evicted Cell's state from disk.
+When the SDK evicts a Cell due to dynamic-mode idle-TTL eviction (see `relay-tasklet-cell-model` "Per-Tasklet idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Relay class, the SDK SHALL ship a `delete_cell_state{cell_id}` frame under the durable guarantee class, held for the next bound stream when none is bound, so the agent removes the per-Cell WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `storage/app/state/{relay}/{tasklet}/`). A subsequent input for the same key SHALL cold-start a fresh Cell (new WAL from seq 0); the SDK SHALL NOT restore the evicted Cell's state from disk.
 
 #### Scenario: Eviction deletes on-disk state
 - **WHEN** a persistence-enabled dynamic-mode Cell is evicted

@@ -12,7 +12,7 @@ use super::{
     Flags, INCLUDE_AUDIT, INCLUDE_AUTH, INCLUDE_CERTS, INCLUDE_DLQ, INCLUDE_PLUGINS,
     INCLUDE_SCHEDULES, INCLUDE_SOCKETS,
 };
-use crate::args::OptSpec;
+use crate::args::{app_dir, OptSpec, STORAGE_ROOT_DEFAULT};
 
 #[derive(Clone, Copy)]
 pub(super) enum ClearMode {
@@ -34,18 +34,19 @@ pub(super) enum ClearMode {
 /// a caller named and shares.
 #[derive(Clone, Copy)]
 pub(super) enum Source {
-    /// A subdirectory of the `app_data/` root this command was given. Every
-    /// entry in it is this command's.
+    /// A subdirectory of `app/` under the storage root this command was given.
+    /// Every entry in it is this command's.
     AppData(&'static str),
-    /// A subdirectory of the directory this command runs in, for the row whose
-    /// default is not under the data root: the log file's, `logs/flezha.log`.
-    /// The data root does not move it, for the Controller or for this command.
-    /// None of its entries is this command's: a directory named relative to
-    /// wherever the command runs may hold anything.
+    /// A subdirectory of the default storage root, relative to the directory
+    /// this command runs in, for the row the controller resolves from no root:
+    /// the log file's default, `storage/logs/flezha.log`. `--storage-root` does
+    /// not move it, for the Controller or for this command. None of its entries
+    /// is this command's: a directory named relative to wherever the command
+    /// runs may hold anything.
     WorkingDir(&'static str),
     /// The shared socket-directory ladder — the one implementation the
     /// Controller, every runner and `flz runner check` reach. Its answer is
-    /// frequently not under `app_data/` at all, so only the socket files
+    /// frequently not under `storage/app/` at all, so only the socket files
     /// Flezha itself creates are unlinked there.
     SocketLadder,
 }
@@ -151,7 +152,7 @@ impl Root {
 
     /// How the root reads to a caller. The socket root names the rung
     /// beside its path, so a run that cleared a runtime directory instead of
-    /// `app_data/sockets/` shows the ladder answering rather than the command
+    /// `storage/app/sockets/` shows the ladder answering rather than the command
     /// going wrong.
     pub(super) fn label(&self) -> String {
         match (&self.path, self.rung) {
@@ -169,12 +170,12 @@ pub(super) fn build_plan(flags: &Flags) -> Vec<Root> {
             |&(source, mode)| match (source, out_of_scope(mode, flags)) {
                 (Source::AppData(name), kept) => Root::planned(
                     source,
-                    Some(flags.app_data_root.join(name)),
+                    Some(app_dir(&flags.storage_root).join(name)),
                     kept.unwrap_or(Action::Clear),
                 ),
                 (Source::WorkingDir(name), kept) => Root::planned(
                     source,
-                    Some(PathBuf::from(name)),
+                    Some(Path::new(STORAGE_ROOT_DEFAULT).join(name)),
                     kept.unwrap_or(Action::Clear),
                 ),
                 // Asking the ladder establishes a directory the way a Controller
@@ -227,7 +228,7 @@ fn plan_socket_root() -> Root {
 
     // A control socket that answers is a Controller serving here — under
     // colocation, a peer, whose durable state is not under this reset's
-    // `app_data/` root and whose sockets are not this reset's to unlink.
+    // `storage/app/` root and whose sockets are not this reset's to unlink.
     let action = match &reach {
         Reach::Reachable => Action::Keep(format!(
             "{}; a serving controller's socket is not this reset's to unlink",
@@ -250,8 +251,8 @@ fn plan_socket_root() -> Root {
     }
 }
 
-pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(), FlezhaError> {
-    let root_c = canonicalize_or_self(app_data_root);
+pub(super) fn preflight_guard(plan: &[Root], app_dir: &Path) -> Result<(), FlezhaError> {
+    let root_c = canonicalize_or_self(app_dir);
     let kept: Vec<(&Root, PathBuf)> = plan
         .iter()
         .filter(|p| matches!(p.action, Action::Keep(_)))
@@ -265,7 +266,7 @@ pub(super) fn preflight_guard(plan: &[Root], app_data_root: &Path) -> Result<(),
         let Some(path) = &p.path else { continue };
         let candidate_c = canonicalize_or_self(path);
         if candidate_c == root_c {
-            return Err(path_refused(path, "the app_data root itself"));
+            return Err(path_refused(path, "the storage app directory itself"));
         }
         if cleared_paths.iter().any(|prev| prev == &candidate_c) {
             return Err(path_refused(path, "another root this run clears"));
@@ -331,7 +332,7 @@ mod tests {
 
     #[test]
     fn preflight_guard_refuses_when_root_equals_candidate() {
-        // Set up: app_data_root canonicalises to one of its candidate
+        // Set up: the app directory canonicalises to one of its candidate
         // subdir paths (via a self-symlink loop) — should refuse.
         #[cfg(unix)]
         {
@@ -340,7 +341,7 @@ mod tests {
                 std::env::temp_dir().join(format!("flz-reset-preflight-{}", std::process::id()));
             let _ = fs::remove_dir_all(&base);
             fs::create_dir_all(&base).unwrap();
-            // app_data_root = base, candidate "state" -> symlink back to base
+            // app directory = base, candidate "state" -> symlink back to base
             symlink(&base, base.join("state")).unwrap();
 
             let plan = vec![Root::planned(
@@ -373,11 +374,12 @@ mod tests {
                 i
             ));
             let _ = fs::remove_dir_all(&base);
-            fs::create_dir_all(base.join(target)).unwrap();
-            symlink(base.join(target), base.join(link)).unwrap();
+            let app = app_dir(&base);
+            fs::create_dir_all(app.join(target)).unwrap();
+            symlink(app.join(target), app.join(link)).unwrap();
             let flags = Flags {
                 included: included.to_vec(),
-                app_data_root: base.clone(),
+                storage_root: base.clone(),
                 ..plain_flags()
             };
 
@@ -385,7 +387,10 @@ mod tests {
             let _ = fs::remove_dir_all(&base);
             let err = verdict.expect_err(&format!("{} -> {} emptied a kept root", link, target));
             assert_eq!(err.code, "reset.path_refused", "{}", err);
-            assert_ne!(err.details["collides_with"], "the app_data root itself");
+            assert_ne!(
+                err.details["collides_with"],
+                "the storage app directory itself"
+            );
         }
     }
 
@@ -394,7 +399,7 @@ mod tests {
     /// one root's entries cleared from another's.
     #[test]
     fn preflight_guard_meets_the_socket_root_only_at_its_own_directory() {
-        let data = PathBuf::from("/nonexistent/flz/app_data");
+        let data = PathBuf::from("/nonexistent/flz/storage/app");
         let socket = |path: &Path, action| {
             Root::planned(Source::SocketLadder, Some(path.to_path_buf()), action)
         };
@@ -462,7 +467,7 @@ mod tests {
             included: Vec::new(),
             json: false,
             probe_timeout_ms: 0,
-            app_data_root: PathBuf::from("/nonexistent/app_data"),
+            storage_root: PathBuf::from("/nonexistent/storage"),
         }
     }
 
@@ -472,9 +477,9 @@ mod tests {
             .unwrap_or_else(|| panic!("{} is kept and the report does not name it", path.display()))
     }
 
-    /// Where a run reports the one row no flag reaches. The log file's default,
-    /// `logs/flezha.log`, is not under the data root, so its row is not either.
-    const LOG_DIR: &str = "logs";
+    /// Where a run reports the one row no flag reaches: the log file's default
+    /// directory, relative to where it runs, which `--storage-root` does not move.
+    const LOG_DIR: &str = "./storage/logs";
 
     /// Every data-root store a flag clears, with the flag that clears it.
     const OPT_IN_STORES: [(&str, &str); 6] = [
@@ -512,7 +517,7 @@ mod tests {
         let flags = plain_flags();
         let plan = build_plan(&flags);
         for (name, flag) in OPT_IN_STORES {
-            match &planned(&plan, &flags.app_data_root.join(name)).action {
+            match &planned(&plan, &app_dir(&flags.storage_root).join(name)).action {
                 Action::Keep(said) => assert_eq!(said, &format!("use {} to clear", flag)),
                 Action::Clear => panic!("a plain reset would clear {}", name),
             }
@@ -542,7 +547,7 @@ mod tests {
         for (name, _) in OPT_IN_STORES {
             assert!(
                 matches!(
-                    planned(&plan, &flags.app_data_root.join(name)).action,
+                    planned(&plan, &app_dir(&flags.storage_root).join(name)).action,
                     Action::Clear
                 ),
                 "{} is kept although its flag was given",

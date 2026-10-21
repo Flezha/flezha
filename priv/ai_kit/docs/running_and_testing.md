@@ -597,8 +597,8 @@ What is kept on disk:
 
 | What | Where |
 | --- | --- |
-| the registry: each relay's start, with its plugins | `app_data/process_hub/<hub_id>/registry.dets` |
-| each cell's log and snapshots | `app_data/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup,lineage}` |
+| the registry: each relay's start, with its plugins | `storage/app/process_hub/<hub_id>/registry.dets` |
+| each cell's log and snapshots | `storage/app/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.{wal,snap.<seq>,outbox.dedup,lineage}` |
 | a remote copy of both, unless opted out | Postgres, S3 or a path, by `FLEZHA_DURABILITY_BACKEND` |
 
 **The first recovery round is the boot gate.** Each namespace's hub waits for
@@ -665,7 +665,7 @@ boot await: recovering; unmet: durable_registry_loaded
 Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable).
 
 Turning auto-restore off takes effect on the next restart; an existing
-`app_data/process_hub/` is then ignored, and `flz reset` deletes it.
+`storage/app/process_hub/` is then ignored, and `flz reset` deletes it.
 
 The boot emits telemetry under `[:flezha, :boot, ...]`, each event with
 `hub_id` and `namespace`:
@@ -685,11 +685,11 @@ bypassed the id claim, and it logs at `error`.
 
 ## Start from a clean slate: `flz reset`
 
-`flz reset` clears a controller's durable data under `app_data/` so that it
+`flz reset` clears a controller's durable data under `storage/app/` so that it
 boots empty: every cell's log, snapshot and outbox files and the registry by
 default, and optionally the TLS material, the dead-letter queue, schedules,
 the auth store, the audit trail, installed plugins and socket files. It
-removes only the contents of each directory, never `app_data/` itself, so bind
+removes only the contents of each directory, never `storage/app/` itself, so bind
 mounts, volumes and file watchers stay valid. It clears nothing while the
 controller is up, and does not touch a remote durability backend.
 
@@ -701,16 +701,16 @@ $ flz controller start
 
 | Directory | Contents | Cleared |
 | --- | --- | --- |
-| `app_data/state/` | each cell's log, snapshot and outbox files | by default |
-| `app_data/process_hub/` | the durable registry | by default |
-| `app_data/certs/` | TLS material | `--include-certs` |
-| `app_data/dlq/` | parked dead-letter records | `--include-dlq` |
-| `app_data/schedules/` | each schedule | `--include-schedules` |
-| `app_data/auth/` | tokens, role bindings, namespaces | `--include-auth` |
-| `app_data/audit/` | the audit trail | `--include-audit` |
-| `app_data/plugins/` | installed plugins | `--include-plugins` |
+| `storage/app/state/` | each cell's log, snapshot and outbox files | by default |
+| `storage/app/process_hub/` | the durable registry | by default |
+| `storage/app/certs/` | TLS material | `--include-certs` |
+| `storage/app/dlq/` | parked dead-letter records | `--include-dlq` |
+| `storage/app/schedules/` | each schedule | `--include-schedules` |
+| `storage/app/auth/` | tokens, role bindings, namespaces | `--include-auth` |
+| `storage/app/audit/` | the audit trail | `--include-audit` |
+| `storage/app/plugins/` | installed plugins | `--include-plugins` |
 | the resolved socket directory | Flezha's own socket files | `--include-sockets` |
-| `logs/` | the controller's log file | never |
+| `storage/logs/` | the controller's log file | never |
 
 | Flag | Meaning |
 | --- | --- |
@@ -718,7 +718,7 @@ $ flz controller start
 | `--dry-run` | print the plan without touching anything; exits 0 |
 | `--include-certs`, `--include-dlq`, `--include-schedules`, `--include-auth`, `--include-audit`, `--include-plugins`, `--include-sockets` | also clear that directory, as in the table above |
 | `--all` | every `--include-` flag |
-| `--app-data-root <PATH>` | the `app_data/` root; otherwise `FLEZHA_APP_DATA_ROOT`, otherwise `./app_data` |
+| `--storage-root <PATH>` | the `storage/` root; otherwise `FLEZHA_STORAGE_ROOT`, otherwise `./storage` |
 | `--probe-timeout-ms <N>` | how long to probe for a running controller; 1000 by default |
 | `--json` | one JSON object as output (`--output json` is the same) |
 
@@ -732,16 +732,16 @@ it as written would clear what you asked to keep.
 names what a reset left behind:
 
 ```output
-cleared     ./app_data/state/                                (12 files, 4.3 MiB)
-cleared     ./app_data/process_hub/                          (2 files, 16.0 KiB)
-kept        ./app_data/certs/                                (use --include-certs to clear)
-kept        ./app_data/dlq/                                  (use --include-dlq to clear)
-kept        ./app_data/schedules/                            (use --include-schedules to clear)
-kept        ./app_data/auth/                                 (use --include-auth to clear)
-kept        ./app_data/audit/                                (use --include-audit to clear)
-kept        ./app_data/plugins/                              (use --include-plugins to clear)
+cleared     ./storage/app/state/                             (12 files, 4.3 MiB)
+cleared     ./storage/app/process_hub/                       (2 files, 16.0 KiB)
+kept        ./storage/app/certs/                             (use --include-certs to clear)
+kept        ./storage/app/dlq/                               (use --include-dlq to clear)
+kept        ./storage/app/schedules/                         (use --include-schedules to clear)
+kept        ./storage/app/auth/                              (use --include-auth to clear)
+kept        ./storage/app/audit/                             (use --include-audit to clear)
+kept        ./storage/app/plugins/                           (use --include-plugins to clear)
 kept        socket directory                                 (use --include-sockets to clear)
-kept        logs/                                            (not reset's to clear)
+kept        ./storage/logs/                                  (not reset's to clear)
 reset complete in 41 ms
 ```
 
@@ -760,16 +760,16 @@ a different node, and is not what this check protects; what a peer shares is
 the socket directory, guarded below.
 
 **What it does not find.** `flz reset` resolves each directory as
-`<app_data root>/<name>` and does not read per-store variables such as
+`<storage root>/app/<name>` and does not read per-store variables such as
 `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_DLQ_DIR`, `FLEZHA_SCHEDULE_DIR` or
-`FLEZHA_AUTHZ_DIR`: a store moved that way is neither found nor cleared. `logs/`
+`FLEZHA_AUTHZ_DIR`: a store moved that way is neither found nor cleared. `storage/logs/`
 sits where the log file's default puts it, relative to the working directory,
 so a controller started elsewhere or with `FLEZHA_LOG_PATH` logs where reset
 cannot see, and reset never empties it.
 
 **The socket directory** is resolved the way the controller and each runner
 resolve it ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md#the-socket-directory)),
-and only with `--include-sockets` or `--all`, so `--app-data-root` does not
+and only with `--include-sockets` or `--all`, so `--storage-root` does not
 move it; the summary names which rule chose the path. A controller still
 serving in that directory keeps it: reset probes the socket first, reports the
 directory `kept` and goes on with the rest. A socket nothing listens on is
@@ -790,7 +790,7 @@ reported `kept` with the reason and the exit code does not change.
   `flz auth bootstrap <token>`, above all when the reset was meant to revoke a
   leaked secret, then bind roles and issue runner credentials again
   ([`authorization.md`](authorization.md)).
-- **`--include-audit` erases the audit trail.** Copy `app_data/audit/` first if
+- **`--include-audit` erases the audit trail.** Copy `storage/app/audit/` first if
   it must be kept.
 - **`--include-plugins` removes every installed plugin.** Install them again
   after the next start.
@@ -806,7 +806,7 @@ reported `kept` with the reason and the exit code does not change.
 | --- | --- |
 | 0 | applied, or a `--dry-run` preview |
 | 1 | `reset.partial` (a directory was cleared, then a filesystem error stopped the walk) or `reset.path_unreadable` (nothing was removed) |
-| 2 | `reset.confirmation_required` (neither `--yes` nor `--dry-run`), `reset.path_refused` (an `--app-data-root` that is the root itself, or names one path twice after symlinks are resolved), or a `usage.*` refusal |
+| 2 | `reset.confirmation_required` (neither `--yes` nor `--dry-run`), `reset.path_refused` (an `--storage-root` that is the root itself, or names one path twice after symlinks are resolved), or a `usage.*` refusal |
 | 6 | `reset.controller_running` |
 
 On an error, the directories not reached are reported as
@@ -818,12 +818,12 @@ error: flz reset printed its plan and cleared nothing: pass --yes to apply it, o
 hint: flz reset --yes
 ```
 
-A missing root is success: `flz reset --yes` with no `app_data/` exits 0. In
+A missing root is success: `flz reset --yes` with no `storage/app/` exits 0. In
 CI, `flz reset --dry-run --json` modifies nothing and does not need the
 controller down, so it serves as a starting-state check. Back up first when in
-doubt: `tar -czf backup.tgz app_data/`.
+doubt: `tar -czf backup.tgz storage/app/`.
 
-In Docker Compose, a bind-mounted `app_data/` survives and only its contents
+In Docker Compose, a bind-mounted `storage/app/` survives and only its contents
 go:
 
 ```sh

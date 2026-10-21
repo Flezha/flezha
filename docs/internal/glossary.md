@@ -238,7 +238,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   before the cell advances; a **credit park** waits for a grant; a **key-group park** refuses a
   mis-routed key; an **`IterPark`** asks for an idle instance of either run to sleep.
 - **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
-  (`Flezha.Dlq.Store`, `app_data/dlq/<relay_class>/<tasklet_id>/`): retry, park durably,
+  (`Flezha.Dlq.Store`, `storage/app/dlq/<relay_class>/<tasklet_id>/`): retry, park durably,
   advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
   `flz dlq list|show|replay|drop`; a steps relay parks only an unreadable message and a
   failed turn of a `per_input` keep-progress loop, and otherwise aborts and compensates. Once an
@@ -431,7 +431,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   state belongs to one namespace (`<state_root>/<namespace>/<class>/`): recorded at bind,
   derivable from disk, refused on conflict; a class under `_system` is adopted by the first claimant.
 - **Break-glass (emergency rebootstrap)** — with the controller stopped, `flz auth rebootstrap`
-  writes `app_data/auth/REBOOTSTRAP`; the next boot unbinds the stale `admin@_system`, revokes
+  writes `storage/app/auth/REBOOTSTRAP`; the next boot unbinds the stale `admin@_system`, revokes
   its tokens, re-enters the bootstrap flow and emits an auditable `:rebootstrap_recovery` event.
 - **Audit log** — the durable JSONL record of every authorized control-plane action
   (`Flezha.Service.AuditLog`, `flz audit list|read|tail|stats|rotate`).

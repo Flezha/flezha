@@ -85,7 +85,7 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
   # ProcessHub keeps a hub's declared list beside its registry file, and an
   # `:ets` registry keeps it in memory only, so a restarted test hub would lose
   # it. Naming the registry file under this project's hub root keeps both files
-  # inside `app_data/`, where `stop_hub/1` and `flz reset` can reach them.
+  # inside `storage/app/`, where `stop_hub/1` and `flz reset` can reach them.
   defp registry_backend(_hub_id, false), do: :ets
   defp registry_backend(hub_id, _recovery), do: {:durable_ets, [path: registry_path(hub_id)]}
 

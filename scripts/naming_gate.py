@@ -159,7 +159,7 @@ def carried_files():
 # A disk walk has to name them; `git ls-files` never lists them at all.
 UNWALKED_DIRS = {
     ".git", "_build", "deps", "target", "node_modules", "vendor", ".venv",
-    "app_data", "dist", "__pycache__", ".elixir_ls", "cover",
+    "storage", "dist", "__pycache__", ".elixir_ls", "cover",
 }
 
 

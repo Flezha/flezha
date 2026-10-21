@@ -14,7 +14,7 @@ use super::plan::{canonicalize_or_self, Source};
 pub(super) fn measure_and_clear(
     root: &Path,
     source: Source,
-    app_data_root: &Path,
+    app_dir: &Path,
     apply: bool,
 ) -> (io::Result<()>, u64, u64) {
     let entries = match entries_to_clear(root, source) {
@@ -28,7 +28,7 @@ pub(super) fn measure_and_clear(
     };
 
     let unlinked = if apply {
-        unlink_all(&entries, app_data_root, root)
+        unlink_all(&entries, app_dir, root)
     } else {
         Ok(())
     };
@@ -79,9 +79,9 @@ fn stats_of(entries: &[PathBuf]) -> io::Result<(u64, u64)> {
     Ok((files, bytes))
 }
 
-fn unlink_all(entries: &[PathBuf], app_data_root: &Path, root: &Path) -> io::Result<()> {
+fn unlink_all(entries: &[PathBuf], app_dir: &Path, root: &Path) -> io::Result<()> {
     for entry_path in entries {
-        if let Err(msg) = assert_safe_to_unlink(entry_path, app_data_root, root) {
+        if let Err(msg) = assert_safe_to_unlink(entry_path, app_dir, root) {
             return Err(io::Error::other(msg));
         }
 
@@ -95,17 +95,13 @@ fn unlink_all(entries: &[PathBuf], app_data_root: &Path, root: &Path) -> io::Res
     Ok(())
 }
 
-fn assert_safe_to_unlink(
-    entry: &Path,
-    app_data_root: &Path,
-    cleared_root: &Path,
-) -> Result<(), String> {
+fn assert_safe_to_unlink(entry: &Path, app_dir: &Path, cleared_root: &Path) -> Result<(), String> {
     let entry_c = canonicalize_or_self(entry);
-    let root_c = canonicalize_or_self(app_data_root);
+    let root_c = canonicalize_or_self(app_dir);
     let cleared_c = canonicalize_or_self(cleared_root);
     if entry_c == root_c {
         return Err(format!(
-            "refusing to unlink configured app_data root itself: {}",
+            "refusing to unlink configured storage app directory itself: {}",
             entry.display()
         ));
     }
@@ -196,7 +192,7 @@ mod tests {
         std::fs::write(tmp.join("user-notes.txt"), vec![0u8; 99]).unwrap();
 
         let (result, files, _bytes) =
-            measure_and_clear(&tmp, Source::SocketLadder, &tmp.join("app_data"), APPLY);
+            measure_and_clear(&tmp, Source::SocketLadder, &tmp.join("app"), APPLY);
         assert!(result.is_ok());
         assert_eq!(files, 2, "the count is of what the unlink removed");
 

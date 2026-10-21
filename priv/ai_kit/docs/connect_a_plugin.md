@@ -19,8 +19,8 @@ flowchart LR
     E --> W["file plugin<br/>writer"] --> O(["echo-out.txt"])
 ```
 
-File plugins read and write only inside one folder, `app_data/files` under the
-directory the controller was started from (`/flezha/app_data/files` in the
+File plugins read and write only inside one folder, `storage/app/files` under the
+directory the controller was started from (`/flezha/storage/app/files` in the
 Docker volume). Run the commands below from the directory the controller was
 started in.
 
@@ -69,7 +69,7 @@ Delivered to 'my_echo'.
 ```
 
 ```sh
-$ cat app_data/files/echo-out.txt
+$ cat storage/app/files/echo-out.txt
 ```
 
 ```output
@@ -104,11 +104,11 @@ itself. `--Xchannel_in` names the entry channel each line arrives on.
 > {: .step}
 
 ```sh
-$ echo "from a file" >> app_data/files/echo-in.txt
+$ echo "from a file" >> storage/app/files/echo-in.txt
 ```
 
 ```sh
-$ cat app_data/files/echo-out.txt
+$ cat storage/app/files/echo-out.txt
 ```
 
 ```output

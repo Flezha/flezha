@@ -7,7 +7,7 @@ defmodule Flezha.State.Paths do
   All persistence files live under
   `<state_root>/<namespace>/<relay_class>/<tasklet_id>/`, where
   `<state_root>` is the `:flezha, :state_root` application env (set by tests
-  for isolation), else `app_data/state`. The user-facing knob is the
+  for isolation), else `storage/app/state`. The user-facing knob is the
   `FLEZHA_STATE_DIR` OS env, which fills that key once at boot in
   `config/runtime.exs`; nothing reads the variable afterwards, so a test that
   sets it in a live BEAM has moved no writer. `namespace_dir/1` and
@@ -81,7 +81,7 @@ defmodule Flezha.State.Paths do
   names a different tree from every working directory, so the advisory lock,
   the refusal it raises, `Flezha.Boot.StateRootLock.held/0` and every WAL,
   snapshot and outbox path built from it would each be talking about something
-  else. Expanding is not relocating: `app_data/state` still resolves against the
+  else. Expanding is not relocating: `storage/app/state` still resolves against the
   working directory the controller was started from, which is why the boot says
   which directory that turned out to be.
   """

@@ -9,10 +9,10 @@ pub(crate) const AUDIT_READ: Help = r#"With --json the matching records are one 
 pub(crate) const AUDIT_TAIL: Help = r#"With --json each record is one JSON line."#;
 
 pub(crate) const AUTH: Help = r#"rebootstrap is break-glass: it recovers a lost admin@_system. Against a running
-controller it writes app_data/auth/bootstrap.token and prints it; against a
-stopped one it writes app_data/auth/REBOOTSTRAP for the next boot.
+controller it writes storage/app/auth/bootstrap.token and prints it; against a
+stopped one it writes storage/app/auth/REBOOTSTRAP for the next boot.
 
-Break-glass needs write access to app_data/auth/ and nothing else, which is
+Break-glass needs write access to storage/app/auth/ and nothing else, which is
 already enough to stop the controller: a claim against a running controller
 therefore grants no authority filesystem access does not already carry. It
 unbinds every admin@_system and revokes its _system admin tokens before binding
@@ -36,7 +36,7 @@ pub(crate) const CONTROLLER_MEM_TOP: Help = r#"OUTPUT (default text format):
     initial call / :message_queue_len / :heap_size / :total_heap_size.
 
     ETS tables sorted by :ets.info(tab, :memory) (bytes).
-    DETS files under app_data/process_hub/ sorted by file size.
+    DETS files under storage/app/process_hub/ sorted by file size.
     :recon_alloc.memory(:allocated_types) allocator breakdown."#;
 
 pub(crate) const CONTROLLER_START: Help = r#"EXAMPLES:
@@ -283,10 +283,10 @@ EXAMPLES:
 
 pub(crate) const RESET: Help = r#"DESCRIPTION:
     By default clears:
-        app_data/state/         (per-Cell WAL/snapshot/outbox)
-        app_data/process_hub/   (ProcessHub durable registry)
+        storage/app/state/        (per-Cell WAL/snapshot/outbox)
+        storage/app/process_hub/  (ProcessHub durable registry)
 
-    Clearing app_data/auth/ removes every token (runner credentials
+    Clearing storage/app/auth/ removes every token (runner credentials
     included), every role binding and every namespace but _system. With
     authorization on and no remote durability backend, the next start
     writes a fresh bootstrap token. Until it is claimed, administration verbs
@@ -294,17 +294,17 @@ pub(crate) const RESET: Help = r#"DESCRIPTION:
     any namespace but _system it names: claim it at once.
 
     Never cleared, and reported as kept:
-        logs/
+        storage/logs/
 
-    Every app_data/ root is <data root>/<name>: a store moved by its own
+    Every store is <storage root>/app/<name>: a store moved by its own
     variable (FLEZHA_DLQ_DIR, FLEZHA_AUTHZ_DIR, ...) is neither found nor
-    cleared. logs/ is the log file's default directory, in the working
-    directory, and --app-data-root does not move it.
+    cleared. storage/logs/ is the log file's default directory, in the
+    working directory, and --storage-root does not move it.
 
     The socket directory is resolved through the same ladder the Controller
     and its runners walk -- $FLEZHA_SOCKET_FILES_PATH, else
-    $XDG_RUNTIME_DIR/flezha, else /run/flezha, else app_data/sockets -- so it
-    is frequently not under app_data/ at all. Only the socket files Flezha
+    $XDG_RUNTIME_DIR/flezha, else /run/flezha, else storage/app/sockets -- so it
+    is frequently not under storage/app/ at all. Only the socket files Flezha
     itself creates are unlinked there, and a directory a Controller is still
     serving in is kept.
 
@@ -314,7 +314,7 @@ EXIT CODES:
         some roots were cleared (reset.partial)
     2   Invalid usage: missing --yes without --dry-run
         (reset.confirmation_required), conflicting flags, or a path it refuses
-        to clear, such as the app_data root itself (reset.path_refused)
+        to clear, such as the storage app directory itself (reset.path_refused)
     6   Refused: the Controller is up (reset.controller_running)
 
 EXAMPLES:

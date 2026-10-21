@@ -170,6 +170,6 @@ jobs:
         with:
           name: e2e-app-data-${{ matrix.runtime }}-w${{ matrix.workers }}
           path: |
-            app_data/
+            storage/app/
           retention-days: 7
           if-no-files-found: ignore

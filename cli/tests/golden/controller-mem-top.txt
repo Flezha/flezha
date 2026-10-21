@@ -14,5 +14,5 @@ OUTPUT (default text format):
     initial call / :message_queue_len / :heap_size / :total_heap_size.
 
     ETS tables sorted by :ets.info(tab, :memory) (bytes).
-    DETS files under app_data/process_hub/ sorted by file size.
+    DETS files under storage/app/process_hub/ sorted by file size.
     :recon_alloc.memory(:allocated_types) allocator breakdown.

@@ -40,13 +40,13 @@ unhealthy container. A Compose service waits for it with
 
 ## What to mount
 
-One volume at `/flezha/app_data` holds every durable tree the controller owns. A volume
+One volume at `/flezha/storage/app` holds every durable tree the controller owns. A volume
 per tree works too, but then every tree needs one: a tree left without a volume is written
 into the container and removed with it. The socket directory gets a volume of its own
 when a runner container shares it
 ([Connecting a runner](connecting_a_runner.md#the-socket-directory)).
 
-The image creates `/flezha/app_data` and the directories under it owned by uid 1000, and a
+The image creates `/flezha/storage/app` and the directories under it owned by uid 1000, and a
 new named volume takes over that owner. Two cases do not:
 
 - **A named volume over a path the image does not have** is created owned by root, and
@@ -55,7 +55,7 @@ new named volume takes over that owner. Two cases do not:
 - **A bind mount** keeps the host directory's owner, which has to be uid 1000 or a group
   that uid belongs to.
 
-With `/flezha/app_data` on a volume, the container also runs with a read-only root
+With `/flezha/storage/app` on a volume, the container also runs with a read-only root
 filesystem (`--read-only`, or `read_only: true` in Compose).
 
 ## A controller and a runner in Compose
@@ -73,15 +73,15 @@ services:
     ports:
       - "127.0.0.1:8080:8080"              # the gateway's HTTP port, on this machine only
     volumes:
-      - app_data:/flezha/app_data
-      - sockets:/flezha/app_data/sockets
+      - app_data:/flezha/storage/app
+      - sockets:/flezha/storage/app/sockets
 
   runner:
     build: .
     environment:
-      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets
+      FLEZHA_SOCKET_FILES_PATH: /flezha/storage/app/sockets
     volumes:
-      - sockets:/flezha/app_data/sockets
+      - sockets:/flezha/storage/app/sockets
     depends_on:
       controller:
         condition: service_healthy
@@ -147,7 +147,7 @@ The release's VM flags are in the image. `ERL_FLAGS` overrides them without a re
 ```sh
 $ docker run -d --name flezha-controller \
   -e ERL_FLAGS="+S 4:4" \
-  -v flezha_data:/flezha/app_data \
+  -v flezha_data:/flezha/storage/app \
   flezha/flezha:0.1.0
 ```
 

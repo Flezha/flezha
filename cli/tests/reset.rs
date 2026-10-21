@@ -43,7 +43,11 @@ const OPT_IN: &[(&str, &str)] = &[
 const NOT_RESETS: &str = "not reset's to clear";
 
 /// The log file's default, relative to the directory the command runs in.
-const LOG_FILE: &str = "logs/flezha.log";
+const LOG_FILE: &str = "storage/logs/flezha.log";
+
+/// How a run names the log file's directory: the default storage root's, which
+/// `--storage-root` does not move.
+const LOG_DIR: &str = "./storage/logs";
 
 /// A controller that died hard: a socket file nothing is listening on. It has
 /// to be a real bound socket — a regular file with the same name probes
@@ -82,15 +86,19 @@ fn populate_socket_dir(dir: &Path) {
     fs::write(dir.join(USER_FILE), vec![0u8; 5]).unwrap();
 }
 
+/// `storage` is the root the command is given; `root` is `app/` under it,
+/// where every store sits.
 struct Fixture {
     _tmp: TempDir,
+    storage: PathBuf,
     root: PathBuf,
 }
 
 impl Fixture {
     fn populated() -> Self {
         let tmp = TempDir::new().expect("tempdir");
-        let root = tmp.path().to_path_buf();
+        let storage = tmp.path().to_path_buf();
+        let root = storage.join("app");
         for name in DATA_ROOTS {
             let sub = root.join(name);
             fs::create_dir_all(sub.join("nested")).unwrap();
@@ -98,13 +106,23 @@ impl Fixture {
             fs::write(sub.join("nested/b.bin"), vec![0u8; 13]).unwrap();
         }
         populate_socket_dir(&root.join("sockets"));
-        Fixture { _tmp: tmp, root }
+        Fixture {
+            _tmp: tmp,
+            storage,
+            root,
+        }
     }
 
     fn empty() -> Self {
         let tmp = TempDir::new().expect("tempdir");
-        let root = tmp.path().to_path_buf();
-        Fixture { _tmp: tmp, root }
+        let storage = tmp.path().to_path_buf();
+        let root = storage.join("app");
+        fs::create_dir_all(&root).unwrap();
+        Fixture {
+            _tmp: tmp,
+            storage,
+            root,
+        }
     }
 
     /// The socket root the ladder resolves for these cases: the explicit rung,
@@ -117,8 +135,8 @@ impl Fixture {
     fn cmd(&self) -> Command {
         let mut c = Command::new(FLZ_BIN);
         c.arg("reset")
-            .arg("--app-data-root")
-            .arg(&self.root)
+            .arg("--storage-root")
+            .arg(&self.storage)
             .env("FLEZHA_RESET_PROBE_OVERRIDE", "down")
             .env("FLEZHA_SOCKET_FILES_PATH", self.socket_dir());
         c
@@ -199,7 +217,7 @@ fn all_flag_clears_every_root() {
         assert!(dir_is_empty(&f.root.join(name)), "{} should be empty", name);
     }
     assert!(log.exists(), "the log directory is not reset's to clear");
-    assert_kept(&stdout_of(&out), "logs", NOT_RESETS);
+    assert_kept(&stdout_of(&out), LOG_DIR, NOT_RESETS);
     assert!(!f.socket_dir().join(CONTROL_SOCKET).exists());
     assert!(!f.socket_dir().join(STREAM_SOCKET).exists());
 }
@@ -228,8 +246,8 @@ fn each_store_flag_clears_its_own_store_and_no_other() {
 }
 
 /// Every path a plain run keeps, with its reason. The log directory is named
-/// where the log file's default puts it, `logs/`, which is not under the data
-/// root.
+/// where the log file's default puts it, `./storage/logs`, which the storage
+/// root does not move.
 fn kept_by_a_plain_run(f: &Fixture) -> Vec<(String, String)> {
     let mut kept: Vec<(String, String)> = OPT_IN
         .iter()
@@ -238,7 +256,7 @@ fn kept_by_a_plain_run(f: &Fixture) -> Vec<(String, String)> {
             (path, format!("use {} to clear", flag))
         })
         .collect();
-    kept.push(("logs".to_string(), NOT_RESETS.to_string()));
+    kept.push((LOG_DIR.to_string(), NOT_RESETS.to_string()));
     kept
 }
 
@@ -354,7 +372,7 @@ fn yes_and_dry_run_together_is_usage_error() {
 #[test]
 fn path_equality_guard_rejects_symlink_loop() {
     let f = Fixture::empty();
-    // Create a symlink loop: app_data_root/state -> app_data_root itself.
+    // Create a symlink loop: app/state -> app itself.
     std::os::unix::fs::symlink(&f.root, f.root.join("state")).unwrap();
     let out = f.cmd().arg("--yes").output().unwrap();
     assert_eq!(out.status.code(), Some(2));
@@ -381,8 +399,8 @@ fn probe_up_refuses_with_exit_6() {
     let f = Fixture::populated();
     let mut cmd = Command::new(FLZ_BIN);
     cmd.arg("reset")
-        .arg("--app-data-root")
-        .arg(&f.root)
+        .arg("--storage-root")
+        .arg(&f.storage)
         .arg("--yes")
         .env("FLEZHA_RESET_PROBE_OVERRIDE", "up");
     let out = cmd.output().unwrap();
@@ -463,7 +481,7 @@ fn human_output_includes_summary_line() {
 // --- the ladder decides which socket directory is cleared -----------------
 
 #[test]
-fn the_per_user_runtime_directory_is_cleared_not_app_data_sockets() {
+fn the_per_user_runtime_directory_is_cleared_not_storage_sockets() {
     let f = Fixture::populated();
     let xdg = TempDir::new().unwrap();
     let live = xdg.path().join("flezha");
@@ -483,7 +501,7 @@ fn the_per_user_runtime_directory_is_cleared_not_app_data_sockets() {
     );
     assert!(
         f.socket_dir().join(CONTROL_SOCKET).exists(),
-        "app_data/sockets/ is not the socket root when a later rung answered"
+        "storage/app/sockets/ is not the socket root when a later rung answered"
     );
 
     let text = stdout_of(&out);
@@ -521,7 +539,7 @@ fn the_explicit_variable_wins_over_every_later_rung() {
 }
 
 #[test]
-fn app_data_root_does_not_move_the_socket_directory() {
+fn storage_root_does_not_move_the_socket_directory() {
     let f = Fixture::populated();
     let xdg = TempDir::new().unwrap();
     let live = xdg.path().join("flezha");
@@ -535,7 +553,7 @@ fn app_data_root_does_not_move_the_socket_directory() {
         .unwrap();
     assert!(out.status.success(), "{}", stdout_of(&out));
 
-    // The `app_data/` roots moved with the flag; the socket root did not.
+    // The stores moved with the flag; the socket root did not.
     assert!(dir_is_empty(&f.root.join("state")));
     assert!(dir_is_empty(&f.root.join("process_hub")));
     assert!(!live.join(CONTROL_SOCKET).exists());
@@ -552,7 +570,7 @@ fn a_resolution_refusal_keeps_the_socket_root_and_clears_the_rest() {
     let xdg = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     let first = xdg.path().join("flezha");
-    let second = cwd.path().join("app_data/sockets");
+    let second = cwd.path().join("storage/app/sockets");
     fs::create_dir_all(&first).unwrap();
     fs::create_dir_all(&second).unwrap();
     let _peers = [
@@ -705,7 +723,7 @@ fn the_socket_root_names_its_rung_in_the_dry_run_preview() {
     assert!(live.join(CONTROL_SOCKET).exists());
 }
 
-/// The last rung of the ladder is `app_data/sockets` relative to the working
+/// The last rung of the ladder is `storage/app/sockets` relative to the working
 /// directory, so a case about what the run creates has to own its cwd.
 #[test]
 fn no_socket_directory_is_established_by_a_run_that_clears_one() {
@@ -730,7 +748,7 @@ fn no_socket_directory_is_established_by_a_run_that_clears_one() {
         stdout_of(&out)
     );
     assert!(
-        !cwd.path().join("app_data").exists(),
+        !cwd.path().join("storage").exists(),
         "a preview established the repository rung: {}",
         stdout_of(&out)
     );
@@ -765,7 +783,7 @@ fn a_rung_a_peer_is_listening_in_is_what_the_run_names() {
     );
     assert!(text.contains("controller reachable"), "{}", text);
     assert!(
-        !cwd.path().join("app_data").exists(),
+        !cwd.path().join("storage").exists(),
         "the run stepped over the peer and established a rung of its own: {}",
         text
     );

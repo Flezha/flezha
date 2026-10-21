@@ -4,7 +4,7 @@ defmodule FlezhaTest.Layout.TableTest do
 
   The point of a declaration is that nothing bypasses it, so these cases read
   the source tree as well as the table: a subtree with a private root, or a
-  second module spelling `app_data/<x>`, is a finding here rather than a
+  second module spelling `storage/app/<x>`, is a finding here rather than a
   directory a user discovers is not cleared.
   """
   use ExUnit.Case, async: true
@@ -62,7 +62,7 @@ defmodule FlezhaTest.Layout.TableTest do
     end
 
     test "the socket directory in use is not under the data root" do
-      # The ladder answers with a runtime directory, and `--app-data-root`
+      # The ladder answers with a runtime directory, and `--storage-root`
       # must not move it. Were it a subtree, a reset of the data root would
       # take a live controller's control socket with it.
       refute String.starts_with?(
@@ -90,7 +90,7 @@ defmodule FlezhaTest.Layout.TableTest do
   end
 
   describe "no bypass" do
-    test "no module outside the table spells an app_data subtree literal" do
+    test "no module outside the table spells a storage subtree literal" do
       offenders =
         SourceWalk.files(["lib"], [".ex"])
         |> Enum.reject(&(&1 in ["lib/flezha/layout/table.ex", "lib/flezha/config/keys.ex"]))
@@ -98,7 +98,7 @@ defmodule FlezhaTest.Layout.TableTest do
           file
           |> SourceWalk.read()
           |> strip_prose()
-          |> String.match?(~r|app_data/[a-z_]+|)
+          |> String.match?(~r|storage/app/[a-z_]+|)
         end)
 
       assert offenders == [],

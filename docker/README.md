@@ -25,9 +25,9 @@ carries both. Per-Cell state comes from the WAL and snapshot files beside it.
 Two directories must therefore survive a container restart, and the prod
 `docker-compose.yml` gives each a named volume:
 
-- `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` (`/flezha/app_data/process_hub`,
+- `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` (`/flezha/storage/app/process_hub`,
   volume `flezha_process_hub`) — ProcessHub's persistent registry.
-- `FLEZHA_STATE_DIR` (`/flezha/app_data/state`, volume `flezha_state`) —
+- `FLEZHA_STATE_DIR` (`/flezha/storage/app/state`, volume `flezha_state`) —
   per-Cell WAL and snapshot files.
 
 If you override either path, make sure the new location is (a) persistent

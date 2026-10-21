@@ -556,7 +556,7 @@ holds. The image itself SHALL NOT change with the plugin set.
 #### Scenario: A declared list is fetched before start
 
 - **GIVEN** the prod image run with `FLEZHA_PLUGINS` naming the example package and a named
-  volume on `/flezha/app_data/plugins`
+  volume on `/flezha/storage/app/plugins`
 - **WHEN** the container starts
 - **THEN** the entrypoint SHALL log the sync, the archive SHALL be in the volume before
   `bin/flzvm start` runs, and `flz plugin list --installed` SHALL show the package loaded
@@ -571,7 +571,7 @@ holds. The image itself SHALL NOT change with the plugin set.
 #### Scenario: A derived image needs no sync
 
 - **GIVEN** an image built `FROM` the prod image that copies the example archive into
-  `/flezha/app_data/plugins/`, run with no volume on that path and no `FLEZHA_PLUGINS`
+  `/flezha/storage/app/plugins/`, run with no volume on that path and no `FLEZHA_PLUGINS`
 - **WHEN** the container starts
 - **THEN** the controller SHALL load the package
 

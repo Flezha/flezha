@@ -25,9 +25,9 @@ data:
   # The address the controller LISTENS on. A runner's dial list is
   # FLEZHA_QUIC_ADDRESSES, set per runner pod.
   FLEZHA_QUIC_LISTEN_ADDRESS: "0.0.0.0:4433"
-  FLEZHA_CA_CERT_PATH: "/flezha/app_data/certs/ca.pem"
-  FLEZHA_SERVER_CERT_PATH: "/flezha/app_data/certs/server.pem"
-  FLEZHA_SERVER_KEY_PATH: "/flezha/app_data/certs/server.key"
+  FLEZHA_CA_CERT_PATH: "/flezha/storage/app/certs/ca.pem"
+  FLEZHA_SERVER_CERT_PATH: "/flezha/storage/app/certs/server.pem"
+  FLEZHA_SERVER_KEY_PATH: "/flezha/storage/app/certs/server.key"
   FLEZHA_LOG_PATH: "/var/log/flezha/flezha.log"
   # auto-restore-on-boot. ProcessHub's persistent registry lives under
   # FLEZHA_PROCESS_HUB_REGISTRY_ROOT, which must be mounted from
@@ -36,7 +36,7 @@ data:
   FLEZHA_BOOT_REPLAY_TIMEOUT_MS: "60000"
   FLEZHA_PROCESS_HUB_REGISTRY_ROOT: "/var/lib/flezha/process_hub"
   # Every durable path must live on the mounted volume. These default to
-  # `app_data/*` relative to the image's working dir, which under
+  # `storage/app/*` relative to the image's working dir, which under
   # `readOnlyRootFilesystem: true` is unwritable — and, before that, was
   # merely ephemeral: state written there was silently lost on every restart.
   FLEZHA_STATE_DIR: "/var/lib/flezha/state"

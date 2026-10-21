@@ -22,7 +22,7 @@ pub const XDG_RUNTIME_VAR: &str = "XDG_RUNTIME_DIR";
 /// System-wide runtime directory, for a controller running as a service.
 pub const RUN_CANDIDATE: &str = "/run/flezha";
 /// The repository fallback, so the development loop needs no configuration.
-pub const REPOSITORY_CANDIDATE: &str = "app_data/sockets";
+pub const REPOSITORY_CANDIDATE: &str = "storage/app/sockets";
 
 const CONTROL_SOCKET_FILE: &str = "runner_control_channel.sock";
 /// A per-runner data socket is `<stream type>_stream_<id field>.sock`.

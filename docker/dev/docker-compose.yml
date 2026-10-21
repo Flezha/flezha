@@ -16,7 +16,7 @@ services:
     stop_signal: SIGTERM
     stop_grace_period: 75s
     environment:
-      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_SOCKET_FILES_PATH: /flezha/storage/app/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
       FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}
@@ -39,8 +39,8 @@ services:
       # and the container never needs root to fix it. Contents still build on
       # first `up`. Source changes are reflected immediately via the
       # bind mount (../../:/flezha) — this single bind also covers ProcessHub's
-      # persistent registry (`app_data/process_hub/`), per-Cell WAL files
-      # (`app_data/state/`), and the plugin install root (`app_data/plugins/`).
+      # persistent registry (`storage/app/process_hub/`), per-Cell WAL files
+      # (`storage/app/state/`), and the plugin install root (`storage/app/plugins/`).
       - socket_data:/socket_data
       - ../../:/flezha
       - flezha_build:/flezha/_build
@@ -195,7 +195,7 @@ services:
       controller:
         condition: service_started
     environment:
-      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
+      FLEZHA_SOCKET_FILES_PATH: /flezha/storage/app/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       # Demo namespace used by the connection-healing integration test in
       # test/scripts/connection_healing.sh — keep in sync.
@@ -208,7 +208,7 @@ services:
       - sh
       - -c
       - |
-        until [ -S /flezha/app_data/sockets/runner_control_channel.sock ]; do
+        until [ -S /flezha/storage/app/sockets/runner_control_channel.sock ]; do
           echo "[rust] waiting for controller control socket..."
           sleep 1
         done

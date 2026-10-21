@@ -30,16 +30,16 @@ Each knob's default and precedence are its row in
 [Controller environment variables](environment_variables.md); this section
 states only which subtrees exist and what reset does with them. `flz reset`
 reports every row, the `never` row as kept, and reads none of these knobs but the
-ladder's: it clears `<app_data root>/dlq`, not a directory `FLEZHA_DLQ_DIR`
+ladder's: it clears `<storage root>/app/dlq`, not a directory `FLEZHA_DLQ_DIR`
 moved it to. `--all` sets every flag in the table, so it also removes every
 credential and erases the audit trail; see [`running_and_testing.md`](../topics/core/running_and_testing.md)
 for the window until the fresh bootstrap token is claimed.
 Two rows are not subdirectories of the data root. `sockets` is resolved by
 the ladder described under
 [the socket-directory ladder](#the-socket-directory-ladder) below, is frequently outside
-`app_data/` altogether, and `--app-data-root` does not move it. `logs` defaults
-to `logs/`, relative to the working directory, and the data root does not move
-it either.
+`storage/app/` altogether, and `--storage-root` does not move it. `logs` defaults
+to `storage/logs/`, relative to the working directory, and `--storage-root` does
+not move it either.
 
 ## The socket-directory ladder
 
@@ -54,7 +54,7 @@ setting. The candidates, in order:
 | 1 | `$FLEZHA_SOCKET_FILES_PATH` | whenever it is set — **used outright, with no fallback to any later candidate** |
 | 2 | `$XDG_RUNTIME_DIR/flezha` | when `XDG_RUNTIME_DIR` is set (every systemd and desktop session sets it) |
 | 3 | `/run/flezha` | a controller running as a system service |
-| 4 | `app_data/sockets` | the repository, so the development loop needs no configuration |
+| 4 | `storage/app/sockets` | the repository, so the development loop needs no configuration |
 
 The **controller** takes the first candidate it can create, stepping over one
 another controller is already listening in — taking that directory would wipe a
@@ -72,7 +72,7 @@ reported absolutely, whichever candidate produced it.
 
 Two consequences worth knowing:
 
-- Sockets are runtime state, so they are no longer under `app_data/` by
+- Sockets are runtime state, so they are no longer under `storage/app/` by
   default — that directory holds certificates, credentials and durable state.
 - `$XDG_RUNTIME_DIR` is per user, so the zero-configuration case is
   same-user. Across users, set `FLEZHA_SOCKET_FILES_PATH` explicitly on both

@@ -29,8 +29,8 @@ services:
       # every node forms one. There is deliberately no committed default.
       RELEASE_COOKIE: "${RELEASE_COOKIE:-}"
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
-      FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
-      FLEZHA_LOG_PATH: /flezha/app_data/logs/flezha.log
+      FLEZHA_SOCKET_FILES_PATH: /flezha/storage/app/sockets/
+      FLEZHA_LOG_PATH: /flezha/storage/logs/flezha.log
       FLEZHA_LOG_LEVEL: ${FLEZHA_LOG_LEVEL:-info}
       FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
       FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS: ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS:-60000}
@@ -45,15 +45,15 @@ services:
         soft: 65536
         hard: 65536
     volumes:
-      - flezha_sockets:/flezha/app_data/sockets
-      - flezha_data:/flezha/app_data/data
-      - flezha_certs:/flezha/app_data/certs
-      - flezha_logs:/flezha/app_data/logs
+      - flezha_sockets:/flezha/storage/app/sockets
+      - flezha_data:/flezha/storage/app/data
+      - flezha_certs:/flezha/storage/app/certs
+      - flezha_logs:/flezha/storage/logs
       # ProcessHub's persistent registry (auto-restore-on-boot) and
       # per-Cell WAL files. Must survive container restarts.
-      - flezha_state:/flezha/app_data/state
-      - flezha_process_hub:/flezha/app_data/process_hub
-      - flezha_plugins:/flezha/app_data/plugins
+      - flezha_state:/flezha/storage/app/state
+      - flezha_process_hub:/flezha/storage/app/process_hub
+      - flezha_plugins:/flezha/storage/app/plugins
     networks:
       - flezha_network
 

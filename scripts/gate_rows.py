@@ -133,7 +133,7 @@ GATES = (
     {"id": "formatters", "group": "format",
      "argv": ["scripts/format-apply.sh", "--check"]},
     # `reuse lint-file` over git-listed paths: a full `reuse lint` walks the
-    # tree and chokes on the stale test sockets under app_data/, which git never
+    # tree and chokes on the stale test sockets under storage/app/, which git never
     # lists. xargs collapses every status from 1 to 125 into 123, which alone
     # would make a reuse crash and a file with no licence header the same
     # number, so the wrapper keeps reuse's own 1 and turns every other failure

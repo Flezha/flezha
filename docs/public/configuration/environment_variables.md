@@ -24,7 +24,7 @@ controller's machine: both sides find the socket directory on their own, by the
 [socket-directory ladder](files_and_sockets.md#the-socket-directory-ladder).
 QUIC lets runners on other machines connect over the network; it is
 [experimental: quic](../publishing/maturity.md#quic), and on its first start the controller generates the self-signed
-certificates it needs under `app_data/certs`.
+certificates it needs under `storage/app/certs`.
 
 Most deployments set nothing here. The settings you are likely to touch:
 
@@ -72,7 +72,7 @@ Notes on the area's variables:
 
 ## State, WAL and durability
 
-- `FLEZHA_STATE_DIR`: The state root. Like every variable here it fills its key once, at boot, in `config/runtime.exs`; `Flezha.State.Paths.state_root/0` then reads `:state_root` and resolves it to an absolute path. Setting the variable in a live BEAM changes nothing. A relative value still resolves against the directory the controller was started from, which the boot and `flz controller status` both name. Default: `app_data/state` (`:test` derives a root per run).
+- `FLEZHA_STATE_DIR`: The state root. Like every variable here it fills its key once, at boot, in `config/runtime.exs`; `Flezha.State.Paths.state_root/0` then reads `:state_root` and resolves it to an absolute path. Setting the variable in a live BEAM changes nothing. A relative value still resolves against the directory the controller was started from, which the boot and `flz controller status` both name. Default: `storage/app/state` (`:test` derives a root per run).
 - `FLEZHA_COMPACT_AFTER_AGE_MS`: `0` disables the age trigger. Default: `300000` (`0` in test).
 - `FLEZHA_EFFECT_MAX_BYTES`: The largest `ctx.effect` result the controller keeps; runners read the same variable ([recorded effects](../topics/core/effectively_once.md#recorded-effects)). Default: `4194304` (4 MiB).
 - `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`: A floor; a declared `correction_ms` raises its own hold above it.
@@ -165,20 +165,20 @@ skipped as a block.
 <!-- config-keys:begin environment -->
 | Variable | Type | Default |
 |---|---|---|
-| `FLEZHA_AUDIT_DIR` | path | `app_data/audit` |
+| `FLEZHA_AUDIT_DIR` | path | `storage/app/audit` |
 | `FLEZHA_AUDIT_ENABLED` | bool | `false` |
 | `FLEZHA_AUDIT_RETENTION_DAYS` | days | `30` |
 | `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` | path | derived |
-| `FLEZHA_AUTHZ_DIR` | path | `app_data/auth` |
+| `FLEZHA_AUTHZ_DIR` | path | `storage/app/auth` |
 | `FLEZHA_AUTHZ_ENABLED` | bool | `false` |
 | `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` | ms | `86400000` |
 | `FLEZHA_AUTO_RESTORE_ENABLED` | bool | `true` |
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | ms | `60000` |
 | `FLEZHA_CALL_PENDING_MAX` | positive_int | `10000` |
 | `FLEZHA_CALL_RETENTION_MARGIN_MS` | ms | `300000` |
-| `FLEZHA_CA_CERT_PATH` | path | `app_data/certs/ca.pem` |
-| `FLEZHA_CLIENT_CERT_PATH` | path | `app_data/certs/client.pem` |
-| `FLEZHA_CLIENT_KEY_PATH` | path | `app_data/certs/client.key` |
+| `FLEZHA_CA_CERT_PATH` | path | `storage/app/certs/ca.pem` |
+| `FLEZHA_CLIENT_CERT_PATH` | path | `storage/app/certs/client.pem` |
+| `FLEZHA_CLIENT_KEY_PATH` | path | `storage/app/certs/client.key` |
 | `FLEZHA_CLUSTER_DISCOVERY` | string | `manual_discovery` |
 | `FLEZHA_CLUSTER_FORMATION_TIMEOUT_MS` | ms | `15000` |
 | `FLEZHA_CLUSTER_UPDATE_INTERVAL` | ms | `5000` |
@@ -196,7 +196,7 @@ skipped as a block.
 | `FLEZHA_CREDIT_FLOW_CONTROL` | bool | `true` |
 | `FLEZHA_DATA_HEARTBEAT_MS` | ms | `10000` |
 | `FLEZHA_DATA_PLANE_LIVENESS` | bool | `true` |
-| `FLEZHA_DLQ_DIR` | path | `app_data/dlq` |
+| `FLEZHA_DLQ_DIR` | path | `storage/app/dlq` |
 | `FLEZHA_DLQ_RETENTION_DAYS` | days | `30` |
 | `FLEZHA_DURABILITY_BACKEND` | one of `none`, `postgres`, `s3`, `local_path`, `unset` | `none` |
 | `FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS` | ms | `604800000` |
@@ -223,7 +223,7 @@ skipped as a block.
 | `FLEZHA_EFFECT_MAX_BYTES` | int | `4194304` |
 | `FLEZHA_EXTERNAL_PROCESSES` | list of string | `""` |
 | `FLEZHA_FABRIC_503_POLLS` | int | `3` |
-| `FLEZHA_FILE_PLUGIN_ROOT` | path | `app_data/files` |
+| `FLEZHA_FILE_PLUGIN_ROOT` | path | `storage/app/files` |
 | `FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID` | string | unset |
 | `FLEZHA_FILE_PLUGIN_S3_ENDPOINT` | string | unset |
 | `FLEZHA_FILE_PLUGIN_S3_REGION` | string | `us-east-1` |
@@ -252,7 +252,7 @@ skipped as a block.
 | `FLEZHA_LOG_KEEP_FILES` | positive_int | `5` |
 | `FLEZHA_LOG_LEVEL` | one of `debug`, `info`, `warn`, `error` | `info (controller), warn (runner)` |
 | `FLEZHA_LOG_MAX_BYTES` | int | `10485760` |
-| `FLEZHA_LOG_PATH` | path | `logs/flezha.log` |
+| `FLEZHA_LOG_PATH` | path | `storage/logs/flezha.log` |
 | `FLEZHA_MAX_RECONNECTS` | positive_int | `5` |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | ms | `5000` |
 | `FLEZHA_MIGRATION_MAX_DEFER_MS` | ms | unset |
@@ -272,29 +272,29 @@ skipped as a block.
 | `FLEZHA_PLUGIN_INGEST_WINDOW` | positive_int | `64` |
 | `FLEZHA_PLUGIN_MAX_PACKAGE_BYTES` | int | `50000000` |
 | `FLEZHA_PLUGIN_REQUIRE_SIGNATURE` | bool | `false` |
-| `FLEZHA_PLUGIN_ROOT` | path | `app_data/plugins` |
+| `FLEZHA_PLUGIN_ROOT` | path | `storage/app/plugins` |
 | `FLEZHA_PLUGIN_TRUSTED_KEYS` | PEM file paths | `""` |
 | `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` | ms | `2000` |
 | `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | ms | `45000` |
 | `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | ms | `30000` |
-| `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | path | `app_data/process_hub` |
+| `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | path | `storage/app/process_hub` |
 | `FLEZHA_PROMETHEUS_BIND` | string | `127.0.0.1` |
 | `FLEZHA_PROMETHEUS_ENABLED` | bool | `false` |
 | `FLEZHA_PROMETHEUS_PORT` | int | `9568` |
-| `FLEZHA_QUIC_CLIENT_CA` | path | `app_data/certs/ca.pem` |
+| `FLEZHA_QUIC_CLIENT_CA` | path | `storage/app/certs/ca.pem` |
 | `FLEZHA_QUIC_LISTEN_ADDRESS` | address | `0.0.0.0:4433` |
 | `FLEZHA_RECONNECT_INTERVAL` | ms | `1000` |
 | `FLEZHA_RECONNECT_MAX_BACKOFF_MS` | ms | `30000` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | ms | `60000` |
 | `FLEZHA_RUNNER_REMOVAL_GRACE_MS` | ms | `30000` |
 | `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | ms | `30000` |
-| `FLEZHA_SCHEDULE_DIR` | path | `app_data/schedules` |
+| `FLEZHA_SCHEDULE_DIR` | path | `storage/app/schedules` |
 | `FLEZHA_SCHEDULE_MISFIRE_GRACE_MS` | ms | `120000` |
-| `FLEZHA_SERVER_CERT_PATH` | path | `app_data/certs/server.pem` |
-| `FLEZHA_SERVER_KEY_PATH` | path | `app_data/certs/server.key` |
+| `FLEZHA_SERVER_CERT_PATH` | path | `storage/app/certs/server.pem` |
+| `FLEZHA_SERVER_KEY_PATH` | path | `storage/app/certs/server.key` |
 | `FLEZHA_SOCKET_DIR_GROUP` | string | unset |
 | `FLEZHA_SOCKET_FILES_PATH` | path | derived per run |
-| `FLEZHA_STATE_DIR` | path | `app_data/state` |
+| `FLEZHA_STATE_DIR` | path | `storage/app/state` |
 | `FLEZHA_STEPS_ACK_TIMEOUT_MS` | ms | `30000` |
 | `FLEZHA_STEPS_RETENTION_HOURS` | int | `72` |
 | `FLEZHA_TRANSPORT` | one of `uds`, `quic` | `uds` |
@@ -316,7 +316,6 @@ Read by the build, the image or the shell wrappers rather than the controller.
 <!-- config-keys:begin build -->
 | Variable | Type | Default |
 |---|---|---|
-| `FLEZHA_APP_DATA_ROOT` | path | `app_data` |
 | `FLEZHA_CONTAINER_USER` | string | unset |
 | `FLEZHA_COOKIE_FILE` | path | unset |
 | `FLEZHA_DIST_TLS_OPTFILE` | path | unset |
@@ -327,7 +326,8 @@ Read by the build, the image or the shell wrappers rather than the controller.
 | `FLEZHA_REBUILD_IMAGE` | bool | `false` |
 | `FLEZHA_RESTORE_WAIT_TIMEOUT_S` | int | `60` |
 | `FLEZHA_SHUTDOWN_TOKEN_FILE` | path | unset |
-| `FLEZHA_STATE_DIR` | path | `app_data/state` |
+| `FLEZHA_STATE_DIR` | path | `storage/app/state` |
+| `FLEZHA_STORAGE_ROOT` | path | `storage` |
 | `FLEZHA_TESTNET_WS_PORT` | int | `4500` |
 | `FLEZHA_UI_PATH` | path | unset |
 <!-- config-keys:end -->

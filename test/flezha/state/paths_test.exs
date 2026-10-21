@@ -18,7 +18,7 @@ defmodule Flezha.State.PathsTest do
     end
 
     # fails when: the controller ignores the configured root and silently
-    # writes/restores the per-Cell WAL under the default `app_data/state`, so
+    # writes/restores the per-Cell WAL under the default `storage/app/state`, so
     # a deployment that mounts a dedicated state volume warm-restarts from an
     # empty tree. The variable that fills the key at boot is the runtime
     # drill's; this is the read every site makes afterwards.
@@ -32,15 +32,15 @@ defmodule Flezha.State.PathsTest do
       # is that default expanded, once, here. A site reading the relative string
       # would name a different tree from every working directory than the
       # advisory lock does.
-      assert Flezha.Config.default(:state_root) == "app_data/state"
-      assert Paths.state_root() == Path.expand("app_data/state")
+      assert Flezha.Config.default(:state_root) == "storage/app/state"
+      assert Paths.state_root() == Path.expand("storage/app/state")
       assert Path.type(Paths.state_root()) == :absolute
     end
 
     test "a relative configured root is resolved too" do
-      Application.put_env(:flezha, :state_root, "app_data/elsewhere")
+      Application.put_env(:flezha, :state_root, "storage/app/elsewhere")
 
-      assert Paths.state_root() == Path.expand("app_data/elsewhere")
+      assert Paths.state_root() == Path.expand("storage/app/elsewhere")
       assert String.starts_with?(Paths.wal_path({"c", "p", "k"}), Paths.state_root())
     end
   end

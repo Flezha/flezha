@@ -21,7 +21,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   @owner :flezha_durability_stub_owner
 
   # A swept node ships its platform stores, so a unit test running with the tier
-  # on must not be pointed at the developer's real `app_data/{auth,schedules,dlq}`
+  # on must not be pointed at the developer's real `storage/app/{auth,schedules,dlq}`
   # — what a case collects would then depend on the machine it runs on. An empty
   # tmp root makes them absent rather than special-cased; a case that wants one
   # of them puts its own dir over this.

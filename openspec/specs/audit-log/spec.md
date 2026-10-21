@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_packages` (which plugin packages each boot loaded and refused). The sink writes one structured JSON Lines record per accepted signal to disk under `app_data/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and a `Flezha.Service.AuditLog` service-API module callable from both the CLI (`flz audit list | read | tail | stats | rotate`) and the planned Phoenix UI directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
+The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_packages` (which plugin packages each boot loaded and refused). The sink writes one structured JSON Lines record per accepted signal to disk under `storage/app/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and a `Flezha.Service.AuditLog` service-API module callable from both the CLI (`flz audit list | read | tail | stats | rotate`) and the planned Phoenix UI directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
 ## Requirements
 ### Requirement: Durable append-only audit sink
 
@@ -10,11 +10,11 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 #### Scenario: Sink off by default
 - **WHEN** the application boots with default configuration
-- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL NOT include a sink named `:audit_log`, no `app_data/audit/` directory SHALL be created, and `Flezha.Service.AuditLog.stats/1` SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
+- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL NOT include a sink named `:audit_log`, no `storage/app/audit/` directory SHALL be created, and `Flezha.Service.AuditLog.stats/1` SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
 
 #### Scenario: Sink registers when enabled
 - **WHEN** the application boots with `:audit_log, :enabled: true`
-- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL include a sink named `:audit_log` with overflow policy `:block`, AND `app_data/audit/audit-current.jsonl` SHALL exist (possibly empty)
+- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL include a sink named `:audit_log` with overflow policy `:block`, AND `storage/app/audit/audit-current.jsonl` SHALL exist (possibly empty)
 
 #### Scenario: Master observability flag transitively disables audit
 - **WHEN** the application boots with `:observability, :enabled: false` AND `:audit_log, :enabled: true`
@@ -126,14 +126,14 @@ The retention sweep SHALL run every `:retention_check_interval_ms` (default `3_6
 
 ### Requirement: INDEX catalog and rebuild
 
-The system SHALL maintain a small binary catalog `app_data/audit/INDEX` containing one entry per rotated file with the filename, first record ts (microseconds, monotonic), last record ts, record count, and SHA-256 hex digest of the file content at rotation time. The catalog SHALL be rewritten atomically (write `.tmp`, rename over `INDEX`) on every rotation. On boot, if `INDEX` is missing or `:erlang.binary_to_term/1` fails, the writer SHALL rebuild it by walking the audit directory and reading every rotated file.
+The system SHALL maintain a small binary catalog `storage/app/audit/INDEX` containing one entry per rotated file with the filename, first record ts (microseconds, monotonic), last record ts, record count, and SHA-256 hex digest of the file content at rotation time. The catalog SHALL be rewritten atomically (write `.tmp`, rename over `INDEX`) on every rotation. On boot, if `INDEX` is missing or `:erlang.binary_to_term/1` fails, the writer SHALL rebuild it by walking the audit directory and reading every rotated file.
 
 #### Scenario: Catalog is created on first rotation
 - **WHEN** the first rotation occurs after a fresh enable
-- **THEN** `app_data/audit/INDEX` SHALL exist AND a `flz audit list` SHALL return one entry
+- **THEN** `storage/app/audit/INDEX` SHALL exist AND a `flz audit list` SHALL return one entry
 
 #### Scenario: Catalog rebuild on missing INDEX
-- **WHEN** the application boots and `app_data/audit/` contains rotated files but no `INDEX` file
+- **WHEN** the application boots and `storage/app/audit/` contains rotated files but no `INDEX` file
 - **THEN** the writer SHALL rebuild `INDEX` from the on-disk files before accepting any signals AND `flz audit list` SHALL show every rotated file
 
 #### Scenario: Catalog rebuild on corrupt INDEX
@@ -246,11 +246,11 @@ The system SHALL expose a runtime configuration map `:audit_log` with keys `:ena
 
 #### Scenario: Env var enables audit
 - **WHEN** the application is booted with `FLEZHA_AUDIT_ENABLED=true` and no other audit config
-- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL include `:audit_log` AND `app_data/audit/audit-current.jsonl` SHALL exist
+- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL include `:audit_log` AND `storage/app/audit/audit-current.jsonl` SHALL exist
 
 #### Scenario: Env var redirects directory
 - **WHEN** the application is booted with `FLEZHA_AUDIT_ENABLED=true FLEZHA_AUDIT_DIR=/var/log/flezha`
-- **THEN** `/var/log/flezha/audit-current.jsonl` SHALL be created AND `app_data/audit/` SHALL NOT be created
+- **THEN** `/var/log/flezha/audit-current.jsonl` SHALL be created AND `storage/app/audit/` SHALL NOT be created
 
 #### Scenario: Test config disables audit by default
 - **WHEN** tests run via `mix test`

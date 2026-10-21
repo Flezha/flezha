@@ -42,12 +42,12 @@ empty `--token` or `FLEZHA_TOKEN` as none.
 ## Claim the admin
 
 With enforcement on and no admin claimed, the controller writes a one-time
-token to `<auth_dir>/bootstrap.token` (`app_data/auth/bootstrap.token` by
+token to `<auth_dir>/bootstrap.token` (`storage/app/auth/bootstrap.token` by
 default, mode `0600`) and logs its path. Whoever claims that token becomes the
 first administrator, and the file is deleted.
 
 ```sh
-$ flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
+$ flz auth bootstrap "$(cat storage/app/auth/bootstrap.token)"
 ```
 
 ```output
@@ -75,12 +75,12 @@ boots again with the token still unclaimed logs nothing, but every gated verb
 refused in that state names the path:
 
 ```output
-error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in /var/lib/flezha/app_data/auth/bootstrap.token on the controller (authz.bootstrap_pending)
+error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in /var/lib/flezha/storage/app/auth/bootstrap.token on the controller (authz.bootstrap_pending)
 hint: flz auth bootstrap <token>
 ```
 
 Before writing the token, the controller removes group and other write
-permission from the parent of the auth directory (such as an `app_data/`
+permission from the parent of the auth directory (such as an `storage/app/`
 created `0775` by a umask). A sticky shared parent such as `/tmp`, or one it
 cannot change, is refused: the controller does not boot, and logs the ways out
 (restore `roles.dets`, place a `bootstrap.token`, or set
@@ -342,7 +342,7 @@ $ flz auth rebootstrap
 ```
 
 ```output
-Bootstrap token written to ./app_data/auth/bootstrap.token.
+Bootstrap token written to ./storage/app/auth/bootstrap.token.
 Claim it against the RUNNING controller:
     flz auth bootstrap 260cd28f8acf6b95e5ac9bec6e7ed73b69665780724253baafcd2ccc14422f11
 The claim unbinds every admin@_system and revokes its _system admin tokens before binding the new admin, and it is audited as a recovery.
@@ -369,7 +369,7 @@ Either way the claim succeeds once, and a claim with no file present is
 refused, naming the path it expected. Old admin tokens stop working; relays,
 runner connections and runner credentials are untouched. The recovery is
 recorded as `:rebootstrap_recovery`. `flz auth rebootstrap` finds the directory
-from `FLEZHA_AUTHZ_DIR`, else `<app_data>/auth`, and runs behind the same
+from `FLEZHA_AUTHZ_DIR`, else `<storage root>/app/auth`, and runs behind the same
 running-controller check as `flz reset`.
 
 **A damaged store.** A store file that cannot be opened is renamed
@@ -433,14 +433,14 @@ is generated again whole.
 
 | Side | Variable | Default |
 | --- | --- | --- |
-| controller | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` |
-| controller | `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.pem`, `.key` |
-| controller | `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` |
-| controller, generated | `FLEZHA_CLIENT_CERT_PATH`, `FLEZHA_CLIENT_KEY_PATH` | `app_data/certs/client.pem`, `.key` |
-| runner | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` |
-| runner | `FLEZHA_QUIC_CLIENT_CERT`, `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem`, `.key` |
+| controller | `FLEZHA_CA_CERT_PATH` | `storage/app/certs/ca.pem` |
+| controller | `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH` | `storage/app/certs/server.pem`, `.key` |
+| controller | `FLEZHA_QUIC_CLIENT_CA` | `storage/app/certs/ca.pem` |
+| controller, generated | `FLEZHA_CLIENT_CERT_PATH`, `FLEZHA_CLIENT_KEY_PATH` | `storage/app/certs/client.pem`, `.key` |
+| runner | `FLEZHA_CA_CERT_PATH` | `storage/app/certs/ca.pem` |
+| runner | `FLEZHA_QUIC_CLIENT_CERT`, `FLEZHA_QUIC_CLIENT_KEY` | `storage/app/certs/client.pem`, `.key` |
 
-A runner sharing `app_data/` authenticates as is. Remote runners get leaves
+A runner sharing `storage/app/` authenticates as is. Remote runners get leaves
 minted from your own CA with any standard tool; a leaf must carry the
 `clientAuth` usage. A refused peer is logged as
 `[Transport.Server] Peer refused at the handshake: ...` and emits
@@ -487,7 +487,7 @@ and [Application env keys](../../configuration/application_env.md#every-key).
 The stores, in the auth directory (mode `0700`, files `0600`):
 
 ```text
-app_data/auth/
+storage/app/auth/
 ├── state.dets               # the durable claimed flag
 ├── roles.dets               # principal -> namespace, roles, when and by whom
 ├── namespaces.dets          # name -> quotas, when and by whom
@@ -498,7 +498,7 @@ app_data/auth/
 ```
 
 Each change is synced to disk before it is acknowledged. Back up the auth
-directory together with `app_data/state/` and `app_data/audit/`.
+directory together with `storage/app/state/` and `storage/app/audit/`.
 
 **Turning it off.** `FLEZHA_AUTHZ_ENABLED=false` restores the open posture,
 warned on every boot; it hides enforcement rather than clearing anything, so

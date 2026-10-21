@@ -13,8 +13,8 @@ relay bound to it there runs without it ([`where_plugins_run.md`](where_plugins_
 
 ## How it works
 
-The plugin root is a folder: `FLEZHA_PLUGIN_ROOT`, `app_data/plugins` relative to the
-working directory by default, `/flezha/app_data/plugins` in the Docker image. It holds one
+The plugin root is a folder: `FLEZHA_PLUGIN_ROOT`, `storage/app/plugins` relative to the
+working directory by default, `/flezha/storage/app/plugins` in the Docker image. It holds one
 `<id>.fpz` archive per package. No setting gates loading: an archive in the plugin root is
 the opt-in.
 
@@ -125,7 +125,7 @@ $ flz plugin install ./flezha_example_plugin-0.1.0.fpz
 ```
 
 ```output
-Installed flezha_example_plugin 0.1.0 (unsigned) into /opt/flezha/app_data/plugins.
+Installed flezha_example_plugin 0.1.0 (unsigned) into /opt/flezha/storage/app/plugins.
 Restart the controller to load it.
 ```
 
@@ -162,7 +162,7 @@ controller that has the package.
 
 - **A release on a host:** `flz plugin install <path-or-url>`, then restart the controller
   however it runs (systemd, a shell).
-- **Docker:** the image's plugin root is `/flezha/app_data/plugins`. Install into a named
+- **Docker:** the image's plugin root is `/flezha/storage/app/plugins`. Install into a named
   volume there with `docker exec <c> /flezha/bin/flz plugin install ...` and
   `docker restart <c>`; or set `FLEZHA_PLUGINS`, which the entrypoint syncs before it
   starts the controller, exiting non-zero without starting it when the sync fails; or build

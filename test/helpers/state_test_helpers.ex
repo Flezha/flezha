@@ -66,7 +66,7 @@ defmodule Flezha.State.TestHelpers do
 
   The root the claim replaces is put back, not deleted. `config/runtime.exs`
   sets `:state_root` for every test run; deleting the key drops the rest of the
-  run onto the declared default, which is the checkout's `app_data/state`, and
+  run onto the declared default, which is the checkout's `storage/app/state`, and
   a live relay's WAL then lands in the working tree.
   """
   @spec tmp_app_data_dir() :: binary()

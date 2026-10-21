@@ -13,7 +13,7 @@
 # ceiling. A `:tmp_dir` of a different length would make those vacuous.
 test/flezha/transport/socket/support_test.exs
 
-# `@tmp_base` is the RELATIVE path `app_data/test_transport_auth`, and one test
+# `@tmp_base` is the RELATIVE path `storage/app/test_transport_auth`, and one test
 # pins that `Support.socket_dir()` expands a relative configured path to an
 # absolute one. An absolute `/tmp` root would prove nothing. Its environment
 # restores are `try/after` blocks rather than `on_exit`, which `:env` cannot

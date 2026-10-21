@@ -4,7 +4,7 @@ use std::path::Path;
 
 use flz_transport::errors::FlezhaError;
 
-use crate::args::{app_data_root, Positional, Reading, APP_DATA_ROOT};
+use crate::args::{app_dir, storage_root, Positional, Reading, STORAGE_ROOT};
 use crate::dispatch::{Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
@@ -19,7 +19,7 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["Namespace.bootstrap"]),
         Verb::door("whoami").calls(&["Namespace.whoami"]),
         Verb::new("rebootstrap", handle_rebootstrap)
-            .reading(&[APP_DATA_ROOT])
+            .reading(&[STORAGE_ROOT])
             .about("Break-glass: recover a lost admin@_system."),
     ],
     missing: Missing::Screen,
@@ -27,7 +27,7 @@ pub(crate) const TABLE: Command = Command {
 };
 
 // Break-glass recovery for a lost admin@_system. Both readings need filesystem
-// access to `app_data/auth/` and nothing else — the same trust the original
+// access to `storage/app/auth/` and nothing else — the same trust the original
 // bootstrap assumes, and already enough to stop the controller.
 //
 // Controller UP: mint a bootstrap token and write it where `Flezha.AuthZ.Bootstrap`
@@ -39,7 +39,7 @@ pub(crate) const TABLE: Command = Command {
 // bootstrap flow with a fresh token.
 fn handle_rebootstrap(read: &Reading) {
     let auth_dir = flz_transport::env::env_dir("FLEZHA_AUTHZ_DIR")
-        .unwrap_or_else(|| app_data_root(read).join("auth"));
+        .unwrap_or_else(|| app_dir(&storage_root(read)).join("auth"));
 
     if !auth_dir.is_dir() {
         rpc::fail(FlezhaError::with(

@@ -16,7 +16,7 @@ and its runners as deployments beside it.
   a volume both containers mount, and the runner finds the sockets there
   (`FLEZHA_SOCKET_FILES_PATH` on both sides, the same path).
 - **The controller's data needs a volume of its own.** Everything the controller keeps, the
-  relays' state included, is under its `app_data` folder. A StatefulSet gives the pod a
+  relays' state included, is under its `storage` folder. A StatefulSet gives the pod a
   volume that a new pod of the same name mounts again, so the state outlives the pod.
 - **The pod needs time to stop.** A controller that stops drains its work and hands its
   relays over first. `terminationGracePeriodSeconds` must be longer than the controller's
@@ -82,7 +82,7 @@ spec:
             periodSeconds: 5
           volumeMounts:
             - name: app-data
-              mountPath: /flezha/app_data
+              mountPath: /flezha/storage/app
             - name: run
               mountPath: /flezha/run
         - name: runner

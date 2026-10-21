@@ -69,7 +69,7 @@ $ flz plugin enable writer relay_file_output --relay_id=op1 --hook=on_output \
 
 A plugin that can read or write any path the controller can reach would hand whoever
 enables plugins the controller's certificates, its state and its tokens. So a file
-plugin may touch one folder and nothing outside it: `app_data/files` by default,
+plugin may touch one folder and nothing outside it: `storage/app/files` by default,
 beside the controller's other data, created by the first file plugin enable. To use
 another, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the controller starts:
 

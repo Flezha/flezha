@@ -67,7 +67,7 @@ candidate:
 1. `FLEZHA_SOCKET_FILES_PATH`, when it is set: it names the directory outright.
 2. `$XDG_RUNTIME_DIR/flezha`
 3. `/run/flezha`
-4. `./app_data/sockets`, relative to the working directory.
+4. `./storage/app/sockets`, relative to the working directory.
 
 The controller prints the answer on every boot:
 
@@ -87,7 +87,7 @@ controller reachable
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
              /run/flezha
-             /srv/flezha/app_data/sockets
+             /srv/flezha/storage/app/sockets
 ```
 
 When it does not connect, `flz runner check` names the verdict and the fix.
@@ -124,13 +124,13 @@ If the runner is also a container, a named volume is the whole answer:
 
 ```sh
 $ docker run -d --name flezha-controller \
-  -v flezha_data:/flezha/app_data \
-  -v flezha_sockets:/flezha/app_data/sockets \
+  -v flezha_data:/flezha/storage/app \
+  -v flezha_sockets:/flezha/storage/app/sockets \
   flezha/flezha:0.1.0
 
 $ docker run -d --name my-runner \
-  -e FLEZHA_SOCKET_FILES_PATH=/flezha/app_data/sockets \
-  -v flezha_sockets:/flezha/app_data/sockets \
+  -e FLEZHA_SOCKET_FILES_PATH=/flezha/storage/app/sockets \
+  -v flezha_sockets:/flezha/storage/app/sockets \
   my-runner-image
 ```
 
@@ -140,8 +140,8 @@ $ docker exec my-runner flz runner check
 
 ```output
 controller reachable
-  directory  /flezha/app_data/sockets (from $FLEZHA_SOCKET_FILES_PATH)
-  checked    /flezha/app_data/sockets
+  directory  /flezha/storage/app/sockets (from $FLEZHA_SOCKET_FILES_PATH)
+  checked    /flezha/storage/app/sockets
 ```
 
 If the runner runs on the host instead, bind mount a host directory in place
@@ -149,8 +149,8 @@ of the named volume:
 
 ```sh
 $ docker run -d --name flezha-controller \
-  -v flezha_data:/flezha/app_data \
-  -v /tmp/flz_sock:/flezha/app_data/sockets \
+  -v flezha_data:/flezha/storage/app \
+  -v /tmp/flz_sock:/flezha/storage/app/sockets \
   flezha/flezha:0.1.0
 
 $ FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock flz runner check

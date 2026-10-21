@@ -201,7 +201,7 @@ spec:
             - name: flezha-data
               mountPath: /flezha/data
             - name: flezha-certs
-              mountPath: /flezha/app_data/certs
+              mountPath: /flezha/storage/app/certs
             - name: flezha-logs
               mountPath: /var/log/flezha
             - name: flezha-recovery

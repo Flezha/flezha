@@ -39,7 +39,7 @@
 #     test/apps/<runtime>_runner/conformance.json before it measures, because
 #     an artifact that exists is not an artifact that is current. Set
 #     FLEZHA_BENCH_SKIP_BUILD=1 to skip it.
-#   - quic transport: certs auto-generated at app_data/certs/ on first run
+#   - quic transport: certs auto-generated at storage/app/certs/ on first run
 #   - node: FLEZHA_NODE_WORKERS selects the dispatch topology (0 = the main
 #     event loop, the default). It is inherited by the runner, and the bench
 #     header reports which one a number was taken under.
@@ -152,7 +152,7 @@ export FLEZHA_DURABILITY_BACKEND="${FLEZHA_DURABILITY_BACKEND:-none}"
 # The run boots its own controller state, so a dev controller already running
 # from this checkout neither holds the state lock against it nor hands it its
 # declared relays and installed plugin packages.
-export FLEZHA_STATE_DIR="${FLEZHA_STATE_DIR:-app_data/bench/state}"
-export FLEZHA_PROCESS_HUB_REGISTRY_ROOT="${FLEZHA_PROCESS_HUB_REGISTRY_ROOT:-app_data/bench/process_hub}"
-export FLEZHA_PLUGIN_ROOT="${FLEZHA_PLUGIN_ROOT:-app_data/bench/plugins}"
+export FLEZHA_STATE_DIR="${FLEZHA_STATE_DIR:-storage/app/bench/state}"
+export FLEZHA_PROCESS_HUB_REGISTRY_ROOT="${FLEZHA_PROCESS_HUB_REGISTRY_ROOT:-storage/app/bench/process_hub}"
+export FLEZHA_PLUGIN_ROOT="${FLEZHA_PLUGIN_ROOT:-storage/app/bench/plugins}"
 exec mix bench "${ARGS[@]}"

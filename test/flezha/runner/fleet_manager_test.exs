@@ -9,7 +9,7 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
   dead node.
 
   These tests drive `Flezha.Runner.FleetManager` directly with synthetic
-  active-runner state (no real SDK / no app_data) so they can run in the
+  active-runner state (no real SDK / no storage) so they can run in the
   presence of a live chaos cluster.
   """
 

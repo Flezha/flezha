@@ -8,7 +8,7 @@ TBD - created by archiving change add-a-file-plugin. Update Purpose after archiv
 The controller SHALL declare one configuration row, `FLEZHA_FILE_PLUGIN_ROOT`, naming the one
 folder, or the one `s3://` bucket prefix, a file plugin may read from or write to. An `s3://`
 root SHALL follow `file-plugin-s3`, and the folder rules of this requirement SHALL NOT apply to
-it. Its default SHALL be the folder `app_data/files`, which the first file plugin enable SHALL
+it. Its default SHALL be the folder `storage/app/files`, which the first file plugin enable SHALL
 create when it is missing. A folder the user sets SHALL NOT be created, and while it is
 missing every file plugin enable SHALL be refused naming it.
 
@@ -25,7 +25,7 @@ telemetry event and health verdict names one spelling.
 #### Scenario: The root is not set
 
 - **WHEN** a file plugin is enabled and `FLEZHA_FILE_PLUGIN_ROOT` is not set
-- **THEN** the root SHALL be `app_data/files`, created if it is missing, and the enable SHALL
+- **THEN** the root SHALL be `storage/app/files`, created if it is missing, and the enable SHALL
   succeed
 
 #### Scenario: A configured root that is missing is refused

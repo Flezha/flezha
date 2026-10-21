@@ -5,7 +5,7 @@
 # contract (see `docs/internal/state_persistence.md`): with a relay
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under the namespaced layout
-# `app_data/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.wal`
+# `storage/app/state/<namespace>/<relay_class>/<tasklet_id>/<cell_key>.wal`
 # and `flz state list <relay_class>` surfaces the live cell.
 #
 # `relay_class` is NOT the factory id: `Overwatch.relay_class/1`
@@ -46,7 +46,7 @@
 #     '... mix run --no-halt'`, with explicit `-name`/`-setcookie`
 #     ERL_FLAGS so `flz` (which shells out to `flzvm rpc`) can reach
 #     the running BEAM via Erlang distribution
-#   * pulls runner_id from the UDS socket name in `app_data/sockets/`
+#   * pulls runner_id from the UDS socket name in `storage/app/sockets/`
 #
 # Usage:
 #   test/scripts/state_persistence.sh
@@ -146,20 +146,20 @@ force_remove_known_containers() {
 }
 
 # Stale UDS socket files from a previous interrupted run linger on
-# the host bind-mount (`app_data/sockets/`). The rust container's
+# the host bind-mount (`storage/app/sockets/`). The rust container's
 # wait-loop watches for `runner_control_channel.sock` to exist and
 # would race straight past it on next boot and hand off to a runner
 # the controller has not registered. Wipe sockets pre-flight (per
-# CLAUDE.md memory: never `rm -rf app_data`, only its subdirs).
+# CLAUDE.md memory: never `rm -rf storage`, only its subdirs).
 clean_stale_sockets() {
-  rm -f "${REPO_ROOT}"/app_data/sockets/*.sock 2>/dev/null || true
+  rm -f "${REPO_ROOT}"/storage/app/sockets/*.sock 2>/dev/null || true
 }
 
 # Wipe persisted state at the START of a fresh run so we don't replay
 # data from a previous test. Mid-cycle (between down and up) we MUST
 # leave it alone — that's the contract under test.
 clean_persisted_state() {
-  rm -rf "${REPO_ROOT}"/app_data/state/* 2>/dev/null || true
+  rm -rf "${REPO_ROOT}"/storage/app/state/* 2>/dev/null || true
 }
 
 # Fail fast if the rust container has already exited (e.g. a cargo build
@@ -200,8 +200,8 @@ controller_sh() {
   "${COMPOSE[@]}" exec -T controller bash -c "$1"
 }
 
-SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
-STATE_DIR="${REPO_ROOT}/app_data/state"
+SOCKETS_DIR="${REPO_ROOT}/storage/app/sockets"
+STATE_DIR="${REPO_ROOT}/storage/app/state"
 CONTROL_SOCKET="${SOCKETS_DIR}/runner_control_channel.sock"
 
 # Run one long build inside the controller container, keeping its output out

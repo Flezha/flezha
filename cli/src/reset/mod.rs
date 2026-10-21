@@ -14,7 +14,7 @@ use flz_transport::errors::FlezhaError;
 use plan::{build_plan, opt_in_flags, preflight_guard, Action, Root};
 use report::{print_human, print_json};
 
-use crate::args::{app_data_root, OptSpec, Reading, APP_DATA_ROOT};
+use crate::args::{app_dir, storage_root, OptSpec, Reading, STORAGE_ROOT};
 use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
 pub(crate) const YES: OptSpec =
@@ -22,17 +22,17 @@ pub(crate) const YES: OptSpec =
 pub(crate) const DRY_RUN: OptSpec = OptSpec::switch("--dry-run", "--dry-run")
     .doc("Print the plan without touching the filesystem (exit 0).");
 const INCLUDE_CERTS: OptSpec =
-    OptSpec::switch("--include-certs", "--include-certs").doc("Also clear app_data/certs/.");
+    OptSpec::switch("--include-certs", "--include-certs").doc("Also clear storage/app/certs/.");
 const INCLUDE_DLQ: OptSpec = OptSpec::switch("--include-dlq", "--include-dlq")
-    .doc("Also clear app_data/dlq/ (every parked dead-letter record).");
+    .doc("Also clear storage/app/dlq/ (every parked dead-letter record).");
 const INCLUDE_SCHEDULES: OptSpec = OptSpec::switch("--include-schedules", "--include-schedules")
-    .doc("Also clear app_data/schedules/ (every schedule).");
+    .doc("Also clear storage/app/schedules/ (every schedule).");
 const INCLUDE_AUTH: OptSpec = OptSpec::switch("--include-auth", "--include-auth")
-    .doc("Also clear app_data/auth/ (every token and role binding).");
+    .doc("Also clear storage/app/auth/ (every token and role binding).");
 const INCLUDE_AUDIT: OptSpec = OptSpec::switch("--include-audit", "--include-audit")
-    .doc("Also clear app_data/audit/ (the audit trail).");
+    .doc("Also clear storage/app/audit/ (the audit trail).");
 const INCLUDE_PLUGINS: OptSpec = OptSpec::switch("--include-plugins", "--include-plugins")
-    .doc("Also clear app_data/plugins/ (every installed plugin).");
+    .doc("Also clear storage/app/plugins/ (every installed plugin).");
 const INCLUDE_SOCKETS: OptSpec = OptSpec::switch("--include-sockets", "--include-sockets")
     .doc("Also clear Flezha's sockets in the resolved socket directory.");
 const ALL: OptSpec =
@@ -56,7 +56,7 @@ pub(crate) const OPTIONS: &[OptSpec] = &[
     INCLUDE_SOCKETS,
     ALL,
     PROBE_TIMEOUT_MS,
-    APP_DATA_ROOT,
+    STORAGE_ROOT,
 ];
 
 /// `--yes` applies and `--dry-run` previews; a run that was asked for both was
@@ -71,7 +71,7 @@ struct Flags {
     included: Vec<&'static str>,
     json: bool,
     probe_timeout_ms: u64,
-    app_data_root: PathBuf,
+    storage_root: PathBuf,
 }
 
 /// The flags the walk read, in the shape the plan below wants them. `--all` is
@@ -89,7 +89,7 @@ fn flags(read: &Reading) -> Flags {
         probe_timeout_ms: read
             .num::<u64>(PROBE_TIMEOUT_MS.long)
             .unwrap_or(DEFAULT_PROBE_TIMEOUT_MS),
-        app_data_root: app_data_root(read),
+        storage_root: storage_root(read),
     }
 }
 
@@ -108,7 +108,7 @@ pub(crate) fn handle_reset_command(read: &Reading) {
     // Pre-flight: refuse if any planned clearance points at the configured
     // root itself, at the same path as another planned root, or onto, into or
     // around a root the run keeps.
-    if let Err(refusal) = preflight_guard(&roots, &flags.app_data_root) {
+    if let Err(refusal) = preflight_guard(&roots, &app_dir(&flags.storage_root)) {
         rpc::fail(refusal);
     }
 
@@ -160,7 +160,7 @@ fn run_plan(roots: &mut [Root], flags: &Flags, apply: bool) -> Option<(PathBuf, 
         };
 
         let (result, files, bytes) =
-            measure_and_clear(&path, root.source, &flags.app_data_root, apply);
+            measure_and_clear(&path, root.source, &app_dir(&flags.storage_root), apply);
         root.files = files;
         root.bytes = bytes;
         if let Err(e) = result {

@@ -33,7 +33,7 @@ setting has one layer: there is no per-class map over a class's own value.
 
 ## State, WAL and durability
 
-- `:state_root`: Default: `FLEZHA_STATE_DIR`, else `"app_data/state"`, expanded to an absolute path on read (derived; set per run in `:test`).
+- `:state_root`: Default: `FLEZHA_STATE_DIR`, else `"storage/app/state"`, expanded to an absolute path on read (derived; set per run in `:test`).
 - `:compaction_timeout_ms`: `0` disables the compaction-timeout sweep.
 - `:record_log_cut_after_bytes`: `0` rewrites at every release.
 - `:time_travel_retention_hours`: The `%{"RelayClass" => hours}` store `flz state retention` writes, read ahead of `:default_time_travel_retention_hours`. Default: `%{}`.
@@ -77,7 +77,7 @@ setting has one layer: there is no per-class map over a class's own value.
 
 - `:authn_authz[:enabled]`: Default: `false` (`runtime.exs`: `true` in prod).
 - `:authn_authz[:application_managed]`: `false` starts no `Flezha.AuthZ.Supervisor` in the application tree. Default: `true` (`false` in test).
-- `:authn_authz[:bootstrap_token_path]`: Default: `"app_data/auth/bootstrap.token"`.
+- `:authn_authz[:bootstrap_token_path]`: Default: `"storage/app/auth/bootstrap.token"`.
 - `:authn_authz[:token_ttl_default_seconds]`: Every credential with an expiry is one a human holds; a runner credential is refused an expiry outright.
 - `:authn_authz[:token_expiry_warning_ms]` / `:authn_authz[:token_expiry_check_interval_ms]`: The warning window and how often the registry looks.
 - `:authn_authz[:namespaces]`: Per-namespace quota overrides.
@@ -99,7 +99,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | Key | Type | Default |
 |---|---|---|
 | `:agent_fsync_interval_ms` | ms | `5` |
-| `:audit_log[:dir]` | path | `app_data/audit` |
+| `:audit_log[:dir]` | path | `storage/app/audit` |
 | `:audit_log[:enabled]` | bool | `false` |
 | `:audit_log[:extra_subscriptions]` | term | `[]` |
 | `:audit_log[:fsync_interval_ms]` | ms | `100` |
@@ -111,7 +111,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:audit_log[:retention_seconds]` | seconds | `2592000` |
 | `:audit_log[:rotation_check_interval_ms]` | ms | `60000` |
 | `:authn_authz[:application_managed]` | bool | `true` |
-| `:authn_authz[:auth_dir]` | path | `app_data/auth` |
+| `:authn_authz[:auth_dir]` | path | `storage/app/auth` |
 | `:authn_authz[:bootstrap_token_path]` | path | derived |
 | `:authn_authz[:enabled]` | bool | `false` |
 | `:authn_authz[:namespaces]` | term | `%{}` |
@@ -122,14 +122,14 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:bench_skip_build` | bool | `false` |
 | `:bind_restore_concurrency` | positive_int | `16` |
 | `:boot_replay_timeout_ms` | ms | `60000` |
-| `:ca_cert_path` | path | `app_data/certs/ca.pem` |
+| `:ca_cert_path` | path | `storage/app/certs/ca.pem` |
 | `:call_channel_deadline_ms` | ms | `30000` |
 | `:call_grace_ms` | ms | `1000` |
 | `:call_pending_max` | positive_int | `10000` |
 | `:call_retention_margin_ms` | ms | `300000` |
 | `:call_worker_idle_ms` | ms | `30000` |
-| `:client_cert_path` | path | `app_data/certs/client.pem` |
-| `:client_key_path` | path | `app_data/certs/client.key` |
+| `:client_cert_path` | path | `storage/app/certs/client.pem` |
+| `:client_key_path` | path | `storage/app/certs/client.key` |
 | `:cluster_discovery` | string | `manual_discovery` |
 | `:cluster_formation_timeout_ms` | ms | `15000` |
 | `:cluster_update_interval` | ms | `5000` |
@@ -155,7 +155,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:default_output_stall_timeout_ms` | ms | `60000` |
 | `:default_relay_completed_retention_hours` | int | `72` |
 | `:default_time_travel_retention_hours` | int | `6` |
-| `:dlq[:dir]` | path | `app_data/dlq` |
+| `:dlq[:dir]` | path | `storage/app/dlq` |
 | `:dlq[:max_total_bytes]` | int | `4294967296` |
 | `:dlq[:replay_grace_ms]` | ms | `5000` |
 | `:dlq[:retention_check_interval_ms]` | ms | `3600000` |
@@ -185,7 +185,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:effect_max_bytes` | int | `4194304` |
 | `:env` | atom | unset |
 | `:external_processes` | list of string | `""` |
-| `:file_plugin_root` | path | `app_data/files` |
+| `:file_plugin_root` | path | `storage/app/files` |
 | `:file_plugin_s3[:access_key_id]` | string | unset |
 | `:file_plugin_s3[:endpoint]` | string | unset |
 | `:file_plugin_s3[:region]` | string | `us-east-1` |
@@ -258,7 +258,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:plugin_successor_poll_ms` | ms | `50` |
 | `:plugins[:list]` | term | unset |
 | `:plugins[:max_package_bytes]` | int | `50000000` |
-| `:plugins[:plugin_root]` | path | `app_data/plugins` |
+| `:plugins[:plugin_root]` | path | `storage/app/plugins` |
 | `:plugins[:require_signature]` | bool | `false` |
 | `:plugins[:trusted_keys]` | PEM file paths | `""` |
 | `:post_hooks` | term | `[]` |
@@ -266,9 +266,9 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:process_hub_cluster_settle_ms` | ms | `2000` |
 | `:process_hub_reconcile_grace_ms` | ms | `45000` |
 | `:process_hub_reconcile_interval_ms` | ms | `30000` |
-| `:process_hub_registry_root` | path | `app_data/process_hub` |
+| `:process_hub_registry_root` | path | `storage/app/process_hub` |
 | `:quic_addresses` | string | `127.0.0.1:4433` |
-| `:quic_client_ca_path` | path | `app_data/certs/ca.pem` |
+| `:quic_client_ca_path` | path | `storage/app/certs/ca.pem` |
 | `:quic_listen_address` | address | `0.0.0.0:4433` |
 | `:reconnect_interval` | ms | `1000` |
 | `:reconnect_max_backoff_ms` | ms | `30000` |
@@ -278,17 +278,17 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:runner_removal_grace_ms` | ms | `30000` |
 | `:runner_retiring_mark_ttl_ms` | ms | `30000` |
 | `:schedules[:application_managed]` | bool | `true` |
-| `:schedules[:dir]` | path | `app_data/schedules` |
+| `:schedules[:dir]` | path | `storage/app/schedules` |
 | `:schedules[:misfire_grace_ms]` | ms | `120000` |
 | `:sdk_commit_ack_ms` | ms | `30000` |
 | `:send_gate_hold_ms` | ms | `5000` |
-| `:server_cert_path` | path | `app_data/certs/server.pem` |
-| `:server_key_path` | path | `app_data/certs/server.key` |
+| `:server_cert_path` | path | `storage/app/certs/server.pem` |
+| `:server_key_path` | path | `storage/app/certs/server.key` |
 | `:socket_dir_group` | string | unset |
 | `:socket_files_path` | path | derived per run |
 | `:source_credit_window_bytes` | int | derived |
 | `:state_resync_fun` | term | unset |
-| `:state_root` | path | `app_data/state` |
+| `:state_root` | path | `storage/app/state` |
 | `:static_nodes` | list of atom | `""` |
 | `:stream_bind_wait_ms` | ms | `30000` |
 | `:testnet_enabled` | bool | `false` |

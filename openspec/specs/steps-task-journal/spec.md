@@ -7,7 +7,7 @@ The steps-task-journal capability is the controller-side durable task-progress s
 ### Requirement: Each durable steps instance has an append-only task-journal on the shared state substrate
 
 The controller SHALL maintain one append-only task-journal file per durable steps relay
-relay instance at `app_data/state/{relay_class}/{instance_id}/task.journal`,
+relay instance at `storage/app/state/{relay_class}/{instance_id}/task.journal`,
 written through the existing WalWriter framing and FsyncBatcher path (no parallel
 persistence machinery). Journal entries SHALL be typed, length-prefixed frames
 carrying `{seq, type, task_idx, iter, payload}`. The entry types SHALL be

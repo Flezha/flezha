@@ -26,9 +26,9 @@ const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 /// expression `flz` built is readable on stdout.
 const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n";
 
-/// An `app_data` root nothing can be under, so the `flz reset` cases plan over
+/// A storage root nothing can be under, so the `flz reset` cases plan over
 /// an empty tree. They pass `--dry-run` as well: nothing is ever cleared.
-const NO_ROOT: &str = "--app-data-root=/nonexistent/flz-output-format-test";
+const NO_ROOT: &str = "--storage-root=/nonexistent/flz-output-format-test";
 
 enum Want {
     /// The door call the verb must reach.
@@ -467,8 +467,8 @@ const CASES: &[(&[&str], Want)] = &[
     // `flz reset` reads its root and its format through the same scanner, so
     // one case here covers both.
     (
-        &["reset", "--dry-run", "--app-data-root"],
-        Refused("--app-data-root requires a value"),
+        &["reset", "--dry-run", "--storage-root"],
+        Refused("--storage-root requires a value"),
     ),
     // The switch spelling may not carry the reader past the refusal: `--json`
     // answered the format before `--output` was ever read.

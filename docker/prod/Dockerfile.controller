@@ -160,14 +160,14 @@ RUN chmod +x /usr/local/bin/controller-entrypoint.sh
 # not have is created at mount time owned by root. Every path the shipped
 # compose file mounts is listed, state first, because that one is claimed
 # before any other write happens and the boot refuses when it cannot be.
-RUN mkdir -p /flezha/app_data/state \
-             /flezha/app_data/data \
-             /flezha/app_data/plugins \
-             /flezha/app_data/sockets \
-             /flezha/app_data/certs \
-             /flezha/app_data/logs \
-             /flezha/app_data/snapshots \
-             /flezha/app_data/process_hub \
+RUN mkdir -p /flezha/storage/app/state \
+             /flezha/storage/app/data \
+             /flezha/storage/app/plugins \
+             /flezha/storage/app/sockets \
+             /flezha/storage/app/certs \
+             /flezha/storage/logs \
+             /flezha/storage/app/snapshots \
+             /flezha/storage/app/process_hub \
     && chown -R flezha:flezha /flezha
 
 USER flezha

@@ -12,13 +12,13 @@ runner. [Authorization](../authorization.html) and
 > {: .step}
 
 A controller with authorization on and no admin writes a one-time token to
-`app_data/auth/bootstrap.token`. Whoever claims it becomes the first admin.
+`storage/app/auth/bootstrap.token`. Whoever claims it becomes the first admin.
 
 > Claim the admin. The answer is your admin token, shown once, so keep it.
 > {: .step}
 
 ```sh
-$ ./bin/flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
+$ ./bin/flz auth bootstrap "$(cat storage/app/auth/bootstrap.token)"
 ```
 
 ```output

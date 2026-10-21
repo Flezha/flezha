@@ -64,7 +64,7 @@ All sockets are `SOCK_STREAM`. The controller listens, the runner connects.
 
 `{base}` is the socket directory both sides resolve from one ladder —
 `FLEZHA_SOCKET_FILES_PATH` when set, then `$XDG_RUNTIME_DIR/flezha`,
-`/run/flezha`, `app_data/sockets` — always reported absolutely, and never
+`/run/flezha`, `storage/app/sockets` — always reported absolutely, and never
 re-derived per SDK (see [Files and sockets](../../public/configuration/files_and_sockets.md#the-socket-directory-ladder)). It is
 at most 60 bytes, so the longest data socket path fits the 107 bytes a Unix
 domain socket address holds, and a controller refuses to boot on a longer one.
@@ -83,11 +83,11 @@ multiplexes every channel over bidirectional streams inside it.
 |---------|---------|---------|
 | Controller listen address | `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` |
 | Runner connect addresses | `FLEZHA_QUIC_ADDRESSES` — a comma list of names or literals, re-resolved every attempt | `127.0.0.1:4433` |
-| CA certificate | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` |
-| Server certificate / key | `FLEZHA_SERVER_CERT_PATH` / `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.pem` / `server.key` |
-| Generated client identity (controller side) | `FLEZHA_CLIENT_CERT_PATH` / `FLEZHA_CLIENT_KEY_PATH` | `app_data/certs/client.pem` / `client.key` |
-| Client trust anchor (controller side) | `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` |
-| Client certificate / key presented by the runner | `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem` / `client.key` |
+| CA certificate | `FLEZHA_CA_CERT_PATH` | `storage/app/certs/ca.pem` |
+| Server certificate / key | `FLEZHA_SERVER_CERT_PATH` / `FLEZHA_SERVER_KEY_PATH` | `storage/app/certs/server.pem` / `server.key` |
+| Generated client identity (controller side) | `FLEZHA_CLIENT_CERT_PATH` / `FLEZHA_CLIENT_KEY_PATH` | `storage/app/certs/client.pem` / `client.key` |
+| Client trust anchor (controller side) | `FLEZHA_QUIC_CLIENT_CA` | `storage/app/certs/ca.pem` |
+| Client certificate / key presented by the runner | `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `storage/app/certs/client.pem` / `client.key` |
 | Peer authentication | `FLEZHA_TRANSPORT_AUTH` | required; `off` is the explicit opt-out, warned on every boot |
 
 Certificates are generated on first start if absent (CA, server pair, a client
@@ -1333,7 +1333,7 @@ ParkBody {
 ```
 
 The controller appends the entry to the durable DLQ store
-(`app_data/dlq/<relay_class>/<tasklet_id>/`), fsyncs, then acks.
+(`storage/app/dlq/<relay_class>/<tasklet_id>/`), fsyncs, then acks.
 Appends are idempotent on origin identity (`channel:sha256(payload)`), so an
 ack-lost re-send never duplicates an entry.
 

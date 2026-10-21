@@ -183,7 +183,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
 
   # Run from the scratch directory: every path the controller does not get from
   # `env` resolves against its working directory, which is the repository's
-  # own `app_data` otherwise.
+  # own `storage` otherwise.
   defp run(ctx, bin, args) do
     System.cmd(Path.join(ctx.release, "bin/#{bin}"), args,
       cd: ctx.tmp,

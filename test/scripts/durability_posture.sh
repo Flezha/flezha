@@ -12,7 +12,7 @@
 #   2. The explicit opt-out boots inert and reports the local-only posture on
 #      `/healthz` and `flz controller status`.
 #   3. A controller that dies WITH its disk comes back: on a fresh container
-#      with an empty app_data and the same tier storage, the parked DLQ record,
+#      with an empty storage and the same tier storage, the parked DLQ record,
 #      the authz state (token still authenticates, bootstrap already claimed)
 #      and the schedule definitions are all back — and the control-plane stores
 #      hydrate before the hubs start, which only a real boot can prove.
@@ -217,7 +217,7 @@ backend_env() { # backend_env <backend>
   esac
 }
 
-# One controller lifetime. app_data lives INSIDE the container so `docker rm -f`
+# One controller lifetime. storage lives INSIDE the container so `docker rm -f`
 # destroys it exactly as a dying disk would; only /tier survives.
 start_controller() { # start_controller <name> <backend> <writer-id>
   # shellcheck disable=SC2046 # the env fragment is intentionally word-split
@@ -249,7 +249,7 @@ disk_death() { # disk_death <backend>
   # Authz: claim the one-shot bootstrap, then issue a token a user would
   # actually use afterwards.
   local boot_token
-  boot_token="$(docker exec "$first" cat /flezha/app_data/auth/bootstrap.token 2>/dev/null)"
+  boot_token="$(docker exec "$first" cat /flezha/storage/app/auth/bootstrap.token 2>/dev/null)"
   flz "$first" auth bootstrap "$boot_token" >"$LOGDIR/${backend}-bootstrap.log" 2>&1
   local admin_token
   admin_token="$(grep -oE 'flzt_[A-Za-z0-9_-]+' "$LOGDIR/${backend}-bootstrap.log" | head -1)"
@@ -311,7 +311,7 @@ disk_death() { # disk_death <backend>
   check "the schedule survived" "$LOGDIR/${backend}-schedule-after.log" "durval-job"
 
   # The one-shot claim must read already-claimed, not hand out a second cluster.
-  docker exec "$second" test -f /flezha/app_data/auth/bootstrap.token
+  docker exec "$second" test -f /flezha/storage/app/auth/bootstrap.token
   if [ $? -ne 0 ]; then pass "no fresh bootstrap token was written"; else
     fail "the replacement re-entered the bootstrap flow"
   fi

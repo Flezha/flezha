@@ -129,7 +129,7 @@ defmodule Mix.Tasks.Bench.Tally do
 
   @spec state_dir_stats(String.t()) :: {non_neg_integer(), non_neg_integer(), non_neg_integer()}
   def state_dir_stats(namespace) do
-    ["app_data", "state", namespace, "**"]
+    ["storage", "app", "state", namespace, "**"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.reduce({0, 0, 0}, fn path, {bytes, wals, snaps} ->

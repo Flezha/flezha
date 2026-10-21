@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The plugin-installation capability gives Flezha plugins the lifecycle of Jenkins plugins: the release is immutable, a plugin is a prebuilt package kept as data beside it, and a change to the plugin set takes effect when the controller restarts. A plugin is an ordinary Mix project depending on `flezha`; `mix flezha.plugin.package` builds its package (`*.fpz`): the compiled `.beam` and `.app` files of the plugin and of every library the release does not ship, laid out like a release's `lib/`, with `manifest.exs` recording the Flezha, OTP and Elixir versions it was built with and the providers it declares, a `CHECKSUMS.sha256` file and an optional detached Ed25519 signature. `flz plugin install`, `uninstall` and `sync` run in a VM of their own and only place or remove verified archives in the plugin root (`app_data/plugins/` by default); `FLEZHA_PLUGINS` declares a node's list, which is synced before the controller starts. Once, at boot, before the supervision tree is built, `Flezha.Plugin.Installer.Loader` verifies every archive, checks its libraries and modules against the VM, loads its code all or nothing, consolidates again the protocols it implements, starts its library applications and registers its providers as rows of the provider table; a refused package is recorded with its error code and never stops the controller. The capability defines the package format, manifest schema, checksum and signature verification, the install, uninstall and sync verbs, the boot-time loading order and its refusals, the list of what each boot loaded, recovery interaction, and the configuration surface (the `:plugins` rows).
+The plugin-installation capability gives Flezha plugins the lifecycle of Jenkins plugins: the release is immutable, a plugin is a prebuilt package kept as data beside it, and a change to the plugin set takes effect when the controller restarts. A plugin is an ordinary Mix project depending on `flezha`; `mix flezha.plugin.package` builds its package (`*.fpz`): the compiled `.beam` and `.app` files of the plugin and of every library the release does not ship, laid out like a release's `lib/`, with `manifest.exs` recording the Flezha, OTP and Elixir versions it was built with and the providers it declares, a `CHECKSUMS.sha256` file and an optional detached Ed25519 signature. `flz plugin install`, `uninstall` and `sync` run in a VM of their own and only place or remove verified archives in the plugin root (`storage/app/plugins/` by default); `FLEZHA_PLUGINS` declares a node's list, which is synced before the controller starts. Once, at boot, before the supervision tree is built, `Flezha.Plugin.Installer.Loader` verifies every archive, checks its libraries and modules against the VM, loads its code all or nothing, consolidates again the protocols it implements, starts its library applications and registers its providers as rows of the provider table; a refused package is recorded with its error code and never stops the controller. The capability defines the package format, manifest schema, checksum and signature verification, the install, uninstall and sync verbs, the boot-time loading order and its refusals, the list of what each boot loaded, recovery interaction, and the configuration surface (the `:plugins` rows).
 ## Requirements
 ### Requirement: Plugin package format
 
@@ -230,7 +230,7 @@ modules to load. A package SHALL never replace a module of the release.
 
 ### Requirement: On-disk installed-plugin layout
 
-The plugin root (`plugin_root`, `app_data/plugins` by default) SHALL hold the installed
+The plugin root (`plugin_root`, `storage/app/plugins` by default) SHALL hold the installed
 packages as archives: every `*.fpz` file in it is one, whatever its name, and install and
 sync SHALL name the archives they place `<id>.fpz`, where `<id>` is the manifest's `id`. An
 install SHALL write under `<plugin_root>/.staging/` and rename into place, and SHALL remove
@@ -377,7 +377,7 @@ plugin manager directly, with no installed-package probe. There SHALL be no `upg
 ### Requirement: Configuration surface
 
 The system SHALL read the plugin settings from the `:flezha, :plugins` keyword list and from
-the environment: `plugin_root` (`FLEZHA_PLUGIN_ROOT`, default `"app_data/plugins"`),
+the environment: `plugin_root` (`FLEZHA_PLUGIN_ROOT`, default `"storage/app/plugins"`),
 `plugin_trusted_keys` (`FLEZHA_PLUGIN_TRUSTED_KEYS`, comma-separated PEM file paths, default
 `[]`), `plugin_require_signature` (`FLEZHA_PLUGIN_REQUIRE_SIGNATURE`, default `false`),
 `plugin_max_package_bytes` (`FLEZHA_PLUGIN_MAX_PACKAGE_BYTES`, default `50_000_000`) and
@@ -389,7 +389,7 @@ no `installer_auto_save_ms` duration.
 #### Scenario: Default configuration starts successfully
 
 - **WHEN** a controller starts with no plugin setting and one valid unsigned archive in
-  `app_data/plugins`
+  `storage/app/plugins`
 - **THEN** the package SHALL load and a warning SHALL name it unsigned
 
 #### Scenario: Configurable package size limit enforced

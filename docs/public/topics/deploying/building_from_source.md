@@ -32,7 +32,7 @@ applies as it does to a downloaded release.
 
 > #### State inside a build directory {: .warning}
 >
-> Running from `_build/prod/rel/flezha` puts `app_data/` inside build output.
+> Running from `_build/prod/rel/flezha` puts `storage/app/` inside build output.
 > `make clean` deletes it, and with it the controller's durable state and its
 > cookie. For anything you want to keep, point `FLEZHA_STATE_DIR` at an
 > absolute path outside the build.
@@ -40,7 +40,7 @@ applies as it does to a downloaded release.
 To pack a release of your own as an archive:
 
 ```sh
-$ tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/app_data' -C _build/prod/rel flezha
+$ tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/storage' -C _build/prod/rel flezha
 ```
 
 A plain `tar` of the directory carries the logs and the node cookie of every

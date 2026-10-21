@@ -29,7 +29,7 @@ defmodule FlezhaTest.CaseFixturesTest do
       # The `:tmp_app_data` row claims `:state_root` per test, and the run's own
       # root has to be back once the last claim has unwound. A teardown that
       # deletes the key instead drops every module after this one onto the
-      # declared default, which is the checkout's `app_data/state`.
+      # declared default, which is the checkout's `storage/app/state`.
       assert Application.get_env(:flezha, :state_root) == state_root_before,
              "the run's state root was not put back: the rest of the run writes to " <>
                Flezha.State.Paths.state_root()

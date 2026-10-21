@@ -896,7 +896,7 @@ An absolute path that an artefact this repository builds defines — a home dire
 
 #### Scenario: A guard refuses a tree that does not declare this application
 
-- **GIVEN** a copy of a script whose guard protects this project's `app_data/`, placed in another project's checkout
+- **GIVEN** a copy of a script whose guard protects this project's `storage/app/`, placed in another project's checkout
 - **WHEN** it is run
 - **THEN** it SHALL exit non-zero without deleting anything, naming the root it resolved and that the tree's `mix.exs` does not declare this application
 
@@ -1211,7 +1211,7 @@ guarded outside the table.
 
 #### Scenario: A test declares the fixtures it needs
 
-- **GIVEN** a test module that needs a temporary `app_data` root and an
+- **GIVEN** a test module that needs a temporary data root and an
   environment override
 - **WHEN** it declares `use FlezhaTest.Case, fixtures: [:tmp_app_data, :env]`
 - **THEN** both fixtures are set up before the first test and both are removed
@@ -1612,11 +1612,11 @@ undeclared.
 
 Every subtree under the data root SHALL be a row of `Flezha.Layout.Table`, and
 `test/flezha/layout/table_test.exs` SHALL fail when a subtree has a private root or a second module
-spells `app_data/<x>`, holding the table to `test/fixtures/layout_rows.txt`.
+spells `storage/app/<x>`, holding the table to `test/fixtures/layout_rows.txt`.
 
 #### Scenario: A second spelling of a data path
 
-- **WHEN** a module outside the table builds `app_data/<x>` itself
+- **WHEN** a module outside the table builds `storage/app/<x>` itself
 - **THEN** `table_test.exs` SHALL fail naming the file
 
 ### Requirement: An event name and a heartbeat slot SHALL each be declared once, held by the suite

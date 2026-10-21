@@ -50,7 +50,7 @@ What each variable does is below; the type and default of every one is in
 | `FLEZHA_BENCH_MEASUREMENT_SECS` | int | `30` |
 | `FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD` | positive_int | `10` |
 | `FLEZHA_BROKEN_PIPE_WINDOW_MS` | ms | `5000` |
-| `FLEZHA_CA_CERT_PATH` | path | `app_data/certs/ca.pem` |
+| `FLEZHA_CA_CERT_PATH` | path | `storage/app/certs/ca.pem` |
 | `FLEZHA_CONTRACT_DIR` | path | unset |
 | `FLEZHA_CONTROL_ACK_TIMEOUT_MS` | ms | `10000` |
 | `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` | ms | `45000` |
@@ -76,8 +76,8 @@ What each variable does is below; the type and default of every one is in
 | `FLEZHA_PYTHON_EXECUTOR` | string | unset |
 | `FLEZHA_QUIC_ADDRESS` | address | unset |
 | `FLEZHA_QUIC_ADDRESSES` | string | `127.0.0.1:4433` |
-| `FLEZHA_QUIC_CLIENT_CERT` | path | `app_data/certs/client.pem` |
-| `FLEZHA_QUIC_CLIENT_KEY` | path | `app_data/certs/client.key` |
+| `FLEZHA_QUIC_CLIENT_CERT` | path | `storage/app/certs/client.pem` |
+| `FLEZHA_QUIC_CLIENT_KEY` | path | `storage/app/certs/client.key` |
 | `FLEZHA_REAP_INTERVAL_MS` | ms | unset |
 | `FLEZHA_RECONNECT_MAX_BACKOFF_MS` | ms | `30000` |
 | `FLEZHA_RECONNECT_REQUEST_RETRY_MS` | ms | `30000` |

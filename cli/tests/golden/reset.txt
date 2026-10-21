@@ -1,27 +1,27 @@
 flz reset - Clear Controller durable runtime data on disk (controller must be stopped).
 
-Usage: flz reset [--yes] [--dry-run] [--include-certs] [--include-dlq] [--include-schedules] [--include-auth] [--include-audit] [--include-plugins] [--include-sockets] [--all] [--probe-timeout-ms <ms>] [--app-data-root <path>]
+Usage: flz reset [--yes] [--dry-run] [--include-certs] [--include-dlq] [--include-schedules] [--include-auth] [--include-audit] [--include-plugins] [--include-sockets] [--all] [--probe-timeout-ms <ms>] [--storage-root <path>]
 
 OPTIONS:
     --yes                    Apply the reset. REQUIRED for any destructive
                              action.
     --dry-run                Print the plan without touching the filesystem
                              (exit 0).
-    --include-certs          Also clear app_data/certs/.
-    --include-dlq            Also clear app_data/dlq/ (every parked dead-letter
-                             record).
-    --include-schedules      Also clear app_data/schedules/ (every schedule).
-    --include-auth           Also clear app_data/auth/ (every token and role
+    --include-certs          Also clear storage/app/certs/.
+    --include-dlq            Also clear storage/app/dlq/ (every parked
+                             dead-letter record).
+    --include-schedules      Also clear storage/app/schedules/ (every schedule).
+    --include-auth           Also clear storage/app/auth/ (every token and role
                              binding).
-    --include-audit          Also clear app_data/audit/ (the audit trail).
-    --include-plugins        Also clear app_data/plugins/ (every installed
+    --include-audit          Also clear storage/app/audit/ (the audit trail).
+    --include-plugins        Also clear storage/app/plugins/ (every installed
                              plugin).
     --include-sockets        Also clear Flezha's sockets in the resolved socket
                              directory.
     --all                    Every opt-in clear above, auth and audit included.
     --probe-timeout-ms <ms>  Live-node probe timeout (default 1000).
-    --app-data-root <path>   The app_data/ root (default: FLEZHA_APP_DATA_ROOT
-                             or ./app_data).
+    --storage-root <path>    The storage/ root (default: FLEZHA_STORAGE_ROOT or
+                             ./storage).
     --token <token>          The caller's token (default: FLEZHA_TOKEN).
     --help | -h              Print this help.
     --output | -o text|json  Output format (default: text).
@@ -29,10 +29,10 @@ OPTIONS:
 
 DESCRIPTION:
     By default clears:
-        app_data/state/         (per-Cell WAL/snapshot/outbox)
-        app_data/process_hub/   (ProcessHub durable registry)
+        storage/app/state/        (per-Cell WAL/snapshot/outbox)
+        storage/app/process_hub/  (ProcessHub durable registry)
 
-    Clearing app_data/auth/ removes every token (runner credentials
+    Clearing storage/app/auth/ removes every token (runner credentials
     included), every role binding and every namespace but _system. With
     authorization on and no remote durability backend, the next start
     writes a fresh bootstrap token. Until it is claimed, administration verbs
@@ -40,17 +40,17 @@ DESCRIPTION:
     any namespace but _system it names: claim it at once.
 
     Never cleared, and reported as kept:
-        logs/
+        storage/logs/
 
-    Every app_data/ root is <data root>/<name>: a store moved by its own
+    Every store is <storage root>/app/<name>: a store moved by its own
     variable (FLEZHA_DLQ_DIR, FLEZHA_AUTHZ_DIR, ...) is neither found nor
-    cleared. logs/ is the log file's default directory, in the working
-    directory, and --app-data-root does not move it.
+    cleared. storage/logs/ is the log file's default directory, in the
+    working directory, and --storage-root does not move it.
 
     The socket directory is resolved through the same ladder the Controller
     and its runners walk -- $FLEZHA_SOCKET_FILES_PATH, else
-    $XDG_RUNTIME_DIR/flezha, else /run/flezha, else app_data/sockets -- so it
-    is frequently not under app_data/ at all. Only the socket files Flezha
+    $XDG_RUNTIME_DIR/flezha, else /run/flezha, else storage/app/sockets -- so it
+    is frequently not under storage/app/ at all. Only the socket files Flezha
     itself creates are unlinked there, and a directory a Controller is still
     serving in is kept.
 
@@ -60,7 +60,7 @@ EXIT CODES:
         some roots were cleared (reset.partial)
     2   Invalid usage: missing --yes without --dry-run
         (reset.confirmation_required), conflicting flags, or a path it refuses
-        to clear, such as the app_data root itself (reset.path_refused)
+        to clear, such as the storage app directory itself (reset.path_refused)
     6   Refused: the Controller is up (reset.controller_running)
 
 EXAMPLES:

@@ -54,7 +54,7 @@ With the image:
 ```sh
 $ docker run -d --name flezha-controller \
   -e FLEZHA_HEALTHZ_ENABLED=true \
-  -v flezha_data:/flezha/app_data \
+  -v flezha_data:/flezha/storage/app \
   flezha/flezha:0.1.0
 ```
 

@@ -22,7 +22,7 @@ The system SHALL define a Principal as a verified identity. For mTLS-authenticat
 
 ### Requirement: Scoped token registry and verification
 
-The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted in `app_data/auth/tokens.dets`. Each entry SHALL store: `token_hash` (SHA-256 of the bare token), `principal`, `namespace`, `role`, `created_at`, `expires_at`, `revoked_at`, `created_by_principal`, `label`. The wire-form token SHALL be a 256-bit cryptographically random value with base32 encoding and a `flzt_` prefix. The on-disk form SHALL be the SHA-256 hash. Verification SHALL look up the hash, reject entries whose `revoked_at` is non-null, reject entries whose `expires_at` has passed, and otherwise return the bound `principal`/`namespace`/`role` and the entry's hash, so a caller can name the credential that admitted it. An entry MAY be issued with no expiry, and the operations surface SHALL be able to ask for one. A `runner`-role entry is the credential a runner connection proves its namespace with and SHALL be refused any expiry and refused the `_system` namespace. Issuance and revocation SHALL emit `:token_issued` / `:token_revoked` events on the `:platform_authz` source, and an entry approaching its expiry SHALL emit `:token_expiring` on the same source.
+The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted in `storage/app/auth/tokens.dets`. Each entry SHALL store: `token_hash` (SHA-256 of the bare token), `principal`, `namespace`, `role`, `created_at`, `expires_at`, `revoked_at`, `created_by_principal`, `label`. The wire-form token SHALL be a 256-bit cryptographically random value with base32 encoding and a `flzt_` prefix. The on-disk form SHALL be the SHA-256 hash. Verification SHALL look up the hash, reject entries whose `revoked_at` is non-null, reject entries whose `expires_at` has passed, and otherwise return the bound `principal`/`namespace`/`role` and the entry's hash, so a caller can name the credential that admitted it. An entry MAY be issued with no expiry, and the operations surface SHALL be able to ask for one. A `runner`-role entry is the credential a runner connection proves its namespace with and SHALL be refused any expiry and refused the `_system` namespace. Issuance and revocation SHALL emit `:token_issued` / `:token_revoked` events on the `:platform_authz` source, and an entry approaching its expiry SHALL emit `:token_expiring` on the same source.
 
 #### Scenario: Token issuance returns the raw value exactly once
 - **WHEN** `TokenStore.issue/5` succeeds
@@ -53,7 +53,7 @@ The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted 
   source naming the entry, so a lapse is observable before it happens
 
 #### Scenario: Token file mode is restrictive
-- **WHEN** `app_data/auth/tokens.dets` is created or reopened
+- **WHEN** `storage/app/auth/tokens.dets` is created or reopened
 - **THEN** its mode SHALL be `0600`
 
 ### Requirement: Single policy point `Flezha.AuthZ.authorize/3`
@@ -195,7 +195,7 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 The system SHALL define a Namespace as a hard partition for authorization scope. Every namespace SHALL exist in the durable catalog (`Flezha.AuthZ.NamespaceStore`) before it can be bound to a token or a role. `_system` SHALL exist at boot, SHALL own resources created before this capability lands, and SHALL be the only namespace from which auth-state mutations on other namespaces are permitted (subject to the `admin` role check). Additional namespaces SHALL be created by `admin@_system` via `Flezha.AuthZ.NamespaceStore.create/2`. Deeper namespacing of the on-disk state subsystem itself (per-namespace WAL paths in `Flezha.State.*`) is out of scope for this change.
 
 #### Scenario: System namespace exists at boot
-- **WHEN** the Controller boots and `app_data/auth/namespaces.dets` is empty or missing
+- **WHEN** the Controller boots and `storage/app/auth/namespaces.dets` is empty or missing
 - **THEN** the namespace catalog SHALL contain exactly one entry named `_system`
 
 #### Scenario: Cross-namespace audit read is filtered
@@ -204,7 +204,7 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 
 ### Requirement: Per-namespace quotas at allocation
 
-The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_relays`, `max_cells_per_relay`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.RelayManager.start_relay/2` SHALL take its `max_relays` unit and its `max_cells_per_relay` count with `record_allocation/3` before the relay is initialised, each checked and counted in one step so two concurrent starts cannot both fit in the last unit, and SHALL settle the take once the start has succeeded or failed: kept, or given back. A take whose caller exits before settling SHALL be given back, and a counter rebuilt from its source while takes are held SHALL keep them. `stop_relay/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
+The system SHALL store per-namespace quotas in `storage/app/auth/namespaces.dets`. Quota fields SHALL include `max_relays`, `max_cells_per_relay`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.RelayManager.start_relay/2` SHALL take its `max_relays` unit and its `max_cells_per_relay` count with `record_allocation/3` before the relay is initialised, each checked and counted in one step so two concurrent starts cannot both fit in the last unit, and SHALL settle the take once the start has succeeded or failed: kept, or given back. A take whose caller exits before settling SHALL be given back, and a counter rebuilt from its source while takes are held SHALL keep them. `stop_relay/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
 
 #### Scenario: Max-relays denial on allocation
 - **WHEN** namespace `team-orders` has `max_relays: 5`, 5 relays already exist, and a user invokes `Flezha.Service.RelayManager.start_relay/2` with a 6th
@@ -228,7 +228,7 @@ The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. 
 
 ### Requirement: Bootstrap flow
 
-On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` contains at least one `admin@_system` binding. If none exists AND `:enabled` is `true` AND `FLEZHA_AUTHZ_ENABLED` is not explicitly set to a false value, the system SHALL: ensure `app_data/auth/` exists with mode `0700`; verify the bootstrap-token-path parent directory mode (abort with `error` on group- or other-writable bits); write a 256-bit random token to `app_data/auth/bootstrap.token` with mode `0600`; emit a single `warn` log line naming the path. `Flezha.AuthZ.Bootstrap.claim/2` SHALL accept that exact token exactly once; on success it SHALL bind the resolved principal (cert SAN > cert DN > `--principal` > freshly-minted admin token) to `admin@_system`, durably flip `:authn_authz, :enabled` to `true`, unlink `bootstrap.token`, and emit a `:bootstrap_completed` event on `:platform_authz`. The claim is the cluster's: every connected controller SHALL adopt it and unlink its own `bootstrap.token`.
+On Controller start, the system SHALL detect whether `storage/app/auth/roles.dets` contains at least one `admin@_system` binding. If none exists AND `:enabled` is `true` AND `FLEZHA_AUTHZ_ENABLED` is not explicitly set to a false value, the system SHALL: ensure `storage/app/auth/` exists with mode `0700`; verify the bootstrap-token-path parent directory mode (abort with `error` on group- or other-writable bits); write a 256-bit random token to `storage/app/auth/bootstrap.token` with mode `0600`; emit a single `warn` log line naming the path. `Flezha.AuthZ.Bootstrap.claim/2` SHALL accept that exact token exactly once; on success it SHALL bind the resolved principal (cert SAN > cert DN > `--principal` > freshly-minted admin token) to `admin@_system`, durably flip `:authn_authz, :enabled` to `true`, unlink `bootstrap.token`, and emit a `:bootstrap_completed` event on `:platform_authz`. The claim is the cluster's: every connected controller SHALL adopt it and unlink its own `bootstrap.token`.
 
 #### Scenario: First boot writes bootstrap token
 - **WHEN** `Flezha.AuthZ.Bootstrap.check_and_write/0` runs and no `admin@_system` binding exists
@@ -252,11 +252,11 @@ On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` 
 
 ### Requirement: State-path namespace prefix and migration
 
-The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per relay-class), safe to interrupt, and idempotent. The namespace SHALL be plumbed through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` so writes land under `app_data/state/<namespace>/...` rather than the migrated `_system` prefix.
+The system SHALL move any pre-namespace top-level subtree under `storage/app/state/` into `storage/app/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per relay-class), safe to interrupt, and idempotent. The namespace SHALL be plumbed through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` so writes land under `storage/app/state/<namespace>/...` rather than the migrated `_system` prefix.
 
 #### Scenario: Migration moves legacy state under _system
-- **WHEN** the Controller boots with `app_data/state/orders/` existing and no `_system/` subdirectory
-- **THEN** after the migrator runs, `app_data/state/_system/orders/` SHALL exist AND `app_data/state/orders/` SHALL NOT exist
+- **WHEN** the Controller boots with `storage/app/state/orders/` existing and no `_system/` subdirectory
+- **THEN** after the migrator runs, `storage/app/state/_system/orders/` SHALL exist AND `storage/app/state/orders/` SHALL NOT exist
 
 #### Scenario: Migration is idempotent
 - **WHEN** the migrator runs twice in succession on an already-migrated tree
@@ -265,7 +265,7 @@ The system SHALL move any pre-namespace top-level subtree under `app_data/state/
 #### Scenario: Namespaced relay writes under its namespace
 
 - **WHEN** a relay in namespace `team-orders` persists cell state
-- **THEN** the WAL and snapshot files land under `app_data/state/team-orders/...`
+- **THEN** the WAL and snapshot files land under `storage/app/state/team-orders/...`
   and restore resolves the same path
 
 ### Requirement: Auth-state mutations emit auditable signals
@@ -304,7 +304,7 @@ The system SHALL expose `Flezha.Service.CliManager.authz_*`, `namespace_*`, and 
 
 ### Requirement: Durable token-store and role-store crash recovery
 
-`app_data/auth/tokens.dets`, `app_data/auth/roles.dets`, `app_data/auth/namespaces.dets`, `app_data/auth/quota_counters.dets`, and `app_data/auth/state.dets` SHALL be opened with `:sync` writes so every mutation is durably written before the mutating call returns. On Controller boot, if any of these files is detected as corrupt, the system SHALL rename the corrupt file to `<name>.corrupt-<unix_ts>` and open a fresh empty file. While `:enabled` is `true`, the Controller SHALL refuse to leave `Flezha.AuthZ.Supervisor` healthy unless either (a) the recovered state contains at least one `admin@_system` role binding, or (b) `bootstrap.token` is present, or (c) `FLEZHA_AUTHZ_ENABLED=false` is set in the environment.
+`storage/app/auth/tokens.dets`, `storage/app/auth/roles.dets`, `storage/app/auth/namespaces.dets`, `storage/app/auth/quota_counters.dets`, and `storage/app/auth/state.dets` SHALL be opened with `:sync` writes so every mutation is durably written before the mutating call returns. On Controller boot, if any of these files is detected as corrupt, the system SHALL rename the corrupt file to `<name>.corrupt-<unix_ts>` and open a fresh empty file. While `:enabled` is `true`, the Controller SHALL refuse to leave `Flezha.AuthZ.Supervisor` healthy unless either (a) the recovered state contains at least one `admin@_system` role binding, or (b) `bootstrap.token` is present, or (c) `FLEZHA_AUTHZ_ENABLED=false` is set in the environment.
 
 Each of these files SHALL be one declared durable store: it names the layout subtree it lives in and its filename, and the opening, the corrupt-file rotation, the per-mutation sync and the close on shutdown SHALL be performed by the shared store implementation rather than by the owning module. The directory SHALL be claimed through the layout declaration, so the five files follow the configured auth directory with no module joining a root of its own.
 
@@ -318,7 +318,7 @@ Each of these files SHALL be one declared durable store: it names the layout sub
 
 ### Requirement: Runtime configuration surface
 
-The system SHALL expose runtime configuration under the `:authn_authz` key with at minimum: `:enabled` (boolean, default `true` in production; dev/test carry the explicit opt-out), `:auth_dir` (default `app_data/auth`), `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`), `:token_ttl_default_seconds` (default `86_400`), `:token_expiry_warning_ms` (default `86_400_000`), `:token_expiry_check_interval_ms` (default `300_000`), `:namespaces` (per-namespace quota overrides), `:application_managed` (boolean, default `true`; tests flip to `false`). There SHALL be no second, longer default TTL for a machine-held credential, because no unattended process holds an expiring credential. Env-var overrides `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` and `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` SHALL be honoured with `env > app config > default` precedence.
+The system SHALL expose runtime configuration under the `:authn_authz` key with at minimum: `:enabled` (boolean, default `true` in production; dev/test carry the explicit opt-out), `:auth_dir` (default `storage/app/auth`), `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`), `:token_ttl_default_seconds` (default `86_400`), `:token_expiry_warning_ms` (default `86_400_000`), `:token_expiry_check_interval_ms` (default `300_000`), `:namespaces` (per-namespace quota overrides), `:application_managed` (boolean, default `true`; tests flip to `false`). There SHALL be no second, longer default TTL for a machine-held credential, because no unattended process holds an expiring credential. Env-var overrides `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` and `FLEZHA_AUTHZ_TOKEN_EXPIRY_WARNING_MS` SHALL be honoured with `env > app config > default` precedence.
 
 #### Scenario: Env var overrides config
 - **WHEN** the Controller boots with `FLEZHA_AUTHZ_DIR=/srv/flezha/auth` set
@@ -459,7 +459,7 @@ SHALL be rebuilt from a State registry scan on boot.
 
 ### Requirement: Break-glass recovery for a lost admin
 
-The system SHALL provide a documented recovery path for a lost `admin@_system` credential that does not require stopping the controller. A user with filesystem access to `app_data/auth/` SHALL be able to write the bootstrap token file that `Flezha.AuthZ.Bootstrap` already reads, and claim it once against the running controller. The recovery SHALL be impossible without filesystem access and SHALL emit an auditable event recording that recovery occurred. Recovery with the controller stopped SHALL remain available and unchanged.
+The system SHALL provide a documented recovery path for a lost `admin@_system` credential that does not require stopping the controller. A user with filesystem access to `storage/app/auth/` SHALL be able to write the bootstrap token file that `Flezha.AuthZ.Bootstrap` already reads, and claim it once against the running controller. The recovery SHALL be impossible without filesystem access and SHALL emit an auditable event recording that recovery occurred. Recovery with the controller stopped SHALL remain available and unchanged.
 
 #### Scenario: Recovery re-enters bootstrap without a stop
 

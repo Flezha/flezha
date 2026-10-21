@@ -11,8 +11,7 @@ cover
 flezha-*.tar
 
 # runtime / scratch
-app_data
-logs
+storage
 *.dump
 **/erl_crash.dump
 bench-*.txt

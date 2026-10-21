@@ -541,7 +541,7 @@ SDK raises or returns its one error type carrying them.
 | `reset.confirmation_required` | invalid | 2 | flz reset printed its plan and cleared nothing: pass --yes to apply it, or --dry-run to preview without an error | `flz reset --yes` |
 | `reset.controller_running` | conflict | 6 | flz reset refuses to run while the controller is up | `flz controller stop` |
 | `reset.partial` | internal | 1 | the reset stopped at {path} after clearing some roots: {reason} |  |
-| `reset.path_refused` | invalid | 2 | refusing to clear {path}: it is, or overlaps, {collides_with}; --app-data-root or a symlink may alias the two |  |
+| `reset.path_refused` | invalid | 2 | refusing to clear {path}: it is, or overlaps, {collides_with}; --storage-root or a symlink may alias the two |  |
 | `reset.path_unreadable` | internal | 1 | {path} could not be read before anything was cleared: {reason} |  |
 
 ### runner

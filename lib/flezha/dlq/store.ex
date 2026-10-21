@@ -2,7 +2,7 @@ defmodule Flezha.Dlq.Store do
   @moduledoc """
   Durable dead-letter store (`dead-letter-queue`).
 
-  One controller-wide GenServer owning `app_data/dlq/<relay_class>/<tasklet_id>/`:
+  One controller-wide GenServer owning `storage/app/dlq/<relay_class>/<tasklet_id>/`:
   a JSONL metadata index (`entries.jsonl`, one record per parked payload)
   with payload bytes in adjacent `<entry_id>.bin` blob files. Appends are
   fsynced before the caller's durable-ack callback fires — the SDK holds

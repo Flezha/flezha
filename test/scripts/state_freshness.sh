@@ -81,7 +81,7 @@ note() {
   echo "[state_freshness] $*"
 }
 
-SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
+SOCKETS_DIR="${REPO_ROOT}/storage/app/sockets"
 
 fetch_active_ce_id() {
   # shellcheck disable=SC2012

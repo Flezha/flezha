@@ -71,11 +71,11 @@ note() {
 
 # Read the agent's currently-active runner_id for the demo namespace
 # by inspecting the per-CE primary stream UDS socket files the agent creates
-# inside `<repo>/app_data/sockets/`. The bind-mounted sockets directory makes
+# inside `<repo>/storage/app/sockets/`. The bind-mounted sockets directory makes
 # this a no-overhead host-side check that doesn't depend on the BEAM having
 # distribution wired up. Returns the most recently created socket's ce_id, or
 # "" if no handshake has happened yet.
-SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
+SOCKETS_DIR="${REPO_ROOT}/storage/app/sockets"
 
 fetch_active_ce_id() {
   # shellcheck disable=SC2012  # ls -t for mtime sort is intentional and portable here

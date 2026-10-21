@@ -30,7 +30,7 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
   describe "the socket ladder" do
     # The repository rung is relative to the runner's working directory. One of
-    # this test's own keeps it from the checkout's `app_data/sockets`, which a
+    # this test's own keeps it from the checkout's `storage/app/sockets`, which a
     # developer's controller or another run's decoy may hold live.
     setup do
       {:ok, cwd: tmp_dir("cwd")}
@@ -110,16 +110,16 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
   # --- helpers ---
 
-  # Where `app_data/sockets` lands for a runner started in `cwd` and for one
+  # Where `storage/app/sockets` lands for a runner started in `cwd` and for one
   # that `cd`s into its own app directory — the rung is relative to the
   # runner's working directory, and test apps differ.
   defp repository_rungs(cwd) do
     app_dir = Path.expand("test/apps/#{NodeTestHelper.spawn_runtime()}_runner")
-    app_rung = Path.join(app_dir, "app_data/sockets")
+    app_rung = Path.join(app_dir, "storage/app/sockets")
 
-    unless File.dir?(app_rung), do: on_exit(fn -> File.rm_rf(Path.join(app_dir, "app_data")) end)
+    unless File.dir?(app_rung), do: on_exit(fn -> File.rm_rf(Path.join(app_dir, "storage")) end)
 
-    [Path.join(cwd, "app_data/sockets"), app_rung]
+    [Path.join(cwd, "storage/app/sockets"), app_rung]
   end
 
   # The rungs as a runner may name them: a test app under `test/apps` is a
@@ -130,8 +130,11 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
 
     resolved =
       case File.read_link(link) do
-        {:ok, target} -> [Path.join(Path.expand(target, Path.dirname(link)), "app_data/sockets")]
-        {:error, _} -> []
+        {:ok, target} ->
+          [Path.join(Path.expand(target, Path.dirname(link)), "storage/app/sockets")]
+
+        {:error, _} ->
+          []
       end
 
     repository_rungs(cwd) ++ resolved

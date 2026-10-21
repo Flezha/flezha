@@ -61,7 +61,7 @@ flz() {
   "${COMPOSE[@]}" exec -T controller /flezha/target/release/flz "$@"
 }
 
-SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
+SOCKETS_DIR="${REPO_ROOT}/storage/app/sockets"
 
 fetch_active_ce_id() {
   # shellcheck disable=SC2012

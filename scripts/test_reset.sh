@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reset the local runtime data dirs between test/soak runs.
 #
-# Deletes only the regenerable per-run state under this repo's app_data/
+# Deletes only the regenerable per-run state under this repo's storage/app/
 # (WAL state, ProcessHub registry, sockets, persisted runner ids). It
 # never touches durable config (certs, auth) and refuses to run unless the
 # tree it resolved declares this application, so a copy of this script
@@ -13,7 +13,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
-# Guard: only ever operate on this project's app_data. Identity, not location —
+# Guard: only ever operate on this project's storage. Identity, not location —
 # a path says where a tree sits, which a clone or a worktree changes; mix.exs
 # says which project it is. Anchored at both ends so `:flezha_market` cannot
 # pass, and the trailing comma is optional so reordering the keyword list does
@@ -24,7 +24,7 @@ if ! grep -Eq '^[[:space:]]*app:[[:space:]]*:flezha[[:space:]]*,?[[:space:]]*$' 
 fi
 
 for sub in state process_hub sockets exec-id; do
-  rm -rf "app_data/${sub:?}"/* 2>/dev/null || true
+  rm -rf "storage/app/${sub:?}"/* 2>/dev/null || true
 done
 
-echo "test_reset: cleared app_data/{state,process_hub,sockets,exec-id}"
+echo "test_reset: cleared storage/app/{state,process_hub,sockets,exec-id}"

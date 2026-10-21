@@ -23,8 +23,8 @@ else installed. What is in it, and what matters to you:
 | --- | --- |
 | `bin/flz` | the CLI |
 | `releases/<version>/vm.args` | the VM's flags, yours to edit ([Tune the VM](../deploying/deploying_a_controller.md#tune-the-vm)) |
-| `app_data/` | the controller's durable state and its cookie, created in the directory the controller starts from |
-| `logs/flezha.log` | everything the controller logs, also in the directory it starts from |
+| `storage/app/` | the controller's durable state and its cookie, created in the directory the controller starts from |
+| `storage/logs/flezha.log` | everything the controller logs, also in the directory it starts from |
 | `tmp/log/` | the boot, and anything printed before the logger is up |
 | `bin/flzvm` | the script every Elixir release comes with, which starts and stops the controller's VM. `flz` is a separate, compiled program that checks your command and prints the answer, and hands each call to `flzvm`; you rarely run it yourself |
 | `erts-<version>/`, `lib/` | the Erlang runtime and the compiled code; nothing to change |

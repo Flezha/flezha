@@ -522,7 +522,7 @@ candidates in order:
 1. `FLEZHA_SOCKET_FILES_PATH` when set — used outright, with no fallback to any later candidate;
 2. `$XDG_RUNTIME_DIR/flezha` when `XDG_RUNTIME_DIR` is set;
 3. `/run/flezha`;
-4. `app_data/sockets`, relative to the working directory.
+4. `storage/app/sockets`, relative to the working directory.
 
 The controller SHALL take the first candidate it can create; a runner SHALL take the first
 candidate holding a live control socket. When no variable is set and more than one candidate
@@ -545,7 +545,7 @@ user.
 - **THEN** the runner refuses to connect and reports both absolute paths and the variable that resolves the ambiguity
 
 #### Scenario: A relative candidate is reported absolutely
-- **WHEN** a runner resolves the `app_data/sockets` candidate and reports the path
+- **WHEN** a runner resolves the `storage/app/sockets` candidate and reports the path
 - **THEN** the reported path is absolute
 
 ### Requirement: A QUIC runner dials a list of addresses re-resolved on every attempt

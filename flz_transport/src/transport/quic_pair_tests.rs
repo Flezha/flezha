@@ -31,7 +31,11 @@ const SERVER_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST),
 
 /// The repo's development certificates, which both endpoints below use.
 pub fn cert_path(name: &str) -> String {
-    format!("{}/../app_data/certs/{}", env!("CARGO_MANIFEST_DIR"), name)
+    format!(
+        "{}/../../storage/app/certs/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    )
 }
 
 /// The server side of the pair, built by the same function a real QUIC server
@@ -245,7 +249,7 @@ impl SocketPeer {
     /// dials. The count is the lever: a client that asks for one more than
     /// this is refused its next open, in the middle of a pair set.
     pub fn listening(max_bidi_streams: u32) -> SocketPeer {
-        // `app_data/` is runtime data, so no checkout carries the development
+        // `storage/app/` is runtime data, so no checkout carries the development
         // certificates and the failure would otherwise be an open() on a path.
         for name in ["ca.pem", "server.pem", "server.key"] {
             assert!(

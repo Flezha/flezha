@@ -150,7 +150,7 @@ steps, and the acknowledgement orders them: the cell does not move past an
 input until the controller has confirmed its park (`flz_core/src/park.rs`).
 
 **The store.** `Flezha.Dlq.Store` keeps
-`app_data/dlq/<relay_class>/<tasklet_id>/entries.jsonl` plus one file per
+`storage/app/dlq/<relay_class>/<tasklet_id>/entries.jsonl` plus one file per
 payload, fsynced before the acknowledgement. An entry's id comes from where
 the payload came from: `cell_key@offset` on the tier, the channel and a hash
 of the payload without it. So a park sent again after a lost acknowledgement,

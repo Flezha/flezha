@@ -33,7 +33,7 @@ flowchart LR
 - **A relay id is unique within its namespace**, not across them.
 - **Each namespace has a hub of its own**: the process that decides which
   runner each relay runs on, and moves it when that runner goes away.
-- **Saved state is kept per namespace**, under `app_data/state/<namespace>/`.
+- **Saved state is kept per namespace**, under `storage/app/state/<namespace>/`.
 - **The limits are six quotas** stored with the namespace, and the keys are
   the credentials and tokens issued for it.
 
@@ -83,7 +83,7 @@ Without a claimed admin, or without a token in the shell, the same command is
 refused, and the refusal says what is missing:
 
 ```output
-error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in app_data/auth/bootstrap.token on the controller (authz.bootstrap_pending)
+error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in storage/app/auth/bootstrap.token on the controller (authz.bootstrap_pending)
 hint: flz auth bootstrap <token>
 ```
 
@@ -225,7 +225,7 @@ Runners in namespace 'trading':
 | `max_runners` | 32 | runners connected at once; a refused connect emits `[:flezha, :runner, :quota_refused]` |
 
 A refusal is `quota.exceeded`, with `kind`, `current` and `limit` in its
-details. The disk footprint is measured from `app_data/state/<namespace>/`,
+details. The disk footprint is measured from `storage/app/state/<namespace>/`,
 cached for 30 s and rebuilt from disk at boot; the runner count comes from the
 live connections. While authorization is not enforced, every quota check
 passes.

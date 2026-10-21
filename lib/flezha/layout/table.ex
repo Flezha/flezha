@@ -19,8 +19,8 @@ defmodule Flezha.Layout.Table do
 
   The `:sockets` row declares `dir: :ladder`. The socket directory is resolved
   by the ladder `flz_transport` owns — an explicit variable, `XDG_RUNTIME_DIR`,
-  `/run/flezha`, then `app_data/sockets` — is frequently not under the data
-  root at all, and `--app-data-root` must not move it. `dir/1` and `claim/1`
+  `/run/flezha`, then `storage/app/sockets` — is frequently not under the data
+  root at all, and `--storage-root` must not move it. `dir/1` and `claim/1`
   therefore refuse that row and name its owner, `Flezha.Socket.Support`, which
   claims the directory with the live-peer refusal a bare `mkdir_p` does not
   carry. This table owns the names inside that directory, never the directory.

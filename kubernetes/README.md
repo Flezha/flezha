@@ -137,7 +137,7 @@ mount. Those are:
 | path | volume | why |
 |---|---|---|
 | `/flezha/sockets` | hostPath | UDS transport (`FLEZHA_SOCKET_FILES_PATH`) |
-| `/flezha/app_data/certs` | hostPath | certs auto-generated on first run |
+| `/flezha/storage/app/certs` | hostPath | certs auto-generated on first run |
 | `/var/log/flezha` | hostPath | log file (`FLEZHA_LOG_PATH`) |
 | `/var/lib/flezha` | hostPath | all durable state (see below) |
 | `/flezha/tmp` | emptyDir | `RELEASE_TMP` — the Mix release materialises its merged runtime config here on **every** boot; without it the controller does not start |
@@ -152,7 +152,7 @@ ladder's first rung and wins outright — a default moving underneath them
 changes nothing. Keep both sides naming the same path; the discovery ladder is
 for hosts that configure neither.
 
-Anything whose path defaults to `app_data/*` (relative to the image working dir)
+Anything whose path defaults to `storage/app/*` (relative to the image working dir)
 therefore has to be redirected onto the persistent volume, which is what
 `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_STATE_DIR` and `FLEZHA_DLQ_DIR` in the
 ConfigMap do. **If

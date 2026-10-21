@@ -99,7 +99,7 @@ defmodule Flezha.Config.Keys do
     # explicit variable still wins for every one of them.
     {:run_token, :string, nil,
      key: true, runtimes: [:harness], env_default: [test: {:late, {System, :pid, []}}]},
-    {:state_root, :path, "app_data/state",
+    {:state_root, :path, "storage/app/state",
      key: true,
      env: "FLEZHA_STATE_DIR",
      per_run: :state_root,
@@ -127,7 +127,7 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_NODE_NAME", runtimes: [:controller, :shell], per_run: :node_name},
     {:node_host_name, :string, "127.0.0.1",
      key: true, env: "FLEZHA_NODE_HOST", runtimes: [:shell, :harness]},
-    {:process_hub_registry_root, :path, "app_data/process_hub",
+    {:process_hub_registry_root, :path, "storage/app/process_hub",
      key: true, env: "FLEZHA_PROCESS_HUB_REGISTRY_ROOT", per_run: :hub_root},
 
     # ---- cluster ------------------------------------------------------------
@@ -172,21 +172,21 @@ defmodule Flezha.Config.Keys do
      env_default: [test: [:uds, :quic]],
      derived: {:one_of, :transport}},
     {:controller_enabled, :bool, true, key: true, env: "FLEZHA_CONTROLLER_ENABLED"},
-    {:ca_cert_path, :path, "app_data/certs/ca.pem",
+    {:ca_cert_path, :path, "storage/app/certs/ca.pem",
      key: true, env: "FLEZHA_CA_CERT_PATH", runtimes: [:controller, :elixir_sdk, :rust]},
-    {:server_cert_path, :path, "app_data/certs/server.pem",
+    {:server_cert_path, :path, "storage/app/certs/server.pem",
      key: true, env: "FLEZHA_SERVER_CERT_PATH"},
-    {:server_key_path, :path, "app_data/certs/server.key",
+    {:server_key_path, :path, "storage/app/certs/server.key",
      key: true, env: "FLEZHA_SERVER_KEY_PATH"},
-    {:client_cert_path, :path, "app_data/certs/client.pem",
+    {:client_cert_path, :path, "storage/app/certs/client.pem",
      key: true, env: "FLEZHA_CLIENT_CERT_PATH"},
-    {:client_key_path, :path, "app_data/certs/client.key",
+    {:client_key_path, :path, "storage/app/certs/client.key",
      key: true, env: "FLEZHA_CLIENT_KEY_PATH"},
     # Peer authentication posture: required by default; the explicit wide-open
     # opt-out is warned on every boot while it is set.
     {:transport_auth_required, :bool, true, key: true, env: "FLEZHA_TRANSPORT_AUTH"},
     # A second trust anchor on purpose: two files a user may point apart.
-    {:quic_client_ca_path, :path, "app_data/certs/ca.pem",
+    {:quic_client_ca_path, :path, "storage/app/certs/ca.pem",
      key: true, env: "FLEZHA_QUIC_CLIENT_CA"},
     # The addresses a runner dials, read by the NIF's diagnosis rather than the
     # controller's own boot.
@@ -396,7 +396,7 @@ defmodule Flezha.Config.Keys do
     # User opt-in: default OFF. When enabled the subsystem writes one JSON
     # Lines record per accepted signal to `<dir>/audit-current.jsonl`.
     {:audit_log_enabled, :bool, false, key: {:audit_log, :enabled}, env: "FLEZHA_AUDIT_ENABLED"},
-    {:audit_log_dir, :path, "app_data/audit",
+    {:audit_log_dir, :path, "storage/app/audit",
      key: {:audit_log, :dir}, env: "FLEZHA_AUDIT_DIR", surface: {:disk, :audit_dir}},
     {:audit_log_max_file_bytes, :int, 67_108_864, key: {:audit_log, :max_file_bytes}},
     {:audit_log_max_file_age_seconds, :int, 86_400, key: {:audit_log, :max_file_age_seconds}},
@@ -414,7 +414,7 @@ defmodule Flezha.Config.Keys do
     {:audit_log_extra_subscriptions, :term, [], key: {:audit_log, :extra_subscriptions}},
 
     # ---- dead-letter queue --------------------------------------------------
-    {:dlq_dir, :path, "app_data/dlq",
+    {:dlq_dir, :path, "storage/app/dlq",
      key: {:dlq, :dir}, env: "FLEZHA_DLQ_DIR", surface: {:disk, :dlq_dir}},
     {:dlq_retention_seconds, {:custom, :days_to_seconds}, 2_592_000,
      key: {:dlq, :retention_seconds}, env: "FLEZHA_DLQ_RETENTION_DAYS"},
@@ -430,7 +430,7 @@ defmodule Flezha.Config.Keys do
     # global tree must start no default supervisor.
     {:authz_application_managed, :bool, true,
      key: {:authn_authz, :application_managed}, env_default: [test: false]},
-    {:authz_auth_dir, :path, "app_data/auth",
+    {:authz_auth_dir, :path, "storage/app/auth",
      key: {:authn_authz, :auth_dir}, env: "FLEZHA_AUTHZ_DIR", runtimes: [:controller, :cli]},
     {:authz_bootstrap_token_path, :path, nil,
      key: {:authn_authz, :bootstrap_token_path},
@@ -441,7 +441,7 @@ defmodule Flezha.Config.Keys do
     {:authz_namespaces, :term, %{}, key: {:authn_authz, :namespaces}},
 
     # ---- scheduled steps spawns ------------------------------------------
-    {:schedule_dir, :path, "app_data/schedules",
+    {:schedule_dir, :path, "storage/app/schedules",
      key: {:schedules, :dir}, env: "FLEZHA_SCHEDULE_DIR"},
     # Same posture as authn_authz: no test gets a stray `:flz_schedules` hub it
     # did not ask for.
@@ -451,7 +451,7 @@ defmodule Flezha.Config.Keys do
     # ---- plugin packages -------------------------------------------------------
     # The folder of installed `*.fpz` archives, loaded at boot. An archive there
     # is the opt-in: no setting gates loading.
-    {:plugin_root, :path, "app_data/plugins",
+    {:plugin_root, :path, "storage/app/plugins",
      key: {:plugins, :plugin_root}, env: "FLEZHA_PLUGIN_ROOT"},
     # Ed25519 public keys verifying `signature.sig` over `CHECKSUMS.sha256`; the
     # variable names PEM files on disk, comma separated.
@@ -471,7 +471,7 @@ defmodule Flezha.Config.Keys do
     # The one folder or bucket prefix a file plugin may read from or write to.
     # The default is a folder of its own beside the controller's data, never a
     # parent of it, so no plugin path reaches the state, certificates or tokens.
-    {:file_plugin_root, :path, "app_data/files",
+    {:file_plugin_root, :path, "storage/app/files",
      key: true, env: "FLEZHA_FILE_PLUGIN_ROOT", surface: {:status, :file_plugin_root}},
     # An `s3://<bucket>/<prefix>` root is reached with these and never with the
     # durability tier's S3 settings, so credentials a plugin holds cannot reach
@@ -514,7 +514,8 @@ defmodule Flezha.Config.Keys do
     # live here and `config/runtime.exs` writes them into the logger's own
     # application env. A controller's file log records at `info`; a runner's
     # stdout is quiet at `warn` — one name, two readers, one spelling each.
-    {:log_path, :path, "logs/flezha.log", env: "FLEZHA_LOG_PATH", runtimes: [:controller]},
+    {:log_path, :path, "storage/logs/flezha.log",
+     env: "FLEZHA_LOG_PATH", runtimes: [:controller]},
     {:log_level, {:enum, [:debug, :info, :warn, :error]}, [controller: :info, runner: :warn],
      env: "FLEZHA_LOG_LEVEL",
      runtimes: [:controller, :elixir_sdk, :rust, :java, :node, :python, :ruby, :php]},
@@ -584,7 +585,7 @@ defmodule Flezha.Config.Keys do
     {:native_lib_dir, :path, nil, runtimes: [:java, :php], env: "FLEZHA_NATIVE_LIB_DIR"},
     {:socket_dir_group, :string, nil,
      key: true, env: "FLEZHA_SOCKET_DIR_GROUP", runtimes: [:controller, :rust]},
-    {:app_data_root, :path, "app_data", runtimes: [:shell, :cli], env: "FLEZHA_APP_DATA_ROOT"},
+    {:storage_root, :path, "storage", runtimes: [:shell, :cli], env: "FLEZHA_STORAGE_ROOT"},
     {:container_user, :string, nil, runtimes: [:shell], env: "FLEZHA_CONTAINER_USER"},
     {:restore_wait_timeout_s, :int, 60, runtimes: [:shell], env: "FLEZHA_RESTORE_WAIT_TIMEOUT_S"},
     {:shutdown_token_file, :path, nil, runtimes: [:shell], env: "FLEZHA_SHUTDOWN_TOKEN_FILE"},
@@ -595,9 +596,9 @@ defmodule Flezha.Config.Keys do
     {:namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_NAMESPACE"},
     {:demo_namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_DEMO_NAMESPACE"},
     {:quic_address, :address, nil, runtimes: [:harness, :rust], env: "FLEZHA_QUIC_ADDRESS"},
-    {:quic_client_cert, :path, "app_data/certs/client.pem",
+    {:quic_client_cert, :path, "storage/app/certs/client.pem",
      runtimes: [:harness, :elixir_sdk, :rust], env: "FLEZHA_QUIC_CLIENT_CERT"},
-    {:quic_client_key, :path, "app_data/certs/client.key",
+    {:quic_client_key, :path, "storage/app/certs/client.key",
      runtimes: [:harness, :elixir_sdk, :rust], env: "FLEZHA_QUIC_CLIENT_KEY"},
     {:testnet_config, :path, nil, runtimes: [:harness], env: "FLEZHA_TESTNET_CONFIG"},
     {:testnet_enabled_env, :bool, nil, env: "FLEZHA_TESTNET_ENABLED", runtimes: [:harness]},

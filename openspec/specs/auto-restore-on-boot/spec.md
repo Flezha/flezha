@@ -12,7 +12,7 @@ The backend SHALL be one whose reads are served from memory, so the reconcile's 
 
 The live registry MUST still start empty on such a boot. `ProcessRegistry.local_data/1` selects rows by `node_pids` membership and the node name is stable across a restart, so a backend that exposed the previous boot's rows as live state would have `Synchronizer.broadcastable_local_data/1` advertise dead pids to peers as this node's local children.
 
-The DETS path SHALL resolve to `app_data/process_hub/<hub_id>/registry.dets` by default, with the root configurable via `:flezha, :process_hub_registry_root` (env var `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`).
+The DETS path SHALL resolve to `storage/app/process_hub/<hub_id>/registry.dets` by default, with the root configurable via `:flezha, :process_hub_registry_root` (env var `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`).
 
 The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recovery.parse_config/1` reads, currently `[reconcile_grace_ms:, reconcile_interval_ms:, cluster_settle_ms:, remote_manifest:]`, so no key advertises a control ProcessHub ignores; a key it no longer reads is accepted with a WARN and silently dropped, which is indistinguishable from working. Values come from runtime config `:flezha, :process_hub_reconcile_grace_ms` (default `45_000`), `:process_hub_reconcile_interval_ms` (default `30_000`) and `:process_hub_cluster_settle_ms` (default `2_000`, env var `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS`). `remote_manifest` carries the durability tier's declared-manifest module when a tier is configured and `nil` otherwise. `stopped_row_ttl_ms` SHALL NOT be passed: ProcessHub deprecated the key and Flezha holds no row for it.
 
@@ -28,7 +28,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 - **GIVEN** an application boots with default Flezha config
 - **WHEN** `HubManager` constructs the ProcessHub child spec for namespace `"default"`
-- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}`, and its `auto_recovery` carries `reconcile_grace_ms: 45_000`, `reconcile_interval_ms: 30_000`, `cluster_settle_ms: 2_000` and `remote_manifest: nil`
+- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "storage/app/process_hub/<hub_id>/registry.dets"]}`, and its `auto_recovery` carries `reconcile_grace_ms: 45_000`, `reconcile_interval_ms: 30_000`, `cluster_settle_ms: 2_000` and `remote_manifest: nil`
 
 #### Scenario: Kill-switch disables auto-recovery
 
@@ -52,7 +52,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 #### Scenario: Boot succeeds end-to-end against a fresh image
 
-- **GIVEN** the controller is started from a freshly-built `flezha/flezha:latest-dev` image with an empty `app_data/process_hub/` directory
+- **GIVEN** the controller is started from a freshly-built `flezha/flezha:latest-dev` image with an empty `storage/app/process_hub/` directory
 - **WHEN** an SDK opens its first UDS `connect_control_channel` frame
 - **THEN** `ProcessHub.Initializer.setup_storage/2` returns successfully for `:default_hub`
 - **AND** the connect starts the namespace's hub and the runner's session completes its handshake
@@ -100,7 +100,7 @@ This works identically across: ProcessHub-driven cold-boot replay, fresh `flz re
 #### Scenario: ProcessHub replay + Cell stream attach ships RestoreInitState
 
 - **GIVEN** ProcessHub's persistent registry is replayed; a Relay is started; a runner connects and is assigned
-- **WHEN** the SDK opens a data stream for a Cell that has on-disk WAL records under `app_data/state/{relay_class}/{tasklet_id}/{cell_key}.wal`
+- **WHEN** the SDK opens a data stream for a Cell that has on-disk WAL records under `storage/app/state/{relay_class}/{tasklet_id}/{cell_key}.wal`
 - **THEN** the controller ships `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
 
 #### Scenario: HotSwap-arrived Cell skips dispatch
@@ -184,9 +184,9 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 
 ### Requirement: State-directory cleanup ONLY on explicit relay stop
 
-State files under `app_data/state/{relay_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup,lineage}` SHALL be removed ONLY when `Flezha.Service.RelayManager.stop_relay/2` is called by a user. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
+State files under `storage/app/state/{relay_class}/{tasklet_id}/{cell_key}.{wal,snap.N,outbox.dedup,lineage}` SHALL be removed ONLY when `Flezha.Service.RelayManager.stop_relay/2` is called by a user. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
 
-`stop_relay/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{relay_class}/{tasklet_id}/` for each tasklet. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
+`stop_relay/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `storage/app/state/{relay_class}/{tasklet_id}/` for each tasklet. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
 
 The Retention sweeper handles long-term orphans via `time_travel_retention_hours`.
 
@@ -195,13 +195,13 @@ The Retention sweeper handles long-term orphans via `time_travel_retention_hours
 - **GIVEN** relay `p1` running on controller A with WAL files
 - **WHEN** ProcessHub HotSwap migrates `p1` to controller B
 - **AND** A's `child_unregistered_hook` fires after the source process terminates
-- **THEN** A's persistent-registry row is removed by ProcessHub; A's `app_data/state/...` files SHALL still exist
+- **THEN** A's persistent-registry row is removed by ProcessHub; A's `storage/app/state/...` files SHALL still exist
 - **AND** B's persistent-registry row is written by ProcessHub's `post_children_start_hook`; B's WAL is populated by WAL-follows-relay
 
 #### Scenario: flz relay stop deletes state files
 
 - **WHEN** the runner runs `flz relay stop default p1`
-- **THEN** `RelayManager.stop_relay/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `app_data/state/MarketRelay/btc/...`
+- **THEN** `RelayManager.stop_relay/2` calls `ProcessHub.stop_children/3`; on success, recursively deletes `storage/app/state/MarketRelay/btc/...`
 - **AND** if any `.tmp` or `.rewriting` file is present, deletion is skipped with a WARN log
 
 ### Requirement: Single explicitly-tolerated data-loss case

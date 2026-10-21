@@ -40,8 +40,8 @@ durability_posture:            local_only
 durability_rpo_breaches:       0
 durability_levels:             my_echo=local
 durability_superseded:         0
-state_root:                    /opt/flezha/app_data/state
-file_plugin_root:              /opt/flezha/app_data/files
+state_root:                    /opt/flezha/storage/app/state
+file_plugin_root:              /opt/flezha/storage/app/files
 ```
 
 `stop` drains the relays first and reports each phase:
@@ -139,7 +139,7 @@ controller reachable
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
              /run/flezha
-             /srv/flezha/app_data/sockets
+             /srv/flezha/storage/app/sockets
 ```
 
 ```sh
@@ -212,15 +212,15 @@ $ flz reset --dry-run
 ```
 
 ```output
-would clear ./app_data/state/                                (0 files, 0 B)
-would clear ./app_data/process_hub/                          (0 files, 0 B)
-would keep  ./app_data/certs/                                (use --include-certs to clear)
-would keep  ./app_data/dlq/                                  (use --include-dlq to clear)
-would keep  ./app_data/schedules/                            (use --include-schedules to clear)
-would keep  ./app_data/auth/                                 (use --include-auth to clear)
-would keep  ./app_data/audit/                                (use --include-audit to clear)
-would keep  ./app_data/plugins/                              (use --include-plugins to clear)
+would clear ./storage/app/state/                             (0 files, 0 B)
+would clear ./storage/app/process_hub/                       (0 files, 0 B)
+would keep  ./storage/app/certs/                             (use --include-certs to clear)
+would keep  ./storage/app/dlq/                               (use --include-dlq to clear)
+would keep  ./storage/app/schedules/                         (use --include-schedules to clear)
+would keep  ./storage/app/auth/                              (use --include-auth to clear)
+would keep  ./storage/app/audit/                             (use --include-audit to clear)
+would keep  ./storage/app/plugins/                           (use --include-plugins to clear)
 would keep  socket directory                                 (use --include-sockets to clear)
-would keep  logs/                                            (not reset's to clear)
+would keep  ./storage/logs/                                  (not reset's to clear)
 reset complete in 0 ms
 ```

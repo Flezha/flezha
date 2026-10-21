@@ -216,7 +216,7 @@ timer parks once ([`timers.md`](timers.md)).
 A message that fails however often it is tried is not discarded. It is tried
 up to the channel's `retry_max` (3 attempts by default, with growing waits), or
 parked at once on a non-retryable error, and then written to the controller's
-dead-letter queue (`app_data/dlq/<relay_class>/<tasklet_id>/`) before the
+dead-letter queue (`storage/app/dlq/<relay_class>/<tasklet_id>/`) before the
 cell moves on, so the messages behind it are not held up. Some messages park
 with no attempt at all: an unroutable forward into a partition group, a key
 outside the member's range, and a message naming a channel that is not an entry

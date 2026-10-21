@@ -123,11 +123,11 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
   defp kept_mode("not reset's to clear"), do: :never
   defp kept_mode("use --include-" <> _flag), do: :flag
 
-  defp row_dir(root, subtree), do: Path.join(root, Atom.to_string(subtree))
+  defp row_dir(root, subtree), do: Path.join([root, "app", Atom.to_string(subtree)])
   defp witness(root, subtree), do: Path.join(row_dir(root, subtree), "witness.dat")
 
-  # Point every row's knob at `<root>/<subtree>` so the controller's own
-  # resolution and the binary's `--app-data-root` name one tree.
+  # Point every row's knob at `<root>/app/<subtree>` so the controller's own
+  # resolution and the binary's `--storage-root` name one tree.
   defp point_every_row_at(root) do
     for subtree <- Layout.subtrees(), subtree != :sockets do
       dir = row_dir(root, subtree)
@@ -160,7 +160,7 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
 
   defp reset_json(root, flags) do
     {out, 0} =
-      System.cmd(flz_binary(), ["reset", "--app-data-root", root, "--json"] ++ flags,
+      System.cmd(flz_binary(), ["reset", "--storage-root", root, "--json"] ++ flags,
         stderr_to_stdout: true
       )
 

@@ -23,8 +23,8 @@ defmodule Flezha.Transport.DriverStatsTest do
   defp start_quic_server do
     CertGenerator.ensure_certs()
 
-    cert = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
-    key = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
+    cert = Application.get_env(:flezha, :server_cert_path, "storage/app/certs/server.pem")
+    key = Application.get_env(:flezha, :server_key_path, "storage/app/certs/server.key")
 
     {:ok, server} = Native.start_quic_server("127.0.0.1:0", cert, key, "", self())
     on_exit(fn -> Native.stop_server(server) end)

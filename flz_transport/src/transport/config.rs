@@ -261,20 +261,21 @@ fn parse_quic_addresses(
 }
 
 pub fn ca_cert_path() -> String {
-    connect_raw("FLEZHA_CA_CERT_PATH").unwrap_or_else(|| "app_data/certs/ca.pem".to_string())
+    connect_raw("FLEZHA_CA_CERT_PATH").unwrap_or_else(|| "storage/app/certs/ca.pem".to_string())
 }
 
 /// Client certificate presented to a QUIC server that requires peer
 /// authentication. Defaults to the controller-generated pair so a local
-/// runner sharing `app_data/` authenticates out of the box; remote runners
+/// runner sharing `storage/app/` authenticates out of the box; remote runners
 /// point these at user-provisioned certs.
 pub fn quic_client_cert_path() -> String {
     connect_raw("FLEZHA_QUIC_CLIENT_CERT")
-        .unwrap_or_else(|| "app_data/certs/client.pem".to_string())
+        .unwrap_or_else(|| "storage/app/certs/client.pem".to_string())
 }
 
 pub fn quic_client_key_path() -> String {
-    connect_raw("FLEZHA_QUIC_CLIENT_KEY").unwrap_or_else(|| "app_data/certs/client.key".to_string())
+    connect_raw("FLEZHA_QUIC_CLIENT_KEY")
+        .unwrap_or_else(|| "storage/app/certs/client.key".to_string())
 }
 
 #[cfg(test)]

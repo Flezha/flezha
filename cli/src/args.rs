@@ -299,21 +299,23 @@ pub(crate) const DURATION_MS: OptSpec =
     OptSpec::number("--duration-ms", "--duration-ms", "<milliseconds>")
         .doc("Stream for at most this long (default 30000).");
 pub(crate) const DEFAULT_WINDOW_MS: u64 = 30_000;
-pub(crate) const APP_DATA_ROOT: OptSpec =
-    OptSpec::text("--app-data-root", "--app-data-root", "<path>")
-        .answered_by("FLEZHA_APP_DATA_ROOT")
-        .doc("The app_data/ root (default: FLEZHA_APP_DATA_ROOT or ./app_data).");
-/// The `app_data/` root when the caller named none. One spelling: two verbs
+pub(crate) const STORAGE_ROOT: OptSpec =
+    OptSpec::text("--storage-root", "--storage-root", "<path>")
+        .answered_by("FLEZHA_STORAGE_ROOT")
+        .doc("The storage/ root (default: FLEZHA_STORAGE_ROOT or ./storage).");
+/// The `storage/` root when the caller named none. One spelling: two verbs
 /// read this root, and a default written twice is a default that drifts.
-pub(crate) const APP_DATA_ROOT_DEFAULT: &str = "./app_data";
+pub(crate) const STORAGE_ROOT_DEFAULT: &str = "./storage";
 
-/// The `app_data/` root this run was given, from the option, the variable it
+/// The `storage/` root this run was given, from the option, the variable it
 /// is answered by, or the default.
-pub(crate) fn app_data_root(read: &Reading) -> PathBuf {
-    PathBuf::from(
-        read.opt(APP_DATA_ROOT.long)
-            .unwrap_or(APP_DATA_ROOT_DEFAULT),
-    )
+pub(crate) fn storage_root(read: &Reading) -> PathBuf {
+    PathBuf::from(read.opt(STORAGE_ROOT.long).unwrap_or(STORAGE_ROOT_DEFAULT))
+}
+
+/// The directory under a storage root that holds every store, beside `logs/`.
+pub(crate) fn app_dir(storage_root: &Path) -> PathBuf {
+    storage_root.join("app")
 }
 
 /// Joins a repeated option's values in its one slot: no word of a command

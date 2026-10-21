@@ -776,7 +776,7 @@ defmodule Flezha.Observability.AuditLogTest do
   defp default_config() do
     [
       enabled: false,
-      dir: "app_data/audit",
+      dir: "storage/app/audit",
       max_file_bytes: 67_108_864,
       max_file_age_seconds: 86_400,
       retention_seconds: 30 * 86_400,

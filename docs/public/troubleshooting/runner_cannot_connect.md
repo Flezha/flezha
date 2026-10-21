@@ -11,7 +11,7 @@ controller reachable
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
              /run/flezha
-             /srv/flezha/app_data/sockets
+             /srv/flezha/storage/app/sockets
 ```
 
 When none answered, a last `fix` line says what to do:
@@ -22,7 +22,7 @@ control socket absent
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
              /run/flezha
-             /srv/flezha/app_data/sockets
+             /srv/flezha/storage/app/sockets
   fix        start the controller, or wait for it to finish booting
 ```
 

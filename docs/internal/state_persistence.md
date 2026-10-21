@@ -21,7 +21,7 @@ describes what is inside the state root; the table is where the root itself is
 decided.
 
 ```text
-<state_root>/                        # :flezha, :state_root, else app_data/state
+<state_root>/                        # :flezha, :state_root, else storage/app/state
   .layout                            # namespaced-layout marker
   {namespace}/                       # `_system` holds pre-namespace state
     {relay_class}/
@@ -683,7 +683,7 @@ writes. The boot refuses a key no row reads and a value its row's type refuses
 
 | Key | Default | Meaning |
 |---|---|---|
-| `:state_root` | `FLEZHA_STATE_DIR`, else `"app_data/state"` | Root for every durable file. |
+| `:state_root` | `FLEZHA_STATE_DIR`, else `"storage/app/state"` | Root for every durable file. |
 | `:agent_fsync_interval_ms` | `5` | `FsyncBatcher` tick; range `[1, 1000]`. |
 | `:wal_high_watermark_bytes` | `16 * 1024 * 1024` | Soft watermark: status flags, default credit window, live-read ceiling, journal entry bound. |
 | `:wal_low_watermark_bytes` | `high / 2` | Status-flag release. |
@@ -714,7 +714,7 @@ relay on the `store_input` factory, attaches the websocket and Kafka
 plugins, lets the testnet drive inputs, then asserts the namespaced WAL layout
 (`<state_root>/<namespace>/<relay_class>/<tasklet_id>/<key>.wal`) and
 that `flz state list <relay_class>` reports the live cell. It wipes
-`app_data/state/` and its compose volumes on every run, so a green result is
+`storage/app/state/` and its compose volumes on every run, so a green result is
 evidence about the contract and not about leftovers.
 
 **It is NOT wired into CI, and nothing else runs it.** It needs a Docker

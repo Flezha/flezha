@@ -70,7 +70,7 @@ The first admin is claimed with the token the controller wrote at its first
 start, from [`authorization.md`](../core/authorization.md#claim-the-admin):
 
 ```sh
-$ flz auth bootstrap "$(cat app_data/auth/bootstrap.token)"
+$ flz auth bootstrap "$(cat storage/app/auth/bootstrap.token)"
 ```
 
 ```output

@@ -50,9 +50,6 @@ __pycache__/
 # Local process hub codebase.
 /process-hub
 
-# Log files
-/logs/
-
 # Local chaos harness + its soak/report outputs. Kept on disk (work in
 # progress) but out of `git status` until it is ready to be committed.
 /chaos/

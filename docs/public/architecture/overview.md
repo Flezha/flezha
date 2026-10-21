@@ -368,11 +368,11 @@ the same map. Wire detail:
 
 ## What is on disk
 
-Everything durable lives under `app_data/`. The state root is
-`app_data/state` by default (`:state_root`).
+Everything durable lives under `storage/app/`. The state root is
+`storage/app/state` by default (`:state_root`).
 
 ```text
-app_data/
+storage/app/
   state/<namespace>/<relay_class>/
     input.log                      the input log, when the class has one
     effectively_once, ack_checkpoint, run, ...

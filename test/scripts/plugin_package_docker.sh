@@ -93,7 +93,7 @@ note "package built on OTP ${PACKAGE_OTP}, runtime image runs OTP ${RUNTIME_OTP}
 note "shape 1: a named volume, flz plugin install, docker restart"
 VOLUMES+=("${RUN_ID}_plugins")
 docker volume create "${RUN_ID}_plugins" >/dev/null
-start "${RUN_ID}_volume" -v "${RUN_ID}_plugins:/flezha/app_data/plugins" -v "$WORK/out:/pkgs:ro" "$RUNTIME"
+start "${RUN_ID}_volume" -v "${RUN_ID}_plugins:/flezha/storage/app/plugins" -v "$WORK/out:/pkgs:ro" "$RUNTIME"
 await_ready "${RUN_ID}_volume"
 docker exec "${RUN_ID}_volume" /flezha/bin/flz plugin install /pkgs/flezha_example_plugin-0.1.0.fpz
 docker restart "${RUN_ID}_volume" >/dev/null
@@ -113,7 +113,7 @@ mkdir -p "$WORK/derived"
 cp "$ARCHIVE" "$WORK/derived/"
 cat >"$WORK/derived/Dockerfile" <<EOF
 FROM ${RUNTIME}
-COPY --chown=flezha:flezha flezha_example_plugin-0.1.0.fpz /flezha/app_data/plugins/
+COPY --chown=flezha:flezha flezha_example_plugin-0.1.0.fpz /flezha/storage/app/plugins/
 EOF
 docker build -q -t "$DERIVED" "$WORK/derived" >/dev/null
 start "${RUN_ID}_derived" "$DERIVED"

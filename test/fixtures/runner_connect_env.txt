@@ -30,4 +30,4 @@ retired   FLEZHA_QUIC_ADDRESS
 ladder    1  explicit      $FLEZHA_SOCKET_FILES_PATH
 ladder    2  xdg_runtime   $XDG_RUNTIME_DIR/flezha
 ladder    3  run           /run/flezha
-ladder    4  repository    app_data/sockets
+ladder    4  repository    storage/app/sockets

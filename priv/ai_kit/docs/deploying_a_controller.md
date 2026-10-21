@@ -66,7 +66,7 @@ starting from somewhere else opens two different trees.
 > #### State inside the release directory {: .warning}
 >
 > Started from the release directory, the controller keeps its durable state
-> and its cookie in `app_data/` beside `bin/`. Deleting the directory to put a
+> and its cookie in `storage/app/` beside `bin/`. Deleting the directory to put a
 > newer release in its place deletes them too. For anything you want to keep,
 > point `FLEZHA_STATE_DIR` at an absolute path outside it.
 
@@ -82,7 +82,7 @@ $ flz controller start
 | Mode | What you get |
 | --- | --- |
 | `attached` | the default. Runs in the foreground of this terminal and logs to it |
-| `daemon` | detached. Returns at once, and logs to `logs/flezha.log` |
+| `daemon` | detached. Returns at once, and logs to `storage/logs/flezha.log` |
 | `attached_iex` | attached, with an IEx shell on the running node |
 | `daemon_iex` | detached, with an IEx shell under the daemon |
 
@@ -94,14 +94,14 @@ $ docker pull flezha/flezha:0.1.0
 
 ```sh
 $ docker run -d --name flezha-controller \
-  -v flezha_data:/flezha/app_data \
+  -v flezha_data:/flezha/storage/app \
   flezha/flezha:0.1.0
 ```
 
 The image is amd64 only for now. One volume is enough: every durable tree the
 controller owns (state, authorization, plugins, schedules, the hub registry,
 the dead-letter queue, logs and the socket directory) lives under
-`/flezha/app_data`. Mount it, or the controller starts cold after every
+`/flezha/storage/app`. Mount it, or the controller starts cold after every
 `docker rm`.
 
 The image's healthcheck runs `flz boot await --timeout 0`, which exits zero
@@ -186,10 +186,10 @@ controller's socket like any other runner
 A healthy boot is a handful of lines, ending with the transport listening:
 
 ```output
-[flezha] no RELEASE_COOKIE provisioned; using the node-local cookie in /home/you/flezha/app_data/state/cookie.
+[flezha] no RELEASE_COOKIE provisioned; using the node-local cookie in /home/you/flezha/storage/app/state/cookie.
 [flezha] That value is this node's alone. A cluster provisions RELEASE_COOKIE with the same value on every node.
 [shutdown] OS signal handlers installed (SIGTERM)
-[flezha] durable state under /home/you/flezha/app_data/state (set with FLEZHA_STATE_DIR)
+[flezha] durable state under /home/you/flezha/storage/app/state (set with FLEZHA_STATE_DIR)
 [flezha] that directory holds no durable state: this controller is starting cold
 [flezha] runners attach with FLEZHA_SOCKET_FILES_PATH=/run/user/1000/flezha
 [cluster] formed and ready; members [:"flezha@127.0.0.1"]
@@ -262,7 +262,7 @@ which defaults it took. A real deployment sets these:
 | `RELEASE_COOKIE` | Unset, the first start mints a random node-local cookie, keeps it `0600` at `${FLEZHA_STATE_DIR}/cookie` (moved with `FLEZHA_COOKIE_FILE`) and reuses it. That is enough for one node. **A cluster has to set it**: two nodes connect only under one cookie you gave them both. Where the release can neither read nor mint one, it starts with `RELEASE_DISTRIBUTION=none`, and every `flz` verb then fails, because the CLI reaches the node over distribution. |
 | `FLEZHA_SOCKET_FILES_PATH` | The directory runners attach through; share it with every runner container on the node. The container entrypoint waits for `<path>/runner_control_channel.sock` before it asks for readiness. At most 60 bytes, or the controller refuses to boot. |
 | `FLEZHA_NODE_NAME`, `FLEZHA_NODE_HOST` | Form the node name `<name>@<host>` the CLI reaches. They default to the release name and `127.0.0.1`; in Kubernetes the host is the pod IP. |
-| `FLEZHA_STATE_DIR`, `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_DLQ_DIR`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_SCHEDULE_DIR`, `FLEZHA_AUDIT_DIR`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_LOG_PATH` | Every durable path defaults to a **relative** `app_data/*`, resolved against the directory the controller was started from, so it is lost with a container and unwritable under a read-only root. Point each at a mounted volume owned by uid 1000. The boot prints the absolute state root, and says when it is empty. |
+| `FLEZHA_STATE_DIR`, `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`, `FLEZHA_DLQ_DIR`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_SCHEDULE_DIR`, `FLEZHA_AUDIT_DIR`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_LOG_PATH` | Every durable path defaults to a **relative** `storage/app/*`, resolved against the directory the controller was started from, so it is lost with a container and unwritable under a read-only root. Point each at a mounted volume owned by uid 1000. The boot prints the absolute state root, and says when it is empty. |
 | `FLEZHA_HEALTHZ_ENABLED` | `/healthz` is off by default; an orchestrator probe needs it on (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `0.0.0.0`). What it and `/readyz` answer is in [Health and liveness](../../architecture/kernel.md#health-and-liveness). |
 | `FLEZHA_CLUSTER_DISCOVERY` | `manual_discovery` by default; `k8s_pod_discovery` in Kubernetes. |
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | 60 000 by default, paired with the orchestrator's grace period ([below](#graceful-shutdown)). |
@@ -276,7 +276,7 @@ A daemon writes nothing to your terminal:
 
 | What | Where |
 | --- | --- |
-| everything the controller logs | `FLEZHA_LOG_PATH`, default `logs/flezha.log` |
+| everything the controller logs | `FLEZHA_LOG_PATH`, default `storage/logs/flezha.log` |
 | the boot, and anything printed before the logger is up | `$RELEASE_TMP/log/`, default `<release>/tmp/log/` |
 
 The second is inside the release directory, so replacing the release takes it
@@ -333,7 +333,7 @@ missed variable a refusal rather than damage:
   lock goes away with its holder, so a killed controller leaves nothing to
   clear.
 
-`flz reset` resolves its roots under the `app_data` root and does not read
+`flz reset` resolves its roots under the storage root and does not read
 these per-store variables, so on a co-located controller it clears nothing
 that controller owns. Clear a relocated tree by path, with the controller down.
 
@@ -482,7 +482,7 @@ each phase boundary also logs a `[shutdown] ...` line:
 
 - **A relative state root moves with you.** Start from one directory, or set
   `FLEZHA_STATE_DIR` to an absolute path.
-- **`make clean` deletes a release's `app_data/`** when the controller runs
+- **`make clean` deletes a release's `storage/app/`** when the controller runs
   from the build directory.
 - **The CLI cannot reach an embedded controller**: there is no `flzvm` beside
   it.

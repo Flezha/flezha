@@ -23,7 +23,7 @@ set -uo pipefail
 
 log() { printf '%s graceful-restart: %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
-SOCKET_DIR="${FLEZHA_SOCKET_FILES_PATH:-/flezha/app_data/sockets}"
+SOCKET_DIR="${FLEZHA_SOCKET_FILES_PATH:-/flezha/storage/app/sockets}"
 READY_WAIT_TIMEOUT_S="${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}"
 FLZ="${FLZ:-/flezha/bin/flz}"
 

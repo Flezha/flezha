@@ -86,11 +86,11 @@ Relay: my_echo
   Waiting callers: 0
   Plugins:
     - reader: Flezha.Plugin.Provider.File.Source
-        path: /opt/flezha/app_data/files/echo-in.txt
+        path: /opt/flezha/storage/app/files/echo-in.txt
         health: :healthy
     - writer: Flezha.Plugin.Provider.File.Sink
         hook: on_output []
-        path: /opt/flezha/app_data/files/echo-out.txt
+        path: /opt/flezha/storage/app/files/echo-out.txt
         health: :healthy
 ```
 

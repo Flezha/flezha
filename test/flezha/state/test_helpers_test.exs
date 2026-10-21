@@ -60,7 +60,7 @@ defmodule Flezha.State.TestHelpersTest do
   # The root is claimed through the application env because that is the one the
   # runtime reads. `FLEZHA_STATE_DIR` fills `:state_root` once, in
   # `config/runtime.exs` at boot; set here it changes nothing, and deleting the
-  # key beside it put this test's WAL under the checkout's `app_data/state`.
+  # key beside it put this test's WAL under the checkout's `storage/app/state`.
   test "the reset empties the root the writers resolve, not one of its own" do
     root = NodeTestHelper.claim_tmp_dir("flezha_reset_root")
     restore_app = TestHelpers.override_env(:state_root, root)

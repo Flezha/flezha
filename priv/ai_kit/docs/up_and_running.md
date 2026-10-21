@@ -103,7 +103,7 @@ controller reachable
   directory  /run/user/1000/flezha (from $XDG_RUNTIME_DIR/flezha)
   checked    /run/user/1000/flezha
              /run/flezha
-             /srv/flezha/app_data/sockets
+             /srv/flezha/storage/app/sockets
 ```
 
 ### Docker
@@ -111,8 +111,8 @@ controller reachable
 ```sh
 $ docker run -d --name flezha-controller \
   -e FLEZHA_AUTHZ_ENABLED=false \
-  -v flezha_data:/flezha/app_data \
-  -v /tmp/flz_sock:/flezha/app_data/sockets \
+  -v flezha_data:/flezha/storage/app \
+  -v /tmp/flz_sock:/flezha/storage/app/sockets \
   flezha/flezha:0.1.0
 ```
 

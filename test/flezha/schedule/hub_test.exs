@@ -104,7 +104,7 @@ defmodule Flezha.Schedule.HubTest do
       Helper.add_quiet("digest") |> Hub.assert()
       Helper.await_registered("digest")
 
-      root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
+      root = Application.get_env(:flezha, :process_hub_registry_root, "storage/app/process_hub")
 
       refute File.exists?(Path.join(root, Atom.to_string(HubManager.schedule_hub_id())))
     end
