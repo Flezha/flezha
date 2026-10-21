@@ -89,7 +89,7 @@ the deleted `cell_key` trait hook produced.
 
 #### Scenario: Cell lifecycle is unchanged
 
-- **WHEN** a Tasklet reached by a keyed edge declares `cell_idle_ttl()`
+- **WHEN** a Tasklet reached by a keyed edge declares `idle_ttl()`
 - **THEN** its lazily created Cells SHALL be evicted on that TTL exactly as dynamic-mode Cells are today
 
 ### Requirement: Consecutive transforms SHALL compose into ONE edge closure

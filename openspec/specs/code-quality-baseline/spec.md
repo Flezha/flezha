@@ -1659,6 +1659,6 @@ name read with no row and a row no runtime reads, for every runtime a row names.
 
 #### Scenario: A read through a constant
 
-- **WHEN** a Rust crate reads `FLEZHA_X_MS` through `const ENV_X: &str = "FLEZHA_X_MS"` and no row names it
+- **WHEN** a Rust crate reads <!-- docs-citation-record:begin -->`FLEZHA_X_MS` through `const ENV_X: &str = "FLEZHA_X_MS"`<!-- docs-citation-record:end --> and no row names it
 - **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
 

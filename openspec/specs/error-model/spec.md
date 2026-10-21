@@ -126,3 +126,15 @@ The Elixir controller SHALL hold the model in `Flezha.Error` alone: the struct, 
 - **WHEN** an SDK's administration call, spawn, connect or registration is refused
 - **THEN** the SDK SHALL raise or return its one error type, and its `code` SHALL equal the code a `flz` user sees for the same refusal
 
+### Requirement: A detail filled from a controller term SHALL be handed as the term
+
+A site SHALL hand a term the controller made (a process reply, an exit, a start failure) to
+`Flezha.Error.new/2` or `from_reason/2` as the term itself when it fills an error detail, never its
+`inspect` text, so that the error records it as a term and the withholding rule keeps it from every
+networked caller whatever the code's class.
+
+#### Scenario: A non-internal code keeps a controller term from a runner
+
+- **WHEN** a runner is answered a non-internal code whose `reason` detail the site filled from a journal's exit
+- **THEN** the runner SHALL read the detail as naming the controller's log, and the log SHALL hold the exit term
+

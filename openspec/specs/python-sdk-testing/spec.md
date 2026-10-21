@@ -40,7 +40,7 @@ The harness SHALL construct a cell's initial state as the runtime does, from `in
 - **THEN** the replay-equality gate SHALL report a mismatch carrying the expected and actual states
 
 #### Scenario: A handler is testable with no runtime
-- **WHEN** a tasklet class is driven through `TaskletTestHarness` with `apply_inputs`, and a function short form's generated tasklet is called directly, both from a unit test with no runner started
+- **WHEN** a tasklet class is driven through `TaskletTestHarness` with `feed`, once per input, and a function short form's generated tasklet is called directly, both from a unit test with no runner started
 - **THEN** the harness SHALL report the values the tasklet passed to `ctx.emit` and the changes it recorded, and the function SHALL execute as an ordinary function
 
 #### Scenario: The harness refuses a returned value as the runner does

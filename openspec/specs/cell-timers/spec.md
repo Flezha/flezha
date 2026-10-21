@@ -7,8 +7,8 @@ TBD - created by archiving change cell-timers. Update Purpose after archive.
 
 The tasklet context (`Ctx`) SHALL offer `timer_at_event_time(ts_ms)` and `timer_after(duration)`
 (Rust) / `timerAtEventTime(long)` and `timerAfter(Duration)` (Java) / `Flezha.SDK.Ctx.timer_at_event_time/2` and `timer_after/2` taking milliseconds and answering `{:ok, at}` (Elixir), each returning
-the absolute millisecond timestamp the timer is scheduled at, and each SHALL offer a
-cancellation taking that timestamp. Registering the same kind and timestamp twice on
+the absolute millisecond timestamp the timer is scheduled at, and each SHALL offer one
+cancellation taking the timer's kind and that timestamp: `cancel_timer(kind, at)` (Python, Ruby), `cancelTimer(kind, at)` (Node, PHP), `cancelTimer(TimerKind, long)` (Java), `cancel_timer(TimerKind, u64)` (Rust) and `Flezha.SDK.Ctx.cancel_timer/3` (Elixir). No SDK SHALL offer a cancellation per kind. Registering the same kind and timestamp twice on
 one Cell SHALL be idempotent — pending timers are a set, not a queue. Timers SHALL
 be scoped to the Cell that registered them and SHALL NOT be visible to any other
 Cell. A hosted SDK's cancellation SHALL answer nothing about whether the timer was pending
@@ -36,26 +36,34 @@ core's, and the core applies the cancellation when the item settles.
 - **THEN** `on_timer` SHALL be invoked for `a` only, with `a`'s state
 
 #### Scenario: The Elixir ctx registers the same absolute timestamp and cancels by it
-- **WHEN** an Elixir Tasklet calls `Ctx.timer_after(ctx, 30_000)` while `Ctx.now(ctx)` is 1000, calls it again, and then calls `Ctx.cancel_processing_time_timer(ctx, 31000)`
+- **WHEN** an Elixir Tasklet calls `Ctx.timer_after(ctx, 30_000)` while `Ctx.now(ctx)` is 1000, calls it again, and then calls `Ctx.cancel_timer(ctx, :processing_time, 31000)`
 - **THEN** both registrations answer `{:ok, 31000}`, the cancellation answers `:ok`, and once the item settles no processing-time timer is pending at 31000
+
+#### Scenario: One cancellation serves both kinds
+
+- **WHEN** a Tasklet in any of the seven SDKs registers an event-time timer at 5000 and a processing-time timer at 5000, then cancels the event-time kind at 5000
+- **THEN** only the processing-time timer SHALL stay pending, and no SDK SHALL expose `cancel_event_time_timer`, `cancel_processing_time_timer` or a spelling of either
 
 ### Requirement: A fired timer SHALL invoke `on_timer` with the scheduled timestamp
 
-`Tasklet` SHALL gain `on_timer(fired_at, kind, ctx)` receiving the same `Ctx`
-as `run`, so it MAY apply changes, emit, and
-register further timers. `fired_at` SHALL be the timestamp the timer was **scheduled
+`Tasklet` SHALL gain an `on_timer` hook receiving one firing record, which carries the
+timer's `kind` and its `scheduled_at`, and the same `Ctx` as `run`: `on_timer(firing, ctx)`, and
+`on_timer(firing, state, ctx)` in Elixir. The record SHALL be `TimerFiring` in Rust, Java, PHP, Node
+and Elixir (`Flezha.SDK.TimerFiring`) and a mapping with `kind` and `scheduled_at` keys in Python
+and Ruby; no SDK SHALL pass the two as separate arguments. The hook receives the `Ctx` `run` receives, so it MAY apply changes, emit, and
+register further timers. The record's `scheduled_at` SHALL be the timestamp the timer was **scheduled
 at**, never the wall-clock time at which it actually fired. The default
 implementation SHALL panic with a message naming the Tasklet, because registering
 a timer without handling it is an authoring error not detectable at build time; in
 the Elixir SDK, whose Tasklet is a behaviour with optional callbacks, a firing on a
-Tasklet that exports no `on_timer/4` SHALL park non-retryably with a message naming
+Tasklet that exports no `on_timer/3` SHALL park non-retryably with a message naming
 the Tasklet and the callback — the end state the panic reaches through the retry
 ladder, without the retries.
 
 #### Scenario: A late-firing processing-time timer reports its scheduled time
 
 - **WHEN** a timer scheduled for 31000 fires at wall-clock 31480 because the Cell was busy
-- **THEN** `on_timer` SHALL receive `fired_at = 31000`
+- **THEN** `on_timer` SHALL receive a firing whose `scheduled_at` is 31000
 
 #### Scenario: on_timer may emit and mutate state
 
@@ -72,9 +80,9 @@ ladder, without the retries.
 - **WHEN** a Tasklet registers a timer and does not override `on_timer`
 - **THEN** firing SHALL panic with a message naming the Tasklet and directing the author to implement `on_timer`
 
-#### Scenario: An Elixir Tasklet without on_timer/4 parks the firing by name
-- **WHEN** an Elixir Tasklet registers a timer and exports no `on_timer/4`
-- **THEN** the firing parks on its first attempt with a message naming the Tasklet and `on_timer/4`, the fired timer's removal is committed, and the Cell is held until the park's ack exactly as for a poison input
+#### Scenario: An Elixir Tasklet without on_timer/3 parks the firing by name
+- **WHEN** an Elixir Tasklet registers a timer and exports no `on_timer/3`
+- **THEN** the firing parks on its first attempt with a message naming the Tasklet and `on_timer/3`, the fired timer's removal is committed, and the Cell is held until the park's ack exactly as for a poison input
 
 ### Requirement: Event-time timers SHALL fire on the Cell's event-time high-water
 

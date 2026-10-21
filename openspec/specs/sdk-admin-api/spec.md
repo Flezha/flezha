@@ -177,3 +177,15 @@ through `flz relay info` or the read surface. A refused start SHALL be reported 
   `quota.exceeded` in every SDK, and its details SHALL name the quota kind, the current count
   and the limit
 
+### Requirement: The list reads SHALL answer what `flz` lists
+
+Every SDK's `list_relays` (`listRelays`) SHALL call `Relay.list` and answer its rows (one per relay
+or partition group, with its health, runner and node), and `list_plugins` (`listPlugins`) SHALL
+call `PluginManager.enabled` and answer its rows, each in the namespace the connection proved. The
+conformance gate's administration verb set SHALL name the two survivors.
+
+#### Scenario: A runner lists its namespace's relays as rows
+
+- **WHEN** application code calls `control().list_relays()` with one relay `orders` running
+- **THEN** the answer SHALL hold one row whose `id` is `orders`, as `flz relay list` shows it
+

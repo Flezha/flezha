@@ -25,7 +25,7 @@ The runner SHALL map onto the ABI lifecycle `flz_core_context_new(SCHEMA_VERSION
 - **THEN** it SHALL raise an error naming the required extension and ini setting, rather than a bare "Class FFI not found" fatal
 
 ### Requirement: Tasklet authoring surface and per-cell dispatch
-The PHP SDK SHALL define an abstract `Flezha\Tasklet` class whose subclasses declare their initial `State` by overriding `initState(?string $cellKey)`, a `run(mixed $input, Ctx $ctx): void` invoked per input, and an `applyChange(mixed &$state, mixed $change)` that folds a Change into State, with a `Ctx` supplying `emit()`, `emitKeyed()`, `change()`, `now()`, `stableId()`, `checkpoint()` and the timer registrations. Overriding a hook SHALL be what declares it. A value SHALL leave a tasklet only through `$ctx->emit()` or `$ctx->emitKeyed()`: `run` returns nothing, and the SDK SHALL NOT emit a value returned from any hook.
+The PHP SDK SHALL define an abstract `Flezha\Tasklet` class whose subclasses declare their initial `State` by overriding `initState(?string $cellKey)`, a `run(mixed $input, Ctx $ctx): void` invoked per input, and an `applyChange(mixed &$state, mixed $change)` that folds a Change into State, with a `Ctx` supplying `emit()` (with named `key`, `channel` and `metadata` arguments), `change()`, `now()`, `stableId()`, `checkpoint()` and the timer registrations. Overriding a hook SHALL be what declares it. A value SHALL leave a tasklet only through `$ctx->emit()`: `run` returns nothing, and the SDK SHALL NOT emit a value returned from any hook.
 
 Per-cell ordering and exclusivity SHALL be the core's, not the SDK's: the SDK SHALL NOT implement mailboxes, drain gates, or ordering of its own.
 
@@ -50,8 +50,8 @@ Per-cell ordering and exclusivity SHALL be the core's, not the SDK's: the SDK SH
 - **THEN** the activation SHALL park without further attempts
 
 #### Scenario: A value leaves a tasklet only through the context
-- **WHEN** a tasklet's `run` calls `$ctx->emit('a')` and `$ctx->emitKeyed('k', 'b')` for one input, and for the next input calls neither
-- **THEN** the first input SHALL emit `a` and `b` keyed `k`, and the second SHALL emit nothing, under the dispatcher and under `Testing\Harness` alike
+- **WHEN** a tasklet's `run` calls `$ctx->emit('a')` and `$ctx->emit('b', key: 'k')` for one input, and for the next input calls neither
+- **THEN** the first input SHALL emit `a` and `b` keyed `k`, and the second SHALL emit nothing, under the dispatcher and under `Testing\TaskletTestHarness` alike
 
 #### Scenario: The initial state comes from initState
 - **WHEN** a tasklet overrides `initState(?string $cellKey)` and a Cell is created for key `A`
@@ -124,7 +124,7 @@ A declaration the core refuses SHALL surface the core's error naming the offendi
 ### Requirement: Cell modes and the prepare crossing
 The PHP SDK SHALL support single, static-keyed and dynamic cell modes, and SHALL answer the core's batched `KeyRequest` prepare crossing with routing keys and extracted event times for the payloads it is given.
 
-The core SHALL derive the cell mode per tasklet node from what is declared, and the SDK SHALL send none: static when the tasklet's `#[Task]` carries `cellKeys`, dynamic when a chain of the relay keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
+The cell mode SHALL be read per tasklet node from what is declared, never from a flag: static when the tasklet's `#[Tasklet\Spec]` carries `cellKeys`, dynamic when a chain of the relay keys its values with `keyBy` before the `into` or merge that reaches the tasklet, and single otherwise. A tasklet carrying `cellKeys` and fed by `keyBy` SHALL be refused at registration with the core's `topology.key_by_on_unkeyable_target`.
 
 Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's existing eviction, without a PHP-side registry.
 
@@ -137,15 +137,15 @@ Dynamic mode SHALL honour the declared idle TTL and cell cap through the core's 
 - **THEN** that payload SHALL climb the entry channel's retry→park ladder, and the other payloads in the batch SHALL be unaffected
 
 #### Scenario: keyBy alone makes a tasklet dynamic
-- **WHEN** a relay declares `$c->input('orders')->keyBy(fn (array $o): string => $o['customer'])->into(Counter::class)` and `Counter`'s `#[Task]` carries only its `name`
-- **THEN** the core SHALL derive dynamic mode for `Counter`, and each customer SHALL get its own Cell
+- **WHEN** a relay declares `$c->input('orders')->keyBy(fn (array $o): string => $o['customer'])->into(Counter::class)` and `Counter`'s `#[Tasklet\Spec]` carries only its `name`
+- **THEN** the declaration record SHALL carry `cell_mode` `dynamic` for `Counter`, and each customer SHALL get its own Cell
 
 #### Scenario: One class takes its mode from each wiring
 - **WHEN** one tasklet class is wired through `keyBy` in one relay and without it in another
-- **THEN** the core SHALL derive dynamic mode for it in the first relay and single in the second
+- **THEN** the first relay's record SHALL carry `cell_mode` `dynamic` for it and the second's `single`
 
 #### Scenario: A static key set fed by keyBy is refused
-- **WHEN** a tasklet carrying `#[Task(name: 'routed', cellKeys: ['a', 'b'])]` is reached by an edge declaring `keyBy`
+- **WHEN** a tasklet carrying `#[Tasklet\Spec(name: 'routed', cellKeys: ['a', 'b'])]` is reached by an edge declaring `keyBy`
 - **THEN** registration SHALL throw `FlezhaException` carrying `topology.key_by_on_unkeyable_target` and naming the tasklet
 
 ### Requirement: Tiers, checkpoint intervals and DLQ park
@@ -270,7 +270,7 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **THEN** it authors the row with `$c->merge()->from(...)…->into(...)` rather than throwing, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
 ### Requirement: The single-tasklet short form is four attribute arguments
-The short form SHALL be declared with the `#[Relay]` attribute a full-form relay already carries, on a class extending `Flezha\Relay`, and SHALL NOT be declared with `#[Task]`, which SHALL accept none of `run`, `durable`, `output`, `input` or `codec` and SHALL throw naming the argument and `#[Relay]` when one is given. `#[Relay]` SHALL accept `output`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
+The short form SHALL be declared with the `#[Relay]` attribute a full-form relay already carries, on a class extending `Flezha\Relay`, and SHALL NOT be declared with `#[Tasklet\Spec]`, which SHALL accept none of `run`, `durable`, `output`, `input` or `codec` and SHALL throw naming the argument and `#[Relay]` when one is given. `#[Relay]` SHALL accept `output`, `input` and `codec` (a `ChannelCodec`) beside the `factoryId` and the class settings it already takes; how the class runs is its `run` argument.
 
 A class SHALL be a short form exactly when it defines the tasklet body `run(mixed $input, Ctx $ctx): mixed` and does not override the topology body `channels`, which is the mechanism `Definition` already uses to read which hooks a class overrides; defining `run` and overriding `channels` SHALL throw `FlezhaException` naming `topology.short_form_with_topology`, and doing neither SHALL throw naming the missing body. A short-form class MAY define the tasklet hooks a `Flezha\Tasklet` subclass defines (`state`, `applyChange`), which the generated tasklet takes.
 
@@ -315,7 +315,7 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 
 #### Scenario: An output on a tasklet attribute is refused
 
-- **WHEN** a class is attributed `#[Task(name: 'upcase', output: 'out')]`
+- **WHEN** a class is attributed `#[Tasklet\Spec(name: 'upcase', output: 'out')]`
 - **THEN** `registerFactory` throws naming `output` and `#[Relay]`
 
 #### Scenario: A derived factory id is refused
@@ -343,44 +343,44 @@ A class SHALL be a short form exactly when it defines the tasklet body `run(mixe
 - **THEN** the call returns the scheduled timestamp, the effect carries the timer op, and `onTimer` runs on that Cell at that timestamp, opening a pass at that tasklet
 
 ### Requirement: A PHP tasklet names itself and declares its settings on one attribute
-A PHP tasklet SHALL be a class extending `Flezha\Tasklet` and carrying `#[Task(...)]`, and its `#[Task]` SHALL carry a non-empty `name`. Registration SHALL refuse a tasklet class whose declaration has no `name`, or an empty one, with a `FlezhaException` naming the class, and SHALL NOT derive a name from the class. `name` SHALL NOT be inherited from a parent class, so every concrete subclass writes its own. The short form SHALL keep naming its tasklet after its factory id and SHALL keep refusing a `name`.
+A PHP tasklet SHALL be a class extending `Flezha\Tasklet` and carrying `#[Tasklet\Spec(...)]`, and its `#[Tasklet\Spec]` SHALL carry a non-empty `name`. Registration SHALL refuse a tasklet class whose declaration has no `name`, or an empty one, with a `FlezhaException` naming the class, and SHALL NOT derive a name from the class. `name` SHALL NOT be inherited from a parent class, so every concrete subclass writes its own. The short form SHALL keep naming its tasklet after its factory id and SHALL keep refusing a `name`.
 
 The idle TTL SHALL be `idleTtlSeconds`, a whole number of seconds, and the declaration record SHALL carry it as `idle_ttl_ms`, that number times 1000. Unset SHALL mean no eviction.
 
-The clock SHALL follow from what the class writes: event time when it overrides `eventTime()`, logical when its `#[Task]` carries `logicalClock: true`, and the wall clock otherwise. A class that does both SHALL be refused at registration with a `FlezhaException` naming `eventTime` and `logicalClock`. A logical clock on a tasklet that does not override `initState` SHALL keep the core's `topology.unservable_clock` refusal. The SDK SHALL NOT have a `Flezha\Clock` enum or a `clock` argument.
+The clock SHALL follow from what the class writes: event time when it overrides `eventTime()`, logical when its `#[Tasklet\Spec]` carries `logicalClock: true`, and the wall clock otherwise. A class that does both SHALL be refused at registration with a `FlezhaException` naming `eventTime` and `logicalClock`. A logical clock on a tasklet that does not override `initState` SHALL keep the core's `topology.unservable_clock` refusal. The SDK SHALL NOT have a `Flezha\Clock` enum or a `clock` argument.
 
 A change SHALL be any value the codec carries, recorded with `$ctx->change($value)` and folded by the tasklet's `applyChange(mixed &$state, mixed $change)`, and no change class SHALL be required. The optional `stateType` and `changeType` Codable classes SHALL stay. `migrateState(int $fromVersion, string $bytes)` and `migrateChange(int $fromVersion, string $bytes)` SHALL keep receiving bytes.
 
-`#[Task]` SHALL NOT accept `dynamicCells`, `clock` or `idleTtlMs`.
+`#[Tasklet\Spec]` SHALL NOT accept `dynamicCells`, `clock` or `idleTtlMs`.
 
 #### Scenario: A tasklet without a name is refused
 
-- **WHEN** a class extending `Flezha\Tasklet` carries `#[Task(cellKeys: ['a'])]`, or no `#[Task]` at all, and a relay wiring it is registered
+- **WHEN** a class extending `Flezha\Tasklet` carries `#[Tasklet\Spec(cellKeys: ['a'])]`, or no `#[Tasklet\Spec]` at all, and a relay wiring it is registered
 - **THEN** registration throws `FlezhaException` naming the class and the missing `name`, and nothing is registered
 
 #### Scenario: A renamed class keeps its state
 
-- **WHEN** a tasklet class carrying `#[Task(name: 'totals')]` is renamed between two runs, keeping the attribute
+- **WHEN** a tasklet class carrying `#[Tasklet\Spec(name: 'totals')]` is renamed between two runs, keeping the attribute
 - **THEN** its Cells restore from the state saved under `totals`
 
 #### Scenario: A subclass writes its own name
 
-- **WHEN** a class extends a named tasklet class and carries `#[Task(mailboxCapacity: 8)]` with no `name`
+- **WHEN** a class extends a named tasklet class and carries `#[Tasklet\Spec(mailboxCapacity: 8)]` with no `name`
 - **THEN** registration refuses it naming the subclass, and the parent's other declarations are still merged into a subclass that does write a `name`
 
 #### Scenario: The idle TTL is whole seconds
 
-- **WHEN** a tasklet fed by `keyBy` carries `#[Task(name: 'sessions', idleTtlSeconds: 3_600)]`
+- **WHEN** a tasklet fed by `keyBy` carries `#[Tasklet\Spec(name: 'sessions', idleTtlSeconds: 3_600)]`
 - **THEN** the declaration record carries `idle_ttl_ms` `3600000` for that tasklet
 
 #### Scenario: Overriding eventTime makes the clock event time
 
-- **WHEN** a tasklet overrides `eventTime()` and its `#[Task]` says nothing about the clock
+- **WHEN** a tasklet overrides `eventTime()` and its `#[Tasklet\Spec]` says nothing about the clock
 - **THEN** the declaration carries clock `event_time`, and `$ctx->now()` inside `run` returns what `eventTime()` extracted from that input
 
 #### Scenario: logicalClock declares the logical clock
 
-- **WHEN** a tasklet overriding `initState` and `applyChange` carries `#[Task(name: 'ledger', logicalClock: true)]`
+- **WHEN** a tasklet overriding `initState` and `applyChange` carries `#[Tasklet\Spec(name: 'ledger', logicalClock: true)]`
 - **THEN** the declaration carries clock `logical`, and `$ctx->now()` serves the Cell's change sequence
 
 #### Scenario: Event time and the logical clock together are refused
@@ -400,7 +400,7 @@ A change SHALL be any value the codec carries, recorded with `$ctx->change($valu
 
 #### Scenario: A retired tasklet argument is refused
 
-- **WHEN** a class carries `#[Task(name: 'x', dynamicCells: true)]`, `#[Task(name: 'x', clock: ...)]` or `#[Task(name: 'x', idleTtlMs: 1000)]`
+- **WHEN** a class carries `#[Tasklet\Spec(name: 'x', dynamicCells: true)]`, `#[Tasklet\Spec(name: 'x', clock: ...)]` or `#[Tasklet\Spec(name: 'x', idleTtlMs: 1000)]`
 - **THEN** PHP refuses the unknown named argument when the SDK reads the attribute, naming it, and the class is not registered
 
 ### Requirement: The four command activation kinds
@@ -425,4 +425,19 @@ The PHP SDK SHALL handle every command activation kind the core hands out: `Rest
 #### Scenario: A leave drops the held State
 - **WHEN** the core hands out a `Leave` for a cell, or with `whole_relay` for a relay
 - **THEN** the SDK SHALL drop the State it holds for that cell, or for every cell of that relay, and a cell started again under the same name SHALL begin at `initState`
+
+### Requirement: The PHP runner and timer record SHALL use the shared names
+
+`Flezha\Runner::close()` SHALL be the one public shutdown verb (`stop()` does not exist), the
+channel builder SHALL be `Flezha\ChannelBuilder` and its stream handle `Flezha\Stream` (no
+`Flezha\Graph\Builder` or `Flezha\Graph\Edge`), the timer hook's record SHALL be
+`Flezha\TimerFiring` with `kind` and `scheduledAt`, and the runner's host plumbing (`serve`, `core`,
+`coreAddress`, `autoloadPath`, `entryScript`, `abandonContext`, `attachInThread`), `Dropped`, `Fanned`
+and `Ctx::effectRecord` SHALL be marked `@internal`. The harness SHALL offer one replay gate,
+`replayEquals()`, raising on a mismatch, with no static twin.
+
+#### Scenario: The renamed builder declares a relay
+
+- **WHEN** a relay's `channels(ChannelBuilder $c)` wires an input into a tasklet carrying `#[Tasklet\Spec(name: 'x')]`
+- **THEN** the relay SHALL register and run exactly as it did under the former names
 

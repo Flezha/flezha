@@ -293,7 +293,7 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 
 ### Requirement: Service-API surface
 
-The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `subscribe/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `subscribe`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `ops`. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
+The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `tail/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `tail`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `ops`. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
 
 #### Scenario: CLI calls service API through CliManager
 - **WHEN** the CLI invokes a `list_sources` request that reaches `Flezha.Service.CliManager`
@@ -304,7 +304,7 @@ The foundation SHALL provide a service-API module `Flezha.Service.Observability`
 - **THEN** the call SHALL succeed without routing through `CliManager`
 
 #### Scenario: Service API records caller context on audit-relevant calls
-- **WHEN** any of `subscribe/2`, `enable_source/1`, `disable_source/1` is invoked
+- **WHEN** any of `tail/2`, `enable_source/1`, `disable_source/1` is invoked
 - **THEN** an `:event` signal with the called function name, the `caller_context.source`, the verified `caller_context.principal`, the `caller_context.namespace`, and the `caller_context.request_id` (if present) SHALL be emitted on the bus
 
 #### Scenario: Viewer cannot disable a source

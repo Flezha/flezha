@@ -7,7 +7,6 @@ authorization row: its arguments, its one-line description, whether it streams a
 it may be reached over the network. The catalogue built from those declarations is what the
 door resolves a name through, what `flz help --json` prints, and what an MCP tool list or a
 JSON API reads, so no surface keeps a list of its own.
-
 ## Requirements
 ### Requirement: Every published operation SHALL be described once, on its binding
 
@@ -86,4 +85,22 @@ catalogue does not declare.
 
 - **WHEN** a verb row in `cli/src` sends `"Dlq.lst"`
 - **THEN** the Rust catalogue test SHALL fail naming the verb and the name
+
+### Requirement: The catalogue SHALL publish one operation per concept, and only operations a surface calls
+
+The catalogue SHALL hold one operation per concept: the relays of a namespace are `Relay.list`
+(rows) and the plugins enabled in a namespace are `PluginManager.enabled`; `Relay.list_relays` and
+`PluginManager.list` SHALL NOT be operations. Every catalogue operation SHALL be called by a `flz`
+verb, by an SDK control method, or by the console's manifest; a function no surface calls SHALL be an
+internal function without a `verb` binding, which `/v1/call`, MCP and the door do not reach.
+
+#### Scenario: The SDK list reads reach the survivors
+
+- **WHEN** a runner's `control().list_relays()` and `list_plugins()` are called in any SDK
+- **THEN** the door SHALL resolve `Relay.list` and `PluginManager.enabled` with the namespace the connection proved
+
+#### Scenario: An uncalled function is not an operation
+
+- **WHEN** the catalogue is generated
+- **THEN** it SHALL carry no entry for `Relay.partition_coverage`, `Schedule.parse_cron` or any other function no `flz` verb, SDK method or console manifest line names, except the operation that undoes a stream a surface calls (`AuditLog.unsubscribe`, `Observability.unsubscribe`), and a `/v1/call` naming one SHALL be answered `control.unknown_function`
 

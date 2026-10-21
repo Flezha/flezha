@@ -951,3 +951,28 @@ the adopting controller.
 - **THEN** both SHALL hold the earlier claim's admin, and the later claim's principal SHALL hold no
   binding and no live `_system` admin token
 
+### Requirement: A quota override SHALL name a declared quota kind
+
+`Namespace.create` and `Namespace.set_quotas` SHALL resolve each override's field, written as text
+or as an atom, against the quota fields a namespace record carries (the keys of
+`Flezha.AuthZ.Namespace`'s default quotas: `max_relays`, `max_cells_per_relay`,
+`max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`),
+refusing any other word, even one the node knows as an atom, with `namespace.unknown_quota_field`, and a value that is not a
+whole number SHALL be refused with `usage.invalid_number` whose `option` is the field's name, the
+same on every surface.
+
+#### Scenario: A word that is not a quota kind is refused
+
+- **WHEN** an HTTP caller sets the quota `enabled`, a word the node knows as an atom but not a quota kind, on a namespace
+- **THEN** the call SHALL be refused with `namespace.unknown_quota_field` naming `enabled`, and the namespace record SHALL be unchanged
+
+#### Scenario: A declared field is taken
+
+- **WHEN** a caller sets `max_relays` to `5` on a namespace
+- **THEN** the namespace's `max_relays` ceiling SHALL be 5
+
+#### Scenario: The refusal names the field
+
+- **WHEN** a runner sets `max_relays` to `"ten"`
+- **THEN** the refusal SHALL be `usage.invalid_number` with `option` `max_relays`
+

@@ -302,7 +302,7 @@ The runner SHALL provide `async registerFactory(specifier)` and `async unregiste
 - **THEN** `defineRelay` refuses the unknown field by name (`topology.unknown_field`), and no declaration carries `wake_after_ms`
 
 ### Requirement: A value leaves a Node tasklet only through its context
-A value SHALL leave a Node tasklet only through its context: `ctx.emit(value, options)`, with the `key`, `channel` and `metadata` options, and `ctx.emitTo(channel, value, options)`. The SDK SHALL NOT emit a value returned from `run`, `onTimer` or `compensate`, under the dispatcher, in local mode and under `TaskletTestHarness` alike.
+A value SHALL leave a Node tasklet only through its context: `ctx.emit(value, options)`, with the `key`, `channel` and `metadata` options, and by no second spelling (`ctx.emitTo` does not exist). The SDK SHALL NOT emit a value returned from `run`, `onTimer` or `compensate`, under the dispatcher, in local mode and under `TaskletTestHarness` alike.
 
 `TaskletDefinition` SHALL type `run`, `onTimer` and `compensate` to return `void | Promise<void>`, so that TypeScript refuses a hook that returns a value, whether it is written as an expression body, a block with `return value`, an `async` body or a reference to a function returning a value. These refusals SHALL be pinned by `@ts-expect-error` fixtures in `sdk/node/types-tests/`, checked by the existing negative control that strips each directive and requires its line to still produce a diagnostic. A plain JavaScript hook that returns a value SHALL run, and its value SHALL be ignored.
 
@@ -429,4 +429,23 @@ The Node runner SHALL keep a Cell's live state by its relay, its tasklet and its
 
 - **WHEN** one runner answers work for relays `order_a` and `order_b` of one factory, on the same tasklet and cell key
 - **THEN** each relay's live state SHALL hold only its own changes, and a restore, an applied state, a snapshot, a migration serialize and a compensation for one SHALL read or write that relay's cell alone
+
+### Requirement: The Node runner SHALL carry the shared lifecycle verbs
+
+The Node `Runner` SHALL offer `start()`, which connects and resolves once the runner has its id,
+`awaitTermination()`, which resolves when the runner has shut down, `run()`, exactly `start()`
+followed by `awaitTermination()`, and `close()`, which stops fetching, drains and releases the core and
+is idempotent; `stop()` SHALL NOT exist. A tasklet's static cells SHALL be declared with `cellKeys`
+and `cellsFor` on the definition, not under a `cells` object, and the test harness SHALL drive an
+input with `feed`, answer an `Outcome` and expose the Cell's state as `state`.
+
+#### Scenario: start resolves before shutdown
+
+- **WHEN** application code awaits `runner.start()` with a controller running
+- **THEN** the promise SHALL resolve once the runner is assigned an id, and `awaitTermination()` SHALL stay pending until `close()` is called
+
+#### Scenario: close is idempotent
+
+- **WHEN** `close()` is awaited twice on a started runner
+- **THEN** the second call SHALL resolve without effect
 

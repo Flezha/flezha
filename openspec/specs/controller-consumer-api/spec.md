@@ -104,7 +104,9 @@ service-API module is unfinished, not conformant.
 
 A published surface name SHALL be retired only together with the manifest edit that stops
 naming it — a rename, an arity change or a withdrawal lands in one change with its
-consumers. Internal module and function names remain free to move; that freedom is what
+consumers. A consumer kept in another repository whose change is its maintainer's SHALL instead
+have the retired call recorded in the consumer gate's record, with the name that replaces it, in
+the change that retires it. Internal module and function names remain free to move; that freedom is what
 the published surface exists to protect.
 
 A rename that leaves a manifest entry unresolved SHALL fail the run that made it, rather
@@ -267,13 +269,22 @@ rule rather than a copy of it, so data a caller may not read never leaves the co
 ### Requirement: Every call the console makes SHALL be on the published surface
 
 Every entry of `docs/internal/api/consumers/flezha_ui.txt` SHALL be a function listed in
-`docs/internal/api/consumers/published.txt` or one of the two context-free reads, and the consumer-surface
-test SHALL assert it; its record of console calls known not to resolve SHALL be empty.
+`docs/internal/api/consumers/published.txt` or one of the context-free reads (`Flezha.Service.Admin.context/2`, and, until the console
+calls it, `Flezha.AuthZ.TokenStore.verify/1`, plus `Flezha.AuthZ.enforcement_posture/0`), and the
+consumer-surface test SHALL assert it. Its record of console calls known not to resolve SHALL hold
+only calls this tree retired while the console still names them, each with the operation that
+replaces it, and SHALL be emptied by the manifest regenerated from the console that no longer
+names them.
 
 #### Scenario: The record is checked against the surface
 
 - **WHEN** `test/flezha/api/consumer_surface_test.exs` runs
 - **THEN** it fails naming any console call that is neither published nor context-free
+
+#### Scenario: A retired operation the console still calls is recorded with its survivor
+
+- **WHEN** `Relay.list_relays` is withdrawn while `docs/internal/api/consumers/flezha_ui.txt` still names <!-- docs-citation-record:begin -->`Flezha.Service.Relay.list_relays/2`<!-- docs-citation-record:end -->
+- **THEN** the record SHALL name that call and `Relay.list`, the test SHALL pass, and a regenerated manifest that no longer names it SHALL fail the test until the record entry is removed
 
 ### Requirement: A caller SHALL be able to read which operations its role grants
 
@@ -406,4 +417,29 @@ print the same text; with `--json` it SHALL print the whole answer, `options` in
 
 - **WHEN** a caller holding `plugin_list` lists the providers
 - **THEN** `relay_websocket`, `relay_http_poll` and `relay_postgres_poll` carry `feeds: true` and `relay_stdout` carries `feeds: false`
+
+### Requirement: The console SHALL enter through the door as a networked caller that may hold a stream
+
+A caller whose source is `:ui` SHALL build its context with `Flezha.Service.Admin.context(:ui,
+token)` and call operations through `Flezha.Service.Admin.call/4` or `run/4` with `:given`
+placement. The door SHALL hold it to what a networked caller reaches: an operation whose row is
+`remote: false` SHALL be refused to it as `control.unknown_function`, and its failures SHALL be
+withheld as a networked caller's are; unlike the other networked sources it MAY call a `remote`
+operation that streams, since it holds the stream's process on the controller's distribution as
+`flz` does.
+
+#### Scenario: The console cannot stop the controller
+
+- **WHEN** a `:ui` caller calls `Controller.stop` through the door
+- **THEN** the door SHALL answer `control.unknown_function` and the controller SHALL keep running
+
+#### Scenario: The console may tail a stream
+
+- **WHEN** a `:ui` caller with a role granting `audit.read` calls `AuditLog.tail` through the door with an `:emit` pid
+- **THEN** the stream SHALL run and hand its events to that pid
+
+#### Scenario: A console caller reads a withheld reason
+
+- **WHEN** a `:ui` caller's call fails with an internal code carrying a reason
+- **THEN** the reason SHALL read as naming the controller's log, as it does for an HTTP caller
 

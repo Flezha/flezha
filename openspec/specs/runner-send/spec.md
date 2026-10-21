@@ -182,3 +182,18 @@ the controller's code. The control surface SHALL not offer this call.
   runner object
 - **THEN** each receives the same decoded answer
 
+### Requirement: A runner's send SHALL reach the relay byte for byte
+
+The core SHALL carry the payload of every SDK's runner `send` to `Relay.send` as base64 with the
+`payload: "base64"` option `Relay.call_channel` already takes, so a send and a call encode a payload
+one way and whatever an SDK's `send` accepts reaches the relay byte for byte: a text message as its
+UTF-8 bytes, and a byte string from an SDK whose `send` takes one (Ruby, PHP, Elixir) unchanged even
+when it is not UTF-8. No SDK's `send` signature changes. `Relay.send`
+SHALL read `payload: "text"` (the default, as `flz relay send --text` sends) and `"base64"`, and
+refuse any other value with `usage.unknown_word`.
+
+#### Scenario: A binary message reaches the relay
+
+- **WHEN** Elixir application code sends the binary `<<0xFF, 0x00, 0x7F>>` to `my_echo` on channel `in`
+- **THEN** the call SHALL answer `delivered` and the relay SHALL receive exactly those three bytes
+

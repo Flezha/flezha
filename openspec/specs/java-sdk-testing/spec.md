@@ -397,3 +397,16 @@ not ask.
 - **WHEN** its exclusion is read
 - **THEN** it SHALL name that reason, and SHALL NOT be replaced by a configuration that passes
 
+### Requirement: TaskletTestHarness drives timers
+
+`TaskletTestHarness` SHALL drive a tasklet's timers as the Rust harness does: `fireTimer(TimerKind,
+long)` runs `onTimer` with a `TimerFiring` for a pending timer, `advanceEventTime(long)` fires every
+pending event-time timer at or before the given time in timestamp order, and `pendingTimers()`
+answers the Cell's pending set. The harness SHALL refuse an effect name over the bound the core
+declares, its constant asserted against the shared wire-constants fixture.
+
+#### Scenario: A timer registered in run is fired by the harness
+
+- **WHEN** a tasklet's `run` calls `ctx.timerAfter(Duration.ofSeconds(30))` at `now` 1000 and the test calls `fireTimer(TimerKind.PROCESSING_TIME, 31000)`
+- **THEN** `onTimer` SHALL run with a `TimerFiring` whose `scheduledAt()` is 31000 and its emits SHALL be recorded
+

@@ -775,3 +775,31 @@ the reference for the list of verbs and keep their examples.
 - **WHEN** the reference line of a verb and that verb's help screen are read
 - **THEN** both SHALL carry the same usage line and the same one-line description
 
+### Requirement: `flz` SHALL refuse a token that does not verify, and SHALL NOT restate a server check
+
+A token given to `flz` that does not verify SHALL refuse the verb with the token store's own error
+and exit by its class, as `flz mcp` and the HTTP API do, through the door's one rule
+(`Flezha.Service.Admin.context/2`), for which only an absent token (`nil`) is no token: an empty
+token is a token that does not verify. `flz` reads an empty `--token` as no token at its own edge,
+and only a run with no token SHALL proceed unbound. `flz`
+SHALL NOT validate a value the operation it calls validates: `--plugins` and `--ttl` SHALL be sent
+as written and refused, when they are wrong, with the codes the controller answers
+(`plugin.spec_invalid_json`, `plugin.fields_unknown`, `authz.invalid_ttl`). A verb whose handler
+only maps its options to the operation's arguments SHALL be a row of its command table naming the
+catalogue operation, with no handler of its own.
+
+#### Scenario: A mistyped token refuses
+
+- **WHEN** `flz dlq list --token wrong` is run against a controller whose authorization is open
+- **THEN** the run SHALL exit non-zero with the token store's refusal on stderr and SHALL NOT list the queue
+
+#### Scenario: An empty bearer is a malformed token, not none
+
+- **WHEN** an HTTP request carries `Authorization: Bearer ` with nothing after the scheme
+- **THEN** it SHALL be refused `authz.token_malformed`, as before this change, and SHALL NOT run unbound
+
+#### Scenario: A plugin spec the controller cannot read is refused by the controller
+
+- **WHEN** `flz relay start f --plugins '[{"name":"k","bogus":1}]'` is run
+- **THEN** the run SHALL exit non-zero with `plugin.fields_unknown` naming `bogus`, and the CLI SHALL have sent the request
+

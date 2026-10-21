@@ -6,11 +6,11 @@ Defines the Java SDK for Flezha compute engines: the public authoring API and th
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/internal/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factories under `factories` (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getRelays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly; there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/internal/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factories under `factories` (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `namespace()` and `relays()` (a snapshot of currently-spawned Relay instances keyed by what the wire calls `relay_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
 - **WHEN** an SDK user calls `Flezha.createRunner("my_app").registerFactory(MarketRelay.class).start()` with the controller running
-- **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same `FlezhaRunner`, and `getNamespace()` returns `"my_app"`
+- **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same `FlezhaRunner`, and `namespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
 - **WHEN** an SDK user calls `.start()` on a runner and the controller's control socket is not yet listening
@@ -697,7 +697,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 ### Requirement: Runner lifecycle — start, run, awaitTermination, close
 
-`FlezhaRunner.start()` SHALL connect (per the `Java SDK Entry Point` requirement) and return `this` without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner.awaitTermination()` SHALL block the calling thread until the runner shuts down (via `.close()`, SIGTERM-triggered graceful shutdown, or a controller-driven stop), replacing any user-authored keep-alive loop; called on a never-started runner it SHALL throw `IllegalStateException` ("runner not started"), as SHALL `getRelays()`. `FlezhaRunner.run()` SHALL be exactly `.start()` followed by `awaitTermination()`, with no independently-implemented blocking logic. `FlezhaRunner` SHALL implement `AutoCloseable`; `.close()` on a started runner SHALL run the existing graceful-shutdown sequence (ship-fresh-state-on-sdk-shutdown), release the singleton slot, and cause any thread blocked in `awaitTermination()` to return; `.close()` on a never-started runner SHALL be a no-op; `.close()` SHALL be idempotent.
+`FlezhaRunner.start()` SHALL connect (per the `Java SDK Entry Point` requirement) and return `this` without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner.awaitTermination()` SHALL block the calling thread until the runner shuts down (via `.close()`, SIGTERM-triggered graceful shutdown, or a controller-driven stop), replacing any user-authored keep-alive loop; called on a never-started runner it SHALL throw `IllegalStateException` ("runner not started"), as SHALL `relays()`. `FlezhaRunner.run()` SHALL be exactly `.start()` followed by `awaitTermination()`, with no independently-implemented blocking logic. `FlezhaRunner` SHALL implement `AutoCloseable`; `.close()` on a started runner SHALL run the existing graceful-shutdown sequence (ship-fresh-state-on-sdk-shutdown), release the singleton slot, and cause any thread blocked in `awaitTermination()` to return; `.close()` on a never-started runner SHALL be a no-op; `.close()` SHALL be idempotent.
 
 #### Scenario: start() returns immediately after the handshake, before shutdown
 - **WHEN** an SDK user calls `.start()` on a runner
@@ -715,7 +715,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 #### Scenario: Pre-start lifecycle calls
 - **GIVEN** a `FlezhaRunner` created but never started
-- **WHEN** code calls `.awaitTermination()` or `.getRelays()`
+- **WHEN** code calls `.awaitTermination()` or `.relays()`
 - **THEN** each SHALL throw `IllegalStateException` stating the runner is not started
 - **AND** calling `.close()` on the same never-started runner SHALL return without effect
 
@@ -1067,7 +1067,7 @@ The settings tree SHALL make a setting under the wrong parent a type error: the 
 
 ### Requirement: A change applies itself through the context
 
-`com.flezha.sdk.state.Change<S>` SHALL declare `void applyTo(S state)` and keep `default Optional<CoalesceKey> coalesceKey()`. `ctx.change(change)` SHALL call `change.applyTo(state)` on the live state and append the change to the cell's flush buffer. The restore fold SHALL call `applyTo` on each decoded change in seq order. The `Tasklet` interface SHALL declare neither `applyChange` nor `coalesceKey(change)`.
+`com.flezha.sdk.state.Change<S>` SHALL declare `void applyTo(S state)` and nothing else: no coalescing key, since no Java change is ever coalesced (`CoalesceKey` does not exist). `ctx.change(change)` SHALL call `change.applyTo(state)` on the live state and append the change to the cell's flush buffer. The restore fold SHALL call `applyTo` on each decoded change in seq order. The `Tasklet` interface SHALL declare neither `applyChange` nor `coalesceKey(change)`.
 
 #### Scenario: A change is applied and recorded
 
@@ -1078,6 +1078,16 @@ The settings tree SHALL make a setting under the wrong parent a type error: the 
 
 - **WHEN** a cell whose log holds three `PriceSeen` changes is restored
 - **THEN** each change's `applyTo` SHALL run in seq order on the initial state, and the result SHALL equal the state before the restart
+
+#### Scenario: A Java change carries no coalescing key
+
+- **WHEN** user code calls `coalesceKey()` on a `Change` or names `com.flezha.sdk.state.CoalesceKey`
+- **THEN** compilation SHALL fail, and every recorded change SHALL be written to the log as recorded
+
+#### Scenario: State written before the removal still decodes
+
+- **WHEN** a Cell's snapshot and change log written by the SDK before `CoalesceKey` was removed are restored
+- **THEN** every built-in class SHALL keep its Kryo id, because the removed class's slot is held by a reserved placeholder, and the restored state SHALL equal the state that was written
 
 ### Requirement: A tasklet's state starts from its state class
 
@@ -1154,4 +1164,16 @@ application's own JVM shutdown hooks SHALL NOT run and the exit status SHALL be
 
 - **WHEN** a Java application installed its own SIGTERM handler before starting the runner
 - **THEN** the SDK SHALL leave that handler in place
+
+### Requirement: The Java context SHALL name its replay flag as every SDK does
+
+`Ctx.replay()` SHALL answer whether the invocation re-runs recorded history; `Ctx` SHALL NOT expose
+`replaying()`, `activationToken()` or `inputOffset()`, and no type of the package
+`com.flezha.sdk.internal` SHALL be reachable from the authoring artifact's public API other than as
+the runtime's own implementation detail.
+
+#### Scenario: The replay flag is read by its shared name
+
+- **WHEN** a tasklet's `run` reads `ctx.replay()` during a restore's replay of a recorded input
+- **THEN** it SHALL answer `true`, and `false` for a live input
 

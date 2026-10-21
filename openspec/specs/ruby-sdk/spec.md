@@ -31,7 +31,7 @@ The SDK SHALL expose one entry point that declares classes, claims a runner slot
 
 Relays and tasklets SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method; registration-time refusal replaces the Rust SDK's compile-time refusal. A tasklet's body SHALL be its `run` method, the name every SDK gives a tasklet's body; a tasklet class defining `process` and no `run` SHALL be refused at registration naming `run`.
 
-A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `key:`, `channel:` and `metadata:` keywords) and `ctx.emit_to`. The SDK SHALL ignore what `run`, `on_timer` and `compensate` answer and SHALL NOT emit it, and SHALL NOT refuse a non-nil answer, since every Ruby method answers its last expression. `Flezha::Ctx` SHALL NOT offer `emit_returned`, and `Flezha::Testing::Harness` SHALL report what a tasklet emitted and SHALL NOT report what it returned.
+A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `key:`, `channel:` and `metadata:` keywords) and by no second spelling (`ctx.emit_to` does not exist). The SDK SHALL ignore what `run`, `on_timer` and `compensate` answer and SHALL NOT emit it, and SHALL NOT refuse a non-nil answer, since every Ruby method answers its last expression. `Flezha::Ctx` SHALL NOT offer `emit_returned`, and `Flezha::Testing::TaskletTestHarness` SHALL report what a tasklet emitted and SHALL NOT report what it returned.
 
 #### Scenario: An undeclared class never runs
 - **WHEN** a tasklet class is defined but not registered
@@ -51,7 +51,7 @@ A value SHALL leave a tasklet only through its context: `ctx.emit` (with its `ke
 
 #### Scenario: A returned value is not emitted
 - **WHEN** a tasklet's `run` answers `"echo: hi"` without calling `ctx.emit`, and another tasklet's `run` ends in `ctx.change({ seen: 1 })`, each wired to an output
-- **THEN** neither SHALL emit anything for that input, under the dispatcher and under `Flezha::Testing::Harness` alike
+- **THEN** neither SHALL emit anything for that input, under the dispatcher and under `Flezha::Testing::TaskletTestHarness` alike
 
 #### Scenario: A value emitted through the context leaves once
 - **WHEN** a tasklet's `run` calls `ctx.emit("a")` and `ctx.emit("b", key: "k")` for one input and answers `"c"`
@@ -78,7 +78,7 @@ The Ruby authoring surface SHALL carry both runs — flow and steps — on one `
 - **THEN** `run` SHALL run three times, once per element, under one consumed offset, and feeding an empty line SHALL run it zero times
 
 #### Scenario: The latest-document router is offered
-- **WHEN** `c.route_latest(config, trades) { |t| t[:symbol] }` is declared and `Flezha::Testing::Harness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
+- **WHEN** `c.route_latest(config, trades) { |t| t[:symbol] }` is declared and `Flezha::Testing::TaskletTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
 - **THEN** exactly one `["A", document]` and one `["B", document]` SHALL be emitted, the repeated document SHALL be inert, and `route_latest_named` SHALL take a node name
 
 ### Requirement: State and Change serialize through author-declared `to_h` / `from_h` over MessagePack
@@ -321,4 +321,18 @@ The core SHALL derive each tasklet node's cell mode from what is written, and th
 
 - **WHEN** a tasklet writing `tasklet_name "routed"` and `cell_keys "a", "b"` is reached by an edge declaring `key_by`
 - **THEN** registration raises `Flezha::Error` carrying `topology.key_by_on_unkeyable_target` and naming the tasklet
+
+### Requirement: The Ruby runner SHALL start and close with the shared verbs
+
+`Runner#start` SHALL connect (`boot` does not exist) and `Runner#close` SHALL be the one public
+shutdown verb (`drain` does not exist); the signal-safe trigger SHALL be private. The channel
+builder SHALL be `Flezha::ChannelBuilder` and its stream handle `Flezha::Stream`;
+`compact_after_bytes` SHALL be a tasklet setting; `Ctx#effect_record` and the readers of the
+accumulated changes, outputs and timers SHALL NOT be public; and the harness SHALL offer one replay
+gate, `replay_equals`, raising on a mismatch, with no `replay_equals!` or `replay_equals?`.
+
+#### Scenario: A runner starts and closes
+
+- **WHEN** application code calls `runner.start` then `runner.close` twice
+- **THEN** the runner SHALL connect, then drain and release the core once
 

@@ -62,7 +62,7 @@ Declaration SHALL be a pure expansion onto the shared authoring contract's surfa
 - **THEN** the tasklet SHALL still be named `tally`, and its cells SHALL restore the state saved under that name
 
 #### Scenario: A function short form's body stays callable
-- **WHEN** a module declares `@flezha.relay(id="upcase", output="out") def upcase(value: str) -> str` and a plain unit test calls `upcase.tasklet("a")` with no runner started
+- **WHEN** a module declares `@flezha.relay(factory_id="upcase", output="out") def upcase(value: str) -> str` and a plain unit test calls `upcase.tasklet("a")` with no runner started
 - **THEN** the call SHALL run the function as an ordinary Python function and return `"A"`
 
 ### Requirement: Type Hints Drive Graph Wiring, And The Graph Is Statically Checkable
@@ -275,56 +275,36 @@ The SDK SHALL prove the set by one conformance run over every row of
 - **WHEN** the Python interpreter reaches `merge_one_source` or `merge_same_twice`
 - **THEN** it authors the row with `c.merge().from_(...)…into(...)` rather than skipping it, registration refuses with `topology.merge_too_few_sources` or `topology.duplicate_merge_source`, and the manifest's `topology_surfaces` lists `merge`
 
-### Requirement: The Channels builder carries merge, the latest-document router and flat_map
-
-`Channels.merge()` SHALL return a merge handle with `from_(source, map)` (`from` being a keyword), `key_by(key)`, `into(tasklet)` and `into(tasklet, name)`, with the `multi-input-tasklets` semantics: a source is an entry edge or an inter-tasklet edge declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output edge. The builder SHALL record each source as a chain closed by the core's `merge` link under one group per merge and SHALL take the merge refusals from the reference check. `Channels.route_latest(documents, traffic, key_fn)` and `route_latest_named(documents, traffic, key_fn, name)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. `Edge.flat_map(fn)` SHALL exist beside `map` and `filter`: the callable answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, the chain is applied as a list so `filter` and `flat_map` are one mechanism, and the record carries the same `transform` link as `map`.
-
-#### Scenario: Two channels merge into one tasklet
-- **WHEN** a relay declares `c.merge().from_(ticks, tick_input).from_(quotes, quote_input).key_by(lambda v: v["symbol"]).into(detector)`
-- **THEN** registration SHALL succeed with one detector node fed by two consumer edges, each applying its own mapping, and a value from either entry SHALL reach the handler as the mapped value keyed by `symbol`
-
-#### Scenario: A duplicated source is refused by the reference name
-- **WHEN** a merge declares the same edge twice
-- **THEN** registration SHALL refuse with `topology.duplicate_merge_source` naming the channel, and a merge with one source SHALL refuse with `topology.merge_too_few_sources`
-
-#### Scenario: One input becomes three deliveries
-- **WHEN** an edge declares `.flat_map(lambda line: [part for part in line.split(",") if part])` into a tasklet and the dispatcher is handed `a,b,c`
-- **THEN** the handler SHALL run three times, once per element, under one consumed offset, and a line the callable answers `[]` for SHALL run it zero times
-
-#### Scenario: The router delivers on a key's own traffic
-- **WHEN** `c.route_latest(config, trades, lambda t: t["symbol"])` is declared and `TaskletTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
-- **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
-
 ### Requirement: The single-tasklet short form is four decorator keywords
-The short form SHALL be declared with `@flezha.relay`, the same decorator that declares a full-form relay, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `output`, `input` or `codec` and SHALL raise `FlezhaError` naming the keyword and the relay decorator when one is passed. Each decorator SHALL accept `id`, `output`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; how it runs is the `run` keyword, as on the full form.
+The short form SHALL be declared with `@flezha.relay`, the same decorator that declares a full-form relay, and SHALL NOT be declared with `flezha.tasklet`, which SHALL accept none of `output`, `input` or `codec` and SHALL raise `FlezhaError` naming the keyword and the relay decorator when one is passed. Each decorator SHALL accept `factory_id`, `output`, `input` and `codec`, and the keywords `flezha.tasklet` takes but `name`, which it hands to the generated tasklet; how it runs is the `run` keyword, as on the full form.
 
-A decorated object SHALL be a short form when it is a tasklet body rather than a `Channels` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.Channels` or not annotated at all, the shape the SDK already reads as a builder body. `output` SHALL be optional. With `output`, the decorator SHALL build a relay whose factory id is `id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `id` and that tasklet to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. A value outside its choice (`each` other than `"once"`, `"per_input"` and `"chained"`, `on_failure` other than `"undo_all"` and `"keep_progress"`) SHALL be refused naming the setting and the value, on the short form and the full form alike. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not an `output` is written. Declaring SHALL still perform no I/O.
+A decorated object SHALL be a short form when it is a tasklet body rather than a `ChannelBuilder` body: a class, which is never a channels body, or any function but a channels body, which is a function whose one parameter is annotated `flezha.ChannelBuilder` or not annotated at all, the shape the SDK already reads as a builder body. `output` SHALL be optional. With `output`, the decorator SHALL build a relay whose factory id is `factory_id`, wiring an entry channel named `input` (or the `input` keyword's value) into a generated tasklet named `factory_id` and that tasklet to the `output` plugin channel; with no `output`, it SHALL wire the entry channel into the tasklet and declare no plugin channel. A short form SHALL take the class settings as the full form does; a steps short form SHALL be a `once` steps relay unless its `run` writes another `each`, fed by its first message on the entry channel and taking `init_values` as the tasklet's initial state. A value outside its choice (`each` other than `"once"`, `"per_input"` and `"chained"`, `on_failure` other than `"undo_all"` and `"keep_progress"`) SHALL be refused naming the setting and the value, on the short form and the full form alike. `codec` SHALL take the vocabulary of `Channels.input(name, codec=)` and SHALL be lowered to that call, whether or not an `output` is written. Declaring SHALL still perform no I/O.
 
-At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code: `topology.output_without_type` for an `output` on a body whose return annotation is absent or `None`, and `topology.short_form_with_topology` for a decorated object carrying both a tasklet body and a `Channels` body. An absent `id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its relay, and `Runner.register_modules` SHALL register the relays a named module carries, short or full. A duplicate factory id SHALL raise `FlezhaError` with the code `topology.duplicate_factory_id`.
+At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code: `topology.output_without_type` for an `output` on a body whose return annotation is absent or `None`, and `topology.short_form_with_topology` for a decorated object carrying both a tasklet body and a `ChannelBuilder` body. An absent `factory_id` SHALL be refused naming the required keyword, and the SDK SHALL NOT derive a factory id from `__name__`. `Runner.register_factory` SHALL accept a short form and register its relay, and `Runner.register_modules` SHALL register the relays a named module carries, short or full. A duplicate factory id SHALL raise `FlezhaError` with the code `topology.duplicate_factory_id`.
 
 #### Scenario: A decorated function is a whole flow relay
 
-- **WHEN** a module declares `@flezha.relay(id="upcase", output="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
+- **WHEN** a module declares `@flezha.relay(factory_id="upcase", output="out", codec="text") def upcase(s: str) -> str` and the runner is given `register_factory(upcase)`
 - **THEN** the runner declares a flow relay `upcase` with entry channel `input` decoding text, a tasklet named `upcase` and output `out`, and the module declares no `flezha.tasklet`
 
 #### Scenario: A decorated function is a whole steps relay
 
-- **WHEN** a module declares `@flezha.relay(id="place", output="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
+- **WHEN** a module declares `@flezha.relay(factory_id="place", output="placed", input="order", codec="text") def place(s: str) -> str`, the runner is given `register_factory(place)`, an instance is started, and one message is sent on `order`
 - **THEN** the tasklet receives the message as text on `order`, its return value reaches `placed`, and the instance completes
 
 #### Scenario: A short-form steps relay declares its loop mode
 
-- **WHEN** a module declares `@flezha.relay(id="chat", output="replies", codec="text", each="per_input") def chat(s: str) -> str` and two messages reach its entry channel
+- **WHEN** a module declares `@flezha.relay(factory_id="chat", output="replies", codec="text", each="per_input") def chat(s: str) -> str` and two messages reach its entry channel
 - **THEN** the declaration carries `each` `per_input`, the tasklet runs once per message, and the instance does not complete after the first
 
 #### Scenario: An unknown loop mode is refused at decoration
 
-- **WHEN** a module declares `@flezha.relay(id="w", each="forever")` over any body, or `on_failure="best_effort"`
+- **WHEN** a module declares `@flezha.relay(factory_id="w", each="forever")` over any body, or `on_failure="best_effort"`
 - **THEN** importing it raises `FlezhaError` naming the keyword and the value, and nothing is declared
 
 #### Scenario: A short form with no output is declared
 
-- **WHEN** a module declares `@flezha.relay(id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
+- **WHEN** a module declares `@flezha.relay(factory_id="counter", input="ticks", codec="text")` over a class with `run` and `apply_change` and the runner is given `register_factory`
 - **THEN** the relay declares `ticks` into the tasklet and no plugin channel, and the tasklet's changes are journaled as any tasklet's are
 
 #### Scenario: A codec needs no output
@@ -339,7 +319,7 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 
 #### Scenario: A builder body is still the full form
 
-- **WHEN** `@flezha.relay(id="static_cell")` decorates `def f(c: flezha.Channels) -> None`
+- **WHEN** `@flezha.relay(factory_id="static_cell")` decorates `def f(c: flezha.ChannelBuilder) -> None`
 - **THEN** it declares a full-form relay from that body, and no tasklet is generated
 
 #### Scenario: A tasklet body beside a channels body is refused
@@ -355,16 +335,16 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 #### Scenario: A derived id is refused
 
 - **WHEN** a module declares `@flezha.relay(output="out") def upcase(s: str) -> str`
-- **THEN** importing it raises `FlezhaError` naming the required `id`, and no socket is opened
+- **THEN** importing it raises `FlezhaError` naming the required `factory_id`, and no socket is opened
 
 #### Scenario: An output on a body with no output is refused
 
-- **WHEN** a module declares `@flezha.relay(id="drain", output="out") def drain(s: str) -> None`
+- **WHEN** a module declares `@flezha.relay(factory_id="drain", output="out") def drain(s: str) -> None`
 - **THEN** importing it raises `FlezhaError` whose code is `topology.output_without_type`
 
 #### Scenario: The generated tasklet composes in another topology
 
-- **WHEN** a short form's generated tasklet is named in another relay's `Channels` body
+- **WHEN** a short form's generated tasklet is named in another relay's `ChannelBuilder` body
 - **THEN** it wires as any tasklet does, and the short form's own relay is declared only if the runner is also handed it or its module
 
 #### Scenario: A function short form that returns None emits nothing
@@ -374,12 +354,12 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 
 #### Scenario: A function short form taking a context is refused
 
-- **WHEN** a module declares `@flezha.relay(id="stamp", output="out") def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str`
+- **WHEN** a module declares `@flezha.relay(factory_id="stamp", output="out") def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str`
 - **THEN** importing it raises `FlezhaError` naming the parameter `ctx` and directing the author to a class body
 
 #### Scenario: A class short form emits through its context
 
-- **WHEN** `@flezha.relay(id="store_input", output="sink")` decorates a class whose `run(self, value: str, ctx: flezha.Ctx[Stored, str]) -> None` calls `ctx.change(...)` and `ctx.emit(value)`, and the runner is given `register_factory(store_input)`
+- **WHEN** `@flezha.relay(factory_id="store_input", output="sink")` decorates a class whose `run(self, value: str, ctx: flezha.Ctx[Stored, str]) -> None` calls `ctx.change(...)` and `ctx.emit(value)`, and the runner is given `register_factory(store_input)`
 - **THEN** the relay declares a tasklet named `store_input`, its changes are journaled, and the emitted value reaches `output`
 
 ### Requirement: A Python class carries the settings tree it wrote
@@ -393,7 +373,7 @@ At decoration the SDK SHALL raise `FlezhaError` whose code is the refusal's code
 
 #### Scenario: A retired keyword is refused
 
-- **WHEN** a module declares `@flezha.relay(id="w", retry_attempts=5)` or `@flezha.relay(id="w", wake_after_ms=5000)`
+- **WHEN** a module declares `@flezha.relay(factory_id="w", retry_attempts=5)` or `@flezha.relay(factory_id="w", wake_after_ms=5000)`
 - **THEN** importing it raises `TypeError` for the unknown keyword, the decorator declaring neither
 
 #### Scenario: A timer inside a steps tasklet fires
@@ -522,4 +502,39 @@ A tasklet's idle TTL SHALL be declared as `idle_ttl_seconds`, a positive `int`, 
 #### Scenario: The millisecond setting is gone
 - **WHEN** a module declares `@flezha.tasklet(name="t", idle_ttl_ms=60_000)`
 - **THEN** importing it SHALL raise `TypeError` for the unknown keyword `idle_ttl_ms`
+
+### Requirement: The ChannelBuilder carries merge, the latest-document router and flat_map
+
+`ChannelBuilder.merge()` SHALL return a merge handle with `from_(source, map)` (`from` being a keyword), `key_by(key)`, `into(tasklet)` and `into(tasklet, name)`, with the `multi-input-tasklets` semantics: a source is an entry edge or an inter-tasklet edge declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output edge. The builder SHALL record each source as a chain closed by the core's `merge` link under one group per merge and SHALL take the merge refusals from the reference check. `ChannelBuilder.route_latest(documents, traffic, key_fn)` and `route_latest_named(documents, traffic, key_fn, name)` SHALL expand to the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. `Edge.flat_map(fn)` SHALL exist beside `map` and `filter`: the callable answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, the chain is applied as a list so `filter` and `flat_map` are one mechanism, and the record carries the same `transform` link as `map`.
+
+#### Scenario: Two channels merge into one tasklet
+- **WHEN** a relay declares `c.merge().from_(ticks, tick_input).from_(quotes, quote_input).key_by(lambda v: v["symbol"]).into(detector)`
+- **THEN** registration SHALL succeed with one detector node fed by two consumer edges, each applying its own mapping, and a value from either entry SHALL reach the handler as the mapped value keyed by `symbol`
+
+#### Scenario: A duplicated source is refused by the reference name
+- **WHEN** a merge declares the same edge twice
+- **THEN** registration SHALL refuse with `topology.duplicate_merge_source` naming the channel, and a merge with one source SHALL refuse with `topology.merge_too_few_sources`
+
+#### Scenario: One input becomes three deliveries
+- **WHEN** an edge declares `.flat_map(lambda line: [part for part in line.split(",") if part])` into a tasklet and the dispatcher is handed `a,b,c`
+- **THEN** the handler SHALL run three times, once per element, under one consumed offset, and a line the callable answers `[]` for SHALL run it zero times
+
+#### Scenario: The router delivers on a key's own traffic
+- **WHEN** `c.route_latest(config, trades, lambda t: t["symbol"])` is declared and `TaskletTestHarness` feeds a document, trades for `A` and `B`, the same document, then a trade for `A`
+- **THEN** exactly one `("A", document)` and one `("B", document)` SHALL be emitted, and the repeated document SHALL be inert
+
+### Requirement: The Python runner SHALL close with the shared verb and hide its internals
+
+`Runner.close()` SHALL be the one public shutdown verb: it stops fetching, drains and releases the
+core, and is idempotent. `Runner.drain` SHALL NOT exist, and the signal-safe trigger the core's
+shutdown callback and `__exit__` call SHALL be private. `tasklet()` SHALL take `state_type=` and
+`change_type=`, the stream handle SHALL be `flezha.Stream`, `compact_after_bytes` SHALL be a tasklet
+setting, and `Ctx.settle_return`, `Ctx.effect_record` and `DROPPED` SHALL NOT be public. The harness
+SHALL offer one replay gate, the `replay_equals()` method, with no module-level twin, and its bridge
+to the fake core SHALL be private.
+
+#### Scenario: close drains and is idempotent
+
+- **WHEN** application code calls `runner.close()` twice on a started runner
+- **THEN** the first SHALL drain and release the core and the second SHALL return without effect
 

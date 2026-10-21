@@ -40,16 +40,16 @@ The Rust SDK SHALL provide a `#[flezha::tasklet]` attribute macro applied to an 
 
 ### Requirement: Attribute opt-ins for cell and mailbox behavior
 
-The `#[flezha::tasklet]` macro SHALL accept keys that set the corresponding `Tasklet` items without the author writing them: `keys`, `capacity`, `max_cells`, `idle_ttl_seconds`, `schema_version`, `min_readable_schema_version`, `compact_after_bytes`, `max_timers_per_cell` and `logical_clock`. `cells_for` SHALL be a hook the block writes, not a key.
+The `#[flezha::tasklet]` macro SHALL accept keys that set the corresponding `Tasklet` items without the author writing them: `cell_keys`, `mailbox_capacity`, `max_cells`, `idle_ttl_seconds`, `schema_version`, `min_readable_schema_version`, `compact_after_bytes`, `max_timers_per_cell` and `logical_clock`. `cells_for` SHALL be a hook the block writes, not a key.
 
 #### Scenario: Static cell keys and cells_for
 
-- **WHEN** `#[flezha::tasklet(name = "static_entry_tasklet", keys = ["a","b","c","d"])]` annotates a block that writes `fn cells_for`
+- **WHEN** `#[flezha::tasklet(name = "static_entry_tasklet", cell_keys = ["a","b","c","d"])]` annotates a block that writes `fn cells_for`
 - **THEN** the tasklet's `cell_keys()` are the listed keys, `CELLS_FOR_OVERRIDDEN` is `true`, and inputs are routed by the written `cells_for`
 
 #### Scenario: Mailbox capacity
 
-- **WHEN** a `capacity` key is supplied
+- **WHEN** a `mailbox_capacity` key is supplied
 - **THEN** the tasklet's `mailbox_capacity()` returns it and `MAILBOX_CAPACITY_OVERRIDDEN` is `true`
 
 #### Scenario: Logical clock
@@ -60,7 +60,7 @@ The `#[flezha::tasklet]` macro SHALL accept keys that set the corresponding `Tas
 #### Scenario: Dynamic-mode knobs
 
 - **WHEN** `#[flezha::tasklet(name = "rsi", idle_ttl_seconds = 5, max_cells = 10)]` is used
-- **THEN** the tasklet's `cell_idle_ttl()` and `max_cells()` return those values, `cell_keys()` is empty, and the tasklet declares no key of its own, because the key is `key_by` on the wiring
+- **THEN** the tasklet's `idle_ttl()` and `max_cells()` return those values, `cell_keys()` is empty, and the tasklet declares no key of its own, because the key is `key_by` on the wiring
 
 #### Scenario: The attribute offers no dynamic key hook
 
@@ -102,7 +102,7 @@ A relay SHALL be able to mix tasklets declared with `#[flezha::tasklet]` and tas
 
 ### Requirement: `#[flezha::relay]` short-form attribute
 
-The Rust SDK SHALL provide one attribute macro applied to a single `run` function that declares a whole single-tasklet relay, running as its `run` key says (`flow` when unwritten): `#[flezha::relay]`. It SHALL require an `id`, SHALL accept an optional `output` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::relay]` SHALL additionally accept an optional `each` key taking `"once"`, `"per_input"` or `"chained"`, which the generated relay SHALL return from `each()`, and SHALL fail to compile naming any other value; `#[flezha::relay]` SHALL refuse the key naming the steps attribute. No other class-level setting SHALL be a key of either attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::relay]` because `flezha::relay!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
+The Rust SDK SHALL provide one attribute macro applied to a single `run` function that declares a whole single-tasklet relay, running as its `run` key says (`flow` when unwritten): `#[flezha::relay]`. It SHALL require an `factory_id`, SHALL accept an optional `output` naming a plugin channel, an optional `input` naming the entry channel, naming it `input` when the key is absent, and an optional `on_full` setting that entry channel's overflow policy. `#[flezha::relay]` SHALL additionally accept an optional `each` key taking `"once"`, `"per_input"` or `"chained"`, which the generated relay SHALL return from `each()`, and SHALL fail to compile naming any other value; `#[flezha::relay]` SHALL refuse the key naming the steps attribute. No other class-level setting SHALL be a key of either attribute. The kind SHALL NOT be expressible as a key. Two attributes are taken rather than one `#[flezha::relay]` because `flezha::relay!` is already a `#[proc_macro]` of that name in the same module (`sdk/rust/macros/src/lib.rs:42`).
 
 Each attribute SHALL take one of two targets:
 
@@ -110,7 +110,7 @@ With an `output`, the generated topology SHALL wire the entry channel into the t
 
 #### Scenario: A flow short form emits a relay and a tasklet
 
-- **WHEN** `#[flezha::relay(id = "do_nothing", output = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
+- **WHEN** `#[flezha::relay(factory_id = "do_nothing", output = "echo")]` annotates `fn do_nothing(input: String) -> Vec<u8>`
 - **THEN** the macro generates `DoNothing` implementing `Relay` with `factory_id()` `do_nothing` and a `channels()` body wiring `input` into `DoNothingTasklet` and `DoNothingTasklet` to the `echo` plugin output, and `DoNothingTasklet` implementing `Tasklet` with `Input = String`, `Output = Vec<u8>`, `State = ()`, `Change = NoChange` and `NAME` `do_nothing`
 
 #### Scenario: The relay takes the author's name
@@ -120,32 +120,32 @@ With an `output`, the generated topology SHALL wire the entry channel into the t
 
 #### Scenario: A steps short form implements the steps relay trait
 
-- **WHEN** `#[flezha::relay(id = "place", output = "placed", input = "order")]` annotates `fn place(order: String) -> String`
+- **WHEN** `#[flezha::relay(factory_id = "place", output = "placed", input = "order")]` annotates `fn place(order: String) -> String`
 - **THEN** `Place` implements `Relay` with `factory_id()` `place` and a `channels()` body wiring `order` into `PlaceTasklet` and `PlaceTasklet` to the `placed` plugin output, every other steps item at its default, and `runner.register_factory(Place)` registers it
 
 #### Scenario: A steps short form declares its loop mode
 
-- **WHEN** `#[flezha::relay(id = "chat", output = "replies", each = "per_input")]` annotates `fn chat(message: String) -> String`, `Chat` is registered, and two messages reach its entry channel
+- **WHEN** `#[flezha::relay(factory_id = "chat", output = "replies", each = "per_input")]` annotates `fn chat(message: String) -> String`, `Chat` is registered, and two messages reach its entry channel
 - **THEN** `Chat::each()` is `Each::PerInput`, the tasklet runs once per message, and the instance does not complete after the first
 
 #### Scenario: An unknown loop mode does not compile
 
-- **WHEN** `#[flezha::relay(id = "chat", each = "forever")]` annotates a run function
+- **WHEN** `#[flezha::relay(factory_id = "chat", each = "forever")]` annotates a run function
 - **THEN** the macro fails to compile naming `each` and the three accepted values
 
 #### Scenario: A short form with no output wires only the entry channel
 
-- **WHEN** `#[flezha::relay(id = "counter", input = "ticks")]` annotates `impl Tasklet for Counter` with `type Input = String`
+- **WHEN** `#[flezha::relay(factory_id = "counter", input = "ticks")]` annotates `impl Tasklet for Counter` with `type Input = String`
 - **THEN** `Counter`'s `channels()` body wires `ticks` into `Counter` and declares no plugin output, and the relay registers and runs
 
 #### Scenario: A stateful short form sits on the impl block
 
-- **WHEN** `#[flezha::relay(id = "store_input", output = "sink", max_cells = 10)]` annotates `impl Tasklet for StoreInput` with `type State = StoreInputState` and `type Change = Stored`
+- **WHEN** `#[flezha::relay(factory_id = "store_input", output = "sink", max_cells = 10)]` annotates `impl Tasklet for StoreInput` with `type State = StoreInputState` and `type Change = Stored`
 - **THEN** `StoreInput` implements both `Tasklet` and `Relay`, its tasklet is named `store_input` with cells capped at 10, and `runner.register_factory(StoreInput)` registers it with no generated type
 
 #### Scenario: A function short form with state is refused
 
-- **WHEN** `#[flezha::relay(id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
+- **WHEN** `#[flezha::relay(factory_id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
 - **THEN** the macro fails to compile with a message beginning `ShortFormStateOnFunction`
 
 #### Scenario: The generated tasklet is nameable in another topology
@@ -155,22 +155,22 @@ With an `output`, the generated topology SHALL wire the entry channel into the t
 
 #### Scenario: The attribute keeps the default entry channel name
 
-- **WHEN** `#[flezha::relay(id = "do_nothing", output = "echo")]` declares no `input` key
+- **WHEN** `#[flezha::relay(factory_id = "do_nothing", output = "echo")]` declares no `input` key
 - **THEN** the relay's entry channel SHALL be named `input`
 
 #### Scenario: The attribute names the generated entry channel
 
-- **WHEN** `#[flezha::relay(id = "do_nothing", output = "echo", input = "prices")]` annotates a run function
+- **WHEN** `#[flezha::relay(factory_id = "do_nothing", output = "echo", input = "prices")]` annotates a run function
 - **THEN** the relay's entry channel SHALL be named `prices`
 
 #### Scenario: An output on a unit return is refused
 
-- **WHEN** `#[flezha::relay(id = "drain", output = "out")]` annotates a run function with a unit return and no `emits`
+- **WHEN** `#[flezha::relay(factory_id = "drain", output = "out")]` annotates a run function with a unit return and no `emits`
 - **THEN** the macro fails to compile with a message beginning `topology.output_without_type`
 
 #### Scenario: An empty entry channel name is rejected
 
-- **WHEN** `#[flezha::relay(id = "do_nothing", output = "echo", input = "")]` annotates a run function
+- **WHEN** `#[flezha::relay(factory_id = "do_nothing", output = "echo", input = "")]` annotates a run function
 - **THEN** the macro fails to compile, stating that an entry channel name may not be empty
 
 #### Scenario: A topology body beside a short form does not compile
@@ -180,7 +180,7 @@ With an `output`, the generated topology SHALL wire the entry channel into the t
 
 ### Requirement: The Rust relay trait carries one body and one settings tree
 
-`Relay` SHALL declare `fn channels(c: &ChannelBuilder);`, required, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels` and `settings` (a `RelaySettings` holding `run`, `durable`, `max_duration` and `description`). The tier, its checkpoint and its correction window SHALL be members of `Run::Flow`, so a steps run cannot carry them, and `ZeroRetryBackoff` SHALL NOT exist. A steps cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `steps_metadata` in the shared core SHALL advertise no `effectively_once` for a steps class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `TaskletCtx` a steps cell's `run` and `on_timer` receive SHALL carry the same timer session a flow cell's does, so `timer_after`, `timer_at_event_time`, `cancel_processing_time_timer` and `cancel_event_time_timer` answer as in a flow relay; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
+`Relay` SHALL declare `fn channels(c: &ChannelBuilder);`, required, and SHALL declare no `tasklets`, `retry_attempts`, `retry_backoff`, `barrier_retry_attempts` or `wake_after` item; its items SHALL be `factory_id`, `channels` and `settings` (a `RelaySettings` holding `run`, `durable`, `max_duration` and `description`). The tier, its checkpoint and its correction window SHALL be members of `Run::Flow`, so a steps run cannot carry them, and `ZeroRetryBackoff` SHALL NOT exist. A steps cell SHALL write no effect record: the collecting path SHALL carry no effectively-once branch, and `steps_metadata` in the shared core SHALL advertise no `effectively_once` for a steps class. The step ladder SHALL take the consuming edge's `RetryPolicy` from the partition's dispatcher, as the stream ladders do, and the barrier re-send count SHALL be a constant beside the acknowledgement timeout. The `TaskletCtx` a steps cell's `run` and `on_timer` receive SHALL carry the same timer session a flow cell's does, so `timer_after`, `timer_at_event_time` and `cancel_timer` answer as in a flow relay; only a `compensate` hook's context SHALL answer `TaskletError::TimersUnavailable`. `sdk/rust/public-api.txt` SHALL record the new signature and none of the removed items.
 
 #### Scenario: A steps relay writes channels and no retry knob
 
@@ -205,5 +205,23 @@ With an `output`, the generated topology SHALL wire the entry channel into the t
 #### Scenario: A timer inside a steps tasklet fires
 
 - **WHEN** a tasklet of a running `PerInput` steps relay calls `ctx.timer_after(Duration::from_millis(300))` in `run`
-- **THEN** the call answers `Ok(at)`, and `on_timer` runs on that cell with `fired_at == at`, opening a pass at that tasklet
+- **THEN** the call answers `Ok(at)`, and `on_timer` runs on that cell with a firing whose `scheduled_at == at`, opening a pass at that tasklet
+
+### Requirement: The Rust context SHALL carry the replay flag and the crate's surface SHALL be gated
+
+`Ctx::replay()` SHALL answer whether the invocation re-runs recorded history. The firing record
+`TimerFiring` SHALL be the one `flz_core::timer` defines, re-exported by the crate, not a second
+struct of the SDK's. The crate's public surface SHALL NOT carry `relay::dispatcher`, `cell::header`, `cell::flusher` or the
+re-exports `pb`, `transport`, `service`, `errors` and `command`, and `sdk/rust/public-api.txt` SHALL
+equal what `cargo public-api` prints for the crate, checked by a row of the gate list.
+
+#### Scenario: A replayed invocation knows it
+
+- **WHEN** a tasklet's `run` is invoked while the runner re-runs recorded history
+- **THEN** `ctx.replay()` SHALL answer true, and false on a live invocation
+
+#### Scenario: The snapshot cannot drift
+
+- **WHEN** a public item is added to the crate and `public-api.txt` is not regenerated
+- **THEN** the gate row SHALL fail naming the difference
 

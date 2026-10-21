@@ -56,7 +56,7 @@ A function-declared tasklet SHALL keep no state in Rust: `#[flezha::relay]` on a
 
 #### Scenario: A Rust function with a state parameter is refused
 
-- **WHEN** `#[flezha::relay(id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
+- **WHEN** `#[flezha::relay(factory_id = "store_input")]` annotates `fn store_input(input: String, state: &mut S) -> String`
 - **THEN** the macro fails to compile with a message beginning `ShortFormStateOnFunction`
 
 ### Requirement: State-to-Change derivation with explicit boundary
@@ -254,7 +254,7 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 
 #### Scenario: An attribute-carried declaration is bound by the same rules
 
-- **WHEN** the PHP SDK's `#[Task]` attribute and override-detected hooks are compared against the contract's inference rules
+- **WHEN** the PHP SDK's `#[Tasklet\Spec]` attribute and override-detected hooks are compared against the contract's inference rules
 - **THEN** they SHALL yield the same declaration a Rust macro or a Java annotation yields for the equivalent class, and a divergence SHALL be a defect of the PHP SDK rather than a contract exception
 
 #### Scenario: The Python surface is bound by the contract, not beside it
@@ -311,7 +311,7 @@ The authoring contract SHALL define an optional-output return shape for a short 
 
 #### Scenario: A PHP tasklet that emits nothing
 
-- **WHEN** a PHP tasklet's or short form's `run` returns without calling `$ctx->emit` or `$ctx->emitKeyed` for an input
+- **WHEN** a PHP tasklet's or short form's `run` returns without calling `$ctx->emit` for an input
 - **THEN** nothing SHALL be emitted for that input, and PHP SHALL refuse to load a `run` that returns a value
 
 #### Scenario: A Python tasklet that emits nothing
@@ -321,12 +321,12 @@ The authoring contract SHALL define an optional-output return shape for a short 
 
 #### Scenario: A Ruby tasklet that emits nothing
 
-- **WHEN** a Ruby tasklet's or short form's `run` answers a value without calling `ctx.emit` or `ctx.emit_to` for an input
+- **WHEN** a Ruby tasklet's or short form's `run` answers a value without calling `ctx.emit` for an input
 - **THEN** nothing SHALL be emitted for that input, and the answered value SHALL be ignored rather than refused
 
 #### Scenario: A Node tasklet that emits nothing
 
-- **WHEN** a plain JavaScript tasklet's or short form's `run` returns a value without calling `ctx.emit` or `ctx.emitTo` for an input
+- **WHEN** a plain JavaScript tasklet's or short form's `run` returns a value without calling `ctx.emit` for an input
 - **THEN** nothing SHALL be emitted for that input, the returned value SHALL be ignored, and the same `run` written in TypeScript SHALL fail to type-check
 
 ### Requirement: Single hand-written path determinism
@@ -597,4 +597,44 @@ registration; a start SHALL not be able to change either.
 
 - **WHEN** a class declares `run: {steps, each: chained, on_failure: undo_all}` and `durable: {local, sleep_after: false}` in any SDK
 - **THEN** the runner's announcement SHALL carry exactly those values, and `flz relay info` on an instance SHALL print them
+
+### Requirement: Every SDK SHALL spell each public concept one way, checked against one fixture
+
+`test/fixtures/sdk_public_names.txt` SHALL list every public concept of the authoring, runner,
+context and harness surfaces with its spelling in each of the seven SDKs (casing per language; a
+family of methods only where the language has no keyword arguments; `-` only for a concept a
+language does not carry, with its reason on the row). Each SDK's own suite SHALL read its column and
+fail naming every listed spelling its public surface lacks, by the language's reflection (Python,
+Ruby, PHP, Node, Elixir, Java) or by `sdk/rust/public-api.txt` (Rust). The fixture SHALL be a member
+of the contract set. No SDK SHALL keep a second spelling of a listed concept, and no rename SHALL
+leave an alias.
+
+#### Scenario: A missing member fails its SDK's suite
+
+- **WHEN** a row is added to the fixture naming a context member one SDK does not have
+- **THEN** that SDK's surface test SHALL fail naming the row, and the six others SHALL pass
+
+#### Scenario: Deleting a public method is caught
+
+- **WHEN** a method a row names is deleted from any SDK
+- **THEN** that SDK's surface test SHALL fail
+
+### Requirement: Every SDK SHALL ship one tasklet test harness shape
+
+Every SDK SHALL ship `TaskletTestHarness` (`Flezha.SDK.TaskletTestHarness` in Elixir,
+`Flezha::Testing::TaskletTestHarness` in Ruby, `Flezha\Testing\TaskletTestHarness` in PHP) with one
+verb that drives inputs (`feed` in Python, Ruby, PHP, Node and Elixir; the fluent `applyInputs` /
+`apply_inputs` in Java and Rust), the Cell's state read as `state`, timer driving
+(`fire_timer`/`fireTimer`, which fires an explicit `(kind, at)`), and one replay gate answering in
+the language's failure idiom. The harnesses that keep the timers a tasklet sets (Rust, Java, Python
+and Elixir) SHALL also ship `advance_event_time`/`advanceEventTime`, firing every pending
+event-time timer due by a given event time; the Ruby, PHP and Node harnesses keep no pending timers
+and fire an explicit `(kind, at)` only. The fake core a harness runs against SHALL NOT be on the
+harness's public surface, and the effect-name bound every harness enforces SHALL be the core's,
+asserted against `test/fixtures/wire_constants.txt` by each runtime's constants test.
+
+#### Scenario: The effect-name bound is the core's
+
+- **WHEN** a tasklet under any SDK's harness records an effect whose name is longer than the core's bound
+- **THEN** the harness SHALL refuse it with `effect.bad_name`, and changing one runtime's constant SHALL fail that runtime's constants test
 

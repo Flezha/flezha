@@ -623,18 +623,18 @@ Concurrent producers pushing inputs for the same brand-new key SHALL all observe
 - **THEN** the runtime SHALL allocate exactly one `CellSlot` for `"user-99"` and all N inputs SHALL land on its single mailbox in some serial order
 
 ### Requirement: Per-Tasklet idle-TTL eviction is opt-in (no eviction by default)
-`Tasklet::cell_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Tasklet's dynamic Cells SHALL NOT be evicted: they live for the lifetime of the Relay (as static Cells do) and no idle sweep SHALL be armed for the Tasklet.
+`Tasklet::idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Tasklet's dynamic Cells SHALL NOT be evicted: they live for the lifetime of the Relay (as static Cells do) and no idle sweep SHALL be armed for the Tasklet.
 
-When `cell_idle_ttl()` returns `Some(ttl)`, the SDK SHALL arm one idle sweep for the Tasklet as an entry on the poll core's deferred-wake list, re-armed after each sweep and run by the poller that promotes it, that periodically evicts Cells whose time since last input push exceeds `ttl`; no thread SHALL exist per Tasklet to run it. A sweep with a host-run Cell to evict waits for the host to answer the Cell's leave, so that sweep SHALL run on a short-lived thread of its own rather than on the poller. The sweep SHALL acquire the Cell's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the sweep SHALL skip the Cell and try again on the next sweep. Eviction SHALL increment the per-Tasklet `cells_evicted_total` counter.
+When `idle_ttl()` returns `Some(ttl)`, the SDK SHALL arm one idle sweep for the Tasklet as an entry on the poll core's deferred-wake list, re-armed after each sweep and run by the poller that promotes it, that periodically evicts Cells whose time since last input push exceeds `ttl`; no thread SHALL exist per Tasklet to run it. A sweep with a host-run Cell to evict waits for the host to answer the Cell's leave, so that sweep SHALL run on a short-lived thread of its own rather than on the poller. The sweep SHALL acquire the Cell's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the sweep SHALL skip the Cell and try again on the next sweep. Eviction SHALL increment the per-Tasklet `cells_evicted_total` counter.
 
 The sweep SHALL come due on a cadence derived as `min(ttl / 4, 30s)`, overridable globally via the `FLEZHA_REAP_INTERVAL_MS` environment variable for testing.
 
 #### Scenario: No eviction by default
-- **WHEN** a dynamic-mode Tasklet does not override `cell_idle_ttl()` (it returns `None`)
+- **WHEN** a dynamic-mode Tasklet does not override `idle_ttl()` (it returns `None`)
 - **THEN** no idle sweep SHALL be armed and its Cells SHALL never be evicted by idle TTL
 
 #### Scenario: Idle cell is evicted after TTL elapses
-- **WHEN** a Tasklet sets `cell_idle_ttl() = Some(ttl)` and a Cell has had no input push for longer than `ttl` and is not currently running
+- **WHEN** a Tasklet sets `idle_ttl() = Some(ttl)` and a Cell has had no input push for longer than `ttl` and is not currently running
 - **THEN** the next sweep SHALL acquire its inflight CAS, evict it from the registry, and increment `cells_evicted_total`
 
 #### Scenario: Active cell is not evicted mid-run
@@ -680,7 +680,7 @@ The cap is soft: enforcement is best-effort against concurrent inserts. The runt
 - **THEN** the runtime SHALL push to that Cell's mailbox normally; `inputs_dropped_capped_total` SHALL NOT increment
 
 #### Scenario: Cap recovers as TTLs elapse
-- **WHEN** a dynamic-mode Tasklet is at its cap, time passes such that some Cells exceed `cell_idle_ttl()`, and the reaper evicts them
+- **WHEN** a dynamic-mode Tasklet is at its cap, time passes such that some Cells exceed `idle_ttl()`, and the idle sweep evicts them
 - **THEN** subsequent new-key inputs SHALL allocate Cells normally up to the cap
 
 ### Requirement: Per-Tasklet dynamic-mode counters
@@ -748,7 +748,7 @@ Wiring a key function onto a Tasklet that declares a static keyset SHALL be a bu
 
 A declaration SHALL be named for the level whose values it produces or consumes, not for the level that hosts it.
 
-Cell selection and lifetime declarations SHALL therefore be named for the Cell: `cell_keys()` (the static keyset), `cells_for()` (static routing, plural because one input may fan out), `key_by` (the dynamic key, declared on the wiring), `cell_idle_ttl()` (the eviction window), and `ctx.cell_key()` (the running Cell's own key). A control-plane message addressed to a Relay SHALL be named for the Relay.
+Cell selection and lifetime declarations SHALL therefore be named for the Cell: `cell_keys()` (the static keyset), `cells_for()` (static routing, plural because one input may fan out), `key_by` (the dynamic key, declared on the wiring), `idle_ttl()` (the Cell eviction window, spelled as the `idle_ttl_seconds` setting every SDK carries), and `ctx.cell_key()` (the running Cell's own key). A control-plane message addressed to a Relay SHALL be named for the Relay.
 
 #### Scenario: Cell-key declarations name the Cell
 - **WHEN** an author declares a Tasklet's static keyset
@@ -956,4 +956,15 @@ The Rust SDK's `Tasklet` trait SHALL declare `fn init_state(cell_key: Option<&st
 
 - **WHEN** a block writes `init_state` and a cell keyed `"1h"` is created
 - **THEN** `init_state` SHALL be called with `Some("1h")`
+
+### Requirement: Every SDK SHALL declare compact_after_bytes on the tasklet
+
+`compact_after_bytes` SHALL be a tasklet setting in all seven SDKs (`compact_after_bytes` in Python,
+Ruby, Elixir and Rust, `compactAfterBytes` in PHP, Node and Java), carried in that tasklet's class
+declaration; no relay builder SHALL offer it.
+
+#### Scenario: A hosted tasklet declares its own threshold
+
+- **WHEN** a Python tasklet declares `compact_after_bytes=16 * 1024 * 1024` and its relay's other tasklet declares nothing
+- **THEN** the controller SHALL resolve 16 MiB for the first tasklet's Cells and the default for the other's
 
