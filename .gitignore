@@ -67,11 +67,6 @@ __pycache__/
 # jars once cost 1.7 GB of history. `scripts/check-build-artifacts.sh` holds the
 # line. The Java SDK's libraries and jars are ignored in its own repository.
 test/apps/java_compute_engine/target/
-examples/**/target/
-# The release staging root: the fake controller, the addons and the wheels the
-# five-triple build produces. Build output, never tracked.
-/dist/
-
 # Memory-drift load-harness outputs.
 /test/load/artifacts/*.json
 /test/load/artifacts/*.log
@@ -95,5 +90,3 @@ examples/**/target/
 stash/*
 # Local-only dev scratch: notes, brainstorms, ad-hoc files. Whole dir ignored.
 /local_dev/
-# Agent coding-fleet prototype: own git repo, extracted to flezha-agents when its shape settles.
-/examples/coding-fleet/

@@ -1,6 +1,6 @@
 defmodule Flezha.TestHelpers.PluginPackage do
   @moduledoc """
-  The example plugin (`examples/elixir/plugin/`) as a real package, edits of it,
+  The example plugin (`test/apps/example_plugin/`) as a real package, edits of it,
   and loading it into the test VM and out again.
 
     * `example!/0` packages the example once per test run with
@@ -20,7 +20,7 @@ defmodule Flezha.TestHelpers.PluginPackage do
   alias Flezha.Plugin.Installer.Package
   alias Flezha.Plugin.Providers
 
-  @example "examples/elixir/plugin"
+  @example "test/apps/example_plugin"
   @built {__MODULE__, :example}
 
   @doc "The example plugin's archive, packaged on first use in this test run."

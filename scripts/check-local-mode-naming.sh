@@ -54,7 +54,7 @@ SURFACE = (
     "sdk/elixir/lib/flezha/sdk/local.ex",
     "crates/flz_core_ffi/src/abi/local.rs",
     "sdk/node/src/local.ts",
-    "examples/node/local_word_count.mjs",
+    "sdk/node/examples/session/local_word_count.mjs",
     "sdk/python/src/flezha/local.py",
     "sdk/python/examples/local_word_count.py",
     "sdk/ruby/lib/flezha/local.rb",

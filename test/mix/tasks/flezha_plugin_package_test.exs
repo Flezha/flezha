@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Flezha.Plugin.PackageTest do
   alias Flezha.TestHelpers.PluginPackage
 
   @moduletag timeout: 300_000
-  @example Path.expand("examples/elixir/plugin")
+  @example Path.expand("test/apps/example_plugin")
   @opts [max_package_bytes: 50_000_000, require_signature: false, trusted_keys: []]
 
   test "the example is packaged with its library and none of Flezha's closure", %{tmp: tmp} do

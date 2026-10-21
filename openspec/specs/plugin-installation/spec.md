@@ -561,7 +561,7 @@ With `--sign <path>` naming an Ed25519 private key in PEM form, the task SHALL w
 
 #### Scenario: The example plugin is packaged
 
-- **WHEN** `mix flezha.plugin.package` runs in `examples/elixir/plugin/` with `MIX_ENV=prod`
+- **WHEN** `mix flezha.plugin.package` runs in `test/apps/example_plugin/` with `MIX_ENV=prod`
 - **THEN** an archive SHALL be written whose `lib/` holds `flezha_example_plugin-<vsn>` and
   `stamp_lib-<vsn>` and no application of Flezha's runtime closure, and whose manifest
   records the task's own Flezha, OTP and Elixir versions and the plugin's providers

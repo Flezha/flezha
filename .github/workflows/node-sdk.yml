@@ -14,10 +14,9 @@ on:
   pull_request:
     paths:
       - "sdk/node"
-      - "examples/node/**"
-      - "flz_core/**"
-      - "flz_core_ffi/**"
-      - "flz_transport/**"
+      - "crates/flz_core/**"
+      - "crates/flz_core_ffi/**"
+      - "crates/flz_transport/**"
       - "test/fixtures/host_class_decl_keys.txt"
       - "scripts/build-node-sdk.sh"
       - ".github/workflows/node-sdk.yml"

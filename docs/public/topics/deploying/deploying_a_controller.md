@@ -137,8 +137,7 @@ The reference manifests are in
 
 Your application depends on `flezha` and becomes the controller. There is
 nothing to start: Flezha is an OTP application, and its controller tree comes
-up with yours. This way is not confirmed end to end yet. Working example:
-[`examples/elixir/embedded_controller`](https://github.com/flezha/flezha/tree/main/examples/elixir/embedded_controller).
+up with yours. This way is not confirmed end to end yet.
 
 ```elixir
 # mix.exs

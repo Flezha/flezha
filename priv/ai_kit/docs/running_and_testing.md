@@ -454,7 +454,7 @@ output, feed an input channel, and run until the graph is idle.
 | --- | --- | --- |
 | Rust | `LocalRelay::start` | [`sdk/rust/examples/local_word_count.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/local_word_count.rs) |
 | Java | `LocalRelay.start` | [`sdk/java/flezha-sdk-examples/.../local/`](https://github.com/flezha/flezha_java_sdk/tree/main/flezha-sdk-examples/src/main/java/com/flezha/examples/local) |
-| Node | `LocalRelay.start` | [`examples/node/local_word_count.mjs`](https://github.com/flezha/flezha/blob/main/examples/node/local_word_count.mjs) |
+| Node | `LocalRelay.start` | [`sdk/node/examples/session/local_word_count.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/session/local_word_count.mjs) |
 | Python | `LocalRelay.start` | [`sdk/python/examples/local_word_count.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/local_word_count.py) |
 | Ruby | `Flezha::LocalRelay.start` | [`sdk/ruby/examples/local_word_count.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/local_word_count.rb) |
 | PHP | `LocalRelay::start` | [`sdk/php/examples/E07_LocalMode.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/E07_LocalMode.php) |

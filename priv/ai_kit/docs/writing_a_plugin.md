@@ -58,7 +58,7 @@ defp deps do
 end
 ```
 
-[Full file](https://github.com/flezha/flezha/blob/main/examples/elixir/plugin/mix.exs)
+[Full file](https://github.com/flezha/flezha/blob/main/test/apps/example_plugin/mix.exs)
 
 Here `flezha` is a path dependency, because the example builds from the checkout it lives
 in; a project outside the Flezha repository depends on `flezha` by git or Hex instead.
@@ -119,7 +119,7 @@ def on_output(%Ctx.IO{message: payload} = ctx, opts) do
 end
 ```
 
-[Full file](https://github.com/flezha/flezha/blob/main/examples/elixir/plugin/lib/flezha_example_plugin/stamp.ex)
+[Full file](https://github.com/flezha/flezha/blob/main/test/apps/example_plugin/lib/flezha_example_plugin/stamp.ex)
 
 This provider writes one file per plugin, so it cannot be shared. A provider whose one
 worker can serve every relay bound to its plugin declares `shareable: true`, and each
@@ -355,7 +355,7 @@ says what a controller does with it.
 
 ## Example
 
-The example plugin in `examples/elixir/plugin/` has one provider, `example_stamp`. Its
+The example plugin in `test/apps/example_plugin/` has one provider, `example_stamp`. Its
 `config/config.exs` sets the bundled library's one setting, `config :stamp_lib,
 prefix: ">>"`, and the package carries it in the library's `.app`, so each line starts
 `>>[stamped]`. It is packaged and installed as any package is, then enabled on a

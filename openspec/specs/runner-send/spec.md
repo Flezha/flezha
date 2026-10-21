@@ -157,7 +157,7 @@ comment SHALL show `admin()` or a send on the control surface.
 
 #### Scenario: No old name is left
 
-- **WHEN** `docs/`, `README.md`, `CHANGELOG.md`'s new entry, `sdk/` and `examples/` are
+- **WHEN** `docs/`, `README.md`, `CHANGELOG.md`'s new entry and `sdk/` are
   searched for the SDK accessor `admin`
 - **THEN** no hit SHALL remain outside the authorization roles and earlier changelog entries
 
