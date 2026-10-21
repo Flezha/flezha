@@ -488,8 +488,13 @@ defmodule Flezha.Relay.Replay do
   a migration and a rehydrate from suspension one path, and a data-stream bind
   that could not carry an earlier input runs the same function. An instance
   without durable input has no log, and it does nothing.
+
+  While a bind is in flight this process still holds the channel the relay is
+  leaving, so it re-forwards nothing: the bind's adoption re-forwards the tail.
   """
   @spec reforward_undelivered_tail(Overwatch.t()) :: Overwatch.t()
+  def reforward_undelivered_tail(%Overwatch{bind_task: %{}} = state), do: state
+
   def reforward_undelivered_tail(%Overwatch{} = state) do
     drop_unrecorded_turns(state)
     redeliver_edges(state)
@@ -574,9 +579,12 @@ defmodule Flezha.Relay.Replay do
   came up between the failed delivery and this call, settled by handing the
   Overwatch the notification it just missed. `:unarmed` means the relay has
   no channel to ask yet; the log still holds the payload, and the bind that
-  gives it one re-forwards the tail.
+  gives it one re-forwards the tail. A bind in flight is that bind, and its
+  adoption re-forwards the tail.
   """
   @spec arm_bind_reforward(Overwatch.t()) :: :armed | :unarmed
+  def arm_bind_reforward(%Overwatch{bind_task: %{}}), do: :armed
+
   def arm_bind_reforward(%Overwatch{channel: channel} = state) do
     owner = owner_pid(state)
 

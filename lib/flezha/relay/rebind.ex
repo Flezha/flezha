@@ -185,7 +185,13 @@ defmodule Flezha.Relay.Rebind do
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 
     # The bound runner's state supersedes a snapshot stored before the bind.
-    %{recovered | bind_task: nil, snapshot: nil}
+    adopted = %{recovered | bind_task: nil, snapshot: nil}
+
+    # Input that went to the channel this relay left while it bound, and a
+    # re-forward of the task's that met the target unbound, are still owed.
+    if Replay.owed_count(Overwatch.relay_class(adopted)) > 0,
+      do: Replay.reforward_undelivered_tail(adopted),
+      else: adopted
   end
 
   # A failed bind with input journaled meanwhile tries again at once, as any

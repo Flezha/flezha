@@ -459,6 +459,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   import FlezhaTest.Helper.MessageTestHelper, only: [collect: 2]
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.Rebind
   alias Flezha.Relay.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.StreamChannel.Gate
@@ -501,16 +502,8 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       state = overwatch(ctx, effectively_once: true)
 
       # The cast path: nobody is told anything, so the journal's `:ok` is the
-      # only record of what happened to this input. The log answers after a real
-      # fsync, which a loaded disk does not finish within any fixed window.
-      assert {:pending, state} = Ingest.confirming_ingest(state, "m0", %{}, :cast)
-
-      log_reply =
-        receive do
-          reply -> reply
-        end
-
-      assert {:ok, state} = Ingest.journal_reply(state, log_reply)
+      # only record of what happened to this input.
+      state = ingest_cast(state, "m0")
 
       # Accepted: the input log holds it.
       assert [{0, "m0", _}] = InputLog.read_range(ctx.class, 0, 0)
@@ -520,7 +513,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       assert drain_frames() == []
 
       # The bind is what owes the delivery.
-      settle_bind(state, ctx)
+      fold_bound(state)
 
       assert_receive {:flz_data, _, class, "m0", %{"flz.offset" => "0"}}
       assert class == ctx.class
@@ -551,7 +544,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       bind_stream(ctx)
       assert drain_frames() == []
 
-      settle_bind(state, ctx)
+      fold_bound(state)
 
       assert_receive {:flz_data, _, _, "m0", %{"flz.offset" => "0"}}
       assert_receive {:flz_data, _, _, "m1", %{"flz.offset" => "1"}}
@@ -566,7 +559,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
 
       bind_stream(ctx)
-      settle_bind(state, ctx)
+      fold_bound(state)
 
       assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
       assert drain_frames() == []
@@ -629,7 +622,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
         Enum.flat_map(1..3, fn _ ->
           assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
           bind_stream(ctx)
-          settle_bind(state, ctx)
+          fold_bound(state)
           frames = drain_frames()
           unbind_stream(ctx)
           frames
@@ -640,6 +633,58 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       # effectively-once identity absorbs.
       assert delivered |> Enum.uniq() |> Enum.sort() == ["m0", "m1"]
       assert length(delivered) == 6
+    end
+  end
+
+  # A rebind runs in a task while the Overwatch keeps serving on the channel
+  # the relay is leaving, whose runner is gone. ctx.channel is the bind's target.
+  describe "a bind in flight" do
+    test "an input accepted meanwhile reaches the runner the bind lands on", ctx do
+      state = binding_away(ctx)
+
+      state = ingest_cast(state, "m0")
+
+      bind_stream(ctx)
+      adopt(state, ctx)
+
+      assert_receive {:flz_data, _, _, "m0", %{"flz.offset" => "0"}}
+    end
+
+    test "an input the channel it leaves still carried reaches the runner it lands on", ctx do
+      state = binding_away(ctx)
+      bind_stream(%{channel: state.channel})
+
+      # The task's re-forward found nothing; the input comes after it.
+      assert %Overwatch{} = Replay.reforward_undelivered_tail(bound_copy(state, ctx))
+      state = ingest_cast(state, "m0")
+      assert drain_frames() == ["m0"]
+
+      bind_stream(ctx)
+      adopt(state, ctx)
+
+      assert_receive {:flz_data, _, _, "m0", %{"flz.offset" => "0"}}
+    end
+
+    for {from, halt_reason} <- [running: nil, halted: :runner_gone] do
+      test "its own re-forward, announced before a #{from} relay's bind is adopted, " <>
+             "reaches its runner",
+           ctx do
+        for i <- 0..1,
+            do: {:ok, _} = InputLog.append(ctx.class, "m#{i}", %{"input_type" => "2"})
+
+        state = binding_away(ctx, phase: unquote(from), halt_reason: unquote(halt_reason))
+
+        # The task's re-forward meets the target before its stream binds.
+        assert %Overwatch{} = Replay.reforward_undelivered_tail(bound_copy(state, ctx))
+        bind_stream(ctx)
+        state = fold_bound(state)
+        assert drain_frames() == []
+
+        adopt(state, ctx)
+
+        assert_receive {:flz_data, _, _, "m0", %{"flz.offset" => "0"}}
+        assert_receive {:flz_data, _, _, "m1", %{"flz.offset" => "1"}}
+      end
     end
   end
 
@@ -694,16 +739,59 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
     :ok
   end
 
-  # Drive the bind notification the way the Overwatch process would. Its
-  # absence is tolerated so a failure reads as "the input was never delivered"
-  # — the defect — rather than as one missing message.
-  defp settle_bind(state, %{channel: channel}) do
+  # A cast ingest through the journal. The log answers after a real fsync,
+  # which a loaded disk does not finish within any fixed window.
+  defp ingest_cast(state, message) do
+    assert {:pending, state} = Ingest.confirming_ingest(state, message, %{}, :cast)
+    assert {:ok, state} = Ingest.journal_reply(state, receive(do: (reply -> reply)))
+    state
+  end
+
+  defp binding_away(ctx, overrides \\ []) do
+    {leaving, _pid} = NodeTestHelper.unbound_stream_channel("bindfwd_leaving")
+    phase = Keyword.get(overrides, :phase, :running)
+
+    overwatch(
+      %{ctx | channel: leaving},
+      [
+        effectively_once: true,
+        runner_id: "bindfwd_leaving",
+        phase: phase,
+        bind_task: %{pid: self(), then: nil, from: phase}
+      ] ++ overrides
+    )
+  end
+
+  # The state the bind task reports: the pre-bind copy, pointed at its target.
+  defp bound_copy(state, %{channel: channel}) do
+    %{
+      state
+      | channel: channel,
+        runner_id: "bindfwd_runner",
+        bind_task: nil,
+        phase: :running,
+        halt_reason: nil
+    }
+  end
+
+  # Drive every bind notification already in the mailbox through the
+  # Overwatch, as its process would. None is tolerated, so a failure reads as
+  # "the input was never delivered" rather than as one missing message. A bind
+  # notifies before its call returns, so nothing is waited for.
+  defp fold_bound(state) do
     receive do
-      {:stream_bound, ^channel} = msg ->
-        assert {:noreply, _} = Overwatch.handle_info(msg, state)
+      {:stream_bound, _channel} = msg ->
+        {:noreply, state} = Overwatch.handle_info(msg, state)
+        fold_bound(state)
     after
-      200 -> :no_notification
+      0 -> state
     end
+  end
+
+  defp adopt(state, ctx) do
+    ExUnit.CaptureLog.with_log(fn ->
+      state |> Rebind.bind_task_reported({:bound, bound_copy(state, ctx)}) |> fold_bound()
+    end)
   end
 
   # Put the channel back in the unbound state the product reaches on a dropped
