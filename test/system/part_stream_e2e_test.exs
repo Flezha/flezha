@@ -65,7 +65,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
       test "a plugin's listener sees the parts, and a file sink the output alone",
            %{namespace: ns} do
-        path = "#{unique("part_sink")}.ndjson"
+        path = sink_path("part_sink")
         id = start!(ns, unquote(factory), unquote(kind), [file_sink("part_sink", path)])
         test = self()
 

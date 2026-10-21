@@ -184,19 +184,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   defp peer_name(name, index), do: :"#{name}_#{Config.get(:run_token)}_#{index}"
 
   @doc """
-  Claim a fresh `<prefix>_<n>` directory under `System.tmp_dir!/0`.
+  Claim a fresh `<prefix>_<n>` directory under `base`, `System.tmp_dir!/0` by default.
 
   `System.unique_integer/1` restarts low in every BEAM, so run N+1 re-mints run
   N's names, and `mkdir_p` would silently share the tree the previous run left.
   `File.mkdir/1` is the claim: it fails on a name somebody already holds.
   """
-  @spec claim_tmp_dir(binary()) :: binary()
-  def claim_tmp_dir(prefix) do
-    dir = Path.join(System.tmp_dir!(), "#{prefix}_#{System.unique_integer([:positive])}")
+  @spec claim_tmp_dir(binary(), binary()) :: binary()
+  def claim_tmp_dir(prefix, base \\ System.tmp_dir!()) do
+    dir = Path.join(base, "#{prefix}_#{System.unique_integer([:positive])}")
 
     case File.mkdir(dir) do
       :ok -> dir
-      {:error, :eexist} -> claim_tmp_dir(prefix)
+      {:error, :eexist} -> claim_tmp_dir(prefix, base)
       {:error, reason} -> raise File.Error, reason: reason, action: "make directory", path: dir
     end
   end

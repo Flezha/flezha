@@ -5,8 +5,12 @@ defmodule FlezhaTest.Helper.ListenerHarness do
   wrote.
   """
 
+  import ExUnit.Callbacks, only: [on_exit: 1]
+
+  alias Flezha.Config
   alias Flezha.Plugin
   alias Flezha.Service.{HubManager, RelayManager}
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @doc """
   The listener plugins on `id`: on its live extension table and in its
@@ -40,6 +44,20 @@ defmodule FlezhaTest.Helper.ListenerHarness do
       opts: %{path: path},
       hooks: [{:on_output, []}]
     }
+  end
+
+  @doc """
+  A path for `file_sink/2` that no other run has written: a file in a directory
+  claimed under the file plugin root, removed when the test exits. The sink
+  appends, so a name a previous run left behind would carry its lines.
+  """
+  @spec sink_path(String.t()) :: String.t()
+  def sink_path(prefix) do
+    root = Path.expand(Config.get(:file_plugin_root))
+    File.mkdir_p!(root)
+    dir = NodeTestHelper.claim_tmp_dir(prefix, root)
+    on_exit(fn -> File.rm_rf(dir) end)
+    dir |> Path.relative_to(root) |> Path.join("sink.ndjson")
   end
 
   @doc "The lines the file sink at `path` has written, `[]` before its first."

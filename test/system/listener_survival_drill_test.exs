@@ -55,7 +55,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   @tag capability: :state_persistence, skip: FlezhaTest.SystemCase.deferral(:state_persistence)
   test "a sleeper restarted asleep wakes with its declared sink beside the listener",
        %{namespace: ns} do
-    path = "#{unique("drill_sink")}.ndjson"
+    path = sink_path("drill_sink")
     id = start!(ns, "sleeping_counter", :flow, [file_sink("drill_sink", path)])
 
     send!(ns, id, "a:2")
@@ -221,7 +221,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       on_exit(fn -> NodeTestHelper.stop_peer_node(c_pid, c_node) end)
 
       sink = %{
-        file_sink("moved_sink", "#{unique("moved_sink")}.ndjson")
+        file_sink("moved_sink", sink_path("moved_sink"))
         | namespace: ns,
           relay_id: id
       }
@@ -242,7 +242,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     test "a file sink enabled through A on a relay moved to B is disabled through A",
          %{namespace: ns, peer: peer, id: id} = ctx do
       sink = %{
-        file_sink("moved_sink", "#{unique("moved_sink")}.ndjson")
+        file_sink("moved_sink", sink_path("moved_sink"))
         | namespace: ns,
           relay_id: id
       }
