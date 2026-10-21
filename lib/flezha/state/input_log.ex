@@ -129,16 +129,16 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  The retained records above the instance's floor, in offset order, as
-  `read_range/3` answers them: what the next bind re-forwards. `[]` for a key
-  with no log.
+  The retained records above the instance's floor and above offset `above`,
+  in offset order, as `read_range/3` answers them: what the next bind
+  re-forwards. `[]` for a key with no log.
   """
-  @spec undelivered(binary()) :: [{non_neg_integer(), term(), map()}] | {:error, term()}
-  def undelivered(relay_class) do
-    case tail(relay_class) do
-      {:ok, floor, last} when last > floor -> read_range(relay_class, floor + 1, last)
-      {:ok, _floor, _last} -> []
-      {:error, _refusal} = refused -> refused
+  @spec undelivered(binary(), integer()) ::
+          [{non_neg_integer(), term(), map()}] | {:error, term()}
+  def undelivered(relay_class, above \\ -1) do
+    with {:ok, floor, last} <- tail(relay_class) do
+      from = max(floor, above) + 1
+      if last >= from, do: read_range(relay_class, from, last), else: []
     end
   end
 

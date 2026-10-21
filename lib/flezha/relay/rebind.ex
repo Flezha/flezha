@@ -8,12 +8,12 @@ defmodule Flezha.Relay.Rebind do
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Relay.Builder
+  alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlUnit
-  alias Flezha.State.InputLog
   alias ProcessHub.Service.Migration, as: HubMigration
 
   require Logger
@@ -110,12 +110,7 @@ defmodule Flezha.Relay.Rebind do
   def start_bind(%Overwatch{} = state, runner_id, then) do
     relay = bind_relay(state)
     parent = self()
-
-    last =
-      case InputLog.tail(Overwatch.relay_class(state)) do
-        {:ok, _floor, last} -> last
-        {:error, _refused} -> -1
-      end
+    last = Ingest.journaled(state)
 
     pid =
       spawn_link(fn ->
@@ -196,22 +191,19 @@ defmodule Flezha.Relay.Rebind do
     adopted = %{recovered | bind_task: nil, snapshot: nil}
 
     case state.bind_task do
-      %{reforward: true} -> Replay.reforward_undelivered_tail(adopted)
-      %{journaled: before} -> reforward_journaled_since(adopted, before)
-      _no_log_read -> adopted
+      %{reforward: true} ->
+        Replay.reforward_undelivered_tail(adopted)
+
+      # Input journaled while the task bound went to the channel this relay
+      # left. Only that input: an edge value the task already re-delivered
+      # would count twice, since edges move no Cell's floor.
+      %{journaled: before} ->
+        Replay.replay_slice(adopted, Ingest.journaled_since(adopted, before))
+        adopted
+
+      _no_log_read ->
+        adopted
     end
-  end
-
-  # Input journaled while the task bound went to the channel this relay left.
-  # Only that input: an edge value the task already re-delivered would count
-  # twice, since edges move no Cell's floor.
-  defp reforward_journaled_since(%Overwatch{} = state, before) do
-    class = Overwatch.relay_class(state)
-
-    with {:ok, floor, last} when last > before and last > floor <- InputLog.tail(class),
-         do: Replay.replay_slice(state, InputLog.read_range(class, max(before, floor) + 1, last))
-
-    state
   end
 
   # A failed bind with input journaled meanwhile tries again at once, as any

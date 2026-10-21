@@ -179,6 +179,20 @@ defmodule Flezha.Relay.Ingest do
   def retained?(%Overwatch{} = state, msg_id),
     do: InputLog.msg_offset(Overwatch.relay_class(state), msg_id) != nil
 
+  @doc "The last offset this relay's input log journaled: `-1` for none and for a log that refused."
+  @spec journaled(Overwatch.t()) :: integer()
+  def journaled(%Overwatch{} = state) do
+    case InputLog.tail(Overwatch.relay_class(state)) do
+      {:ok, _floor, last} -> last
+      {:error, _refused} -> -1
+    end
+  end
+
+  @doc "The undelivered input this relay's log journaled above offset `since`."
+  @spec journaled_since(Overwatch.t(), integer()) :: [tuple()] | {:error, term()}
+  def journaled_since(%Overwatch{} = state, since),
+    do: InputLog.undelivered(Overwatch.relay_class(state), since)
+
   @doc """
   The one ingest-and-report path behind every entry point. Answers what the
   entry point is told, or `:pending` when the reply is owed until the log
