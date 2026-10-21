@@ -5,8 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::args::{self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, NAMESPACE};
 use crate::dispatch::{self, Arg, Command, Missing, Verb};
-use crate::help;
-use crate::rpc;
+use crate::{help, rpc};
 
 const RELAY_ID: &[Positional] = &[Positional::required("<relay_id>")];
 /// The verbs that name one relay, or one of its Cells, within the namespace.
