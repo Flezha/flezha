@@ -9,13 +9,13 @@ defmodule Flezha.State.TaskJournal.Records do
 
   alias Flezha.State.{Lineage, Outbox, Supervisor, TaskJournal, WalWriter, Wire}
 
+  @type range :: {cell_id :: binary(), first_seq :: non_neg_integer(), seq :: non_neg_integer()}
+
   @doc """
   The records a stage entry's Cells wrote, `{cell_id, first_seq, seq}` for
   each Cell that wrote any.
   """
-  @spec record_ranges([TaskJournal.committed_cell()]) :: [
-          {binary(), non_neg_integer(), non_neg_integer()}
-        ]
+  @spec record_ranges([TaskJournal.committed_cell()]) :: [range()]
   def record_ranges(cells),
     do:
       for(
@@ -49,7 +49,7 @@ defmodule Flezha.State.TaskJournal.Records do
   The entry naming `records` (`record_ranges/1`) is durable: each Cell's
   writer releases their outputs.
   """
-  @spec release_records([{binary(), non_neg_integer(), non_neg_integer()}]) :: :ok
+  @spec release_records([range()]) :: :ok
   def release_records(records) do
     for {id, first, last} <- records,
         {:ok, writer} <- [record_writer(id)],
@@ -73,19 +73,25 @@ defmodule Flezha.State.TaskJournal.Records do
   end
 
   @doc """
-  Whether any of `records` (`record_ranges/1`) sits above its Cell's persisted
-  flush cursor, so the sinks may still be owed its output. The cursor lags what
-  the sinks confirmed, never leads it, so an entry naming one is kept a little
-  longer than needed and never too briefly.
+  The seqs of `entries` (`{seq, records}`, records as `record_ranges/1`) that
+  name a record above its Cell's persisted flush cursor, so the sinks may still
+  be owed its output. The cursor lags what the sinks confirmed, never leads it,
+  so such an entry is kept a little longer than needed and never too briefly.
+  Each Cell's cursor is read once; an id naming no Cell owes nothing.
   """
-  @spec unflushed?([{binary(), non_neg_integer(), non_neg_integer()}]) :: boolean()
-  def unflushed?(records) do
-    Enum.any?(records, fn {id, _first, seq} ->
-      case Wire.decode_cell_id(id) do
-        {:ok, cell} -> seq > Lineage.progress(cell).outbox_flushed_seq
-        {:error, _} -> false
-      end
-    end)
+  @spec unflushed([{non_neg_integer(), [range()]}]) :: [non_neg_integer()]
+  def unflushed(entries) do
+    ids = for {_seq, records} <- entries, {id, _first, _last} <- records, uniq: true, do: id
+
+    cursors =
+      for id <- ids,
+          {:ok, cell} <- [Wire.decode_cell_id(id)],
+          into: %{},
+          do: {id, Lineage.progress(cell).outbox_flushed_seq}
+
+    for {seq, records} <- entries,
+        Enum.any?(records, fn {id, _first, last} -> last > Map.get(cursors, id, last) end),
+        do: seq
   end
 
   defp record_writer(cell_id) do

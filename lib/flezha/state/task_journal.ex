@@ -583,8 +583,7 @@ defmodule Flezha.State.TaskJournal do
     entries = live_entries(raw)
 
     with %{seq: head} <- latest_iteration(entries) do
-      owed =
-        for %{seq: seq} = e <- entries, seq < head, Records.unflushed?(stage_records(e)), do: seq
+      owed = Records.unflushed(for %{seq: s} = e <- entries, s < head, do: {s, stage_records(e)})
 
       unwound =
         case {rewind_undo_entries(raw), latest_rewound(raw)} do

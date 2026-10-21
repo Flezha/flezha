@@ -705,7 +705,7 @@ defmodule FlezhaTest.State.TaskJournalTest do
     record = %{id: nil, trail: [], landed: false, epoch: 1, folded_offset: -1, cut: nil}
     :ok = Lineage.put(cell, record)
 
-    assert Records.unflushed?([{seg_identity(inst, "TaskA", "s0"), 0, 3}])
+    assert Records.unflushed([{7, [{seg_identity(inst, "TaskA", "s0"), 0, 3}]}]) == [7]
   end
 
   test "an entry whose record is still owed holds the cut, and goes once the cursor passes it" do
