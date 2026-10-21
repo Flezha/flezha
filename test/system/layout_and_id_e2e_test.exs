@@ -39,9 +39,7 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
   @long_namespace "colocation_ns"
 
   setup do
-    previous = Application.get_all_env(:flezha)
-    on_exit(fn -> for {key, value} <- previous, do: Application.put_env(:flezha, key, value) end)
-    :ok
+    FlezhaTest.Case.install([:env])
   end
 
   describe "the layout both runtimes read" do
