@@ -6,20 +6,20 @@
 #      platforms ->
 #      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_core_ffi.<ext>
 #   1a. flz-fake-controller (feature "fake-controller") for all 5 platforms ->
-#      dist/tools/<sdk-dir>/flz-fake-controller
+#      _build/.dist/tools/<sdk-dir>/flz-fake-controller
 #   1f. the Elixir SDK's native library (flz_core_beam) for all 5 platforms, packed
 #      as rustler_precompiled downloads it, with the checksum file the package
-#      carries -> dist/elixir-nifs/
+#      carries -> _build/.dist/elixir-nifs/
 #   1b. The contract set (test/fixtures/contract.txt) as one archive, staged
 #      by --stage-release only: it is files already in the tree, not a build.
 #   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
-#      package's own table declares -> dist/node-addons/<suffix>/, packed into
-#      the per-platform packages at dist/node-packages/
+#      package's own table declares -> _build/.dist/node-addons/<suffix>/, packed into
+#      the per-platform packages at _build/.dist/node-packages/
 #   1d. abi3 wheels (feature "python-abi3") for all 5 platforms, and one
 #      free-threaded wheel per platform per supported free-threaded
-#      interpreter -> dist/wheels/
+#      interpreter -> _build/.dist/wheels/
 #   1e. precompiled Ruby platform gems, one per platform, carrying one library
-#      per supported Ruby minor -> dist/ruby-gems/
+#      per supported Ruby minor -> _build/.dist/ruby-gems/
 #   2. The same five libraries staged for the PHP package ->
 #      sdk/php/lib/<sdk-dir>/libflz_core_ffi.<ext>
 #   3. SDK fat jar ->
@@ -144,15 +144,15 @@ NATIVE_OUT="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
 PHP_NATIVE_OUT="${REPO_ROOT}/sdk/php/lib"
 # The fake controller is loaded by no package; it is a release asset an SDK
 # repository fetches, so it is staged on its own rather than into an SDK tree.
-TOOLS_OUT="${REPO_ROOT}/dist/tools"
+TOOLS_OUT="${REPO_ROOT}/_build/.dist/tools"
 # The Node addons, one directory per platform suffix, and the per-platform
 # packages `scripts/platform-package.mjs` writes around them.
-NODE_ADDONS_OUT="${REPO_ROOT}/dist/node-addons"
-NODE_PACKAGES_OUT="${REPO_ROOT}/dist/node-packages"
+NODE_ADDONS_OUT="${REPO_ROOT}/_build/.dist/node-addons"
+NODE_PACKAGES_OUT="${REPO_ROOT}/_build/.dist/node-packages"
 NODE_PLATFORM_TABLE="${REPO_ROOT}/sdk/node/dist/esm/platforms.js"
 # The wheels: one `abi3` wheel per platform, and one per platform per
 # free-threaded interpreter. PyO3 builds no free-threaded extension below 3.14.
-WHEELS_OUT="${REPO_ROOT}/dist/wheels"
+WHEELS_OUT="${REPO_ROOT}/_build/.dist/wheels"
 FREE_THREADED_PYTHONS=("3.14t")
 # Each wheel tier as `<the tag in its file name>|<what maturin is asked for>`:
 # the abi3 tier, then one per free-threaded interpreter, because `abi3` has no
@@ -166,10 +166,10 @@ wheel_tiers() {
 }
 # The Elixir SDK's native library archives, and the checksum file the package
 # carries beside them.
-ELIXIR_NIFS_OUT="${REPO_ROOT}/dist/elixir-nifs"
+ELIXIR_NIFS_OUT="${REPO_ROOT}/_build/.dist/elixir-nifs"
 ELIXIR_NIF_CHECKSUMS="checksum-Elixir.Flezha.SDK.Native.exs"
 # The precompiled Ruby gems, and the Ruby minors each one carries a library for.
-RUBY_GEMS_OUT="${REPO_ROOT}/dist/ruby-gems"
+RUBY_GEMS_OUT="${REPO_ROOT}/_build/.dist/ruby-gems"
 RUBY_GEM_MINORS="3.3,3.4"
 RELEASE_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "${REPO_ROOT}/Cargo.toml")"
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
@@ -596,7 +596,7 @@ done
 step "building the Ruby platform gems"
 require_cmd docker "install Docker"
 require_cmd rb-sys-dock "gem install rb_sys at the version sdk/ruby/flezha.gemspec pins"
-RUBY_GEM_SOURCE="${REPO_ROOT}/dist/ruby-gem-source"
+RUBY_GEM_SOURCE="${REPO_ROOT}/_build/.dist/ruby-gem-source"
 rm -rf "${RUBY_GEM_SOURCE}"
 mkdir -p "${RUBY_GEM_SOURCE}" "${RUBY_GEMS_OUT}"
 git -C "${REPO_ROOT}/sdk/ruby" archive HEAD | tar -x -C "${RUBY_GEM_SOURCE}"

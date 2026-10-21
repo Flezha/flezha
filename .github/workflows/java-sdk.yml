@@ -128,23 +128,25 @@ jobs:
       - name: Stage it under its platform suffix
         shell: bash
         run: |
-          mkdir -p dist/node-addons/win32-x64-msvc
-          cp target/release/flz_core_ffi.dll dist/node-addons/win32-x64-msvc/flz_core_ffi.node
+          mkdir -p _build/.dist/node-addons/win32-x64-msvc
+          cp _build/.target/release/flz_core_ffi.dll _build/.dist/node-addons/win32-x64-msvc/flz_core_ffi.node
 
       - name: Build the abi3 and free-threaded wheels
         shell: bash
         run: |
           pip install --quiet maturin
           cd sdk/python
-          maturin build --release --out ../../dist/wheels --features python-abi3
-          maturin build --release --out ../../dist/wheels --interpreter python3.14t
+          maturin build --release --out ../../_build/.dist/wheels --features python-abi3
+          maturin build --release --out ../../_build/.dist/wheels --interpreter python3.14t
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-artefacts
           path: |
-            dist/node-addons/win32-x64-msvc/flz_core_ffi.node
-            dist/wheels/*.whl
+            _build/.dist/node-addons/win32-x64-msvc/flz_core_ffi.node
+            _build/.dist/wheels/*.whl
+          # Everything under `_build/.dist` counts as hidden to this action.
+          include-hidden-files: true
           if-no-files-found: error
 
   # The five-triple cross-build, on a version tag and nowhere else. This is the
@@ -213,7 +215,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: windows-artefacts
-          path: dist
+          path: _build/.dist
 
       - name: Build all five triples, the wheels, the gems and both fat jars
         # The same script that is run locally. It installs cargo-zigbuild and a
