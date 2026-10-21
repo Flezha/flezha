@@ -269,19 +269,33 @@ defmodule FlezhaTest.Tiers do
       expanded = Regex.replace(~r/\$\{\{[^}]*\}\}/, spec, Atom.to_string(runtime))
       {expanded, expanded != spec}
     end
-    |> Enum.map_join(fn {spec, expanded?} ->
-      case System.cmd("python3", ["scripts/naming_gate.py", "--list", spec],
-             stderr_to_stdout: true
-           ) do
-        {rows, 0} ->
-          rows
+    |> then(fn specs ->
+      # One listing for every spec: each naming_gate.py start costs over a
+      # second, and a workflow can name dozens of specs.
+      groups = for line <- gate_list("all"), [_id, group | _] <- [String.split(line)], do: group
 
-        {output, _} ->
-          if expanded? and output =~ "no gate is declared in group",
-            do: "",
-            else: raise("naming_gate.py --list #{spec} failed:\n#{output}")
+      specs
+      |> Enum.reject(fn {spec, expanded?} -> expanded? and missing_group?(spec, groups) end)
+      |> Enum.map_join(",", &elem(&1, 0))
+      |> case do
+        "" -> ""
+        joined -> Enum.join(gate_list(joined), "\n")
       end
     end)
+  end
+
+  defp missing_group?(spec, groups),
+    do:
+      Enum.any?(
+        String.split(spec, ","),
+        &(String.starts_with?(&1, "@") and String.trim_leading(&1, "@") not in groups)
+      )
+
+  defp gate_list(spec) do
+    case System.cmd("python3", ["scripts/naming_gate.py", "--list", spec], stderr_to_stdout: true) do
+      {rows, 0} -> String.split(rows, "\n", trim: true)
+      {output, _} -> raise "naming_gate.py --list #{spec} failed:\n#{output}"
+    end
   end
 
   @doc "The workflow directory this table reads its triggers from."
