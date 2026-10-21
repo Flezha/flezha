@@ -605,7 +605,7 @@ exit status and the output, not a control frame.
 
 The allocated language byte your SDK stamps at byte 0 of every durable record
 and advertises on every factory. Take the next free value from the table of
-record in `flz_core/src/header.rs`, and add its row to
+record in `crates/flz_core/src/header.rs`, and add its row to
 `test/fixtures/wire_constants.txt` — one value per SDK, assigned when the SDK
 lands, never asserted by a proposal in advance.
 

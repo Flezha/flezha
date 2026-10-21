@@ -159,7 +159,7 @@ reading a whole WAL — and one
 bytes decode identically. The two differ in one stated thing: a device log may have a torn tail
 an append left, and a payload shipped whole has none, so a crc failure in a payload is refused
 however few bytes follow it. `test/flezha/state/durable_frame_conformance_test.exs` folds the
-same golden log through every one of them, and `flz_core/src/restore.rs` folds the same bytes in
+same golden log through every one of them, and `crates/flz_core/src/restore.rs` folds the same bytes in
 the kernel from `test/fixtures/durable_frame.txt` — a framing change on either side fails the
 other side's suite.
 
@@ -430,7 +430,7 @@ session minted per attach. The SDK answers `CreditWindowAck`; from then on:
   `CreditLedger.drain/2` returns one batched `CreditGrant` when the outstanding bytes
   fall below the low watermark or a low-watermark's worth has been freed; a stalled fsync mints
   nothing.
-- **The sender parks** — `flz_core/src/credit.rs` (one implementation for every host) debits
+- **The sender parks** — `crates/flz_core/src/credit.rs` (one implementation for every host) debits
   before the output plugin write and parks until the next grant; the `credit_parked` counter rides
   `data_heartbeat` metadata so a parked runner classifies as fed-but-parked, not frozen.
 - **Reconnect resets the ledger** — a re-attach re-runs the handshake with a fresh session;
@@ -549,7 +549,7 @@ flz state retention <relay_class> <hours>                            # admin
 flz state delete <relay/tasklet/cell_key>                            # admin
 ```
 
-The verbs live in `cli/src/state.rs` and reach `Flezha.Service.Steps` through the door.
+The verbs live in `crates/cli/src/state.rs` and reach `Flezha.Service.Steps` through the door.
 `state list` reports each Cell's live writer counters (`Metrics.snapshot_all/0`: WAL size,
 snapshot seq, ...). `state at` runs `Flezha.State.TimeTravel.query/2`, which returns the restore
 payload a bind ships, as of the resolved seq (`Restore.payload/2`: `%{snapshot_bytes,
@@ -633,7 +633,7 @@ including a plain stateful flow relay (the default), **keeps** its queue:
 `Flezha.Relay.Ingest` forwards those inputs un-journaled
 ([`../public/topics/core/durability.md`](../public/topics/core/durability.md)), so the mailbox is their
 only copy. The rule lives once, in `CellSlot::discard_queued_input_on_restore`
-(`flz_core/src/cell.rs`); discards ship as `restore_discarded_inputs` in `data_heartbeat`
+(`crates/flz_core/src/cell.rs`); discards ship as `restore_discarded_inputs` in `data_heartbeat`
 metadata. The replay buffer, replay flags and any open checkpoint interval are cleared on every
 class. A dispatch already in flight when the restore lands has its Change stamped with a seq the
 `change_seq` re-arm then re-issues; the WAL dedups the collision (`seq <= last_persisted_seq`) at

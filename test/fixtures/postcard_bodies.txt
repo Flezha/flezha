@@ -3,7 +3,7 @@
 # park and correction bodies the controller decodes off a runner's frames.
 #
 # Four runtimes read this file and none derives it. `flz_core` encodes every
-# row from the real struct (`flz_core/src/postcard_bodies_tests.rs`) and fails
+# row from the real struct (`crates/flz_core/src/postcard_bodies_tests.rs`) and fails
 # on a row it does not produce or one the file lacks; the controller decodes
 # the effect, park and correction rows through `Flezha.State.Wire`, and its
 # test encoders write the effect and park rows back
@@ -20,7 +20,7 @@
 # index and then its fields. Field order IS the wire.
 #
 # One row per case, `|`-separated: type | case | hex. The values each case
-# encodes are spelled in `flz_core/src/postcard_bodies_tests.rs`.
+# encodes are spelled in `crates/flz_core/src/postcard_bodies_tests.rs`.
 #
 # Command activations are all token 1 addressed to relay `o`, tasklet 0, no
 # key, change seq 0, factory `f` and no identity, so each starts `01016f0000` and

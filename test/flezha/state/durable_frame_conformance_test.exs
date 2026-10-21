@@ -1,7 +1,7 @@
 defmodule Flezha.State.DurableFrameConformanceTest do
   @moduledoc """
   The durable record frame, driven from the bytes in
-  `test/fixtures/durable_frame.txt` — the file `flz_core/src/restore.rs`'s tests
+  `test/fixtures/durable_frame.txt` — the file `crates/flz_core/src/restore.rs`'s tests
   read too.
 
   Every reader of the framing is folded over the same golden log here: the

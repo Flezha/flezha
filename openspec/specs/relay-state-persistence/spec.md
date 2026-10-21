@@ -340,7 +340,7 @@ the code `state.persistence_off`.
 
 Every WAL record and snapshot file SHALL carry a 16-byte header preceding the payload bytes:
 
-- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python. Values `8–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
+- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `crates/flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python. Values `8–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
 - bytes 1:5 — `sdk_version: u32 BE`, the **writing SDK's own** released version packed as `(major << 16) | (minor << 8) | patch` with each component clamped at 255. `0` means the writing SDK did not state one and SHALL NOT be read as version 0.0.0.
 - bytes 5:9 — `schema_version: u32 BE` (per-Tasklet, user-controlled)
 - bytes 9:10 — `format_id: u8` (1 = postcard, 2 = effect record, 3 = timer ops, 4 = kryo-registered, 5 = msgpack, 6 = json, 7 = etf — Erlang External Term Format, the Elixir SDK's codec). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte; a new codec takes the next free value in the same table of record.

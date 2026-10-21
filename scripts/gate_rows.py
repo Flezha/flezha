@@ -512,7 +512,7 @@ GATES += (
     _bar("proto-fresh", "contract", "bash", "-c",
          'd=$(mktemp -d) && trap \'rm -rf "$d"\' EXIT && '
          '{ protobufs/regen.sh --out "$d" || exit 255; } && '
-         'diff -u flz_core/src/generated/runner_commands.rs "$d/runner_commands.rs"',
+         'diff -u crates/flz_core/src/generated/runner_commands.rs "$d/runner_commands.rs"',
          finding="status:1", tools=["protoc:apt install protobuf-compiler"]),
     # The controller images' size budgets (docker/prod/README.md), measured on
     # images built before the row runs; the table also goes to a CI step summary.

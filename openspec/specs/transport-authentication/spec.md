@@ -119,7 +119,7 @@ The `flz` CLI SHALL accept a token (`--token` flag or `FLEZHA_TOKEN` environment
 variable) and pass it through to the controller in one place: the trailing options
 list every verb's request ends with, appended once by the one function that issues
 every RPC. That entry SHALL read the token from the child's stdin, where `child` in
-`cli/src/rpc.rs` writes it with the request that reads it, so the token never appears
+`crates/cli/src/rpc.rs` writes it with the request that reads it, so the token never appears
 on a child's command line, which any local user can read. A child `flz mcp` starts
 SHALL get that stdin and no other, empty when there is no token, so it never reads a
 protocol line. No verb SHALL carry the credential another way, and no verb that issues

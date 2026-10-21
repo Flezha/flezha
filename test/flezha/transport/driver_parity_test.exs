@@ -11,7 +11,7 @@ defmodule Flezha.Transport.DriverParityTest do
 
   The tree has no QUIC client of its own, so the same cases over QUIC, against a
   real `quinn_proto` peer, are the Rust conformance table's in
-  `flz_nif/src/driver/conformance_tests.rs`, which runs every scenario over both
+  `crates/flz_nif/src/driver/conformance_tests.rs`, which runs every scenario over both
   wires.
   """
 

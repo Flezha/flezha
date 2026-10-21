@@ -15,7 +15,7 @@
 # veneer registers a steps fixture yet; it is `tier_commit_block_steps`'s
 # topology, which declares nothing about its handoffs — no SDK does, because the
 # runtime derives an inter-tasklet channel's journal codec (from the channel
-# kind for a host that ships bytes, `flz_core/src/host/register.rs`).
+# kind for a host that ships bytes, `crates/flz_core/src/host/register.rs`).
 #
 # Five readers pin it: `sdk/node/test/decl-keys.test.mjs`,
 # `sdk/ruby/test/decl_keys_test.rb`, `sdk/php/tests/DeclKeysTest.php` and
@@ -53,7 +53,7 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #   refusal | topology | steps | needs
 #
 # `refusal` is the code of a `TopologyIssue` variant of
-# `flz_core/src/host/issue.rs` (`topology.<snake_case>`), or `ok` for a
+# `crates/flz_core/src/host/issue.rs` (`topology.<snake_case>`), or `ok` for a
 # well-formed shape whose derived lines follow it in the seven-column table
 # above. `test/sdk_conformance/topology_check_test.exs` pairs the two files: a
 # variant with no row fails naming the variant, a row naming no variant fails

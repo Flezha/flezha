@@ -1,6 +1,6 @@
 # Errors
 
-<!-- Generated from flz_transport/errors.json by `mix flezha.errors_doc`; do not edit. -->
+<!-- Generated from crates/flz_transport/errors.json by `mix flezha.errors_doc`; do not edit. -->
 
 Every failure Flezha reports carries one shape, on every surface: the `flz` CLI, the
 published consumer API, the SDK administration door, spawn, a runner connect and every

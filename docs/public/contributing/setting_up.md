@@ -8,7 +8,7 @@ release of the controller instead, see
 ## What you need
 
 - Elixir 1.17 or later, with its Erlang/OTP.
-- A stable Rust toolchain. `rust-toolchain.toml` selects it.
+- A stable Rust toolchain.
 - Node.js with npm, for the WebSocket test server some tests connect to.
 - For work on the Java SDK, Java 21 and Maven.
 - Docker, only for the development containers below.
@@ -47,8 +47,8 @@ Every `make` target is listed in
 
 The Java SDK calls the shared Rust core through a native library,
 `libflz_core_ffi`. It is build output and is not in git, so build it once after
-cloning, and again after changing `flz_core_ffi/`, `flz_core/` or
-`flz_transport/`:
+cloning, and again after changing `crates/flz_core_ffi/`, `crates/flz_core/` or
+`crates/flz_transport/`:
 
 ```sh
 $ scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native

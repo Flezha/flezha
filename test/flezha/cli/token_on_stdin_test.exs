@@ -5,11 +5,11 @@ defmodule Flezha.Service.Cli.TokenOnStdinTest do
   through the caller's group leader. The CLI's own tests answer with a shim, so
   only this drive sees the read come back: it runs the `elixir --rpc-eval` that
   `flzvm rpc` runs against this suite's node, with a token piped in, and
-  evaluates the read `cli/src/rpc.rs` writes into every request.
+  evaluates the read `crates/cli/src/rpc.rs` writes into every request.
   """
   use ExUnit.Case, async: true
 
-  @rpc_rs Path.expand("../../../cli/src/rpc.rs", __DIR__)
+  @rpc_rs Path.expand("../../../crates/cli/src/rpc.rs", __DIR__)
 
   @tag timeout: 20_000
   test "the read every request ends with gives back exactly the token piped in" do
@@ -41,7 +41,7 @@ defmodule Flezha.Service.Cli.TokenOnStdinTest do
   defp cli_token_read do
     case Regex.run(~r/"token: (IO\.read\(:eof\))"/, File.read!(@rpc_rs)) do
       [_, read] -> read
-      nil -> flunk("cli/src/rpc.rs no longer ends a request with `token: IO.read(:eof)`")
+      nil -> flunk("crates/cli/src/rpc.rs no longer ends a request with `token: IO.read(:eof)`")
     end
   end
 end

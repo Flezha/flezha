@@ -18,7 +18,7 @@ checks yourself.
   builder method and a `match` arm block long enough to be one.
 - **No Rust function over cognitive complexity 25.** The gate row
   `rust-clippy` (`cargo clippy --workspace --all-targets`) is the reading; the
-  threshold is in `clippy.toml`.
+  threshold is in `crates/clippy.toml`.
 - **No new dependency cycle.** `mix xref graph --format cycles` is the reading
   for Elixir. A change may not add a module to an existing cycle either: a cycle
   that grows is a cycle that is getting harder to cut, and the count alone will

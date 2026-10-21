@@ -101,7 +101,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   describe "the class of a failure" do
     # The two classes only `flz` decides, a malformed command line and a
     # controller it cannot reach, are proved through the binary in
-    # `cli/tests/dispatch.rs` and `cli/tests/exit_codes.rs`; a refusal for want
+    # `crates/cli/tests/dispatch.rs` and `crates/cli/tests/exit_codes.rs`; a refusal for want
     # of a role in `test/flezha/authz/enforcement_test.exs`, a conflict in the
     # authz render tests, and a controller that is not ready in
     # `boot_test.exs`.

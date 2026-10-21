@@ -16,16 +16,16 @@ both stored verbatim by the controller: outside the effectively-once tier as a
 
 | Piece | Rust | Java | Elixir |
 | --- | --- | --- | --- |
-| Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `flz_core/src/timer.rs` (re-exported by `sdk/rust/src/cell/timer.rs`, which adds `timer_policy_for::<S>()`) | shared core; `flezha-sdk-runtime/.../state/TimerOp.java` is the op an item records | shared core; `lib/flezha/sdk/ctx.ex` records the item's ops |
-| A hosted item's ops judged at settle (`TimerPolicy::judge`: cap and clock, against the live set) and committed | `flz_core/src/host/activation.rs`; Rust's own tasklets judge at the call | shared core | shared core |
-| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `flz_core/src/poll_core/` | shared core | shared core |
+| Pending set, `TimerOp`, `TimerPolicy`, `TimerSession`, `TimerCounters`, arming (`apply_ops` / `rearm_restored`) | `crates/flz_core/src/timer.rs` (re-exported by `sdk/rust/src/cell/timer.rs`, which adds `timer_policy_for::<S>()`) | shared core; `flezha-sdk-runtime/.../state/TimerOp.java` is the op an item records | shared core; `lib/flezha/sdk/ctx.ex` records the item's ops |
+| A hosted item's ops judged at settle (`TimerPolicy::judge`: cap and clock, against the live set) and committed | `crates/flz_core/src/host/activation.rs`; Rust's own tasklets judge at the call | shared core | shared core |
+| Both triggers: event-time due generation at batch assembly, processing-time on the deferred-wake list | `crates/flz_core/src/poll_core/` | shared core | shared core |
 | The surface and the hook | `sdk/rust/src/tasklet/{ctx,mod}.rs` | `flezha-sdk-api/.../tasklet/{Ctx,Tasklet}.java`, `.../state/TimerKind.java` | `lib/flezha/sdk/{ctx,tasklet}.ex` |
 | The invocation (`invoke_once`) and the restore fold | `sdk/rust/src/relay/dispatcher.rs`, `sdk/rust/src/cell/restore.rs` | `flezha-sdk-runtime/.../core/ActivationDispatcher.java` (`RestoreFold`) | `lib/flezha/sdk/dispatch.ex` |
-| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `flz_core/src/{header,schema}.rs` | shared core | shared core |
+| Record formats (`FORMAT_ID_TIMER_OPS`, `EffectRecordBody.timers`) | `crates/flz_core/src/{header,schema}.rs` | shared core | shared core |
 | Controller: `Flezha.State.Wire` decodes the effect record's `timers` field; nothing else changes | `lib/flezha/state/wire.ex` | — | — |
 
 Tests: `sdk/rust/tests/timer_{durability,firing,lifecycle,surface}.rs`,
-`flz_core/src/host/timer_settle_tests.rs`, Java `ActivationDispatcherTest`,
+`crates/flz_core/src/host/timer_settle_tests.rs`, Java `ActivationDispatcherTest`,
 Elixir `sdk/elixir/test/flezha/sdk/ctx_test.exs`,
 and `test/system/cell_timers_e2e_test.exs`, which drives a session-timeout
 fixture on every runtime, including a re-seat from disk that proves the

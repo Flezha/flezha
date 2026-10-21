@@ -9,7 +9,7 @@ defmodule Flezha.Error do
   `Flezha.AuthZ.Verb.run/5` for every verb and published function, and at the
   declared wire sites (`"wire.spawn"`, `"wire.connect"`, `"wire.commit"`,
   `"wire.message"`) for what a runner is answered. The catalogue is
-  `flz_transport/errors.json`. The rendering is `Flezha.SDK.Error`'s, the one
+  `crates/flz_transport/errors.json`. The rendering is `Flezha.SDK.Error`'s, the one
   Elixir renderer, which the Rust one matches byte for byte
   (`test/fixtures/error_rendering.json`).
   """
@@ -18,7 +18,7 @@ defmodule Flezha.Error do
 
   require Logger
 
-  @external_resource Path.expand("../../../flz_transport/errors.json", __DIR__)
+  @external_resource Path.expand("../../../crates/flz_transport/errors.json", __DIR__)
   @catalogue Renderer.catalogue()
 
   @uncatalogued "internal.uncatalogued"

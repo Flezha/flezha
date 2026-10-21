@@ -1,7 +1,7 @@
 # Steps Relay
 
 What must stay true in a relay whose class sets `run: steps`, where each rule is enforced, and
-what a crash in each window leaves behind. Written for contributors to `flz_core/src/steps/`
+what a crash in each window leaves behind. Written for contributors to `crates/flz_core/src/steps/`
 and to the controller's steps path. The concepts (the graph, the journal, the stage commit, the
 outbox, retry, undo, the loop, sleeping, rewind, how an instance ends) are described once in
 [`../../public/architecture/steps_profile.md`](../../public/architecture/steps_profile.md) and
@@ -43,23 +43,23 @@ is a `RelayInstance` that also carries a `StepsRun`; the module's files split by
 
 | File | What it holds |
 | --- | --- |
-| `flz_core/src/steps/mod.rs` | the module's doc, its re-exports (`StepsRun`, `Resume`, the event functions) and `StepsError` |
-| `flz_core/src/steps/spec.rs` | `StepsSpec::of` and `TaskDag::of`: the frozen DAG in Kahn order, one `Chain` per entry channel, the class's `each` and `on_failure` |
-| `flz_core/src/steps/instance.rs` | the pass sheet (`PassSheet`, `Phase`, `Pass`), `BarrierFor` with its `impl`, `Barrier`, `Undo` and `UndoStep`, and `JournalResume`, the journal state a bind carries |
-| `flz_core/src/steps/events.rs` | the entry points each thread calls with what it brings: `open`, `restore_landed`, `message`, `stop`, `item_settled`, `complete`, `barrier_acked`, `deadline_due` and the timer hooks |
-| `flz_core/src/steps/run.rs` | `Run` and `Run::decide`, addressing values to Cells off the lock, `begin_pass`, and the decisions on stops, deadlines, barriers and their re-sends |
-| `flz_core/src/steps/pass.rs` | the pass decisions under the lock: messages and passes, settled items, stage commits, `settle_pass`, a failed turn's undo, the iteration ack |
-| `flz_core/src/steps/resume.rs` | what the journal says about where a run resumes (`seed_from_journal`, `resumed_seed`), the restore gate (`landed`, `open_gate`) and `resume` |
-| `flz_core/src/steps/compensation.rs` | `plan_compensation`, the saga, rewind and failed-turn undo plans, and the undo steps a run takes one event at a time |
-| `flz_core/src/steps/effects.rs` | `Effects` and `act`: frames sent, deadlines armed, items admitted and author code run, after the lock |
-| `flz_core/src/steps/commit.rs` | the barrier frames (`task_frame`, `iteration_frame`, `undo_frame`) and `ack_timeout` |
-| `flz_core/src/steps/run_tests.rs` | deadline and restore-gate tests |
-| `flz_core/src/steps/driver_tests.rs`, `flz_core/src/steps/driver_tests/` | the host path as a C-ABI host drives it, on the fake controller in `flz_core/src/test_support/steps.rs`; `driver_tests/undo.rs` holds the unacknowledged-compensation tests |
-| `flz_core/src/steps/spec_tests.rs` | the DAG order a class registers with |
+| `crates/flz_core/src/steps/mod.rs` | the module's doc, its re-exports (`StepsRun`, `Resume`, the event functions) and `StepsError` |
+| `crates/flz_core/src/steps/spec.rs` | `StepsSpec::of` and `TaskDag::of`: the frozen DAG in Kahn order, one `Chain` per entry channel, the class's `each` and `on_failure` |
+| `crates/flz_core/src/steps/instance.rs` | the pass sheet (`PassSheet`, `Phase`, `Pass`), `BarrierFor` with its `impl`, `Barrier`, `Undo` and `UndoStep`, and `JournalResume`, the journal state a bind carries |
+| `crates/flz_core/src/steps/events.rs` | the entry points each thread calls with what it brings: `open`, `restore_landed`, `message`, `stop`, `item_settled`, `complete`, `barrier_acked`, `deadline_due` and the timer hooks |
+| `crates/flz_core/src/steps/run.rs` | `Run` and `Run::decide`, addressing values to Cells off the lock, `begin_pass`, and the decisions on stops, deadlines, barriers and their re-sends |
+| `crates/flz_core/src/steps/pass.rs` | the pass decisions under the lock: messages and passes, settled items, stage commits, `settle_pass`, a failed turn's undo, the iteration ack |
+| `crates/flz_core/src/steps/resume.rs` | what the journal says about where a run resumes (`seed_from_journal`, `resumed_seed`), the restore gate (`landed`, `open_gate`) and `resume` |
+| `crates/flz_core/src/steps/compensation.rs` | `plan_compensation`, the saga, rewind and failed-turn undo plans, and the undo steps a run takes one event at a time |
+| `crates/flz_core/src/steps/effects.rs` | `Effects` and `act`: frames sent, deadlines armed, items admitted and author code run, after the lock |
+| `crates/flz_core/src/steps/commit.rs` | the barrier frames (`task_frame`, `iteration_frame`, `undo_frame`) and `ack_timeout` |
+| `crates/flz_core/src/steps/run_tests.rs` | deadline and restore-gate tests |
+| `crates/flz_core/src/steps/driver_tests.rs`, `crates/flz_core/src/steps/driver_tests/` | the host path as a C-ABI host drives it, on the fake controller in `crates/flz_core/src/test_support/steps.rs`; `driver_tests/undo.rs` holds the unacknowledged-compensation tests |
+| `crates/flz_core/src/steps/spec_tests.rs` | the DAG order a class registers with |
 
 The loop shape and failure mode live beside the other settings, in
-`flz_core/src/relay/settings.rs`, and an instance's deadlines (`Deadline`) in
-`flz_core/src/relay/mod.rs`. The Rust SDK's driver suite (`sdk/rust/src/steps/tests/`)
+`crates/flz_core/src/relay/settings.rs`, and an instance's deadlines (`Deadline`) in
+`crates/flz_core/src/relay/mod.rs`. The Rust SDK's driver suite (`sdk/rust/src/steps/tests/`)
 runs on the same fake controller.
 
 ### The controller
@@ -85,15 +85,15 @@ runs on the same fake controller.
 A new rule or kind goes into the type that owns it; no trait sits in front of these:
 
 - **A loop-shape or failure-mode rule** is one inherent method on `Each` or `OnFailure` in
-  `flz_core/src/relay/settings.rs`, one `match` each. Today `Each` answers `as_str`,
+  `crates/flz_core/src/relay/settings.rs`, one `match` each. Today `Each` answers `as_str`,
   `message_fed(iter)`, `ends_after_first`, `carries_leaf`, `calls_allowed` and `partitionable`,
   and `OnFailure` answers `as_str`, `keeps_committed` and `fails_turn(each)`. A site outside that file calls a method rather than matching a variant.
-- **A barrier step** is one method on `impl BarrierFor` in `flz_core/src/steps/instance.rs`,
+- **A barrier step** is one method on `impl BarrierFor` in `crates/flz_core/src/steps/instance.rs`,
   beside the enum (`Stage(node)`, `Iteration`, `DeadLetter`, `Undo`): today `on_ack`,
   `on_refusal`, `on_timeout`, `failed`, `label` and `commits_iteration`. Outside that
   file a `BarrierFor` is only constructed, never matched.
-- **The graph order** is `TaskDag::of` in `flz_core/src/steps/spec.rs`, over `graph_order` in
-  `flz_core/src/relay/topology.rs`. A change to the walk changes every journal's `task_idx`, so
+- **The graph order** is `TaskDag::of` in `crates/flz_core/src/steps/spec.rs`, over `graph_order` in
+  `crates/flz_core/src/relay/topology.rs`. A change to the walk changes every journal's `task_idx`, so
   `spec_tests.rs` pins it.
 - **The controller's loop-shape question** is `ClassRegistry.single_input?/1`, over the `each`
   the class registered with; partitioning and the one-input rule call it.
@@ -263,11 +263,11 @@ Paths in the Test column are under `test/system/` unless they name a crate.
 | C4 | `IterCommit` durable, crash before the input release or the cut | the bind seeds the floor from the journal's released offset, so the message drives one iteration | `Replay.seed_floor/1` | `steps_crash_resume_e2e_test.exs` "the re-forwarded message drives one iteration after the resume, never two", "an Overwatch killed mid-bind leaves the message one iteration" |
 | C5 | a completing iteration journaled, crash before `RelayCompleted` | the resumed run ends `ok` with the journaled result and runs nothing | `open_gate` (`JournalResume.completion`) | `sdk/rust/src/steps/tests/driver/durable_loop.rs` `loop_completion` |
 | C6 | a timer firing's stage committed, the firing's removal unwritten | the restored timer is not fired again | `committed_firings` (the root's `TaskCommit` names the firing) | `steps_crash_resume_e2e_test.exs` "a crash after the firing's root committed does not fire it again"; `sdk/rust/src/steps/tests/driver/timers.rs` `a_crash_after_the_roots_ack_does_not_fire_it_again` |
-| C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `resend_refused`, `undo_journaled` | `flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
+| C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `resend_refused`, `undo_journaled` | `crates/flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
 | C8 | a failed turn parked, crash before its `dead_lettered` entry | the bind removes the unrecorded entry and the turn runs again, so the message is parked at most once | `TaskJournal.Turns.drop_unrecorded_turns/1` | `steps_failed_turn_e2e_test.exs` "after the park and before the record re-runs the turn, and parks it once", "after the record and before the undo is journaled undoes the turn once, on the rebind" |
 | C9 | intent markers sent, crash before the barrier frame they precede | with a journal, intents start no compensation without a done marker; the stage runs again | the order inside `act`; `open_gate` | `steps_crash_resume_e2e_test.exs` "durable saga steps resumes compensation after a SIGKILL mid-rollback" |
 | C10 | `RelayCompleted` written, the drain of owed outboxes times out | the teardown goes on, the warning names what is still owed, the retained WAL keeps the debt; a finished relay is not started again | `drain_owed_ms`, `DurableTasks` | `test/flezha/runner/control_channel_steps_test.exs` "the teardown flushes the runner's stream channels before it deregisters" (the flush); none for the timeout |
-| C11 | a bind's Cell restores do not all land | the run ends `error` after 30 s naming how many landed; a stop or `max_duration` meanwhile ends it `cancelled`; no tasklet or hook runs, and the journal and state stay | `Deadline::RestoreGate` and `stop` in `Phase::Gated` | `flz_core/src/steps/run_tests.rs` `a_restore_gate_timeout_ends_the_run_error`, `a_stop_at_the_restore_gate_ends_the_run_cancelled`; the teardown that follows: `test/flezha/runner/control_channel_steps_test.exs` "RelayCompleted error → failure telemetry + identical teardown" |
+| C11 | a bind's Cell restores do not all land | the run ends `error` after 30 s naming how many landed; a stop or `max_duration` meanwhile ends it `cancelled`; no tasklet or hook runs, and the journal and state stay | `Deadline::RestoreGate` and `stop` in `Phase::Gated` | `crates/flz_core/src/steps/run_tests.rs` `a_restore_gate_timeout_ends_the_run_error`, `a_stop_at_the_restore_gate_ends_the_run_cancelled`; the teardown that follows: `test/flezha/runner/control_channel_steps_test.exs` "RelayCompleted error → failure telemetry + identical teardown" |
 
 Every window also runs end to end on each SDK runtime, over UDS and QUIC, in
 `steps_crash_resume_e2e_test.exs`, `steps_control_flow_e2e_test.exs`,

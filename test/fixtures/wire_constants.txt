@@ -4,7 +4,7 @@
 # metadata keys.
 #
 # The Rust sources are the authority and the file is checked against them both
-# ways: `flz_core/src/wire_constants_tests.rs` fails on a constant the file
+# ways: `crates/flz_core/src/wire_constants_tests.rs` fails on a constant the file
 # lacks and on a row no constant declares. Every other runtime asserts the
 # literals it compiles in against these rows, and `gate_test.exs` holds each
 # conformance manifest's `sdk_lang` to the `sdk_lang` rows.

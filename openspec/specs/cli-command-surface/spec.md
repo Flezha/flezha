@@ -65,7 +65,7 @@ stop being checked without the suite saying so.
 #### Scenario: A changed operation description reaches the screen and fails its capture
 
 - **WHEN** the first sentence of a published operation's documentation changes and
-  `cli/catalogue.json` is regenerated
+  `crates/cli/catalogue.json` is regenerated
 - **THEN** the screen of the verb that calls that operation SHALL print the new sentence, and
   the suite SHALL fail until that screen's capture is retaken
 

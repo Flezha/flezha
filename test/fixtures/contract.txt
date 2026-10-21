@@ -39,9 +39,9 @@ test/fixtures/derived_cell_modes.txt|The Cell mode the core derives from a decla
 test/fixtures/call_response_envelope.json|The `Response` envelope the controller writes for each call outcome, and what it decodes to. The core's decoder is asserted against every case; every SDK round-trips one.
 test/fixtures/runner_connect_env.txt|The environment contract every SDK's connect path reads, and the socket-directory ladder in the order it is walked.
 openspec/specs/java-sdk/spec.md|The Java SDK's scenarios. The Java repository's spec-coverage gate holds its test names against them.
-flz_transport/errors.json|The error catalogue: every code with its class, message template and hint. The Elixir SDK compiles its error type from it; the Rust crates read it through `flz_transport`.
+crates/flz_transport/errors.json|The error catalogue: every code with its class, message template and hint. The Elixir SDK compiles its error type from it; the Rust crates read it through `flz_transport`.
 protobufs/runner_commands.proto|The controller-runner command envelope. An SDK that encodes a command of its own generates from this file.
-flz_core_ffi/src/veneer/shape.rs|The veneer's record key tables. Node's `native-types.test.mjs` holds its TypeScript interfaces equal to them; Python's `test_veneer_keys.py` and Ruby's `veneer_keys_test.rb` read only keys they name.
-flz_core_ffi/src/napi_glue.rs|The Node addon's `#[napi(object)]` structs, read by the same test.
-flz_core_ffi/src/napi_host/mod.rs|The Node addon's host-side objects, read by the same test.
+crates/flz_core_ffi/src/veneer/shape.rs|The veneer's record key tables. Node's `native-types.test.mjs` holds its TypeScript interfaces equal to them; Python's `test_veneer_keys.py` and Ruby's `veneer_keys_test.rb` read only keys they name.
+crates/flz_core_ffi/src/napi_glue.rs|The Node addon's `#[napi(object)]` structs, read by the same test.
+crates/flz_core_ffi/src/napi_host/mod.rs|The Node addon's host-side objects, read by the same test.
 test/fixtures/sdk_public_names.txt|One public spelling per concept in seven SDKs, and the internals no SDK exports. Every SDK's surface test asserts its column.

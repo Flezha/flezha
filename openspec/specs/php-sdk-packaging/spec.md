@@ -40,7 +40,7 @@ Process multiplicity SHALL be the orchestrator's concern — Kubernetes replicas
 ### Requirement: Schema version is negotiated, never assumed
 The package SHALL carry the `SCHEMA_VERSION` it was built against and pass it to `flz_core_context_new`, so a shim paired with a mismatched core is refused before any controller connection.
 
-A version bump in `flz_core/src/schema.rs` SHALL therefore require the PHP fixtures and constant to move in the same commit, exactly as the Rust and Java fixture suites do.
+A version bump in `crates/flz_core/src/schema.rs` SHALL therefore require the PHP fixtures and constant to move in the same commit, exactly as the Rust and Java fixture suites do.
 
 #### Scenario: A mismatched pair refuses to start
 - **WHEN** the package's schema version differs from the loaded core's

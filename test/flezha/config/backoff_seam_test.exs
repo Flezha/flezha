@@ -13,7 +13,7 @@ defmodule Flezha.Config.BackoffSeamTest do
 
   The SDK rows pin the two ladders every SDK is held to, not every sleep in
   `flz_core`. Its UDS socket-connect poll, in
-  `flz_core/src/command/streams_connect.rs`, is deliberately not a row: it is
+  `crates/flz_core/src/command/streams_connect.rs`, is deliberately not a row: it is
   no shared default, and nothing observes it across SDKs.
   """
   use ExUnit.Case, async: true
@@ -263,9 +263,9 @@ defmodule Flezha.Config.BackoffSeamTest do
 
   describe "the runner-side rows equal the constants the core compiles" do
     test "keepalive, heartbeat, the commit ack and the spawn reply are one value per runtime" do
-      commit = File.read!("flz_core/src/steps/commit.rs")
-      liveness = File.read!("flz_transport/src/transport/liveness.rs")
-      shutdown = File.read!("flz_core/src/shutdown.rs")
+      commit = File.read!("crates/flz_core/src/steps/commit.rs")
+      liveness = File.read!("crates/flz_transport/src/transport/liveness.rs")
+      shutdown = File.read!("crates/flz_core/src/shutdown.rs")
 
       assert Durations.default(:sdk_commit_ack_ms) ==
                rust_const(commit, "ACK_TIMEOUT_DEFAULT_MS")

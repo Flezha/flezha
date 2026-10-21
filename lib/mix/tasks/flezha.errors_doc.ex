@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
 
   @moduledoc """
   Writes `docs/public/errors.md`, the published list of every error code, from
-  `flz_transport/errors.json`. The page is generated and never edited by hand:
+  `crates/flz_transport/errors.json`. The page is generated and never edited by hand:
   `test/flezha/error_catalogue_test.exs` fails when the committed page differs
   from a fresh generation.
 
@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Flezha.ErrorsDoc do
 
     [
       "# Errors\n\n",
-      "<!-- Generated from flz_transport/errors.json by `mix flezha.errors_doc`; do not edit. -->\n\n",
+      "<!-- Generated from crates/flz_transport/errors.json by `mix flezha.errors_doc`; do not edit. -->\n\n",
       "Every failure Flezha reports carries one shape, on every surface: the `flz` CLI, the\n",
       "published consumer API, the SDK administration door, spawn, a runner connect and every\n",
       "SDK. A program acts on the `code` and the `class`.\n\n",

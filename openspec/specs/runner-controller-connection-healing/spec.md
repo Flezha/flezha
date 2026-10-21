@@ -61,7 +61,7 @@ The Rust SDK's `command_add_relay` handler SHALL be idempotent: an `AddRelay` fo
 
 ### Requirement: Rust SDK command decode SHALL treat a clean peer close as a transport event, not a panic
 
-The Rust SDK's command-frame decode path (`flz_core/src/command/mod.rs`) SHALL distinguish three transport outcomes when reading a frame from the controller's control socket:
+The Rust SDK's command-frame decode path (`crates/flz_core/src/command/mod.rs`) SHALL distinguish three transport outcomes when reading a frame from the controller's control socket:
 
 1. **Clean peer close** — the read returns 0 bytes. The SDK SHALL classify this as a graceful disconnect, drive the existing reconnect loop, and SHALL NOT panic any runtime thread. The runner process SHALL remain alive across this event.
 2. **Malformed frame** — the read returns N bytes (N > 0) and `prost::Message::decode` returns `Err(prost::DecodeError)`. The SDK SHALL log a structured warning containing the decode error's `description` and `stack`, return a typed `Err(CommandDecodeError::Malformed { stack: String })` from `get_handler`, and drive the existing reconnect loop. The SDK SHALL NOT panic any runtime thread.
@@ -84,7 +84,7 @@ This requirement is a precondition for the existing "Runner → Controller data 
 Note: the `market-executor` container/PID-file name above is owned by the separate `flezha_market` repository and is unchanged by this proposal — see this change's design.md Open Questions.
 
 #### Scenario: Decoder receives 0-byte input on socket EOF and returns a clean signal
-- **GIVEN** a unit test in `flz_core/src/command/mod.rs`'s `#[cfg(test)] mod tests`
+- **GIVEN** a unit test in `crates/flz_core/src/command/mod.rs`'s `#[cfg(test)] mod tests`
 - **WHEN** the test invokes the SDK's command-read entry point with an empty byte slice (`&[]`) simulating EOF
 - **THEN** the function SHALL return a value indicating "peer closed" (`Ok(FrameOutcome::PeerClosed)` or the equivalent typed variant chosen in the apply step)
 - **AND** the call SHALL NOT panic
@@ -111,7 +111,7 @@ The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateRe
 
 #### Scenario: `Command` oneof is None and SDK does not panic
 - **GIVEN** the SDK receives a well-formed `CommandRequest` whose `command` field is `None` (a future protocol contract violation or a defensive serialization bug)
-- **WHEN** the SDK enters `get_handler`'s command-classification step (`flz_core/src/command/mod.rs`)
+- **WHEN** the SDK enters `get_handler`'s command-classification step (`crates/flz_core/src/command/mod.rs`)
 - **THEN** the SDK SHALL return a typed `Err(CommandDecodeError::EmptyCommand)` (or equivalent) instead of panicking on `.unwrap()`
 - **AND** the runtime thread SHALL remain alive
 - **AND** the SDK SHALL log a structured warning and continue processing subsequent frames
@@ -871,7 +871,7 @@ an untrusted peer.
 ### Requirement: A data-socket connect that cannot be completed SHALL be refused, never panicked
 
 The shared core SHALL surface every failure of a `ConnectSocket` execution to the
-controller as a refusal, and no production path under `flz_core/src/command/` SHALL
+controller as a refusal, and no production path under `crates/flz_core/src/command/` SHALL
 `panic!`, `unwrap` or `expect` on it. The UDS handler SHALL take the same error channel the
 QUIC handler already takes, so that a refusal has somewhere to go instead of unwinding the
 coordinator thread that owns the control stream.

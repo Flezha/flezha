@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
   One layout, read by both runtimes, and one steps id, proved on disk.
 
   The controller resolves where a file lands from `Flezha.Layout.Table`;
-  `flz reset` resolves the same thing from `cli/src/reset/plan.rs`. Two
+  `flz reset` resolves the same thing from `crates/cli/src/reset/plan.rs`. Two
   declarations of one layout is how a user ends up with a directory that
   is never cleared, or one that is cleared and should not have been. This
   drives the real binary against a data root of its own and compares, row by

@@ -9,7 +9,7 @@ declares them: for each, the knob that may move it, whether a directory
 claim is owed before the first write, and how `flz reset` treats it. Both
 runtimes read that declaration — the controller through
 `Flezha.Layout.Table.dir/1`, `flz reset` through the matching rows in
-`cli/src/reset/plan.rs` — so at the default settings the directory the
+`crates/cli/src/reset/plan.rs` — so at the default settings the directory the
 controller uses and the one a user's reset reports are one path. A knob
 that moves a subtree moves it for the controller only.
 

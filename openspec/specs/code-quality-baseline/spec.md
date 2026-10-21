@@ -12,7 +12,7 @@ The code-quality-baseline capability defines a project-wide build-hygiene contra
 
 - **WHEN** a developer runs `cargo build --workspace --all-targets` on a freshly-cloned repository
 - **THEN** the command exits 0
-- **AND** the output contains zero `warning:` lines whose source path begins with any of `sdk/rust/`, `flz_transport/`, `flz_core_ffi/`, `flz_nif/`, `cli/`, or `test/apps/rust_runner/`
+- **AND** the output contains zero `warning:` lines whose source path begins with any of `sdk/rust/`, `crates/flz_transport/`, `crates/flz_core_ffi/`, `crates/flz_nif/`, `crates/cli/`, or `test/apps/rust_runner/`
 
 #### Scenario: New code introduces a warning
 
@@ -1491,7 +1491,7 @@ denied, which is the reading `docs/public/contributing/code_standards.md` names 
 
 ### Requirement: The committed protobuf code SHALL equal its generator's output
 
-The prost output `flz_core/src/generated/runner_commands.rs` SHALL stay committed, and its generator
+The prost output `crates/flz_core/src/generated/runner_commands.rs` SHALL stay committed, and its generator
 SHALL live beside `protobufs/runner_commands.proto` with every prost attribute in one
 configuration. A gate row SHALL regenerate the output into a temporary directory and fail on any
 difference from the committed file. No generator SHALL live in an SDK repository or rewrite another
@@ -1499,7 +1499,7 @@ crate's manifest to run.
 
 #### Scenario: A hand edit of the generated file fails
 
-- **WHEN** a line of `flz_core/src/generated/runner_commands.rs` is edited by hand
+- **WHEN** a line of `crates/flz_core/src/generated/runner_commands.rs` is edited by hand
 - **THEN** the `proto-fresh` row SHALL exit `1` showing the difference
 
 #### Scenario: A proto change without regeneration fails
@@ -1653,7 +1653,7 @@ the line.
 
 ### Requirement: The keys seam SHALL walk every reader of a knob
 
-`test/flezha/config/keys_seam_test.exs` SHALL walk `cli/src`, every Java SDK module, `rel/`,
+`test/flezha/config/keys_seam_test.exs` SHALL walk `crates/cli/src`, every Java SDK module, `rel/`,
 `kubernetes/`, multi-line Elixir reads and Rust reads through a named constant, and SHALL fail on a
 name read with no row and a row no runtime reads, for every runtime a row names.
 

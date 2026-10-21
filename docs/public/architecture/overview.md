@@ -188,20 +188,20 @@ held for the fsync: the controller sends them on as they arrive, and writes the
 state changes in batches about every 5 ms. A crash can then resend an output.
 
 **The life of a message**, hop by hop in the code. Every frame body is read by
-one decoder, `parse_payload_body` in `flz_transport/src/service/payloader.rs`.
-On the controller the NIF's `FrameBuffer` (`flz_nif/src/frame_buffer.rs`) cuts
+one decoder, `parse_payload_body` in `crates/flz_transport/src/service/payloader.rs`.
+On the controller the NIF's `FrameBuffer` (`crates/flz_nif/src/frame_buffer.rs`) cuts
 frames from the socket and hands each to `Flezha.Runner.StreamChannel`; the
 relay's `Flezha.Relay.Overwatch` writes an input to the input log, when there
 is one, and sends it on. The runner reads
-it through its transport's `Wire` (`flz_transport/src/transport/mod.rs`), and
-`flz_core/src/routing.rs` routes it with one `Delivery` value into the Cell's
-mailbox. The poll core (`flz_core/src/poll_core/`) hands the Cell's work out;
-for a hosted SDK `flz_core/src/host/handout.rs` turns it into an activation that
+it through its transport's `Wire` (`crates/flz_transport/src/transport/mod.rs`), and
+`crates/flz_core/src/routing.rs` routes it with one `Delivery` value into the Cell's
+mailbox. The poll core (`crates/flz_core/src/poll_core/`) hands the Cell's work out;
+for a hosted SDK `crates/flz_core/src/host/handout.rs` turns it into an activation that
 carries the Cell's identity bytes once and marks whether each input still needs
-its transform. The host's answer settles in `flz_core/src/host/activation.rs`:
+its transform. The host's answer settles in `crates/flz_core/src/host/activation.rs`:
 its timer operations are judged against the Cell's live timers
-(`flz_core/src/timer.rs`), its plugin outputs are stamped
-(`output_identity` in `flz_core/src/host/stamp.rs`) and written by
+(`crates/flz_core/src/timer.rs`), its plugin outputs are stamped
+(`output_identity` in `crates/flz_core/src/host/stamp.rs`) and written by
 `ship_plugin_output`, and its outputs to the next tasklet are routed with a
 `Delivery` again.
 

@@ -46,7 +46,7 @@ be reached over the network (`remote`): a runner connection and the HTTP API rea
 neither an operation that is not `remote` nor one that streams. `Flezha.Service.catalogue/0` builds the
 catalogue from those declarations; the door resolves an operation's name
 (`"Dlq.list"`) through it and converts the JSON arguments by its rows.
-`mix flezha.catalogue` writes the copy `flz` embeds, `cli/catalogue.json`, which
+`mix flezha.catalogue` writes the copy `flz` embeds, `crates/cli/catalogue.json`, which
 `flz help --json` prints and `test/flezha/cli/catalogue_test.exs` holds to the code.
 
 A provider's options are described in the same vocabulary: `Fleet.provider/2`

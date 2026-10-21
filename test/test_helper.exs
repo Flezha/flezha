@@ -47,7 +47,10 @@ ExUnit.after_suite(fn _result ->
       :ok
 
     missed ->
-      IO.puts(:stderr, "\nuncatalogued errors reached a caller (flz_transport/errors.json):")
+      IO.puts(
+        :stderr,
+        "\nuncatalogued errors reached a caller (crates/flz_transport/errors.json):"
+      )
 
       for {site, reason} <- Enum.uniq(missed),
           do: IO.puts(:stderr, "  #{site}: #{inspect(reason)}")

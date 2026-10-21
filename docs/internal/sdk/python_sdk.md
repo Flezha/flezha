@@ -13,7 +13,7 @@ defect specific to it is likely to be found by its users first.
 
 - **Package**: `flezha` (PyPI).
 - **Source**: `sdk/python/`; the native veneer is
-  `flz_core_ffi/src/python_glue.rs`, behind that crate's `python` feature.
+  `crates/flz_core_ffi/src/python_glue.rs`, behind that crate's `python` feature.
 - **Installing**: the supported Python versions, the wheel tiers and how the
   native module reaches the host are in the package's
   [`README.md`](../../../sdk/python/README.md);

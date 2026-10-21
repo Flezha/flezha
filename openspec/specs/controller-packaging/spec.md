@@ -82,12 +82,12 @@ The Dockerfile SHALL NOT contain branches for any other Linux architecture, and 
 
 ### Requirement: Cargo dependency declarations SHALL match actual source usage
 
-Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at least one `use <crate>::` or `extern crate <crate>` reference in that crate's `src/`. Dependencies declared but unused SHALL be removed. Specifically, `byteorder` SHALL be removed from `flz_nif/Cargo.toml`, `sdk/rust/Cargo.toml`, and `test/apps/rust_runner/Cargo.toml` (it remains in `flz_transport/Cargo.toml` where `src/service/payloader.rs` uses it).
+Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at least one `use <crate>::` or `extern crate <crate>` reference in that crate's `src/`. Dependencies declared but unused SHALL be removed. Specifically, `byteorder` SHALL be removed from `crates/flz_nif/Cargo.toml`, `sdk/rust/Cargo.toml`, and `test/apps/rust_runner/Cargo.toml` (it remains in `crates/flz_transport/Cargo.toml` where `src/service/payloader.rs` uses it).
 
 #### Scenario: byteorder is removed from non-using crates
 
 - **GIVEN** the cleaned-up Cargo.toml files
-- **WHEN** `grep '^byteorder' flz_nif/Cargo.toml sdk/rust/Cargo.toml test/apps/rust_runner/Cargo.toml` is run
+- **WHEN** `grep '^byteorder' crates/flz_nif/Cargo.toml sdk/rust/Cargo.toml test/apps/rust_runner/Cargo.toml` is run
 - **THEN** stdout is empty
 
 #### Scenario: Workspace still builds after cleanup

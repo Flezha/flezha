@@ -51,7 +51,7 @@ the container, and VM flags:
 
 `.github/workflows/docker.yml` runs `docker-size-gate` on PRs that touch
 `docker/prod/**`, `mix.exs`, `mix.lock`, `Cargo.toml`, `Cargo.lock`, or
-`flz_nif/**`. The job builds the prod and runtime-dev images, then runs the
+`crates/flz_nif/**`. The job builds the prod and runtime-dev images, then runs the
 gate row `image-size` (`python3 scripts/naming_gate.py --run @docker`), which
 prints their sizes to the GitHub step summary and fails if either exceeds its
 budget.

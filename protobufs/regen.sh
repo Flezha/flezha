@@ -5,8 +5,8 @@
 #   protobufs/regen.sh [--out DIR]   (default: flz_core/src/generated)
 set -euo pipefail
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-out="$root/flz_core/src/generated"
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+out="$root/crates/flz_core/src/generated"
 case "${1:-}" in
   "") ;;
   --out) out=${2:?--out needs a directory} ;;

@@ -22,7 +22,7 @@ variable  XDG_RUNTIME_DIR
 # Names that are no longer honoured. An SDK or test app reading one of these is
 # a gate failure: a silent ignore looks exactly like the bug the replacement
 # exists to remove. The one file allowed to name a retired variable is the one
-# that refuses it, `flz_transport/src/transport/config.rs`.
+# that refuses it, `crates/flz_transport/src/transport/config.rs`.
 retired   FLEZHA_QUIC_ADDRESS
 
 # The socket-directory ladder, in the order it is walked. The first rung, when

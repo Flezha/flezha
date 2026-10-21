@@ -28,7 +28,7 @@ The project SHALL ship a `rustfmt.toml` at the repository root that pins the can
 
 ### Requirement: Project SHALL enforce `cargo fmt` in CI
 
-A GitHub Actions workflow SHALL run `cargo fmt --all -- --check` on every pull request and push to `main`. The check SHALL fail the workflow when any project source file diverges from `rustfmt.toml`'s contract. The Rust toolchain version used by the check SHALL be pinned (via `rust-toolchain.toml` or an explicit workflow input) so a stable-rustfmt change does not retroactively break the gate, and the same pinned version SHALL be the one the local format script invokes.
+A GitHub Actions workflow SHALL run `cargo fmt --all -- --check` on every pull request and push to `main`. The check SHALL fail the workflow when any project source file diverges from `rustfmt.toml`'s contract. The Rust toolchain version used by the check SHALL be pinned (via an explicit workflow input) so a stable-rustfmt change does not retroactively break the gate, and the same pinned version SHALL be the one the local format script invokes.
 
 The workflow's path filter SHALL be expressed as paths to ignore rather than paths to include, so a source tree added later is covered by default. A filter that must name every covered tree is a gate that silently stops covering the one it forgets.
 

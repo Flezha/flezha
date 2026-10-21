@@ -112,14 +112,14 @@ the invariants and crash windows in
 
 The SDK's side is small: `sdk/rust/src/steps/mod.rs` re-exports the core's types, and
 `sdk/rust/src/steps/spec.rs` (`build_spec`) runs the author's `channels` through the shared
-check. The engine is `flz_core/src/steps/`, split by concern: `spec.rs` (`TaskDag::of`, the DAG
+check. The engine is `crates/flz_core/src/steps/`, split by concern: `spec.rs` (`TaskDag::of`, the DAG
 in Kahn order), `instance.rs` (the pass sheet and `BarrierFor`), `events.rs` (the entry point
 each thread calls), `run.rs` (`Run::decide` and addressing), `pass.rs` (passes, items, stages),
 `resume.rs` (the journal's resume point and the restore gate), `compensation.rs` (the undo
 plans), `effects.rs` (`act`, everything done after the lock) and `commit.rs` (the barrier
 frames). A new loop-shape or failure-mode rule is one method on `impl Each` or
-`impl OnFailure` in `flz_core/src/relay/settings.rs`; a new barrier step is one method on
-`impl BarrierFor` in `flz_core/src/steps/instance.rs`. The full file map is in
+`impl OnFailure` in `crates/flz_core/src/relay/settings.rs`; a new barrier step is one method on
+`impl BarrierFor` in `crates/flz_core/src/steps/instance.rs`. The full file map is in
 [`../resilience/steps_relay.md`](../resilience/steps_relay.md#where-the-code-is).
 
 Every class carries `durable` in its `RelaySettings`: `Durable::Memory`,
@@ -765,7 +765,7 @@ postcard body the typed dispatcher encodes under the state lock.
 
 - **Per-Tasklet `handle_message` is not served by the SDK**: the
   `RelayMessage` command is answered `relay does not support
-  handle_message` (`flz_core/src/command/relay_message.rs`).
+  handle_message` (`crates/flz_core/src/command/relay_message.rs`).
 - **One started runner per process** (`FlezhaError::AlreadyRunning`).
 - **`UpdateFactories` has no ack**; the reconnect init frame is the resync.
 - **`unregister_factory` cannot see a suspended durable steps instance**:
@@ -784,20 +784,20 @@ postcard body the typed dispatcher encodes under the state lock.
 | Concern | File |
 |---|---|
 | `Relay` trait; `Tasklet`, `Ctx`, `Change`, `ClockKind`, `TaskletError` | `sdk/rust/src/relay/mod.rs`; `sdk/rust/src/tasklet/{mod,ctx,change,clock,error}.rs` |
-| `ChannelBuilder`, `Stream<T>`, `TopologyIssue` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `flz_core/src/channel.rs`) |
+| `ChannelBuilder`, `Stream<T>`, `TopologyIssue` | `sdk/rust/src/channel/builder/`, `sdk/rust/src/channel/mod.rs` (kernel types: `crates/flz_core/src/channel.rs`) |
 | Topology builder, mailbox-capacity resolution | `sdk/rust/src/relay/builder.rs` |
 | Authoring macros | `sdk/rust/macros/src/{tasklet,short_form,relay}.rs` |
 | Typed dispatcher and plugin-output tail; poll-worker threads | `sdk/rust/src/relay/dispatcher.rs` |
-| Pool governor (sizes, supervisor, grow and retire) | `flz_core/src/poll_pool.rs` |
-| Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core/` |
-| `RelayInstance`, `KeyGroupRange`; `RelayTopology`, `CellMode`; registries | `flz_core/src/relay/{instance,topology,registry}.rs` |
-| `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and idle sweep | `flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |
-| Wire dispatch (`RelayDispatchHandle`); wire input routing | `flz_core/src/routing.rs`, `flz_core/src/command/streams_connect.rs` |
-| Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
-| Relay state JSON shape, `apply_init_values` | `flz_core/src/command/cell_state.rs` |
-| Restore fold and compaction snapshot; the typed sink | `flz_core/src/restore.rs`, `flz_core/src/host/commands.rs`; `sdk/rust/src/cell/restore.rs` |
-| `Relay`; `TaskletTestHarness` | `sdk/rust/src/steps/mod.rs`, `flz_core/src/steps/mod.rs`; `sdk/rust/src/testing/harness.rs` |
-| Steps engine: DAG, pass sheet, barriers, resume, undo; `Each`, `OnFailure` | `flz_core/src/steps/{spec,instance,events,run,pass,resume,compensation,effects,commit}.rs`; `flz_core/src/relay/settings.rs` |
+| Pool governor (sizes, supervisor, grow and retire) | `crates/flz_core/src/poll_pool.rs` |
+| Poll engine (handout, admission, ladder, deferred wakes) | `crates/flz_core/src/poll_core/` |
+| `RelayInstance`, `KeyGroupRange`; `RelayTopology`, `CellMode`; registries | `crates/flz_core/src/relay/{instance,topology,registry}.rs` |
+| `CellSlot`, `CellCounters`; `Mailbox`, `Waiters`; dynamic registry and idle sweep | `crates/flz_core/src/cell.rs`, `mailbox.rs`, `dynamic.rs` |
+| Wire dispatch (`RelayDispatchHandle`); wire input routing | `crates/flz_core/src/routing.rs`, `crates/flz_core/src/command/streams_connect.rs` |
+| Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `crates/flz_core/src/routing.rs`, `crates/flz_core/src/flusher.rs` |
+| Relay state JSON shape, `apply_init_values` | `crates/flz_core/src/command/cell_state.rs` |
+| Restore fold and compaction snapshot; the typed sink | `crates/flz_core/src/restore.rs`, `crates/flz_core/src/host/commands.rs`; `sdk/rust/src/cell/restore.rs` |
+| `Relay`; `TaskletTestHarness` | `sdk/rust/src/steps/mod.rs`, `crates/flz_core/src/steps/mod.rs`; `sdk/rust/src/testing/harness.rs` |
+| Steps engine: DAG, pass sheet, barriers, resume, undo; `Each`, `OnFailure` | `crates/flz_core/src/steps/{spec,instance,events,run,pass,resume,compensation,effects,commit}.rs`; `crates/flz_core/src/relay/settings.rs` |
 
 ## See also
 

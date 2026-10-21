@@ -135,7 +135,7 @@ sequenceDiagram
 
 **Retries.** A failed input is tried up to the edge's `retry_max` (3 attempts
 in all by default). Attempt n waits `retry_backoff_ms × 2^(n-1)`, 50 ms by
-default, with ±50% jitter and capped at 5 seconds (`flz_core/src/channel.rs`).
+default, with ±50% jitter and capped at 5 seconds (`crates/flz_core/src/channel.rs`).
 A non-retryable error (`TaskletError::NonRetryable` in Rust) skips the
 retries and parks at once. In the Rust SDK a panic counts as retryable,
 because the author never got to classify it. Retries live in the runner,
@@ -147,7 +147,7 @@ record, so they cannot come apart; the controller writes the dead-letter
 entry before it moves the consumed offset, because moving the watermark can
 truncate the poison input out of the input log. Without the tier they are two
 steps, and the acknowledgement orders them: the cell does not move past an
-input until the controller has confirmed its park (`flz_core/src/park.rs`).
+input until the controller has confirmed its park (`crates/flz_core/src/park.rs`).
 
 **The store.** `Flezha.Dlq.Store` keeps
 `storage/app/dlq/<relay_class>/<tasklet_id>/entries.jsonl` plus one file per
@@ -213,7 +213,7 @@ What follows from that:
   the same epoch, and the keyed output the tier requires drops the repeats.
 - **A park closes the interval.** The record that parks a poison input also
   carries the state before it, so the parked input is never replayed and the
-  state behind it is never lost (`flz_core/src/effect.rs`).
+  state behind it is never lost (`crates/flz_core/src/effect.rs`).
 - **A restore drops the open interval.** Its changes were never acknowledged,
   and the inputs behind them are re-sent from the input log.
 - **The stall watchdog skips the class.** For an ordinary class, "wrote before
@@ -265,7 +265,7 @@ sequenceDiagram
 ```
 
 The runner sees an event time and the controller does not, so the runner
-detects a late input (`flz_core/src/correction.rs`) and the controller runs
+detects a late input (`crates/flz_core/src/correction.rs`) and the controller runs
 the correction (`Flezha.Relay.Replay.run_correction/3`). Four details carry
 the design:
 
@@ -378,13 +378,13 @@ flowchart TB
   therefore moves whole slices of key groups instead of moving almost every
   key, and an uneven split later would need no format change. The hash has
   two implementations, kept equal by one fixture set: `flz_core`
-  (`flz_core/src/relay/instance.rs`), used by every SDK, and the
+  (`crates/flz_core/src/relay/instance.rs`), used by every SDK, and the
   controller's `Flezha.Relay.KeyGroup`.
 - **The routing rule is checked, not trusted.** The item a source subscribes
   with, and the `flz.key` a forward routes on, must equal what `key_by`
   returns. The runner checks every computed cell key against its member's
   range before it creates a cell, and parks the first key outside it with an
-  error that names the rule (`flz_core/src/routing.rs`), instead of folding
+  error that names the rule (`crates/flz_core/src/routing.rs`), instead of folding
   part of the traffic into the wrong state. A forward into the group parks a
   message that has no key, or whose key no member owns, rather than guessing
   (`Flezha.Plugin.Provider.RelayForward`).

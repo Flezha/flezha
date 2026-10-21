@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Flezha.Llms do
   a "Start here" list, every user-facing guide page with the first sentence of
   its introduction, and the published API modules. Each line links the
   Markdown copy ExDoc writes next to it, so an assistant opens only the pages a
-  task needs. Also copies `cli/catalogue.json` next to it.
+  task needs. Also copies `crates/cli/catalogue.json` next to it.
 
   The `docs` alias runs it on the folder ExDoc wrote its Markdown to:
 

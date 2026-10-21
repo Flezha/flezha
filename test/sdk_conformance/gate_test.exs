@@ -41,10 +41,10 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # `flz_nif`.
   @connect_sources %{
     rust: [
-      "flz_transport/src/utility/socket_dir.rs",
-      "flz_transport/src/utility/socket_probe.rs",
-      "flz_transport/src/transport/config.rs",
-      "flz_core/src/control_unit.rs"
+      "crates/flz_transport/src/utility/socket_dir.rs",
+      "crates/flz_transport/src/utility/socket_probe.rs",
+      "crates/flz_transport/src/transport/config.rs",
+      "crates/flz_core/src/control_unit.rs"
     ],
     java: Path.wildcard("sdk/java/**/*.java"),
     node: Path.wildcard("sdk/node/src/**/*.ts"),
@@ -59,11 +59,11 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @connect_env_shape ~r/FLEZHA_(?:[A-Z0-9_]*SOCKET[A-Z0-9_]*|QUIC_ADDRESS(?:ES)?)/
 
   # The one file allowed to name a retired variable is the one that refuses it.
-  @retired_refusal_site "flz_transport/src/transport/config.rs"
+  @retired_refusal_site "crates/flz_transport/src/transport/config.rs"
 
   # The heartbeat's self-report is built here for every SDK but Elixir's, whose
   # core inherits nothing from the kernel and builds its own.
-  @heartbeat_site "flz_core/src/coordinator.rs"
+  @heartbeat_site "crates/flz_core/src/coordinator.rs"
 
   # The administration surface an application reaches its own namespace with.
   # The verb travels as data, so every SDK spells the same names and nothing
@@ -108,7 +108,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # The authoring surface and everything written against it, but not the SDK
   # suites that name a retired spelling to prove it is refused.
   @authoring_roots ~w(
-    flz_core/src flz_core_ffi/src sdk/rust/src sdk/rust/macros/src sdk/rust/examples
+    crates/flz_core/src crates/flz_core_ffi/src sdk/rust/src sdk/rust/macros/src sdk/rust/examples
     sdk/rust/test_app sdk/java/flezha-sdk-api/src/main sdk/java/flezha-sdk-runtime/src/main
     sdk/java/flezha-sdk-examples sdk/java/examples
     sdk/java/test_app/src sdk/node/src sdk/node/examples sdk/node/test_app sdk/python/src
@@ -297,7 +297,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
           unless is_integer(lang) and lang > 0 do
             fail(
               "#{path} declares sdk_lang #{inspect(lang)}; every runtime holds an " <>
-                "allocated value from the table in flz_core/src/header.rs (0 is " <>
+                "allocated value from the table in crates/flz_core/src/header.rs (0 is " <>
                 "reserved and never places)"
             )
           end
@@ -314,13 +314,13 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         fail(
           "sdk_lang #{lang} is declared by #{inspect(runtimes)}; one value per SDK, " <>
             "allocated in landing order — take the next free value from the table in " <>
-            "flz_core/src/header.rs"
+            "crates/flz_core/src/header.rs"
         )
       end
     end
 
     test "each manifest's sdk_lang is its SDK's row of the wire constants" do
-      # The fixture is held to `flz_core/src/header.rs` by the core, and each
+      # The fixture is held to `crates/flz_core/src/header.rs` by the core, and each
       # SDK's constants test holds the byte it stamps to the same row, so the
       # manifest, the SDK and the core cannot drift apart. The nightly `interop`
       # scenario proves that the runner advertises it on connect.
@@ -775,7 +775,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
     test "the ladder is walked in the pinned order by the one implementation that walks it" do
       %{ladder: ladder} = connect_env()
-      source = File.read!("flz_transport/src/utility/socket_dir.rs")
+      source = File.read!("crates/flz_transport/src/utility/socket_dir.rs")
 
       body =
         case Regex.run(~r/fn candidates_from\(.*?\n\}/s, source) do

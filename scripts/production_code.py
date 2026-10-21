@@ -26,11 +26,11 @@ EXCLUDE = re.compile(r"(^|/)(test|tests|spec|fixtures|examples?|benches)/|_test\
 # Row name, repository, the pathspecs its production code lives under.
 ROWS = [
     ("core-lib", ".", ["lib"]),
-    ("core-flz_core", ".", ["flz_core/src"]),
-    ("core-flz_core_ffi", ".", ["flz_core_ffi/src"]),
-    ("core-flz_nif", ".", ["flz_nif/src"]),
-    ("core-flz_transport", ".", ["flz_transport/src"]),
-    ("core-cli", ".", ["cli/src"]),
+    ("core-flz_core", ".", ["crates/flz_core/src"]),
+    ("core-flz_core_ffi", ".", ["crates/flz_core_ffi/src"]),
+    ("core-flz_nif", ".", ["crates/flz_nif/src"]),
+    ("core-flz_transport", ".", ["crates/flz_transport/src"]),
+    ("core-cli", ".", ["crates/cli/src"]),
     ("sdk-elixir", "sdk/elixir", ["lib"]),
     ("sdk-elixir-native", "sdk/elixir", [":(glob)native/*/src/**"]),
     ("sdk-java", "sdk/java", [":(glob)*/src/main/**"]),

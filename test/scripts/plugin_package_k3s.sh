@@ -54,7 +54,7 @@ if [ -z "${RUNTIME_IMAGE:-}" ] || [ -z "${ARCHIVE:-}" ]; then
   (cd "$REPO_ROOT" && tar -cf - \
     --exclude='_build' --exclude='deps' --exclude='target' \
     mix.exs mix.lock config lib protobufs rel \
-    flz_transport/errors.json flz_core/src/schema.rs flz_core_ffi/src/veneer/shape.rs \
+    crates/flz_transport/errors.json crates/flz_core/src/schema.rs crates/flz_core_ffi/src/veneer/shape.rs \
     openspec/specs/java-sdk/spec.md test/fixtures sdk/elixir examples/elixir/plugin) \
     | tar -xf - -C "$WORK/src"
   docker run --rm -v "$WORK/src:/src" -v "$WORK/out:/out" -w /src/examples/elixir/plugin "$BUILDER" \

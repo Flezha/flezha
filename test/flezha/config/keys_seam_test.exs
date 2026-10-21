@@ -19,7 +19,7 @@ defmodule Flezha.Config.KeysSeamTest do
     "lib/flezha/config/keys.ex",
     "lib/flezha/config/durations.ex",
     "lib/flezha/config/environment.ex",
-    "flz_transport/src/env.rs"
+    "crates/flz_transport/src/env.rs"
   ]
 
   # A read of a NAMED knob: a literal `FLEZHA_*` or a module attribute holding
@@ -34,7 +34,7 @@ defmodule Flezha.Config.KeysSeamTest do
   # a clause that runs one over every line of the tree binds it once first.
   @env_name ~r/FLEZHA_[A-Z0-9_]+/
 
-  @rust_roots ~w(flz_core/src flz_transport/src flz_nif/src flz_core_ffi/src sdk/rust/src)
+  @rust_roots ~w(crates/flz_core/src crates/flz_transport/src crates/flz_nif/src crates/flz_core_ffi/src sdk/rust/src)
 
   # Where each runtime's source lives, for the declaration and unread clauses.
   # A test app is a harness, not its SDK, and is not one of them.
@@ -46,7 +46,7 @@ defmodule Flezha.Config.KeysSeamTest do
     python: ["sdk/python/src"],
     ruby: ["sdk/ruby/lib"],
     php: ["sdk/php/src"],
-    cli: ["cli/src"],
+    cli: ["crates/cli/src"],
     shell: ["rel"]
   }
 
@@ -77,8 +77,8 @@ defmodule Flezha.Config.KeysSeamTest do
   @parse_readers [
     "test/flezha/config/parse_test.exs",
     "sdk/elixir/test/flezha/sdk/knob_test.exs",
-    "flz_transport/src/env.rs",
-    "flz_core_ffi/tests/abi/knob.rs"
+    "crates/flz_transport/src/env.rs",
+    "crates/flz_core_ffi/tests/abi/knob.rs"
   ]
 
   describe "nothing reads a knob outside the seam" do
@@ -291,7 +291,7 @@ defmodule Flezha.Config.KeysSeamTest do
   defp elixir_sources(), do: SourceWalk.files(["lib", "config"], [".ex", ".exs"])
 
   # The CLI is a crate too: it reads through `flz_transport::env` like the rest.
-  defp rust_sources(), do: sources(@rust_roots ++ ["cli/src"])
+  defp rust_sources(), do: sources(@rust_roots ++ ["crates/cli/src"])
 
   defp sdk_sources(), do: @runtime_roots |> Map.values() |> List.flatten() |> sources()
 

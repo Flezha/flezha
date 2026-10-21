@@ -90,10 +90,10 @@ The shared smoke tier `test/system/sdk_smoke_e2e_test.exs` SHALL exercise the se
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end steps relay SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `RELAY_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `relay-mvp-java/design.md` Decision 11). Tests tagged `RELAY_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `relay-message-handlers` ships.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `crates/flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end steps relay SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `RELAY_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `relay-mvp-java/design.md` Decision 11). Tests tagged `RELAY_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `relay-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
-- **WHEN** a pull request modifies a file under `flz_transport/src/`
+- **WHEN** a pull request modifies a file under `crates/flz_transport/src/`
 - **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + the smoke tier under `FLEZHA_E2E_RUNTIME=java`) — neither suite SHALL be skipped on the basis of `RELAY_MVP_JAVA_PENDING`
 
 #### Scenario: Failing Java integration test blocks merge

@@ -98,7 +98,7 @@ Two properties matter to anyone writing an SDK:
 ## What crosses the boundary
 
 An **activation** targets one cell, or for a relay-wide leave one relay. The types are listed in
-`ActivationKind` (`flz_core/src/schema.rs`):
+`ActivationKind` (`crates/flz_core/src/schema.rs`):
 
 | Activation | What the SDK does with it |
 | --- | --- |
@@ -153,7 +153,7 @@ and a native frame pins a virtual thread's carrier.
 
 **Starvation means stuck, not busy.** Queued work counts as starved only
 after a 100 ms dwell during which **no thread entered `poll` at all**
-(`flz_core/src/poll_core/starvation.rs`). A busy runner enters `poll` once per
+(`crates/flz_core/src/poll_core/starvation.rs`). A busy runner enters `poll` once per
 batch, microseconds apart, so it never trips; only a runner whose every thread
 is inside user code shows no entry for that long. Starvation is a blocking wait
 a host thread may park in, never a callback, so the core still calls no SDK
@@ -186,7 +186,7 @@ sequenceDiagram
 ```
 
 Different cells run in parallel. Batch assembly
-(`flz_core/src/poll_core/assembly.rs`) owns the rest of the order: skipping
+(`crates/flz_core/src/poll_core/assembly.rs`) owns the rest of the order: skipping
 inputs a cell already consumed, holding a replayed slice until its end marker
 and sorting it by event time, and admitting late inputs.
 
@@ -211,7 +211,7 @@ thread:
   the dead-letter path ([`flow_profile.md`](flow_profile.md#the-dead-letter-queue)),
   and a park closes an open checkpoint interval.
 
-The **deferred-wake list** (`flz_core/src/poll_core/wake.rs`) is one ordered
+The **deferred-wake list** (`crates/flz_core/src/poll_core/wake.rs`) is one ordered
 list of retry backoffs, processing-time timer deadlines, checkpoint interval
 closes, push retries and instance deadlines. It owns no thread: entries are
 promoted by whichever thread next enters or wakes inside `poll`.
@@ -264,7 +264,7 @@ What an instance costs at scale is measured in
 ## The C ABI
 
 An SDK other than Rust reaches the kernel through `flz_core_ffi`
-(`flz_core_ffi/src/abi/`, one file per concern). The life of a context:
+(`crates/flz_core_ffi/src/abi/`, one file per concern). The life of a context:
 
 1. `flz_core_context_new(shim_schema_version)`: the version check happens
    here. An SDK built against a different schema version gets NULL, and
@@ -297,7 +297,7 @@ relay's state, stop the pollers, drain within the grace and exit.
 
 The class declaration is complete: the channel graph, cell modes, clocks, the
 settings tree, the record header's language byte, and the steps facts. Its
-JSON is parsed with unknown fields refused (`flz_core/src/host/decl.rs`), so a
+JSON is parsed with unknown fields refused (`crates/flz_core/src/host/decl.rs`), so a
 field the core does not know is an error, not a silent downgrade.
 `flz_core_check_class` returns the same verdict without registering anything,
 which is what a conformance run uses.
@@ -305,7 +305,7 @@ which is what a conformance run uses.
 Whoever allocates a buffer frees it; buffers the core hands out are freed with
 `flz_core_buf_free`.
 
-The surface is one table, `veneer::SURFACE` (`flz_core_ffi/src/veneer/mod.rs`):
+The surface is one table, `veneer::SURFACE` (`crates/flz_core_ffi/src/veneer/mod.rs`):
 each row names an entry, its C symbol, whether it can block, and which bindings
 reach it. The Python, Ruby and Node bindings list their exports from it, and a
 test in the crate holds it equal to what the crate exports, to
@@ -342,7 +342,7 @@ A runner does not need a controller to run a graph. Everything a tasklet does
 to a value happens in the runner: decoding and parsing on the entry channel,
 edge transforms and keying, one cell per key with its mailbox and overflow
 policy, retries, and the hop between tasklets, which is a mailbox push
-(`route_to_consumers` in `flz_core/src/routing.rs`) that never crosses the
+(`route_to_consumers` in `crates/flz_core/src/routing.rs`) that never crosses the
 wire.
 
 **Local mode** uses that. It builds the same `RelayInstance` a deployed
@@ -350,7 +350,7 @@ runner builds, feeds it through the same dispatch entry a stream reader uses,
 and differs in one thing: where output goes. A `FlezhaStream::Local` passes
 what production would write to a callback in the same process, and a null
 state output discards every durable record at the outbound edge, so the record
-path still runs and still costs what it costs (`flz_core/src/local.rs`).
+path still runs and still costs what it costs (`crates/flz_core/src/local.rs`).
 There is no second routing path and no second cell implementation. Timers work
 through the core's own wake list.
 
@@ -387,7 +387,7 @@ The rules every SDK follows:
   mailbox capacity, heartbeat keys), and the fixtures that prove them. What a
   graph may look like is checked in one place: a builder submits the links its
   author declared to `flz_core::host::register::check`
-  (`flz_core/src/host/register.rs`), which holds the refusals and the
+  (`crates/flz_core/src/host/register.rs`), which holds the refusals and the
   derivation rules. A new refusal is one variant and one fixture row, not an
   edit to seven builders.
 - **A host that brings its own workers replaces them.** A worker that leaves
@@ -428,7 +428,7 @@ The rules every SDK follows:
   durable bodies of `State` and `Change` are per SDK, below a shared 16-byte
   header, and a restore sends them unchanged to whichever runner holds the
   cell, so a relay is placed only on a runner of its factory's language.
-  The table is in `flz_core/src/header.rs`:
+  The table is in `crates/flz_core/src/header.rs`:
 
   | Value | SDK | Encoding of its records |
   | --- | --- | --- |

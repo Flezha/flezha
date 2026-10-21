@@ -325,7 +325,7 @@ is a trend signal, not a CI gate.
 | Workflow                    | Trigger                                                                                                                                                            | What it runs                                                                                                                                                                                                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bench.yml`                 | PRs touching `sdk/rust/**`, `flz_transport/**`, `flz_nif/**`, `lib/flezha/**`, `lib/mix/tasks/bench**`, `protobufs/**`, `test/apps/rust_runner/**`, the workflow | **`bench-regression`**: `mix bench --runtime rust --shape regression -n 100 -m 10000`; reads `metrics.throughput_msg_per_sec` and `metrics.receive_window_msg_per_sec` from the run's JSON report (not from printed output) and writes both to the job summary, re-emits every preflight warning as a job annotation, and uploads `bench/reports/` with the log. No throughput number fails it: it fails only when the bench run fails, writes no report, or writes one with no rate. **`bench-cell-scaling`** (informational, `continue-on-error`): `--shape cell --pool-sizes 1,8`, reads `metrics.scaling_ratio`; GitHub runners do not reliably expose 8 physical cores, so the 4× target is validated on real hardware. |
-| `rust-sdk-perf.yml`         | PRs and `main` pushes touching `sdk/rust/**`, `flz_transport/**`, `Cargo.toml`, `Cargo.lock`                                                                         | Runs the `correctness` bench (any invariant violation fails) and the `dispatch` bench with `--save-baseline`; on PRs compares against the cached `main` baseline and fails if any bench's estimated change exceeds 10%.                                                                      |
+| `rust-sdk-perf.yml`         | PRs and `main` pushes touching `sdk/rust/**`, `crates/flz_transport/**`, `Cargo.toml`, `Cargo.lock`                                                                         | Runs the `correctness` bench (any invariant violation fails) and the `dispatch` bench with `--save-baseline`; on PRs compares against the cached `main` baseline and fails if any bench's estimated change exceeds 10%.                                                                      |
 | `rust-sdk-bench-cron.yml`   | Mondays 03:00 UTC, `workflow_dispatch`                                                                                                                              | Non-blocking drift detector: `mix bench -n 100 -m 10000` across rust/java × uds/quic, plus Criterion `dispatch` (`regression_` group only) and `dynamic_cell_steady_state`; posts a step summary.                                                                                             |
 
 ## Settling a series
@@ -581,13 +581,13 @@ each:
 
 A rate that moved fails nothing, but when the job summary shows one drop:
 
-1. **Transport / NIF changes?** If the PR touches `flz_transport/`, `flz_nif/`,
-   `flz_core/src/command/streams_connect.rs` or the framing path, compare
+1. **Transport / NIF changes?** If the PR touches `crates/flz_transport/`, `crates/flz_nif/`,
+   `crates/flz_core/src/command/streams_connect.rs` or the framing path, compare
    `cargo bench --bench dispatch -- regression_100x1x1x10k` to the `mix bench`
    number. Criterion steady while `mix bench` dropped → transport/controller.
 2. **SDK dispatch changes?** If the PR touches
-   `sdk/rust/src/relay/dispatcher.rs`, `flz_core/src/routing.rs` or
-   `flz_core/src/cell.rs`, run `throughput_single_cell` against
+   `sdk/rust/src/relay/dispatcher.rs`, `crates/flz_core/src/routing.rs` or
+   `crates/flz_core/src/cell.rs`, run `throughput_single_cell` against
    `SINGLE_CELL_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot
    path itself.
 3. **Runner drift?** Rerun the job on `main`. If `main` reads the same on the

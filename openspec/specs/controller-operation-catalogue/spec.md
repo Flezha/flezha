@@ -53,13 +53,13 @@ SHALL live in the row, so that no list of forbidden verbs is kept beside the dec
 
 ### Requirement: The CLI SHALL ship a generated copy of the catalogue
 
-`mix flezha.catalogue` SHALL write the catalogue to `cli/catalogue.json`, and the suite SHALL
+`mix flezha.catalogue` SHALL write the catalogue to `crates/cli/catalogue.json`, and the suite SHALL
 fail when the committed file differs from a fresh generation. `flz` SHALL embed the file, and
 `flz help --json` SHALL print it without reaching a controller.
 
 #### Scenario: A stale catalogue file fails the suite
 
-- **WHEN** a published function gains an argument and `cli/catalogue.json` is not
+- **WHEN** a published function gains an argument and `crates/cli/catalogue.json` is not
   regenerated
 - **THEN** the catalogue test SHALL fail naming the entry that differs
 
@@ -83,7 +83,7 @@ catalogue does not declare.
 
 #### Scenario: A Rust verb that sends an unknown name fails the build's tests
 
-- **WHEN** a verb row in `cli/src` sends `"Dlq.lst"`
+- **WHEN** a verb row in `crates/cli/src` sends `"Dlq.lst"`
 - **THEN** the Rust catalogue test SHALL fail naming the verb and the name
 
 ### Requirement: The catalogue SHALL publish one operation per concept, and only operations a surface calls

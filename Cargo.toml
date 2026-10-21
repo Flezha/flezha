@@ -4,11 +4,11 @@
 # named by their real paths: cargo resolves a manifest reached through the
 # `test/apps/rust_runner` symlink against the link's name.
 members = [
-    "flz_core",
-    "flz_core_ffi",
-    "flz_transport",
-    "flz_nif",
-    "cli",
+    "crates/flz_core",
+    "crates/flz_core_ffi",
+    "crates/flz_transport",
+    "crates/flz_nif",
+    "crates/cli",
     "sdk/rust",
     "sdk/rust/macros",
     "sdk/rust/test_app",
@@ -20,9 +20,9 @@ resolver = "2"
 # tag, which is what their own repositories build against. Here the same source resolves to the crates in this tree, so a
 # core change is seen by the SDK at once and nothing is fetched.
 [patch."https://github.com/flezha/flezha"]
-flz_core = { path = "flz_core" }
-flz_core_ffi = { path = "flz_core_ffi" }
-flz_transport = { path = "flz_transport" }
+flz_core = { path = "crates/flz_core" }
+flz_core_ffi = { path = "crates/flz_core_ffi" }
+flz_transport = { path = "crates/flz_transport" }
 
 [workspace.package]
 version = "0.1.0"
@@ -57,7 +57,7 @@ thiserror = "1.0"
 tracing = "0.1"
 
 # Every crate opts in with `[lints] workspace = true`. The clippy ceiling is
-# stated in docs/public/contributing/code_standards.md, "Ceilings"; its threshold lives in clippy.toml.
+# stated in docs/public/contributing/code_standards.md, "Ceilings"; its threshold lives in crates/clippy.toml.
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)", "cfg(loom)"] }
 

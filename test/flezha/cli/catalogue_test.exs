@@ -111,7 +111,7 @@ defmodule Flezha.Service.Cli.CatalogueTest do
     end
   end
 
-  describe "cli/catalogue.json" do
+  describe "crates/cli/catalogue.json" do
     test "is the catalogue the code declares, named entry by entry when it is not" do
       committed = operations(File.read!(Mix.Tasks.Flezha.Catalogue.path()))
       fresh = operations(Mix.Tasks.Flezha.Catalogue.render())
@@ -122,7 +122,7 @@ defmodule Flezha.Service.Cli.CatalogueTest do
             do: name
 
       assert stale == [],
-             "cli/catalogue.json is stale for #{inspect(Enum.sort(stale))}: run `mix flezha.catalogue`"
+             "crates/cli/catalogue.json is stale for #{inspect(Enum.sort(stale))}: run `mix flezha.catalogue`"
 
       assert File.read!(Mix.Tasks.Flezha.Catalogue.path()) == Mix.Tasks.Flezha.Catalogue.render()
     end

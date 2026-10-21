@@ -43,7 +43,7 @@ import naming_gate
 # The public local-mode surface: the files a user's import or a reader's link
 # reaches. Not a scope for prose — see SURFACE below for what is judged here.
 SURFACE = (
-    "flz_core/src/local.rs",
+    "crates/flz_core/src/local.rs",
     "sdk/rust/src/local.rs",
     "sdk/rust/examples/local_word_count.rs",
     "sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/LocalRelay.java",
@@ -52,7 +52,7 @@ SURFACE = (
     "sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/LocalImpl.java",
     "sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/local/Main.java",
     "sdk/elixir/lib/flezha/sdk/local.ex",
-    "flz_core_ffi/src/abi/local.rs",
+    "crates/flz_core_ffi/src/abi/local.rs",
     "sdk/node/src/local.ts",
     "examples/node/local_word_count.mjs",
     "sdk/python/src/flezha/local.py",

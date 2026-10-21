@@ -7,7 +7,7 @@ with changes of your own.
 ## What you need
 
 - Elixir 1.17 or later, with its Erlang/OTP.
-- A stable Rust toolchain; `rust-toolchain.toml` selects it.
+- A stable Rust toolchain.
 - A checkout of the repository with the Elixir and Rust SDK submodules, which
   the build compiles:
 

@@ -129,7 +129,7 @@ When a channel does not call `.on_full(...)`, the runtime SHALL apply a default 
 
 An entry channel SHALL NOT discard a wire frame unless the Relay declared a dropping policy explicitly. Data loss on the ingress path SHALL be a stated intent, never a default: a Relay that wants shedding under saturation declares `.on_full(OverflowPolicy::DropNewest)` or `.on_full(OverflowPolicy::DropOldest)`.
 
-The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder/state.rs`), the policy assigned by `declareChannel` (`RelayTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Relay` and the `#[default]` an absent `overflow` deserializes to (`OverflowPolicy` itself, read by `flz_core/src/host/decl.rs`) SHALL all name `DropNothing`.
+The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`crates/flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder/state.rs`), the policy assigned by `declareChannel` (`RelayTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Relay` and the `#[default]` an absent `overflow` deserializes to (`OverflowPolicy` itself, read by `crates/flz_core/src/host/decl.rs`) SHALL all name `DropNothing`.
 
 These defaults SHALL be reflected in the `ChannelDescriptor.overflow_policy` field set by `build_topology` for every channel for which the user did not explicitly call `.on_full(...)`.
 

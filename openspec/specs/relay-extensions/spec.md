@@ -747,7 +747,7 @@ plugin from its stored options converts them again.
 
 #### Scenario: The catalogue reads the same description
 
-- **WHEN** `mix flezha.catalogue` writes `cli/catalogue.json`
+- **WHEN** `mix flezha.catalogue` writes `crates/cli/catalogue.json`
 - **THEN** every argument it lists SHALL be the description `describe_row/1` gives that
   argument's row, with its type and its values written as JSON
 

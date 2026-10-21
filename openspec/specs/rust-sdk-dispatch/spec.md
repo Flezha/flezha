@@ -497,7 +497,7 @@ The Rust SDK clears the mailbox on restore; the Java SDK does not, clearing only
 
 ### Requirement: The Rust SDK SHALL emit a cell_state_snapshot on CompactCell
 
-`flz_core/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactCellResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Cell, capture its state, ship a `cell_state_snapshot` data frame, and answer with the seq it actually captured.
+`crates/flz_core/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactCellResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Cell, capture its state, ship a `cell_state_snapshot` data frame, and answer with the seq it actually captured.
 
 The snapshot body SHALL be encoded with the same codec the restore path decodes — postcard, per `cell/restore.rs`. The JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
 

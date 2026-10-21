@@ -26,19 +26,19 @@ the C ABI and where the code lives; the system-level picture is
 
 | Path                                   | Purpose |
 | -------------------------------------- | ------- |
-| `flz_core/src/poll_core/`              | The activation engine (`mod.rs`, `assembly.rs`, `starvation.rs`, `wake.rs`): per-cell handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the in-flight cap, the deferred-wake list, starvation, `poll` / `complete` |
-| `flz_core/src/schema.rs`               | The versioned Activation / ActivationResult boundary contract (postcard; `SCHEMA_VERSION`; bytes pinned in `test/fixtures/postcard_bodies.txt`) |
-| `flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `cell.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
-| `flz_core/src/cell.rs`, `mailbox.rs` | `CellSlot`, bounded mailbox + inflight CAS, shared slot assembly |
-| `flz_core/src/routing.rs`              | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
-| `flz_core/src/retry.rs`, `park.rs`     | The retry→park ladder: backoff computation, `RETRIES_TOTAL`, DLQ parks |
-| `flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable output, credit windows, late-input machinery, timers, restore payloads, record headers |
-| `flz_core/src/coordinator.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, one handler module per controller command |
-| `flz_core/src/steps/`               | A steps instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
-| `flz_core_ffi/src/lib.rs`, `abi/`      | The context, and the `flz_core_*` C entry points in one `abi/` file per concern (crate types `cdylib`, `staticlib`, `rlib`) |
-| `flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
-| `flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
-| `flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
+| `crates/flz_core/src/poll_core/`              | The activation engine (`mod.rs`, `assembly.rs`, `starvation.rs`, `wake.rs`): per-cell handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the in-flight cap, the deferred-wake list, starvation, `poll` / `complete` |
+| `crates/flz_core/src/schema.rs`               | The versioned Activation / ActivationResult boundary contract (postcard; `SCHEMA_VERSION`; bytes pinned in `test/fixtures/postcard_bodies.txt`) |
+| `crates/flz_core/src/host/`                   | Erased host classes (`decl.rs`, `register.rs`, `prepare.rs`, `commands.rs`, `activation.rs`, `cell.rs` under `mod.rs`): `HostClassDecl` (JSON), data-declared topologies, completion application — what the C ABI drives |
+| `crates/flz_core/src/cell.rs`, `mailbox.rs` | `CellSlot`, bounded mailbox + inflight CAS, shared slot assembly |
+| `crates/flz_core/src/routing.rs`              | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
+| `crates/flz_core/src/retry.rs`, `park.rs`     | The retry→park ladder: backoff computation, `RETRIES_TOTAL`, DLQ parks |
+| `crates/flz_core/src/flusher.rs`, `state_sink.rs`, `credit.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable output, credit windows, late-input machinery, timers, restore payloads, record headers |
+| `crates/flz_core/src/coordinator.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, one handler module per controller command |
+| `crates/flz_core/src/steps/`               | A steps instance's run: `instance.rs` (the pass sheet a journal resume fills), `run.rs` (the events that advance it), `commit.rs` (the barrier frames), `resume.rs` (the journal readers), `compensation.rs` (the undo plan), `spec.rs` (the spec/DAG kernel) |
+| `crates/flz_core_ffi/src/lib.rs`, `abi/`      | The context, and the `flz_core_*` C entry points in one `abi/` file per concern (crate types `cdylib`, `staticlib`, `rlib`) |
+| `crates/flz_core_ffi/src/jni_glue.rs`         | `Java_com_flezha_sdk_native_1_FlzCore_*` exports behind the `jni` feature |
+| `crates/flz_core_ffi/tests/abi_scenario.rs`   | The CI scenario that drives the whole runtime through the C ABI |
+| `crates/flz_transport/`                       | The transport tier both the kernel and the controller NIF share: `transport/` (QUIC, TLS, config, liveness, `protocol.rs` stream constants `STREAM_TYPE_PRIMARY 0x01` / `STREAM_TYPE_SECONDARY 0x02`), `service/payloader.rs` (binary framing), `utility/socket_dir.rs` (socket paths), `utility/socket_probe.rs` (reachability) |
 | `sdk/rust/src/`                        | The Rust SDK — the typed layer over `flz_core`: `lib.rs` (runner handle), `tasklet/`, `channel/` (builder DSL), `relay/` (typed dispatcher, poll pool), `cell/`, `steps/`, `runner/`, `testing/` (harness), `diag.rs` |
 | `sdk/java/`                            | The Java SDK (Maven): `flezha-sdk-api` (authoring surface), `flezha-sdk-runtime` (`PollHost`, `ActivationDispatcher`, codec), `flezha-sdk-native` (`FlzCore`, `NativeLibraryLoader`, bundled binaries), `flezha-sdk-testing` (`TaskletTestHarness`), `flezha-sdk-examples` (the `E01`–`E12` authoring samples), `flezha-sdk` (fat-jar aggregator) |
 
@@ -439,7 +439,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   reads a process-wide clock, so every host's `ctx` dates an event the same way
   without keeping a second clock in step.
 
-The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
+The CI scenario (`crates/flz_core_ffi/tests/abi_scenario.rs`, `c_abi_full_scenario`)
 drives connect, AddRelay over the real control path, input activations, a
 timer firing, a restore fold, a live state read, a
 keyed dynamic route through the prepare crossing, an effectively-once floor

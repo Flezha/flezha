@@ -52,7 +52,7 @@ fi
 # headers: with libclang alone the build dies inside cargo with `'stdarg.h' file
 # not found`. gcc's builtin include directory carries the same headers.
 #
-# This guard cannot move into `flz_core_ffi/build.rs`: rb-sys is a dependency,
+# This guard cannot move into `crates/flz_core_ffi/build.rs`: rb-sys is a dependency,
 # so its build script runs first and fails before ours exists. A bare
 # `cargo build/test -p flz_core_ffi --features ruby*` on a box with no clang
 # builtin headers is therefore unprotected: run it as `build-ruby-sdk.sh --run

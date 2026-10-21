@@ -21,7 +21,7 @@ on:
       - "mix.lock"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "flz_nif/**"
+      - "crates/flz_nif/**"
       - ".dockerignore"
       - ".github/workflows/docker.yml"
       - "scripts/gate_rows.py"

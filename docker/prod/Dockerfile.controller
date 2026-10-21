@@ -7,7 +7,7 @@ ARG ELIXIR_IMAGE=hexpm/elixir:1.20.2-erlang-28.5.0.5-debian-bookworm-20260713-sl
 
 # Stage 1 — Rust builder. Builds flz_nif.so and the flz CLI binary with
 # --release. No protoc: the prost output is committed under
-# flz_core/src/generated.
+# crates/flz_core/src/generated.
 FROM rust:1.87.0-slim-bookworm AS rust-build
 
 WORKDIR /workspace
@@ -76,7 +76,7 @@ COPY config ./config
 COPY rel ./rel
 COPY protobufs ./protobufs
 # The error catalogue the controller and the SDK compile their codes from.
-COPY flz_transport/errors.json ./flz_transport/errors.json
+COPY crates/flz_transport/errors.json ./crates/flz_transport/errors.json
 COPY lib ./lib
 COPY sdk/elixir ./sdk/elixir
 COPY LICENSE rel/third_party/THIRD_PARTY_NOTICES.md ./

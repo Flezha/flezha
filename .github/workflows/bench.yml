@@ -12,8 +12,8 @@ on:
   pull_request:
     paths:
       - "sdk/rust"
-      - "flz_transport/**"
-      - "flz_nif/**"
+      - "crates/flz_transport/**"
+      - "crates/flz_nif/**"
       - "lib/flezha/**"
       - "lib/mix/tasks/bench**"
       - "protobufs/**"

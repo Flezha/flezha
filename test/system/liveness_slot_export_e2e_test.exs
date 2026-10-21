@@ -76,9 +76,9 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     hb_timers_fired: "test/system/cell_timers_e2e_test.exs",
     hb_parts_sent: "test/system/part_stream_e2e_test.exs",
     # The runner's own counters, which these mirror, are moved by its unit suite.
-    hb_parts_dropped_no_stream: "flz_core/src/part_tests.rs",
-    hb_parts_dropped_refused: "flz_core/src/part_tests.rs",
-    hb_parts_dropped_too_large: "flz_core/src/part_tests.rs",
+    hb_parts_dropped_no_stream: "crates/flz_core/src/part_tests.rs",
+    hb_parts_dropped_refused: "crates/flz_core/src/part_tests.rs",
+    hb_parts_dropped_too_large: "crates/flz_core/src/part_tests.rs",
     hb_restore_discarded_inputs: "sdk/rust/tests/ack_checkpoint.rs",
     stale_writer_refused: "test/flezha/state/runner_restart_realign_test.exs",
     send_gate_held: "test/flezha/runner/stream_channel_gate_test.exs",

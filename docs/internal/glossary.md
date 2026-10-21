@@ -124,7 +124,7 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   `flz relay start <factory> --id <id> --partitions N` starts N; `flz relay scale <group> M`
   rescales. See [`../public/topics/core/partitioning.md`](../public/topics/core/partitioning.md).
 - **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
-  (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
+  (`crates/flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
   `AddRelay`; the SDK **key-group guard** parks the first frame whose key falls outside it.
 - **Group** — the logical relay N partitions make up, named by the base id, of either run. No
   group record is stored: the single `flz relay list` row and `info`'s coverage check derive

@@ -182,7 +182,7 @@ When `:flezha, :graceful_shutdown_enabled` is `false`, or the coordinator cannot
 
 ### Requirement: `flz controller stop` SHALL run the coordinator over the CLI socket in every controller run mode
 
-`cli/src/controller.rs` `handle_stop/1` SHALL replace the `bin/flezha stop` shell-out with an RPC over the existing `runner_control_channel.sock` to a new `Flezha.Service.CliManager.controller_stop/1` handler that calls `Flezha.Shutdown.Coordinator.shutdown(:cli, opts)`. The CLI SHALL stream coordinator progress (the `[:flezha, :shutdown, :*]` telemetry events, formatted) to the user's terminal until the coordinator returns.
+`crates/cli/src/controller.rs` `handle_stop/1` SHALL replace the `bin/flezha stop` shell-out with an RPC over the existing `runner_control_channel.sock` to a new `Flezha.Service.CliManager.controller_stop/1` handler that calls `Flezha.Shutdown.Coordinator.shutdown(:cli, opts)`. The CLI SHALL stream coordinator progress (the `[:flezha, :shutdown, :*]` telemetry events, formatted) to the user's terminal until the coordinator returns.
 
 Once the coordinator returns and its outcome line is printed, the handler SHALL stop the node with `:init.stop()`, whatever the outcome, so the command ends the controller rather than leaving a drained node running. `--no-wait` stops the node the same way once the drain it dispatched returns.
 

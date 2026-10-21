@@ -15,9 +15,9 @@ SPDX-License-Identifier = "MPL-2.0"
 [[annotations]]
 path = [
   "sdk/**",
-  "flz_core/**",
-  "flz_core_ffi/**",
-  "flz_transport/**",
+  "crates/flz_core/**",
+  "crates/flz_core_ffi/**",
+  "crates/flz_transport/**",
   "protobufs/**",
   # Examples and project templates are meant to be copied into a user's own
   # project, so they carry the SDK's licence rather than the controller's.

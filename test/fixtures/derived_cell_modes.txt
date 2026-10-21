@@ -4,7 +4,7 @@
 # tasklets hang off the same entry channel, and only the one its chain reaches
 # through `key` is dynamic. Then `tasklet|mode`, one per tasklet.
 #
-# Two readers pin it: `flz_core/src/host/check_tests.rs` derives the shape, and
+# Two readers pin it: `crates/flz_core/src/host/check_tests.rs` derives the shape, and
 # the Java SDK's `HostClassDeclarationTest` builds it and reads the modes the
 # core answered.
 

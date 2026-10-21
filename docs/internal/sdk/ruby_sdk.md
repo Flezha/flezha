@@ -12,7 +12,7 @@ permanently supported; it is not yet run by the maintainer in a live deployment,
 defect specific to it is likely to be found by its users first.
 
 - **Gem**: `flezha`.
-- **Source**: `sdk/ruby/`; the native veneer is `flz_core_ffi/src/ruby_glue.rs`,
+- **Source**: `sdk/ruby/`; the native veneer is `crates/flz_core_ffi/src/ruby_glue.rs`,
   behind that crate's `ruby` feature.
 - **Installing**: the supported Ruby versions and how the native library
   reaches the host are in the gem's [`README.md`](../../../sdk/ruby/README.md);

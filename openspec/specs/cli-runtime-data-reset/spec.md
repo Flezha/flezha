@@ -173,7 +173,7 @@ The walk that computes file counts and bytes SHALL be the same in dry-run and ap
 
 `flz reset` SHALL resolve the `storage/` root using, in order: the explicit `--storage-root <PATH>` flag if given; the `FLEZHA_STORAGE_ROOT` environment variable if set; otherwise the default `./storage` relative to the current working directory. Every store is under `<storage root>/app/`; the log directory stays `./storage/logs/`, which the flag does not move.
 
-This resolution SHALL live in one shared helper — `cli/src/args.rs`, `app_data_root/1` over `resolve_app_data_root` — so every CLI subcommand that touches `app_data/` agrees on the location, and SHALL NOT be re-derived at a call site.
+This resolution SHALL live in one shared helper — `crates/cli/src/args.rs`, `storage_root` and `app_dir` — so every CLI subcommand that touches `storage/` agrees on the location, and SHALL NOT be re-derived at a call site.
 
 #### Scenario: Explicit flag wins over env var
 

@@ -12,7 +12,7 @@ defmodule Flezha.Layout.Table do
   `dir/1` resolves a root, `file/2` names a file inside one, and `claim/1` is
   the one `File.mkdir_p` a subtree gets. A caller that spells a root by hand
   is a caller the two runtimes can disagree with: `flz reset` reads the same
-  rows through `cli/src/reset/plan.rs`, so a subtree that is cleared and a
+  rows through `crates/cli/src/reset/plan.rs`, so a subtree that is cleared and a
   subtree that is kept are decided once.
 
   ## The socket directory is not a subtree of the data root
@@ -58,7 +58,7 @@ defmodule Flezha.Layout.Table do
   # rather than the subtree itself.
   #
   # Adding a subtree is adding a row here and the matching row in
-  # `cli/src/reset/plan.rs`; `test/flezha/layout/table_test.exs` asserts no
+  # `crates/cli/src/reset/plan.rs`; `test/flezha/layout/table_test.exs` asserts no
   # module outside this one spells a root, so a private root cannot be added
   # without the gate saying so.
   @subtrees [

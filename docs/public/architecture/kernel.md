@@ -143,7 +143,7 @@ and every such point is consistent.
 
 `event_time` lets late-input correction and point-in-time reads turn a timestamp into a
 sequence number by reading the log instead of guessing. The record is defined in
-`flz_core/src/effect.rs`.
+`crates/flz_core/src/effect.rs`.
 
 ## When a change is durable
 
@@ -488,7 +488,7 @@ Against a slow disk, senders wait. Against a slow or dead runner, the controller
 to a limit, because one stuck runner must not hold the controller that serves every other
 relay. The 8 MiB limit stays as a last resort below the gate; a frame dropped there is a
 defect, counted and reported as `send_buffer_dropping`. The gate is
-`flz_transport/src/transport/send_gate.rs` and `Flezha.Runner.StreamChannel.Gate`.
+`crates/flz_transport/src/transport/send_gate.rs` and `Flezha.Runner.StreamChannel.Gate`.
 
 ### The runner to controller credit loop
 
@@ -515,7 +515,7 @@ once. Grants are batched, never one per record (`Flezha.State.CreditLedger`).
 
 A waiting sender re-checks every 50 ms, so a lost grant costs a short delay rather than a
 freeze. It logs once after waiting 5 s, and the runner's heartbeat reports how often it waited
-(`credit_parked`), so "fed but waiting" can be told apart from "wedged" (`flz_core/src/credit.rs`).
+(`credit_parked`), so "fed but waiting" can be told apart from "wedged" (`crates/flz_core/src/credit.rs`).
 
 A hard bound at 4 times the window (64 MiB by default) still exists. A runner that honours its
 credit cannot reach it, so reaching it emits `[:flezha, :state, :credit_anomaly]`.

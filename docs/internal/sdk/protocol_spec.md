@@ -172,9 +172,9 @@ the logical id.
 Their types and defaults are in [Runner environment variables](../../public/configuration/runner_environment.md#every-variable).
 
 Both are defined once (`max_frame_bytes()` / `max_write_buffer_bytes()` in
-`flz_transport/src/transport/config.rs`) and shared by the runner-side
-payloader (`flz_transport/src/service/payloader.rs`) and the controller's NIF
-`FrameBuffer` (`flz_nif/src/frame_buffer.rs`). Both parsers reject a declared
+`crates/flz_transport/src/transport/config.rs`) and shared by the runner-side
+payloader (`crates/flz_transport/src/service/payloader.rs`) and the controller's NIF
+`FrameBuffer` (`crates/flz_nif/src/frame_buffer.rs`). Both parsers reject a declared
 length **before allocating for it**, on raw bytes before any authentication
 verdict — the only pre-identity defence on an exposed port: an outer
 `Payload Size` above `FLEZHA_MAX_FRAME_BYTES` is refused, an inner
@@ -1201,7 +1201,7 @@ right per-Cell WAL without a side table:
 
 | Offset | Field | Value |
 |--------|-------|-------|
-| 0 | `sdk_lang: u8` | `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python — the allocation table in `flz_core/src/header.rs` |
+| 0 | `sdk_lang: u8` | `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python — the allocation table in `crates/flz_core/src/header.rs` |
 | 1..5 | `sdk_version: u32 BE` | `(major << 16) \| (minor << 8) \| patch` of the **writing SDK's** own released version, each component clamped at 255; `0` means the SDK did not say. Advisory: no reader decides how a body is read from it |
 | 5..9 | `schema_version: u32 BE` | the Tasklet's declared schema version |
 | 9 | `format_id: u8` | `1` postcard change, `2` effect record, `3` timer-ops record, `4` Kryo change (Java), `5` MessagePack change (Node, Ruby, Python), `6` JSON change (PHP), `7` External Term Format change (Elixir) |

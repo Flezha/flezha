@@ -13,8 +13,8 @@
 # Every reader of its own feeds this file to it:
 #   test/flezha/config/parse_test.exs          the controller
 #   sdk/elixir/test/flezha/sdk/knob_test.exs   the Elixir SDK
-#   flz_transport/src/env.rs                   the crates and the Rust SDK
-#   flz_core_ffi/tests/abi/knob.rs             `flz_core_knob`, which the
+#   crates/flz_transport/src/env.rs                   the crates and the Rust SDK
+#   crates/flz_core_ffi/tests/abi/knob.rs             `flz_core_knob`, which the
 #                                              Java, Node, Python, Ruby and
 #                                              PHP SDKs parse through
 

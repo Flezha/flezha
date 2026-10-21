@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Flezha.Catalogue do
-  @shortdoc "Generate cli/catalogue.json from the published operations"
+  @shortdoc "Generate crates/cli/catalogue.json from the published operations"
 
   @moduledoc """
-  Writes `cli/catalogue.json`, the catalogue of every published operation
+  Writes `crates/cli/catalogue.json`, the catalogue of every published operation
   (`Flezha.Service.catalogue/0`), which `flz` embeds: `flz help --json` prints
   it, and the CLI's tests hold every door call `flz` sends to it. The file is
   generated and never edited by hand: `test/flezha/cli/catalogue_test.exs`
@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Flezha.Catalogue do
 
   use Mix.Task
 
-  @path "cli/catalogue.json"
+  @path "crates/cli/catalogue.json"
 
   @impl Mix.Task
   def run(_args) do

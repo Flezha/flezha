@@ -5,7 +5,7 @@
 # Two runtimes read this file and neither derives it. The controller and the
 # Elixir SDK fold it through `Flezha.State.RecordFrame`
 # (`test/flezha/state/durable_frame_conformance_test.exs`); the kernel folds it
-# through `flz_core::restore` (`flz_core/src/restore.rs`'s tests). A framing
+# through `flz_core::restore` (`crates/flz_core/src/restore.rs`'s tests). A framing
 # change on either side fails the other side's suite, which is the only thing
 # that keeps two independent implementations of one on-disk format honest.
 #

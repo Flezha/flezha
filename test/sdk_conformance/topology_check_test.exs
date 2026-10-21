@@ -22,10 +22,10 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   alias FlezhaTest.Helper.ReferenceTopologies
   alias FlezhaTest.Helper.SourceWalk
 
-  @issues "flz_core/src/host/issue.rs"
+  @issues "crates/flz_core/src/host/issue.rs"
   @fixture "test/fixtures/reference_topologies.txt"
   @decl_keys "test/fixtures/host_class_decl_keys.txt"
-  @record "flz_core/src/host/decl.rs"
+  @record "crates/flz_core/src/host/decl.rs"
 
   # The seam's own shape: every spelling the tree used to judge a topology with,
   # before the fold put the verdict in one place. A file outside @seam_files
@@ -33,7 +33,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
   @shape ~r/push\(TopologyIssue::|Err\(TopologyIssue::|linkIssues\.push\(|link_issues\.append\(|@link_issues <<|linkIssues\[\] =|EdgeAlreadyWired: already feeds|amendCheckpoint\(|_amend_checkpoint\(|checkpoint_policy\(|\{:invalid_topology,/
 
   @roots [
-    "flz_core/src",
+    "crates/flz_core/src",
     "sdk/rust/src",
     "sdk/node/src",
     "sdk/python/src",
@@ -46,9 +46,9 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
 
   # The seam: every SDK, the Elixir one included, submits to it.
   @seam_files [
-    "flz_core/src/host/register.rs",
-    "flz_core/src/host/chains.rs",
-    "flz_core/src/host/issue.rs"
+    "crates/flz_core/src/host/register.rs",
+    "crates/flz_core/src/host/chains.rs",
+    "crates/flz_core/src/host/issue.rs"
   ]
 
   # Sites that carry a verdict `flz_core` already reached without deciding
@@ -202,7 +202,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
              respelled and @shape needs updating, or a root has moved.
              """
 
-      assert "flz_core/src/host/register.rs" in matched,
+      assert "crates/flz_core/src/host/register.rs" in matched,
              "the seam itself no longer matches its own shape; @shape is measuring something else"
 
       strangers = matched -- (@seam_files ++ @carries_a_verdict)

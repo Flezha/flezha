@@ -19,12 +19,12 @@ Every failure Flezha reports to a caller SHALL carry five fields: a `code`, a `c
 
 ### Requirement: One catalogue SHALL define every code
 
-The file `flz_transport/errors.json` SHALL be the only definition of the codes. For each code it SHALL give the class, a message template whose `{placeholders}` name keys of `details`, the detail keys, an optional hint, and the internal reasons that map to it. It SHALL also list, by name, the reasons that never reach a caller. The Elixir controller SHALL read it at compile time and the Rust crates SHALL read it at build time. No code, class, message or hint SHALL be written anywhere else in the source.
+The file `crates/flz_transport/errors.json` SHALL be the only definition of the codes. For each code it SHALL give the class, a message template whose `{placeholders}` name keys of `details`, the detail keys, an optional hint, and the internal reasons that map to it. It SHALL also list, by name, the reasons that never reach a caller. The Elixir controller SHALL read it at compile time and the Rust crates SHALL read it at build time. No code, class, message or hint SHALL be written anywhere else in the source.
 
 #### Scenario: One definition
 
 - **WHEN** the source tree is searched for the text of a catalogued message template
-- **THEN** it SHALL be found in `flz_transport/errors.json` and the generated `docs/public/errors.md` only
+- **THEN** it SHALL be found in `crates/flz_transport/errors.json` and the generated `docs/public/errors.md` only
 
 #### Scenario: The catalogue is internally consistent
 
@@ -118,7 +118,7 @@ The Elixir controller SHALL hold the model in `Flezha.Error` alone: the struct, 
 
 #### Scenario: No second printer
 
-- **WHEN** `lib/flezha/cli/`, the door (`lib/flezha/service/admin.ex`) and `cli/src/` are searched for a function that turns a reason into caller-facing text
+- **WHEN** `lib/flezha/cli/`, the door (`lib/flezha/service/admin.ex`) and `crates/cli/src/` are searched for a function that turns a reason into caller-facing text
 - **THEN** none SHALL exist outside `Flezha.Error` and `flz_transport::errors`
 
 #### Scenario: One catchable type per SDK

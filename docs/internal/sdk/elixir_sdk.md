@@ -381,7 +381,7 @@ keyless tasklet → dynamic; else single. Refusals accumulate into one
 `topology.deferred_builder_surface` (names the relay module).
 
 The SDK builds the declaration and `flz_core` judges it, so the names are the reference
-vocabulary every SDK answers with (`flz_core/src/host/issue.rs`). A few refusals are about
+vocabulary every SDK answers with (`crates/flz_core/src/host/issue.rs`). A few refusals are about
 the Elixir surface itself and are judged before the declaration is submitted:
 `topology.channel_named_twice`, `topology.deferred_builder_surface`, a `keyed/1`, `named/2` or
 `output` on an entry, and a tasklet that declares two clocks. The fixture every SDK is driven
