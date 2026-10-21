@@ -497,10 +497,10 @@ defmodule Flezha.Relay.Overwatch do
   # Held while a bind task brings the plugins up on its own copy; a moved running
   # instance keeps its table up, as holding would tear a run ending first down.
   # With no bind in flight and no plugin subscribed (a failed bind, a boot sleeper),
-  # calls and answers go out unsettled, owed to the next bind. Running relays fail at phase.
-  def handle_cast(frame, %__MODULE__{phase: phase} = state)
-      when phase != :running and is_tuple(frame) and elem(frame, 0) in [:io_out, :io_out_batch] and
-             (phase == :suspended or state.halt_reason != nil) and
+  # calls and answers go out unsettled, owed to the next bind. A running relay fails the first test.
+  def handle_cast(frame, %__MODULE__{phase: phase, halt_reason: halt} = state)
+      when (phase == :suspended or halt != nil) and is_tuple(frame) and
+             elem(frame, 0) in [:io_out, :io_out_batch] and
              (state.bind_task != nil or state.extensions.active_mask == 0),
       do: {:noreply, hold_or_owe(frame, state)}
 

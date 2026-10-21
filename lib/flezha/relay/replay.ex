@@ -287,7 +287,7 @@ defmodule Flezha.Relay.Replay do
   def redrive_outboxes(%Overwatch{} = state, owner) do
     class = Overwatch.relay_class(state)
 
-    if state.owes_outputs or ClassRegistry.overwatch_pid(class) == :error,
+    if state.owes_outputs or match?({:error, _}, Lookup.overwatch(class)),
       do: Enum.each(Flezha.State.Supervisor.live_writers(class), &WalWriter.redrive(&1, owner))
 
     :ok
