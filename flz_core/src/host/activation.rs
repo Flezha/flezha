@@ -553,9 +553,9 @@ fn split_outputs(outputs: Vec<schema::Output>) -> (Vec<schema::Output>, Vec<sche
 }
 
 /// The firing an item is, if it is one.
-fn firing_of(item: &CellItem) -> Option<(crate::timer::TimerKind, u64)> {
+fn firing_of(item: &CellItem) -> Option<crate::timer::TimerFiring> {
     match item {
-        CellItem::Timer(fire) => Some((fire.firing.kind, fire.firing.scheduled_at)),
+        CellItem::Timer(fire) => Some(fire.firing),
         CellItem::Input(_) | CellItem::CloseInterval => None,
     }
 }
@@ -590,7 +590,7 @@ fn call_of(item: &CellItem) -> Option<&Arc<str>> {
 /// invocation commits nothing else, so a poison firing parks once instead of
 /// firing forever.
 fn committed_timers(item: &CellItem, timers: Vec<TimerOp>, parked: bool) -> Vec<TimerOp> {
-    let removal = firing_of(item).map(|(kind, at)| TimerOp::cancel(kind, at));
+    let removal = firing_of(item).map(|firing| TimerOp::cancel(firing.kind, firing.scheduled_at));
     match removal {
         _ if parked => removal.into_iter().collect(),
         Some(op) if !timers.contains(&op) => std::iter::once(op).chain(timers).collect(),

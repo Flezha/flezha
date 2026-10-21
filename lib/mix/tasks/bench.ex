@@ -171,17 +171,11 @@ defmodule Mix.Tasks.Bench do
   defp run_default_shape(runtime, num_relays, messages_per_relay, shape, warmup) do
     # `:send` grants its runners a role, which only the scratch namespace takes.
     namespace =
-      cond do
-        runtime != :rust or shape == :send ->
-          Fleet.setup(@bench_namespace, 2, [])
-          @bench_namespace
-
-        Fleet.runners_available?(@default_namespace) ->
-          @default_namespace
-
-        true ->
-          Fleet.setup(@bench_namespace, 2, [])
-          @bench_namespace
+      if runtime == :rust and shape != :send and Fleet.runners_available?(@default_namespace) do
+        @default_namespace
+      else
+        Fleet.setup(@bench_namespace, 2, [])
+        @bench_namespace
       end
 
     try do

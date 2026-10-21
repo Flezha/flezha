@@ -164,7 +164,7 @@ impl TimerPolicy {
         &self,
         pending: &PendingTimers,
         now_ms: u64,
-        firing: Option<(TimerKind, u64)>,
+        firing: Option<TimerFiring>,
     ) -> RefCell<TimerSession> {
         let mut session = TimerSession {
             pending: pending.clone(),
@@ -173,8 +173,8 @@ impl TimerPolicy {
             now_ms,
             firing: None,
         };
-        if let Some((kind, scheduled_at)) = firing {
-            session.open_firing(kind, scheduled_at);
+        if let Some(firing) = firing {
+            session.open_firing(firing);
         }
         RefCell::new(session)
     }
@@ -226,7 +226,7 @@ impl TimerPolicy {
 
     /// Count one op that changed the set; the firing's removal counts as
     /// fired, once.
-    fn count(&self, op: &TimerOp, firing: &mut Option<(TimerKind, u64)>) {
+    fn count(&self, op: &TimerOp, firing: &mut Option<TimerFiring>) {
         let counters = &self.counters;
         if op.register {
             counters.registered_total.fetch_add(1, Ordering::Relaxed);
@@ -234,7 +234,7 @@ impl TimerPolicy {
             return;
         }
         counters.pending.fetch_sub(1, Ordering::Relaxed);
-        if *firing == Some((op.kind, op.scheduled_at)) {
+        if firing.is_some_and(|f| f.kind == op.kind && f.scheduled_at == op.scheduled_at) {
             *firing = None;
             counters.fired_total.fetch_add(1, Ordering::Relaxed);
             TIMERS_FIRED_TOTAL.fetch_add(1, Ordering::Relaxed);
@@ -249,7 +249,7 @@ impl TimerPolicy {
         &self,
         slot: &Arc<CellSlot>,
         ops: &[TimerOp],
-        mut firing: Option<(TimerKind, u64)>,
+        mut firing: Option<TimerFiring>,
         stream: &Arc<FlezhaStream>,
     ) {
         if ops.is_empty() {
@@ -279,18 +279,18 @@ pub struct TimerSession {
     now_ms: u64,
     /// The firing the session opened on: op 0 is its removal, counted as a
     /// firing rather than a cancel.
-    firing: Option<(TimerKind, u64)>,
+    firing: Option<TimerFiring>,
 }
 
 impl TimerSession {
     /// Seed the session with the firing's removal, so it rides the SAME
     /// record as what `on_timer` applies: either both land or the whole
     /// firing repeats.
-    fn open_firing(&mut self, kind: TimerKind, scheduled_at: u64) {
-        let op = TimerOp::cancel(kind, scheduled_at);
+    fn open_firing(&mut self, firing: TimerFiring) {
+        let op = TimerOp::cancel(firing.kind, firing.scheduled_at);
         self.pending.apply(&op);
         self.ops.push(op);
-        self.firing = Some((kind, scheduled_at));
+        self.firing = Some(firing);
     }
 
     pub fn now(&self) -> u64 {
@@ -453,9 +453,9 @@ pub fn arm_interval_deadline(slot: &Arc<CellSlot>) {
 pub fn hold_firing_removal(
     slot: &Arc<CellSlot>,
     ops: &mut Vec<TimerOp>,
-    firing: Option<(TimerKind, u64)>,
+    firing: Option<TimerFiring>,
 ) {
-    let Some((kind, scheduled_at)) = firing else {
+    let Some(TimerFiring { kind, scheduled_at }) = firing else {
         return;
     };
     let Some(at) = ops
@@ -539,7 +539,7 @@ fn drop_committed_firings(slot: &Arc<CellSlot>) {
         let mut pending = slot.timers.lock_recover();
         fired
             .into_iter()
-            .map(|(kind, at)| TimerOp::cancel(kind, at))
+            .map(|firing| TimerOp::cancel(firing.kind, firing.scheduled_at))
             .filter(|op| pending.apply(op))
             .collect()
     };
@@ -628,7 +628,11 @@ mod tests {
             .cancel(TimerKind::ProcessingTime, 31_000));
         session.into_inner().commit(&mut live);
 
-        let session = policy.session(&live, 9_000, Some((TimerKind::ProcessingTime, 9_000)));
+        let firing = TimerFiring {
+            kind: TimerKind::ProcessingTime,
+            scheduled_at: 9_000,
+        };
+        let session = policy.session(&live, 9_000, Some(firing));
         session.into_inner().commit(&mut live);
 
         let view = counters_snapshot()

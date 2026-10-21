@@ -18,7 +18,7 @@ use crate::host::Crossed;
 use crate::relay::instance::RelayInstance;
 use crate::relay::Deadline;
 use crate::routing::Entering;
-use crate::timer::{TimerFire, TimerKind, TimerOp};
+use crate::timer::{TimerFire, TimerFiring, TimerOp};
 
 // ---- the events ------------------------------------------------------------
 
@@ -354,7 +354,7 @@ pub(crate) fn held_removals(slot: &Arc<CellSlot>) -> Vec<TimerOp> {
 }
 
 /// The firings of `slot` whose stage the bind's journal records committed.
-pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<(TimerKind, u64)> {
+pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<TimerFiring> {
     with_cell(slot, |r, node, _| {
         let sheet = r.run.sheet();
         sheet
@@ -362,7 +362,7 @@ pub(crate) fn committed_firings(slot: &Arc<CellSlot>) -> Vec<(TimerKind, u64)> {
             .iter()
             .flat_map(|journal| journal.firings())
             .filter(|&(_, at, key)| at == node && key.cell_key == slot.cell_key)
-            .map(|(_, _, key)| (key.kind, key.scheduled_at))
+            .map(|(_, _, key)| key.firing)
             .collect()
     })
     .unwrap_or_default()

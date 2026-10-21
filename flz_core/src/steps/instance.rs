@@ -20,7 +20,7 @@ use crate::cell::{CellItem, CellSlot};
 use crate::channel::ChannelId;
 use crate::relay::instance::RelayInstance;
 use crate::relay::Deadline;
-use crate::timer::{TimerFire, TimerKind, TimerOp};
+use crate::timer::{TimerFire, TimerFiring, TimerKind, TimerOp};
 
 pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 
@@ -240,38 +240,38 @@ impl Firing {
     pub(crate) fn key(&self) -> FiringKey {
         FiringKey {
             cell_key: self.slot.cell_key.clone(),
-            kind: self.fire.firing.kind,
-            scheduled_at: self.fire.firing.scheduled_at,
+            firing: self.fire.firing,
         }
     }
 }
 
-/// Which timer fired: its Cell's key, its kind and its scheduled timestamp.
+/// Which timer fired: its Cell's key and the firing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FiringKey {
     pub cell_key: Option<Arc<str>>,
-    pub kind: TimerKind,
-    pub scheduled_at: u64,
+    pub firing: TimerFiring,
 }
 
 impl FiringKey {
     pub(crate) fn to_wire(&self) -> crate::pb::TimerTrigger {
         crate::pb::TimerTrigger {
             cell_key: self.cell_key.as_deref().unwrap_or_default().to_string(),
-            event_time: self.kind == TimerKind::EventTime,
-            scheduled_at: self.scheduled_at,
+            event_time: self.firing.kind == TimerKind::EventTime,
+            scheduled_at: self.firing.scheduled_at,
         }
     }
 
     fn from_wire(trigger: &crate::pb::TimerTrigger) -> Self {
         Self {
             cell_key: (!trigger.cell_key.is_empty()).then(|| Arc::from(trigger.cell_key.as_str())),
-            kind: if trigger.event_time {
-                TimerKind::EventTime
-            } else {
-                TimerKind::ProcessingTime
+            firing: TimerFiring {
+                kind: if trigger.event_time {
+                    TimerKind::EventTime
+                } else {
+                    TimerKind::ProcessingTime
+                },
+                scheduled_at: trigger.scheduled_at,
             },
-            scheduled_at: trigger.scheduled_at,
         }
     }
 }
