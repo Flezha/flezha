@@ -14,8 +14,11 @@ Do this:
 
 1. Read the code the row names, at HEAD. Is the mechanism it describes still
    there, unchanged?
-2. Run something. A command with real output, not an argument from reading. If
-   the row already carries a command, run that one first.
+2. Show it. Point at the file and line where the mechanism lives at HEAD, and
+   where it helps, drive the product by hand (the CLI, a private controller from
+   `wip/tools/env.sh`, an IEx expression) and quote the real output. Never run a
+   test, a test file, a gate row or a suite: tests run only at the section
+   checkpoint (`wip/INVARIANTS.md`, "Tests run at three checkpoints").
 3. Time box: <30 minutes>. If it will not reproduce in that time, that is a
    result, not a failure.
 4. Say whether the fix is local or needs a decision: a behaviour or public
@@ -41,11 +44,11 @@ Usually you reproduce the NEXT row while another row is being coded in the same
 tree, so your reading is off the critical path. Then the tree is someone else's:
 
 - Create, change and delete nothing in the tree. Read, and run only commands
-  that leave no file behind in it (existing tests, the CLI, grep, git log).
+  that leave no file behind in it (the CLI, grep, git log); never a test.
 - Write any new regression test as a draft under `wip/repro/<row-id>/`, which
   git ignores and which outlives the session, and give the exact path it belongs
-  at in the tree. The supervisor places it and runs it red when the row becomes
-  current.
+  at in the tree. The supervisor places it when the row becomes current; it
+  runs red at the section checkpoint.
 - Run nothing that loads the machine (a release build, a full suite, a load
   test) while the row in flight is measuring performance. The supervisor says so
   in your brief when it is.

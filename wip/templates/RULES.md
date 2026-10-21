@@ -30,8 +30,19 @@ maintainer's.>
 commands this campaign holds to that bar and how each is checked, so the
 requirement is a gate rather than an intention.
 
-Per item: only the tests the change affects. The full suite: once every <5 to
-10> closed items, and at exit.
+Test runs follow `INVARIANTS.md` "Tests run at three checkpoints": no test or
+gate runs inside a section; each of the three sections ends with one full run of
+every check and suite, every failure fixed and green on its own before the full
+run repeats.
+
+## Sections
+
+<The three sections, each one logical part of the work and about equal in
+expected effort, with the rows of each. Section 3's clean full run is the exit.>
+
+1. <name>: <rows>, <expected effort>
+2. <name>: <rows>, <expected effort>
+3. <name>: <rows>, <expected effort>
 
 ## Definition of done, campaign additions
 

@@ -18,10 +18,12 @@
 
 ## Reproduce before you fix
 
-**Nothing is worked until it is reproduced.** The row carries the command and
-the output it really gave, taken before any code changed. A regression test is
-shown red on the unfixed code and green after. A reproduction nobody ran is a
-hypothesis, and the supervisor runs it rather than reading about it.
+**Nothing is worked until it is reproduced.** Inside a section that means the
+mechanism is shown in the code at HEAD (file and line) or by driving the product
+by hand (the CLI, a private controller from `wip/tools/env.sh`, an IEx
+expression), never by running a test (see "Tests run at three checkpoints").
+The item's regression test is written with the fix; its proof, red on the
+unfixed code and green after, is taken at the section's checkpoint.
 
 An item that will not reproduce inside its timebox is closed as *not
 reproducible*, with what was tried. No code is written for it. Fixes for defects
@@ -45,6 +47,51 @@ after it learns to scroll past the noise.
 - A run that is not clean is not green, whatever the pass count says. Do not
   add to a noisy run: clean it, or make the noise fail the build, before the
   work that needed the run.
+
+## Tests run at three checkpoints, and never in between
+
+Most of the time earlier campaigns lost went into running tests: a suite after
+every small edit, and the same full suite run again and again while most of its
+failures were still unfixed, so most of a day was spent waiting. The work moved
+fast once tests stopped running in the middle of it. Tests are not skipped; they
+run at fixed points, and these rules are absolute.
+
+1. **Three sections of equal work.** Every campaign divides its work into
+   exactly three sections. Each section is one logical part of the work, and the
+   three are about equal in expected effort (effort, not row count). `WORK.md`
+   names the section of every row before the first row starts.
+2. **No test runs inside a section.** While a section is in progress nothing is
+   run: no single test, no test file, no gate row, no `verify.sh`, no suite, no
+   benchmark, neither by a worker nor by the supervisor. A worker compiles and
+   formats the files it touched, because code that does not compile cannot be
+   handed over, and that is all. It writes the tests its item needs and does
+   not run them.
+3. **Each section ends with a checkpoint that runs everything once.** When every
+   row of the section is coded and committed, the checkpoint runs every quality
+   check (warnings-as-errors builds in every language, formatters, linters, the
+   naming, layer and ceiling gates, spec validation, the docs build) and every
+   test suite (core, every SDK, every plugin, end to end, multi node) with
+   `wip/tools/clean-run.sh`, its output saved to a file. The proofs deferred
+   during the section are taken here: each new regression test is shown red with
+   its fix reverted and green with the fix restored.
+4. **Every failure is fixed before the full run is repeated.** From the saved
+   output, list every failing test and every failed check. Fix all of them in
+   one batch. Then run each one **on its own** (its test, its file or its gate
+   row) until every one of them passes individually. Only when **all** of them
+   pass individually may the full run start again. It is never repeated while a
+   single known failure is still unfixed, never to find out whether a failure
+   was flaky (a flaky test is a failing test, and its cause is found), and never
+   after fixing a few failures to "see what is left".
+5. **A section closes on a clean full run**: everything green and no noise. The
+   next section starts only after it, and the third section's clean run is the
+   campaign's exit.
+6. **No run between checkpoints, whoever asks for one**: a reviewer, a hunch, a
+   peer session or a stop hook. A question only a run can answer is written
+   into the section's checkpoint list, and the checkpoint answers it.
+
+The maintainer's global limit of three full runs per session still holds. A
+session that reaches it stops there, with every failure fixed and green on its
+own, and the next session starts with the full run.
 
 ## Say what happened, from the files
 
@@ -114,10 +161,9 @@ read again. These defaults hold for every campaign.
   a new module or public surface, or concurrency, authorization or durability
   logic changed beyond a few lines. A small or low-risk change gets the refine
   pass and the supervisor's reading, nothing more.
-- **Run whatever the goal needs.** There is no limit on reruns: a test, a row or
-  a full suite runs as often as it takes to reproduce a failure, prove a fix or
-  confirm a clean run. An intermittent failure is run until it reproduces, and
-  its fix is run until it holds.
+- **Tests run only at the section checkpoints** ("Tests run at three
+  checkpoints"). An item is handed over compiled and formatted, with its tests
+  written and not run.
 - **Paperwork is what someone reads**: the commit, one `DONE.md` line carrying the
   reproduction command and its key output, and the bug-list row moved. A dev
   note only for a trap the next session would fall into. No evidence pasted into
@@ -164,11 +210,11 @@ hand in every row. Whatever a campaign does in every row is done by a script.
    `DONE.md` line.
 2. Fixed at the mechanism, then swept: every other site with the same shape is
    fixed or named.
-3. A test that was red before the fix and is green after.
+3. A regression test written with the fix; its red-before and green-after proof
+   is taken at the section checkpoint.
 4. Documentation and specs updated **in the same commit**. Never a follow up.
-5. Gates green: `openspec validate --strict`, the citation gate, the naming and
-   boundary gates, the tests the change affects, and the full suite whenever it
-   helps.
+5. The code compiles and its touched files are formatted. Every other gate and
+   every test runs at the section checkpoint, not per item.
 6. One item, one commit. No AI attribution trailer, ever.
 7. The row moves to `DONE.md` with its commit, its net lines and its cost.
 

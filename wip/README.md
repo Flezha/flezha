@@ -80,8 +80,10 @@ a hypothesis until the command has been run and the code has been read.
 
 **One item, one commit**, with the documentation and the spec changes inside it.
 A documentation update deferred to "later" is how a repository ends up
-describing behaviour it does not have. Only the tests the change affects run per
-item; the full suite runs every five to ten items. The record of an item is its
+describing behaviour it does not have. No test runs per item: the work is split
+into three sections of equal effort, each ends with one run of every check and
+suite, and every failure is fixed and green on its own before the full run
+repeats (`INVARIANTS.md`, "Tests run at three checkpoints"). The record of an item is its
 commit and one line in `DONE.md`; a dev note only for a trap the next session
 would fall into.
 

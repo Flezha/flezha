@@ -26,9 +26,12 @@ exists.
 5. **Documentation and specs in the same change.** Grep every symbol you touched
    across `docs/` and `openspec/specs/`. A tracked sentence your change makes
    false is fixed now.
-6. **Run the tests the change affects, and rerun as often as the goal needs**:
-   to reproduce a failure, prove a fix, or confirm a clean run. An intermittent
-   failure is run until it reproduces, and its fix until it holds.
+6. **Run no tests.** Write the tests the change needs and do not run them, nor
+   any other test, gate row, `verify.sh` or suite: they run once at the end of
+   the section (`wip/INVARIANTS.md`, "Tests run at three checkpoints"). Compile
+   with warnings as errors and format the files you touched; that is all you
+   run. Name each new regression test and the line of the fix it guards in your
+   report, so the checkpoint can show it red with the fix reverted.
    **Use the campaign's tools, never hand steps.** `wip/tools/` has the
    environment script (a private controller, ports, the demo exchange, the shared
    native build: never build your own), the verify command (every gate, one line
