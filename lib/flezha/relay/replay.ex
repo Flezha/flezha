@@ -489,11 +489,11 @@ defmodule Flezha.Relay.Replay do
   that could not carry an earlier input runs the same function. An instance
   without durable input has no log, and it does nothing.
 
-  While a bind is in flight this process still holds the channel the relay is
-  leaving, so it re-forwards nothing: the bind's adoption re-forwards the tail.
+  A bind in flight, still on the channel it leaves, is marked to re-forward.
   """
   @spec reforward_undelivered_tail(Overwatch.t()) :: Overwatch.t()
-  def reforward_undelivered_tail(%Overwatch{bind_task: %{}} = state), do: state
+  def reforward_undelivered_tail(%Overwatch{bind_task: %{} = task} = state),
+    do: %Overwatch{state | bind_task: Map.put(task, :reforward, true)}
 
   def reforward_undelivered_tail(%Overwatch{} = state) do
     drop_unrecorded_turns(state)
@@ -579,8 +579,7 @@ defmodule Flezha.Relay.Replay do
   came up between the failed delivery and this call, settled by handing the
   Overwatch the notification it just missed. `:unarmed` means the relay has
   no channel to ask yet; the log still holds the payload, and the bind that
-  gives it one re-forwards the tail. A bind in flight is that bind, and its
-  adoption re-forwards the tail.
+  gives it one re-forwards the tail, as a bind in flight does on adoption.
   """
   @spec arm_bind_reforward(Overwatch.t()) :: :armed | :unarmed
   def arm_bind_reforward(%Overwatch{bind_task: %{}}), do: :armed
@@ -625,7 +624,8 @@ defmodule Flezha.Relay.Replay do
   # dispatching any of it. Re-forwarding in arrival order would put the late
   # input back after the inputs that overtook it and recompute the same wrong
   # answer.
-  defp replay_slice(%Overwatch{} = state, read) do
+  @doc false
+  def replay_slice(%Overwatch{} = state, read) do
     case read do
       [] ->
         :ok

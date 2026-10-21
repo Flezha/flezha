@@ -750,6 +750,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   defp binding_away(ctx, overrides \\ []) do
     {leaving, _pid} = NodeTestHelper.unbound_stream_channel("bindfwd_leaving")
     phase = Keyword.get(overrides, :phase, :running)
+    {:ok, _floor, journaled} = InputLog.tail(ctx.class)
 
     overwatch(
       %{ctx | channel: leaving},
@@ -757,7 +758,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
         effectively_once: true,
         runner_id: "bindfwd_leaving",
         phase: phase,
-        bind_task: %{pid: self(), then: nil, from: phase}
+        bind_task: %{pid: self(), then: nil, from: phase, journaled: journaled}
       ] ++ overrides
     )
   end

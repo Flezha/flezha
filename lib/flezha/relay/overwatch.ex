@@ -93,8 +93,10 @@ defmodule Flezha.Relay.Overwatch do
     liveness_ref: nil,
     # A bind onto another runner (a rebind, a wake, a restarted runner) runs
     # in a task linked to this process so it never blocks the Overwatch and
-    # never outlives it: `%{pid, then, from}`, the task, what the bind carries
-    # and the phase it started from. `nil` when no bind is in flight.
+    # never outlives it: `%{pid, then, from, journaled}`, the task, what the
+    # bind carries, the phase it started from and the input log's last offset
+    # then, plus `reforward` once its own re-forward is owed again. `nil` when
+    # no bind is in flight.
     bind_task: nil,
     # Outputs that arrived while a bind task was binding, newest first,
     # delivered once its binding is adopted.
@@ -579,9 +581,13 @@ defmodule Flezha.Relay.Overwatch do
 
   # Halted: not serving, and the rebind's own bind re-forwards the tail. A
   # re-forward here would push input at the runner the relay is halted away
-  # from — the same reason the ingress cast is dropped while halted.
+  # from — the same reason the ingress cast is dropped while halted. A bind in
+  # flight is owed the notice, which the clause below records on it.
   @impl true
-  def handle_info({:stream_bound, _channel}, %__MODULE__{halt_reason: reason} = state)
+  def handle_info(
+        {:stream_bound, _channel},
+        %__MODULE__{halt_reason: reason, bind_task: nil} = state
+      )
       when reason != nil,
       do: {:noreply, state}
 

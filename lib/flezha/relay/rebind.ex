@@ -13,6 +13,7 @@ defmodule Flezha.Relay.Rebind do
   alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlUnit
+  alias Flezha.State.InputLog
   alias ProcessHub.Service.Migration, as: HubMigration
 
   require Logger
@@ -101,13 +102,20 @@ defmodule Flezha.Relay.Rebind do
   the Overwatch. The task is linked to the Overwatch, so a killed Overwatch
   takes its bind with it and no second bind outlives it. It reports its
   outcome and decides nothing: a failure is a halt the Overwatch declares.
-  `then` is what a wake carries, and `from` the phase the bind started from
-  (`apply_bind_result/2`).
+  `then` is what a wake carries, `from` the phase the bind started from
+  (`apply_bind_result/2`) and `journaled` the input log's last offset then.
+  `reforward` is set when the bind's own re-forward is owed again.
   """
   @spec start_bind(Overwatch.t(), binary(), :stop | nil) :: Overwatch.t()
   def start_bind(%Overwatch{} = state, runner_id, then) do
     relay = bind_relay(state)
     parent = self()
+
+    last =
+      case InputLog.tail(Overwatch.relay_class(state)) do
+        {:ok, _floor, last} -> last
+        {:error, _refused} -> -1
+      end
 
     pid =
       spawn_link(fn ->
@@ -120,7 +128,7 @@ defmodule Flezha.Relay.Rebind do
         send(parent, {:bind_task_result, self(), result})
       end)
 
-    %Overwatch{state | bind_task: %{pid: pid, then: then, from: state.phase}}
+    %Overwatch{state | bind_task: %{pid: pid, then: then, from: state.phase, journaled: last}}
   end
 
   @doc """
@@ -187,11 +195,23 @@ defmodule Flezha.Relay.Rebind do
     # The bound runner's state supersedes a snapshot stored before the bind.
     adopted = %{recovered | bind_task: nil, snapshot: nil}
 
-    # Input that went to the channel this relay left while it bound, and a
-    # re-forward of the task's that met the target unbound, are still owed.
-    if Replay.owed_count(Overwatch.relay_class(adopted)) > 0,
-      do: Replay.reforward_undelivered_tail(adopted),
-      else: adopted
+    case state.bind_task do
+      %{reforward: true} -> Replay.reforward_undelivered_tail(adopted)
+      %{journaled: before} -> reforward_journaled_since(adopted, before)
+      _no_log_read -> adopted
+    end
+  end
+
+  # Input journaled while the task bound went to the channel this relay left.
+  # Only that input: an edge value the task already re-delivered would count
+  # twice, since edges move no Cell's floor.
+  defp reforward_journaled_since(%Overwatch{} = state, before) do
+    class = Overwatch.relay_class(state)
+
+    with {:ok, floor, last} when last > before and last > floor <- InputLog.tail(class),
+         do: Replay.replay_slice(state, InputLog.read_range(class, max(before, floor) + 1, last))
+
+    state
   end
 
   # A failed bind with input journaled meanwhile tries again at once, as any
