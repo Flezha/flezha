@@ -29,7 +29,7 @@ defmodule Flezha.MixProject do
     ]
   end
 
-  # `mix docs` renders the guides as a browsable site under `doc/`. The guides
+  # `mix docs` renders the guides as a browsable site under `_build/.doc/`. The guides
   # carry ExDoc tabsets (`<!-- tabs-open -->`), which are inert HTML comments
   # anywhere else, so one file serves both GitHub and this.
   # `mermaid` code fences render as diagrams. GitHub draws them itself; ExDoc
@@ -241,6 +241,8 @@ defmodule Flezha.MixProject do
   defp docs do
     [
       main: "what_is_flezha",
+      # Beside the other build output; the dot keeps it out of `mix clean --deps`.
+      output: "_build/.doc",
       filter_modules: fn module, _ -> not test_module?(module) end,
       skip_code_autolink_to: &(&1 |> autolink_module() |> test_module?()),
       extras: [
@@ -321,7 +323,8 @@ defmodule Flezha.MixProject do
         "docs/public/contributing/setting_up.md",
         "docs/public/contributing/testing.md",
         "docs/public/contributing/code_standards.md",
-        "docs/public/contributing/releasing.md"
+        "docs/public/contributing/releasing.md",
+        "docs/public/contributing/cla.md"
       ],
       groups_for_extras: [
         "Getting started": [

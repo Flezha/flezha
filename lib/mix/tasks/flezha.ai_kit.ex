@@ -59,7 +59,7 @@ defmodule Mix.Tasks.Flezha.AiKit do
   end
 
   def run(args) do
-    doc_dir = List.first(args, "doc")
+    doc_dir = List.first(args, "_build/.doc")
     map = map(File.read!(Path.join(doc_dir, "llms.txt")))
 
     for dir <- ["sdk", "docs", "templates"], do: File.rm_rf!(Path.join(@root, dir))

@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Flezha.Llms do
-  @shortdoc "Rewrite doc/llms.txt as a small map for AI assistants"
+  @shortdoc "Rewrite _build/.doc/llms.txt as a small map for AI assistants"
 
   @moduledoc """
-  Rewrites the `doc/llms.txt` ExDoc writes into a map an assistant reads whole:
+  Rewrites the `_build/.doc/llms.txt` ExDoc writes into a map an assistant reads whole:
   a "Start here" list, every user-facing guide page with the first sentence of
   its introduction, and the published API modules. Each line links the
   Markdown copy ExDoc writes next to it, so an assistant opens only the pages a
@@ -28,7 +28,7 @@ defmodule Mix.Tasks.Flezha.Llms do
   @impl Mix.Task
   def run(args) do
     Mix.Task.run("compile")
-    doc_dir = List.first(args, "doc")
+    doc_dir = List.first(args, "_build/.doc")
     map = render(doc_dir)
     File.write!(Path.join(doc_dir, "llms.txt"), map)
     File.cp!(Catalogue.path(), Path.join(doc_dir, "catalogue.json"))
