@@ -10,7 +10,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
   one of these rows, which is the point of keeping the bytes in a file rather
   than in each test.
   """
-  use ExUnit.Case, async: true
+  use FlezhaTest.Case, fixtures: [{:tmp_dir, base: Path.expand("storage/tmp")}], async: true
 
   import ExUnit.CaptureLog
 
@@ -84,8 +84,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       end)
     end
 
-    @tag :tmp_dir
-    test "the device walk reaches the same verdict over the same bytes", %{tmp_dir: tmp} do
+    test "the device walk reaches the same verdict over the same bytes", %{tmp: tmp} do
       Enum.each(rows("frame"), fn [name, hex, verdict, seqs] ->
         path = Path.join(tmp, "#{name}.log")
         File.write!(path, bytes(hex))
@@ -105,8 +104,7 @@ defmodule Flezha.State.DurableFrameConformanceTest do
       end)
     end
 
-    @tag :tmp_dir
-    test "one record decoded from bytes and from a device is the same record", %{tmp_dir: tmp} do
+    test "one record decoded from bytes and from a device is the same record", %{tmp: tmp} do
       hex = Enum.find_value(rows("frame"), fn [n, hex | _] -> n == "three_records" && hex end)
       log = bytes(hex)
       path = Path.join(tmp, "three.log")

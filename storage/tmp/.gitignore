@@ -1,0 +1,4 @@
+# Scratch space the test suite and local tools write into. The directory is
+# tracked so it exists in every checkout; nothing written here is.
+*
+!.gitignore

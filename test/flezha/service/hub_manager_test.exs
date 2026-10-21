@@ -17,7 +17,9 @@ defmodule Flezha.Service.HubManagerTest do
 
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
 
-  use FlezhaTest.Case, fixtures: [:env], async: false
+  use FlezhaTest.Case,
+    fixtures: [:env, {:tmp_dir, base: Path.expand("storage/tmp")}],
+    async: false
 
   alias Flezha.Config.Durations
   alias Flezha.Relay.Builder
@@ -69,8 +71,7 @@ defmodule Flezha.Service.HubManagerTest do
   end
 
   describe "registry_backend_config/1" do
-    @tag :tmp_dir
-    test "regression_ensures_registry_backend_atom_routes_to_real_backend", %{tmp_dir: tmp_dir} do
+    test "regression_ensures_registry_backend_atom_routes_to_real_backend", %{tmp: tmp_dir} do
       # Fails when a controller cannot boot at all: ProcessHub treats an
       # unrecognised backend atom as a module name and crashes
       # `setup_storage/2` on the first runner connect. Pin both the atom
@@ -108,8 +109,7 @@ defmodule Flezha.Service.HubManagerTest do
       end
     end
 
-    @tag :tmp_dir
-    test "a boot that skips replay leaves the on-disk registry intact", %{tmp_dir: tmp_dir} do
+    test "a boot that skips replay leaves the on-disk registry intact", %{tmp: tmp_dir} do
       # Fails when a whole-cluster cold boot comes up with zero relays and
       # no way back: the boot that declines to replay must not erase the only
       # on-disk record a later recovery boot reads.

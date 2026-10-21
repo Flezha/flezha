@@ -73,10 +73,12 @@ defmodule FlezhaTest.Case do
     [
       # A state root of this test's own, registered as `:state_root`.
       {:tmp_app_data, fn _opts -> %{base: StateHelpers.tmp_app_data_dir()} end, nil},
-      # A bare temporary directory for a module with no state tree under it.
+      # A bare temporary directory for a module with no state tree under it,
+      # under `base:` when the module names one.
       {:tmp_dir,
        fn opts ->
-         %{tmp: NodeTestHelper.claim_tmp_dir(Keyword.get(opts, :prefix, "flz_case"))}
+         prefix = Keyword.get(opts, :prefix, "flz_case")
+         %{tmp: NodeTestHelper.claim_tmp_dir(prefix, Keyword.get(opts, :base, System.tmp_dir!()))}
        end, fn %{tmp: tmp} -> File.rm_rf!(tmp) end},
       # The five auth stores over a directory of their own.
       {:auth_stores, fn opts -> AuthTestHelper.setup_auth_stores(opts) end, nil},

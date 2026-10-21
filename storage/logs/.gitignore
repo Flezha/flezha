@@ -1,0 +1,4 @@
+# The controller's log files. The directory is tracked so it exists in every
+# checkout; the logs themselves never are.
+*
+!.gitignore
