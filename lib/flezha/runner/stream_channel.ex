@@ -108,11 +108,6 @@ defmodule Flezha.Runner.StreamChannel do
 
   @impl true
   def init({namespace, runner_id, type, name}) do
-    # The runner heartbeats every SECONDARY stream every ~10s; a bound
-    # secondary whose last frame (heartbeat or data) is older than the
-    # threshold is stalled — a silent data-plane wedge that raises no
-    # `{:flz_closed}` write-error. Primary channels are send-only (the
-    # runner never writes them), so the check would flag them forever.
     # Trapped so a session's shutdown runs `terminate/2`: a handle left in the
     # persistent_term pins its listener's descriptors for the node's lifetime.
     Process.flag(:trap_exit, true)

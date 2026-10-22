@@ -1,6 +1,6 @@
 defmodule Flezha.Service.ObservabilityTest do
   # async: false: writes Application env; the observability registry.
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:env], async: false
 
   import FlezhaTest.Case, only: [refute_minted: 2]
 
@@ -197,11 +197,9 @@ defmodule Flezha.Service.ObservabilityTest do
     @system_ops %{source: :cli, principal: "op@_system", role: :ops, namespace: "_system"}
 
     setup do
-      AuthTestHelper.setup_auth_stores(
-        prefix: "flz_obs_switch",
-        claim: true,
-        register_source: true
-      )
+      FlezhaTest.Case.install([
+        {:auth_stores, prefix: "flz_obs_switch", claim: true, register_source: true}
+      ])
 
       on_exit(fn -> Registry.enable_source(:platform_authz) end)
       :ok
@@ -229,27 +227,23 @@ defmodule Flezha.Service.ObservabilityTest do
       prev = Application.get_env(:flezha, :observability, [])
       Application.put_env(:flezha, :observability, Keyword.put(prev, :enabled, false))
 
-      try do
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.list_sources(%{source: :cli})
+      assert {:error, %Flezha.Error{code: "observability.disabled"}} =
+               Observability.list_sources(%{source: :cli})
 
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.list_sinks(%{source: :cli})
+      assert {:error, %Flezha.Error{code: "observability.disabled"}} =
+               Observability.list_sinks(%{source: :cli})
 
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.query(%{source: :s}, %{source: :cli})
+      assert {:error, %Flezha.Error{code: "observability.disabled"}} =
+               Observability.query(%{source: :s}, %{source: :cli})
 
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.unsubscribe(:s, %{source: :cli})
+      assert {:error, %Flezha.Error{code: "observability.disabled"}} =
+               Observability.unsubscribe(:s, %{source: :cli})
 
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.enable_source(:s, %{source: :cli})
+      assert {:error, %Flezha.Error{code: "observability.disabled"}} =
+               Observability.enable_source(:s, %{source: :cli})
 
-        assert {:error, %Flezha.Error{code: "observability.disabled"}} =
-                 Observability.disable_source(:s, %{source: :cli})
-      after
-        Application.put_env(:flezha, :observability, prev)
-      end
+      assert {:error, %Flezha.Error{code: "observability.disabled"}} =
+               Observability.disable_source(:s, %{source: :cli})
     end
   end
 
@@ -528,7 +522,6 @@ defmodule Flezha.Service.ObservabilityTest do
   defp claim_pubsub_sink do
     prev = Application.get_env(:flezha, :observability, [])
     Application.put_env(:flezha, :observability, Keyword.put(prev, :pubsub_sink_enabled, true))
-    on_exit(fn -> Application.put_env(:flezha, :observability, prev) end)
 
     if Process.whereis(PubSubSink) == nil do
       sink = :"obs_tail_pubsub_#{:erlang.unique_integer([:positive])}"

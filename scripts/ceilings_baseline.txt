@@ -7,7 +7,6 @@
 # One `<file> <lines>`, `<file>::<function> <lines>` or `xref <measure> <n>`
 # per line, sorted.
 crates/cli/src/args.rs::scan 62
-crates/cli/src/rpc.rs::child 59
 crates/flz_core/src/admission.rs::admit_from_cell 53
 crates/flz_core/src/command/mod.rs::classify 59
 crates/flz_core/src/command/mod.rs::handle_command 86
@@ -29,7 +28,6 @@ crates/flz_nif/src/driver/quic.rs::accept_streams 58
 crates/flz_transport/src/transport/quic_pair_tests.rs::serve 64
 lib/flezha/observability/counter_table.ex::__using__ 107
 lib/flezha/relay/lifecycle.ex::complete_init 65
-lib/flezha/runner/stream_channel.ex::init 52
 lib/flezha/state/durability_tier/shipper.ex 809
 sdk/elixir/lib/flezha/sdk/declaration.ex::channel 52
 sdk/elixir/lib/flezha/sdk/declaration.ex::from_record 52

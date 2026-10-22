@@ -76,6 +76,8 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
     end
   end
 
-  defp start_channel({_, name, _} = args),
-    do: start_supervised!(Supervisor.child_spec({StreamChannel, args}, id: name))
+  defp start_channel({runner_id, name, type}) do
+    args = {"_system", runner_id, name, type}
+    start_supervised!(Supervisor.child_spec({StreamChannel, args}, id: name))
+  end
 end
