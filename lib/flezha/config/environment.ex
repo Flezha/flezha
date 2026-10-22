@@ -364,20 +364,13 @@ defmodule Flezha.Config.Environment do
 
   @doc """
   The two commands `:test` runs as external processes: one reference runner per
-  data channel the suite expects to be connected before it starts.
-
-  `--quiet` suppresses the `Finished dev profile […] / Running […]` banners
-  cargo emits each time a runner is re-spawned for an ad-hoc test namespace.
-  Build cache hits keep the calls essentially free; only the noise is gone.
+  data channel the suite expects to be connected before it starts. They run the
+  binary `mix test` builds once before it boots, never `cargo run`.
   """
   @spec test_runner_commands() :: [binary()]
   def test_runner_commands() do
     {:ok, cwd} = :file.get_cwd()
-
-    command =
-      "cargo run --quiet --manifest-path=#{cwd}/sdk/rust/test_app/Cargo.toml " <>
-        "--target-dir=./_build/.target"
-
+    command = Path.join(cwd, "_build/.target/debug/rust_runner")
     [command, command]
   end
 end

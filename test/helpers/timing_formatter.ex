@@ -69,7 +69,6 @@ defmodule FlezhaTest.Helper.TimingFormatter do
       end) ++
         (state.tests
          |> Enum.sort_by(fn {_, _, t} -> -t end)
-         |> Enum.take(40)
          |> Enum.map(fn {mod, name, t} ->
            "TEST\t#{inspect(mod)}\t#{name}\t#{div(t, 1000)}\n"
          end))

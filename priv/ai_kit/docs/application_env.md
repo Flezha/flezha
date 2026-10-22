@@ -161,6 +161,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:dlq[:replay_grace_ms]` | ms | `5000` |
 | `:dlq[:retention_check_interval_ms]` | ms | `3600000` |
 | `:dlq[:retention_seconds]` | seconds | `2592000` |
+| `:durability_ship_retry_ms` | ms | `500` |
 | `:durability_tier[:backend]` | one of `none`, `postgres`, `s3`, `local_path`, `unset` | `none` |
 | `:durability_tier[:backend_opts][:access_key_id]` | string | unset |
 | `:durability_tier[:backend_opts][:auto_create]` | bool | `true` |
@@ -197,6 +198,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:healthz_bind` | string | `0.0.0.0` |
 | `:healthz_enabled` | bool | `false` |
 | `:healthz_port` | int | `9569` |
+| `:http_poll_min_interval_ms` | ms | `1000` |
 | `:hub_start_child_ms` | ms | `15000` |
 | `:initial_nodes` | list of atom | `""` |
 | `:input_log_hold_window_ms` | ms | `0` |
@@ -217,6 +219,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:listener_pending_frames` | positive_int | `4096` |
 | `:listener_release_check_ms` | ms | `5000` |
 | `:max_reconnects` | positive_int | `5` |
+| `:migrate_timeout_ms` | ms | `2000` |
 | `:migration_consent[:consent_timeout_ms]` | ms | `5000` |
 | `:migration_consent[:max_defer_ms]` | ms | unset |
 | `:migration_consent[:retry_interval_ms]` | ms | `2000` |
@@ -253,6 +256,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:placement_load_refresh_ms` | ms | `1000` |
 | `:plugin_backlog_bytes` | positive_int | `4194304` |
 | `:plugin_backlog_frames` | positive_int | `4096` |
+| `:plugin_call_timeout_ms` | ms | `2000` |
 | `:plugin_idle_stop_ms` | ms | `60000` |
 | `:plugin_ingest_window` | positive_int | `64` |
 | `:plugin_stable_uptime_ms` | ms | `60000` |
@@ -291,6 +295,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:state_resync_fun` | term | unset |
 | `:state_root` | path | `storage/app/state` |
 | `:static_nodes` | list of atom | `""` |
+| `:stop_release_timeout_ms` | ms | `15000` |
 | `:stream_bind_wait_ms` | ms | `30000` |
 | `:testnet_enabled` | bool | `false` |
 | `:testnet_ws_port` | int | `4500` |
@@ -303,4 +308,5 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:wal_high_watermark_bytes` | int | `16777216` |
 | `:wal_low_watermark_bytes` | int | derived |
 | `:wal_pending_msg_cap` | positive_int | `5000` |
+| `:ws_subscription_min_interval_ms` | ms | `1000` |
 <!-- config-keys:end -->

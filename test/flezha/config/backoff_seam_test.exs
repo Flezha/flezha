@@ -41,16 +41,19 @@ defmodule Flezha.Config.BackoffSeamTest do
       {[:Task], :yield} => 2
     }
 
+    # Every shape below spells one of these, so a file holding none is not parsed.
+    @spelled ["sleep", "Keyword.get", ".call", "bounded", "await", "yield", "\\\\"]
+
     @spec offences() :: [binary()]
     def offences do
       for path <- SourceWalk.files(@roots ++ Path.wildcard("plugins/*/lib"), [".ex"]),
+          String.contains?(SourceWalk.read(path), @spelled),
           offence <- offences(path),
           do: offence
     end
 
     defp offences(path) do
-      {:ok, ast} = Code.string_to_quoted(File.read!(path))
-      {_ast, found} = Macro.prewalk(ast, [], &shape(&1, &2, path))
+      {_ast, found} = Macro.prewalk(SourceWalk.ast(path), [], &shape(&1, &2, path))
       for {line, what} <- Enum.reverse(found), do: "#{path}:#{line} #{what}"
     end
 
@@ -130,7 +133,8 @@ defmodule Flezha.Config.BackoffSeamTest do
   defp offences(shape, allow) do
     for path <- lib_files(),
         path != allow,
-        {line, number} <- Enum.with_index(String.split(File.read!(path), "\n"), 1),
+        Regex.match?(shape, SourceWalk.read(path)),
+        {_path, line, number} <- SourceWalk.lines([path]),
         Regex.match?(shape, line),
         do: "#{path}:#{number}"
   end
@@ -296,13 +300,15 @@ defmodule Flezha.Config.BackoffSeamTest do
     test "a geometric row ascends to its cap and never past it" do
       for {key, %{rungs: nil} = row} <- Backoff.ladders() do
         delays = for attempt <- 1..12, do: Backoff.delay(key, attempt)
-        cap = if is_atom(row.cap), do: Durations.get(row.cap), else: row.cap
+
+        [base, cap] =
+          for ms <- [row.base, row.cap], do: if(is_atom(ms), do: Durations.get(ms), else: ms)
 
         assert Enum.all?(delays, &(&1 <= cap)), "#{key} exceeded its cap"
 
         unless row.jitter do
           assert delays == Enum.sort(delays), "#{key} is not monotone in the attempt"
-          assert hd(delays) == min(row.base, cap)
+          assert hd(delays) == min(base, cap)
         end
       end
     end

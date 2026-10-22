@@ -487,12 +487,19 @@ defmodule Flezha.MixProject do
   end
 
   # Aliases are invoked via `mix <alias>`.
+  defp build_test_runner(_args) do
+    Mix.Task.run("compile")
+    Mix.Tasks.Bench.Fleet.ensure_built(:rust, :test)
+  end
+
   defp aliases do
     [
       # The docs, with the code block lexers `register_highlighters/1` names,
       # then the tutorial site and the map for AI assistants over ExDoc's
       # `llms.txt` and `priv/ai_kit`.
       docs: [&register_highlighters/1, &docs_tutorials_and_assistant_map/1],
+      # The reference runner every test launches, built once per run.
+      test: [&build_test_runner/1, "test"],
       # Build the WebSocket testnet bundle that several `mix test` cases
       # reach for over WS (`flezha_test.exs` "websocket plugin connection
       # start", "beam msg forward plugin connection start", "relay flow

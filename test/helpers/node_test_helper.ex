@@ -684,12 +684,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # UDS-only paths that should disconnect quickly.
     timeout = Keyword.get(opts, :timeout, 5_000)
 
-    {_, disconnected} =
-      runner_event(:disconnected, namespace, runner_id, timeout, fn ->
-        FleetManager.disconnect_runner(namespace, runner_id)
-      end)
+    # A runner whose port died with the process that opened it has already
+    # disconnected, and no second event will come. One that leaves between the
+    # roster read and the attach is judged by the roster again.
+    if runner_id in FleetManager.active_runners(namespace) do
+      {_, disconnected} =
+        runner_event(:disconnected, namespace, runner_id, timeout, fn ->
+          FleetManager.disconnect_runner(namespace, runner_id)
+        end)
 
-    disconnected || raise "temporary test runner not disconnected"
+      disconnected || runner_id not in FleetManager.active_runners(namespace) ||
+        raise "temporary test runner not disconnected"
+    end
+
     :ok
   end
 
@@ -712,7 +719,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   on `Flezha.Process.Poll.until/4`: a state read is the settle signal of last
   resort, and its interval is the suite's one deliberate sleep.
   """
-  def wait_until(fun, timeout_ms, interval_ms \\ 50) do
+  def wait_until(fun, timeout_ms, interval_ms \\ 5) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     settled = fn ->

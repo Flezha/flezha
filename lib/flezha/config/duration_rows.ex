@@ -121,7 +121,7 @@ defmodule Flezha.Config.DurationRows do
     {:hub_declared_mutate_ms, :ms, 5_000, []},
     {:hub_declared_mutate_rpc_ms, :ms, nil, derived: {:headroom, :hub_declared_mutate_ms, 500}},
     {:hub_start_child_ms, :ms, 15_000, key: true},
-    {:migrate_timeout_ms, :ms, 2_000, []},
+    {:migrate_timeout_ms, :ms, 2_000, key: true},
     {:migration_consent_timeout_ms, :ms, 5_000,
      key: {:migration_consent, :consent_timeout_ms}, env: "FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS"},
     {:migration_retry_interval_ms, :ms, 2_000,
@@ -182,8 +182,8 @@ defmodule Flezha.Config.DurationRows do
     # probed in series, so a few wedged ones still fit.
     {:health_probe_budget_ms, :ms, nil, derived: {:factor, :provider_probe_timeout_ms, 3}},
     {:http_listener_idle_ms, :ms, 5_000, []},
-    {:http_poll_min_interval_ms, :ms, 1_000, []},
-    {:plugin_call_timeout_ms, :ms, 2_000, []},
+    {:http_poll_min_interval_ms, :ms, 1_000, key: true},
+    {:plugin_call_timeout_ms, :ms, 2_000, key: true},
     # A call into a provider's own worker: its counters, a hand-over, a stop.
     {:plugin_worker_call_ms, :ms, 5_000, []},
     # Whether a running worker may be handed to a new user, asked of the worker.
@@ -216,7 +216,7 @@ defmodule Flezha.Config.DurationRows do
     {:ws_resubscribe_after_ms, :ms, 0, []},
     {:ws_sink_handoff_timeout_ms, :ms, 5_000, []},
     {:ws_subscription_interval_ms, :ms, 30_000, []},
-    {:ws_subscription_min_interval_ms, :ms, 1_000, []},
+    {:ws_subscription_min_interval_ms, :ms, 1_000, key: true},
     {:ws_subscription_timeout_ms, :ms, 10_000, []},
     # One S3 request, for the durability tier and the file plugins alike.
     {:s3_recv_ms, :ms, 30_000, []},
@@ -231,7 +231,7 @@ defmodule Flezha.Config.DurationRows do
     {:schedule_store_call_ms, :ms, 5_000, []},
 
     # ---- state: logs, watchdogs, retention ---------------------------------
-    {:agent_fsync_interval_ms, :ms, 5, key: true},
+    {:agent_fsync_interval_ms, :ms, 5, key: true, env_default: [test: 1]},
     {:agent_fsync_max_interval_ms, :ms, 1_000, []},
     {:agent_fsync_min_interval_ms, :ms, 1, []},
     {:input_silence_timeout_ms, :ms, 0, key: true, env: "FLEZHA_INPUT_SILENCE_TIMEOUT_MS"},
@@ -284,6 +284,8 @@ defmodule Flezha.Config.DurationRows do
     # The backstop sweep: how stale a quiet cell's remote copy may get.
     {:durability_ship_interval_ms, :ms, 30_000,
      key: {:durability_tier, :ship_interval_ms}, env: "FLEZHA_DURABILITY_SHIP_INTERVAL_MS", min: 1},
+    # The first wait before a failed ship is tried again; it doubles from here.
+    {:durability_ship_retry_ms, :ms, 500, key: true},
 
     # ---- shutdown ----------------------------------------------------------
     {:drain_budget_slack_ms, :ms, 1_000, []},
@@ -299,7 +301,7 @@ defmodule Flezha.Config.DurationRows do
     # A call to the coordinator, whose status reads the signal handler's inside it.
     {:shutdown_coordinator_call_ms, :ms, nil,
      derived: {:headroom, :signal_handler_status_call_ms, 1_000}},
-    {:stop_release_timeout_ms, :ms, 15_000, []},
+    {:stop_release_timeout_ms, :ms, 15_000, key: true},
     # Nested 1 s apart: a relay stop's hub stop, after its flush of at most 1 s,
     # outwaits the Overwatch's shutdown bound, which outwaits its teardown.
     {:overwatch_shutdown_ms, :ms, nil, derived: {:headroom, :stop_release_timeout_ms, -2_000}},

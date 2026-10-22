@@ -73,6 +73,22 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
     end
   end
 
+  @doc """
+  Fire `pid`'s `Flezha.Process.Timer` entry whose key is `key`, or matches the
+  predicate `key`, now: cancel it and send its message. Answers the
+  milliseconds it had left, or `false` when it had already fired.
+  """
+  def fire_timer(pid, key?) when is_function(key?, 1) do
+    {_key, {ref, message}} = Enum.find(:sys.get_state(pid).timers, fn {key, _} -> key?.(key) end)
+
+    case Process.cancel_timer(ref) do
+      false -> false
+      left -> send(pid, message) && left
+    end
+  end
+
+  def fire_timer(pid, key), do: fire_timer(pid, &(&1 == key))
+
   @doc "Empty the calling process's mailbox."
   def flush_all() do
     receive do
