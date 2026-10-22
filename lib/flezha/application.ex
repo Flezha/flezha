@@ -10,7 +10,6 @@ defmodule Flezha.Application do
   alias Flezha.Process.DurableTasks
   alias Flezha.Plugin.Installer.Loader, as: PackageLoader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Lifecycle
   alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
@@ -55,7 +54,7 @@ defmodule Flezha.Application do
 
     # Every hub is built with this strategy later, off the boot path; built
     # here once, a split setting that cannot work stops the boot instead.
-    _ = Lifecycle.partition_tolerance_strategy(HubManager.schedule_hub_id())
+    _ = Lifecycle.partition_tolerance_strategy()
 
     # Before the children are computed: a package's providers are rows of the
     # provider table, whose worker families the tree supervises.

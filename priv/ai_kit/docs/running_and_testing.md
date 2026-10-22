@@ -715,7 +715,6 @@ for the relays of every namespace and for the schedules:
 | --- | --- | --- |
 | `divergence` (the default) | both: a relay can run on each side until the network heals, and write its state and outputs twice | none |
 | `static` | a side with at least `FLEZHA_QUORUM_NODES` controllers | `FLEZHA_QUORUM_NODES`, required |
-| `majority` | a side with more than half of the controllers the cluster counts as members | `FLEZHA_QUORUM_NODES`, optional |
 | `dynamic` | a side that kept `FLEZHA_QUORUM_PERCENT` of the controllers it lost within `FLEZHA_QUORUM_WINDOW_MS` | `FLEZHA_QUORUM_PERCENT`, `FLEZHA_QUORUM_WINDOW_MS` |
 
 A controller on the side that stops:
@@ -735,30 +734,6 @@ A controller on the side that stops:
 
 How each one treats a planned scale-down and a restart:
 
-- **`majority`** keeps a list of member controllers, by node name. A
-  controller that shuts down gracefully drains and leaves the list, and a
-  leave never stops the others, so the cluster can be scaled down one or
-  several controllers at a time. A controller that crashes or is cut off stays
-  on the list and counts as missing. Node names must therefore survive a
-  restart: on Kubernetes the boot refuses `majority` unless
-  `FLEZHA_K8S_HOST_IDENTIFIER=hostname`, since a pod named after its address
-  would come back as a new member each time.
-- With `FLEZHA_AUTO_RESTORE_ENABLED` on, its default, the list is kept beside
-  the registry (`storage/app/process_hub/<hub_id>/registry.members`), so on
-  Kubernetes it lives on the StatefulSet volume. A controller that restarts
-  alone reads it and stays stopped instead of running as a cluster of one.
-  With auto-restore off, the list is kept in memory only. A controller with no
-  list waits for `FLEZHA_QUORUM_NODES` controllers when that is set, and runs
-  alone when it is not. A controller that leaves a namespace's hub because it
-  holds nothing there forgets that hub's list and joins it again as a new
-  member.
-- A controller that died for good and will not come back stays a member until
-  it is removed with
-  `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum.forget_node/2`, called
-  for each hub from a controller's remote console while the rest of the
-  cluster is together. A forget reaches the controllers that are connected;
-  after a split heals, forget it again if the other side's list brought it
-  back.
 - **`static`** counts the controllers that are present, whatever the reason
   the others are gone. `FLEZHA_QUORUM_NODES` must be below the cluster size by
   at least the number of controllers a rolling restart takes down at once,
@@ -767,7 +742,7 @@ How each one treats a planned scale-down and a restart:
 - **`dynamic`** counts a graceful shutdown as a leave, so any number of
   controllers can be scaled down at once; only a sudden loss counts. A split
   that builds up more slowly than the window, one controller at a time, is not
-  seen as a split; use `majority` when that matters. A controller waits for
+  seen as a split; use `static` when that matters. A controller waits for
   `FLEZHA_QUORUM_NODES` controllers when it starts, if that is set.
 
 Each side judges by what it sees. When the network shows a split one

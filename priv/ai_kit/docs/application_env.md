@@ -295,7 +295,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:socket_dir_group` | string | unset |
 | `:socket_files_path` | path | derived per run |
 | `:source_credit_window_bytes` | int | derived |
-| `:split_behaviour` | one of `divergence`, `static`, `majority`, `dynamic` | `divergence` |
+| `:split_behaviour` | one of `divergence`, `static`, `dynamic` | `divergence` |
 | `:state_resync_fun` | term | unset |
 | `:state_root` | path | `storage/app/state` |
 | `:static_nodes` | list of atom | `""` |

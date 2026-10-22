@@ -28,14 +28,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
-  alias ProcessHub.Strategy.PartitionTolerance.{
-    Divergence,
-    DynamicQuorum,
-    MajorityQuorum,
-    StaticQuorum
-  }
-
-  @member_file "registry.members"
+  alias ProcessHub.Strategy.PartitionTolerance.{Divergence, DynamicQuorum, StaticQuorum}
 
   require Logger
 
@@ -384,16 +377,12 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   end
 
   @doc """
-  The partition tolerance strategy `FLEZHA_SPLIT_BEHAVIOUR` picks for `hub_id`.
+  The partition tolerance strategy `FLEZHA_SPLIT_BEHAVIOUR` picks for every hub.
   Raises, naming the variable, on a setting that cannot work; the boot builds
   it once before any hub starts, so a bad setting stops the boot.
-
-  Under `majority` a namespace hub keeps its member list beside its registry,
-  on disk exactly when the registry is; the schedule hub's registry is in
-  memory, so its list gets a file of its own.
   """
-  @spec partition_tolerance_strategy(atom()) :: struct()
-  def partition_tolerance_strategy(hub_id) do
+  @spec partition_tolerance_strategy() :: struct()
+  def partition_tolerance_strategy do
     nodes = Config.get(:quorum_nodes)
 
     case Config.get(:split_behaviour) do
@@ -403,10 +392,6 @@ defmodule Flezha.Service.HubManager.Lifecycle do
       :static ->
         unless nodes, do: refuse(:quorum_nodes, "is required when FLEZHA_SPLIT_BEHAVIOUR=static")
         %StaticQuorum{quorum_size: nodes, startup_confirm: true}
-
-      :majority ->
-        stable_node_names!()
-        %MajorityQuorum{startup_nodes: nodes, path: member_path(hub_id)}
 
       :dynamic ->
         percent = Config.get(:quorum_percent)
@@ -447,39 +432,6 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   rescue
     # A hub going down can still be stored after its registry has gone.
     ArgumentError -> false
-  end
-
-  # The list holds node names. A pod found by its address comes back under a
-  # new one after every restart, and its old name stays a missing member.
-  defp stable_node_names!() do
-    if Config.get(:cluster_discovery) == "k8s_pod_discovery" and
-         Config.get(:k8s_host_identifier) != :hostname do
-      refuse(
-        :k8s_host_identifier,
-        "is #{Config.get(:k8s_host_identifier)}; FLEZHA_SPLIT_BEHAVIOUR=majority counts " <>
-          "controllers by node name, which only hostname keeps across a pod restart"
-      )
-    end
-  end
-
-  # Where the list survives a restart: beside the registry when that is on
-  # disk, and for the schedule hub, whose registry never is, in its own file.
-  defp member_path(hub_id) do
-    if hub_id == HubManager.schedule_hub_id() or Rows.durable_starts?(),
-      do: member_file(hub_id)
-  end
-
-  defp member_file(hub_id), do: Layout.file(:process_hub, [Atom.to_string(hub_id), @member_file])
-
-  @doc """
-  Forgets this node's member list of `hub_id`. A node that leaves a hub's
-  cluster on purpose is no member of it any more; when it starts the hub
-  again it joins as a new one instead of waiting for the members it knew.
-  """
-  @spec drop_member_list(atom()) :: :ok
-  def drop_member_list(hub_id) do
-    _ = File.rm(member_file(hub_id))
-    :ok
   end
 
   defp refuse(name, why), do: raise(ArgumentError, "#{Keys.fetch!(name).env} #{why}")

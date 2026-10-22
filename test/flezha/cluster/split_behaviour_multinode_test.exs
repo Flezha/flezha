@@ -1,10 +1,11 @@
 defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
   @moduledoc """
-  `FLEZHA_SPLIT_BEHAVIOUR=majority` on three controllers. The controller cut
+  `FLEZHA_SPLIT_BEHAVIOUR=dynamic` on three controllers. The controller cut
   off from the other two stops its relays, tells its runner to drop them, says
   `no_quorum` on `/healthz` and refuses a relay start, while the other two run
-  every relay; after the heal each relay runs once. Draining controllers one
-  after another takes them off the member list, so the last one keeps running.
+  every relay; after the heal each relay runs once. A drained controller is not
+  counted as lost, so draining them one after another leaves the last one
+  running.
 
   The three controllers are peers. This node runs no runner of the namespace,
   so it is no member of its hub; it stays connected to every peer through the
@@ -24,7 +25,6 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
-  alias ProcessHub.Strategy.PartitionTolerance.MajorityQuorum
 
   @factory "store_input"
   @ops %{source: :ui, principal: "op@_system", role: :ops, namespace: "_system"}
@@ -33,7 +33,7 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
     namespace = "split-#{System.unique_integer([:positive])}"
 
     app_env = [
-      split_behaviour: :majority,
+      split_behaviour: :dynamic,
       healthz_enabled: true,
       healthz_port: 0,
       convergence_health_enabled: true,
@@ -113,9 +113,6 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
 
     assert :erpc.call(p1, HubManager, :quorum, [hub_id]) == :ok
     assert wait(fn -> counts([p1], hub_id, relays) == ones(relays) end, 30_000)
-
-    hub = :erpc.call(p1, ProcessHub.Hub, :get, [hub_id])
-    assert :erpc.call(p1, MajorityQuorum, :members, [hub]).members == MapSet.new([p1])
   end
 
   defp start_relays(at, ns) do

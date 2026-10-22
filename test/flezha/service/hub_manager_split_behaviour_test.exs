@@ -19,12 +19,7 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ScheduleTestHelper
 
-  alias ProcessHub.Strategy.PartitionTolerance.{
-    Divergence,
-    DynamicQuorum,
-    MajorityQuorum,
-    StaticQuorum
-  }
+  alias ProcessHub.Strategy.PartitionTolerance.{Divergence, DynamicQuorum, StaticQuorum}
 
   @namespace_hub :split_behaviour_test_hub
   @ops %{source: :ui, principal: "op@_system", role: :ops, namespace: "_system"}
@@ -34,12 +29,11 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
     Enum.each(settings, fn {key, value} -> Application.put_env(:flezha, key, value) end)
   end
 
-  defp strategy(hub_id \\ @namespace_hub), do: Lifecycle.partition_tolerance_strategy(hub_id)
+  defp strategy, do: Lifecycle.partition_tolerance_strategy()
 
   describe "the strategy builder" do
-    test "nothing set builds Divergence for both hubs" do
+    test "nothing set builds Divergence" do
       assert strategy() == %Divergence{}
-      assert strategy(HubManager.schedule_hub_id()) == %Divergence{}
     end
 
     test "static takes the quorum in nodes and checks it at start" do
@@ -50,67 +44,6 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
     test "static without FLEZHA_QUORUM_NODES is refused, naming the variable" do
       split(:static)
       assert_raise ArgumentError, ~r/^FLEZHA_QUORUM_NODES is required/, fn -> strategy() end
-    end
-
-    test "majority keeps a namespace hub's list beside its registry" do
-      split(:majority)
-      assert strategy() == %MajorityQuorum{startup_nodes: nil, path: nil}
-
-      split(:majority, quorum_nodes: 3)
-      assert strategy().startup_nodes == 3
-    end
-
-    test "majority keeps a namespace hub's list on disk exactly when its registry is" do
-      split(:majority, auto_restore_enabled: true)
-      root = Flezha.Config.get(:process_hub_registry_root)
-
-      assert strategy().path ==
-               Path.join([root, Atom.to_string(@namespace_hub), "registry.members"])
-    end
-
-    test "majority refuses Kubernetes node names that change on a pod restart" do
-      for identifier <- [:ip, :dns] do
-        split(:majority, cluster_discovery: "k8s_pod_discovery", k8s_host_identifier: identifier)
-
-        assert_raise ArgumentError, ~r/^FLEZHA_K8S_HOST_IDENTIFIER is #{identifier}/, fn ->
-          strategy()
-        end
-      end
-
-      split(:majority, cluster_discovery: "k8s_pod_discovery", k8s_host_identifier: :hostname)
-      assert %MajorityQuorum{} = strategy()
-    end
-
-    test "leaving a hub on purpose forgets its member list and keeps its registry" do
-      namespace = "split-behaviour-leave"
-
-      dir =
-        Path.join(
-          Flezha.Config.get(:process_hub_registry_root),
-          Atom.to_string(Flezha.Identificator.hub(namespace))
-        )
-
-      File.mkdir_p!(dir)
-      on_exit(fn -> File.rm_rf(dir) end)
-      File.write!(Path.join(dir, "registry.members"), "list")
-      File.write!(Path.join(dir, "registry.dets"), "rows")
-
-      assert HubManager.leave_hub(namespace) == :ok
-
-      refute File.exists?(Path.join(dir, "registry.members"))
-      assert File.exists?(Path.join(dir, "registry.dets"))
-    end
-
-    test "majority gives the in-memory schedule hub a member file of its own" do
-      split(:majority)
-      %MajorityQuorum{path: path} = strategy(HubManager.schedule_hub_id())
-
-      root = Flezha.Config.get(:process_hub_registry_root)
-
-      assert path ==
-               Path.join([root, Atom.to_string(HubManager.schedule_hub_id()), "registry.members"])
-
-      refute Path.basename(path) == "registry.dets"
     end
 
     test "dynamic maps the percent, the window in whole seconds rounded up, and the startup count" do
