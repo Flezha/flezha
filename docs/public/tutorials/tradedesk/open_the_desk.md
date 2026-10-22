@@ -18,7 +18,7 @@ A controller with authorization on and no admin writes a one-time token to
 > {: .step}
 
 ```sh
-$ ./bin/flz auth bootstrap "$(cat storage/app/auth/bootstrap.token)"
+$ ./bin/flz auth bootstrap < storage/app/auth/bootstrap.token
 ```
 
 ```output

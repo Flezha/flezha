@@ -8,11 +8,56 @@
 #![allow(dead_code)]
 
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use tempfile::TempDir;
+
+/// A `flzvm` that prints each argument on its own line, then its whole stdin,
+/// and succeeds, so the request `flz` built is readable on stdout.
+pub const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\ncat\nexit 0\n";
+
+/// How an expression binds the arguments line of its stdin, ahead of its call.
+pub const READ_ARGUMENTS: &str = "arguments = IO.read(:line); ";
+
+/// The call every request to a running controller makes.
+pub const DOOR: &str = "Flezha.Service.Cli.call(";
+
+/// The door call a run against `ECHOING` reached, with the arguments line its
+/// stdin carried written where the call names it.
+pub fn door_request(stdout: &str) -> Option<String> {
+    let mut lines = stdout.lines().skip_while(|line| {
+        !line
+            .strip_prefix(READ_ARGUMENTS)
+            .is_some_and(|call| call.starts_with(DOOR))
+    });
+    let call = lines.next()?.strip_prefix(READ_ARGUMENTS)?;
+    let arguments = lines.next().unwrap_or("<no arguments line>");
+    Some(call.replacen(", arguments, ", &format!(", {arguments}, "), 1))
+}
+
+/// The stdin a run over every verb gives each one: `flz auth bootstrap` reads
+/// its token from it, and no other verb reads it.
+pub const BOOTSTRAP_INPUT: &str = "bootstrap-token\n";
+
+/// Run `cmd` with `input` as its whole stdin.
+pub fn output_fed(mut cmd: Command, input: &str) -> Output {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("flz runs");
+    // A run that exits before reading closes the pipe; its output says why.
+    let _ = child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input.as_bytes());
+    child.wait_with_output().expect("flz ends")
+}
 
 pub struct Shim {
     _tmp: TempDir,

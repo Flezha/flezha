@@ -11,7 +11,8 @@ defmodule Flezha.AuthZ.Bootstrap do
        a shared sticky dir), writes a 256-bit token to
        `<auth_dir>/bootstrap.token` with mode `0600`, and emits a
        single `warn` line naming the path.
-    2. **`claim/2`** — invoked by `flz auth bootstrap <token>`.
+    2. **`claim/2`** — invoked by `flz auth bootstrap`, which reads the token
+       from its stdin.
        Verifies the presented token against `bootstrap.token`,
        resolves a principal (cert SAN > cert DN > `--principal`
        flag > freshly minted admin token), binds `admin@_system`,
@@ -233,7 +234,7 @@ defmodule Flezha.AuthZ.Bootstrap do
 
             Logger.warning(
               "[authz.bootstrap] wrote one-time bootstrap token to #{path}; " <>
-                "run `flz auth bootstrap <token>` to claim admin@_system"
+                "run `flz auth bootstrap < #{path}` to claim admin@_system"
             )
 
             :ok

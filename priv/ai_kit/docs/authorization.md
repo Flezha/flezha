@@ -44,10 +44,12 @@ empty `--token` or `FLEZHA_TOKEN` as none.
 With enforcement on and no admin claimed, the controller writes a one-time
 token to `<auth_dir>/bootstrap.token` (`storage/app/auth/bootstrap.token` by
 default, mode `0600`) and logs its path. Whoever claims that token becomes the
-first administrator, and the file is deleted.
+first administrator, and the file is deleted. `flz auth bootstrap` reads the
+token from its standard input, never from an argument, which any local user
+could read.
 
 ```sh
-$ flz auth bootstrap "$(cat storage/app/auth/bootstrap.token)"
+$ flz auth bootstrap < storage/app/auth/bootstrap.token
 ```
 
 ```output
@@ -76,7 +78,7 @@ refused in that state names the path:
 
 ```output
 error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in /var/lib/flezha/storage/app/auth/bootstrap.token on the controller (authz.bootstrap_pending)
-hint: flz auth bootstrap <token>
+hint: flz auth bootstrap < /var/lib/flezha/storage/app/auth/bootstrap.token
 ```
 
 Before writing the token, the controller removes group and other write
@@ -344,7 +346,7 @@ $ flz auth rebootstrap
 ```output
 Bootstrap token written to ./storage/app/auth/bootstrap.token.
 Claim it against the RUNNING controller:
-    flz auth bootstrap 260cd28f8acf6b95e5ac9bec6e7ed73b69665780724253baafcd2ccc14422f11
+    flz auth bootstrap < ./storage/app/auth/bootstrap.token
 The claim unbinds every admin@_system and revokes its _system admin tokens before binding the new admin, and it is audited as a recovery.
 ```
 
@@ -352,7 +354,7 @@ That one-time token is not an admin token, and no other command accepts it.
 Claiming it answers the new admin token (`flzt_...`):
 
 ```sh
-$ flz auth bootstrap 260cd28f8acf6b95e5ac9bec6e7ed73b69665780724253baafcd2ccc14422f11
+$ flz auth bootstrap < ./storage/app/auth/bootstrap.token
 ```
 
 ```output

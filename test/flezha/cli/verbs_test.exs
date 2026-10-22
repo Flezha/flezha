@@ -379,7 +379,7 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
   alias Flezha.Service.Cli
 
   test "the whole verb-family flow: bootstrap → namespace → role → token → whoami" do
-    # `flz auth bootstrap <token>` — claims and prints the minted admin token.
+    # `flz auth bootstrap` — claims and prints the minted admin token.
     :ok = Bootstrap.check_and_write()
     raw_bootstrap = File.read!(Config.bootstrap_token_path()) |> String.trim()
 

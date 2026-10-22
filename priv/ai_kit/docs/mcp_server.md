@@ -145,6 +145,5 @@ for this project's language before writing SDK code.
   stops the cancelled call's VM.
 - **No streaming operations.** `flz relay listen` and `flz observe tail` are
   not tools, as over HTTP.
-- **A message up to about 120 KiB.** A larger one is refused before it is sent.
 - **The token is read when the assistant starts the server.** After issuing a new
   one, restart the assistant's session.

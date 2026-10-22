@@ -9,9 +9,9 @@
 //! it decides itself: its command line, a controller it cannot reach, and an
 //! `flzvm` it cannot start. Every request ends with one options list, and the
 //! caller's token and output format join that list here and nowhere else: no
-//! verb can be gated on the controller and token-less on the wire. The token
-//! itself travels on the child's stdin, never its command line, which any local
-//! user can read.
+//! verb can be gated on the controller and token-less on the wire. The
+//! arguments and the token travel on the child's stdin, never its command line,
+//! which any local user can read.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{exit, Child, ChildStderr, Command, ExitStatus, Stdio};
@@ -54,6 +54,10 @@ pub(crate) fn fail(error: FlezhaError) -> ! {
 /// options list.
 const DOOR: &str = "Flezha.Service.Cli.call";
 
+/// The variable an expression names its arguments by: `request` binds it to
+/// the first line of the child's stdin before anything else runs.
+pub(crate) const ARGUMENTS: &str = "arguments";
+
 /// Run the published operation `name` on the controller with `args`, the
 /// caller's token and format appended to `opts`. Returns only when the child
 /// succeeded, so the caller's next line is its success path.
@@ -62,12 +66,7 @@ pub(crate) fn door(name: &str, args: &[Value], opts: &[Opt], read: &Reading) {
 }
 
 /// The request `door` sends, for the calls that do not go through `door`.
-pub(crate) fn door_request<'a>(
-    name: &str,
-    args: &[Value],
-    opts: &[Opt],
-    read: &'a Reading,
-) -> Request<'a> {
+pub(crate) fn door_request(name: &str, args: &[Value], opts: &[Opt], read: &Reading) -> Request {
     door_call(
         name,
         args,
@@ -79,59 +78,45 @@ pub(crate) fn door_request<'a>(
 
 /// `serde_json` keeps an object's keys sorted, so one invocation builds one
 /// request, byte for byte.
-fn door_call<'a>(
-    name: &str,
-    args: &[Value],
-    opts: &[Opt],
-    token: Option<&'a str>,
-    json: bool,
-) -> Request<'a> {
-    request(opts, token, json, |list| {
-        format!(
-            "{}({}, {}, {})",
-            DOOR,
-            text(name),
-            text(&Value::Array(args.to_vec()).to_string()),
-            list
-        )
+fn door_call(name: &str, args: &[Value], opts: &[Opt], token: Option<&str>, json: bool) -> Request {
+    let arguments = Value::Array(args.to_vec()).to_string();
+    request(Some(arguments), opts, token, json, |list| {
+        format!("{}({}, {}, {})", DOOR, text(name), ARGUMENTS, list)
     })
 }
 
-/// One request for a `flzvm` child: its expression, and the token that
-/// expression's options list reads from the child's stdin. Only `request`
-/// builds one with a token, so an expression that reads a token never goes
-/// without it. No `Debug`: it holds the token.
-pub(crate) struct Request<'a> {
+/// One request for a `flzvm` child: its expression, and the whole stdin that
+/// expression reads — the arguments line, then the token its options list
+/// reads. Only `request` builds one whose expression reads either, so an
+/// expression never reads what was not written. No `Debug`: it holds the token.
+pub(crate) struct Request {
     expression: String,
-    token: Option<&'a str>,
-}
-
-impl Request<'_> {
-    /// An expression with no options list, so no token to read.
-    pub(crate) fn bare(expression: String) -> Request<'static> {
-        Request {
-            expression,
-            token: None,
-        }
-    }
-
-    pub(crate) fn expression(&self) -> &str {
-        &self.expression
-    }
+    stdin: String,
 }
 
 /// The request `build` makes of the options list `keyword_opts_fragment`
-/// renders, holding the token that list reads.
-pub(crate) fn request<'a>(
+/// renders. Its stdin is the arguments line when the expression reads one,
+/// then the token that list reads, which runs to the end: `serde_json` writes
+/// no raw newline, so a JSON document is one line. The line is bound to
+/// `ARGUMENTS` in a statement of its own, because Erlang leaves the order of a
+/// call's arguments undefined, and it must be read before the token.
+pub(crate) fn request(
+    arguments: Option<String>,
     opts: &[Opt],
-    token: Option<&'a str>,
+    token: Option<&str>,
     json: bool,
     build: impl FnOnce(&str) -> String,
-) -> Request<'a> {
-    Request {
-        expression: build(&keyword_opts_fragment(opts, token.is_some(), json)),
-        token,
-    }
+) -> Request {
+    let call = build(&keyword_opts_fragment(opts, token.is_some(), json));
+    let (expression, mut stdin) = match arguments {
+        Some(line) => (
+            format!("{} = IO.read(:line); {}", ARGUMENTS, call),
+            line + "\n",
+        ),
+        None => (call, String::new()),
+    };
+    stdin.push_str(token.unwrap_or_default());
+    Request { expression, stdin }
 }
 
 /// Run `module.fun` in a VM of its own (`flzvm eval`), for a verb that reaches
@@ -153,8 +138,8 @@ pub(crate) fn eval_request(
     fun: &str,
     positional: &[String],
     read: &Reading,
-) -> Request<'static> {
-    request(&[], None, read.output_format() == "json", |list| {
+) -> Request {
+    request(None, &[], None, read.output_format() == "json", |list| {
         let mut parts = positional.to_vec();
         parts.push(list.to_string());
         format!("{}.{}({})", module, fun, parts.join(", "))
@@ -223,42 +208,18 @@ pub(crate) fn call(request: &Request, out: Out) -> io::Result<Answer> {
 pub(crate) type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
 
 /// `call`, with the `flzvm` command named: `rpc` evaluates on the controller,
-/// `eval` in a VM of its own. The request's token is the child's whole stdin;
-/// it gets no other, so nothing it reads can be a line meant for `flz` itself.
+/// `eval` in a VM of its own.
 pub(crate) fn child(
     command: &str,
     request: &Request,
     out: Out,
     stop: Option<Stop>,
 ) -> io::Result<Answer> {
-    let mut spawn = flzvm();
-    spawn
-        .arg(command)
-        .arg(&request.expression)
-        .stdin(Stdio::piped())
-        .stdout(match out {
-            Out::Inherit => Stdio::inherit(),
-            Out::Filter(_) => Stdio::piped(),
-        })
-        .stderr(Stdio::piped());
-    // A `flz` killed outright (SIGKILL, the OOM killer) takes the child with
-    // it. The signal fires when the spawning thread exits, and every caller
-    // waits for its child on that thread.
-    #[cfg(target_os = "linux")]
-    // SAFETY: `prctl` is async-signal-safe and touches no memory of the parent.
-    unsafe {
-        std::os::unix::process::CommandExt::pre_exec(&mut spawn, || {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-            Ok(())
-        });
-    }
-    let mut child = spawn.spawn()?;
-
-    // Closed once written. A child that exits before reading closes the pipe;
-    // its own status and stderr say why, so the failed write adds nothing.
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(request.token.unwrap_or_default().as_bytes());
-    }
+    let stdout = match out {
+        Out::Inherit => Stdio::inherit(),
+        Out::Filter(_) => Stdio::piped(),
+    };
+    let mut child = spawn(command, request, stdout, Stdio::piped())?;
 
     let stderr = child.stderr.take().expect("stderr is piped");
     let forwarder = thread::spawn(move || forward_stderr(stderr));
@@ -283,6 +244,43 @@ pub(crate) fn child(
         status,
         unreachable,
     })
+}
+
+/// Start `flzvm <command> <expression>` and write the request's stdin. The
+/// child gets no other, so nothing it reads can be a line meant for `flz`
+/// itself.
+fn spawn(command: &str, request: &Request, stdout: Stdio, stderr: Stdio) -> io::Result<Child> {
+    let mut cmd = flzvm();
+    cmd.arg(command)
+        .arg(&request.expression)
+        .stdin(Stdio::piped())
+        .stdout(stdout)
+        .stderr(stderr);
+    // A `flz` killed outright (SIGKILL, the OOM killer) takes the child with
+    // it. The signal fires when the spawning thread exits, and every caller
+    // waits for its child on that thread.
+    #[cfg(target_os = "linux")]
+    // SAFETY: `prctl` is async-signal-safe and touches no memory of the parent.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn()?;
+
+    // Written beside the child and closed once written, so a stop is heard
+    // however long the child takes to read. A child that exits before reading
+    // closes the pipe; its own status and stderr say why, so the failed write
+    // adds nothing.
+    if let Some(mut stdin) = child.stdin.take() {
+        let input = request.stdin.clone();
+        thread::spawn(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        });
+    }
+
+    Ok(child)
 }
 
 /// Wait for `child`, killing and reaping it once `stop` says so; with nothing
@@ -491,13 +489,8 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
         }
     }
 
-    let mut child = match flzvm()
-        .arg("rpc")
-        .arg(&door_call("Controller.boot_status", &[], &[], None, false).expression)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
+    let probe = door_call("Controller.boot_status", &[], &[], None, false);
+    let mut child = match spawn("rpc", &probe, Stdio::piped(), Stdio::null()) {
         Ok(c) => c,
         Err(_) => return false,
     };
@@ -519,19 +512,24 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 mod tests {
     use super::*;
 
-    /// The token closes the options list as code that reads it from stdin, so
-    /// its value is never on the child's command line; a call with nothing
-    /// else still ends with the list.
+    /// The arguments and the token are read from stdin, the arguments line
+    /// first, so neither value is on the child's command line; a call with
+    /// nothing else still ends with the list.
     #[test]
-    fn the_token_closes_the_options_list_and_is_read_from_stdin() {
+    fn the_arguments_and_the_token_are_read_from_stdin() {
+        let call = door_call("Dlq.list", &[], &[], Some("abc\"def"), false);
         assert_eq!(
-            door_call("Dlq.list", &[], &[], Some("abc\"def"), false).expression,
-            r#"Flezha.Service.Cli.call("Dlq.list", "[]", [token: IO.read(:eof)])"#
+            call.expression,
+            r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Dlq.list", arguments, [token: IO.read(:eof)])"#
         );
+        assert_eq!(call.stdin, "[]\nabc\"def");
+
+        let call = door_call("Dlq.list", &[Value::Null], &[], None, false);
         assert_eq!(
-            door_call("Dlq.list", &[Value::Null], &[], None, false).expression,
-            r#"Flezha.Service.Cli.call("Dlq.list", "[null]", [])"#
+            call.expression,
+            r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Dlq.list", arguments, [])"#
         );
+        assert_eq!(call.stdin, "[null]\n");
     }
 
     /// A value is data on the controller, never code: `#{` stays text, and a
@@ -552,17 +550,22 @@ mod tests {
         );
     }
 
-    /// The arguments are one JSON array inside one Elixir string: a quote and a
-    /// backslash inside a value stay inside it, an object's keys come out in one
+    /// The arguments are one JSON array on one line: a quote, a backslash and a
+    /// newline inside a value stay inside it, an object's keys come out in one
     /// order, and the options keep theirs with the token last.
     #[test]
-    fn arguments_are_one_escaped_json_array_and_options_keep_their_order() {
-        let fields =
-            serde_json::json!({ "name": "d", "init_values": { "a": "x\"y" }, "cron": "0 8 * * *" });
+    fn arguments_are_one_json_line_and_options_keep_their_order() {
+        let fields = serde_json::json!({ "name": "d\ne", "init_values": { "a": "x\"y" }, "cron": "0 8 * * *" });
         let opts = [("duration_ms", "500".to_string())];
+        let call = door_call("Schedule.add", &[fields], &opts, Some("t"), true);
         assert_eq!(
-            door_call("Schedule.add", &[fields], &opts, Some("t"), true).expression,
-            r#"Flezha.Service.Cli.call("Schedule.add", "[{\"cron\":\"0 8 * * *\",\"init_values\":{\"a\":\"x\\\"y\"},\"name\":\"d\"}]", [duration_ms: 500, output: "json", token: IO.read(:eof)])"#
+            call.expression,
+            r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Schedule.add", arguments, [duration_ms: 500, output: "json", token: IO.read(:eof)])"#
+        );
+        assert_eq!(
+            call.stdin,
+            r#"[{"cron":"0 8 * * *","init_values":{"a":"x\"y"},"name":"d\ne"}]"#.to_string()
+                + "\nt"
         );
     }
 

@@ -27,11 +27,7 @@ use flz_transport::utility::socket_dir;
 use serde_json::{json, Value};
 
 use crate::args::Reading;
-use crate::rpc::{self, text, Out, Request, Stop};
-
-/// The longest request passed on. It rides one argument of the child's
-/// command line, which Linux caps at 128 KiB.
-const MAX_EXPRESSION: usize = 120 * 1024;
+use crate::rpc::{self, text, Out, Stop, ARGUMENTS};
 
 /// Set when SIGINT or SIGTERM arrives: every running child is killed, and no
 /// message is answered after it.
@@ -140,18 +136,18 @@ impl Server<'_> {
     }
 
     fn answer(&self, line: &str, local: bool, stop: Stop) {
-        let online = rpc::request(&[], self.token, false, |list| {
-            format!("Flezha.Mcp.Stdio.answer({}, {})", text(line), list)
+        // The line is the request's arguments line: an assistant's tool
+        // arguments never ride a command line.
+        let online = rpc::request(Some(line.to_string()), &[], self.token, false, |list| {
+            format!("Flezha.Mcp.Stdio.answer({}, {})", ARGUMENTS, list)
         });
-        let offline = Request::bare(format!(
-            "Flezha.Mcp.Stdio.offline({}, {})",
-            text(line),
-            text(&self.socket)
-        ));
-
-        if online.expression().len().max(offline.expression().len()) > MAX_EXPRESSION {
-            return refuse(line, -32_600, "Request too large");
-        }
+        let offline = rpc::request(Some(line.to_string()), &[], None, false, |_| {
+            format!(
+                "Flezha.Mcp.Stdio.offline({}, {})",
+                ARGUMENTS,
+                text(&self.socket)
+            )
+        });
 
         // Stdout is the protocol's alone: a line the child printed that is not
         // a reply, such as a boot-time log line, goes to stderr, where a client
@@ -185,7 +181,7 @@ impl Server<'_> {
         // A child that failed before replying has said why on stderr; the
         // client still gets an answer to its request rather than waiting.
         if !stop() && !replied && !matches!(answered, Ok(ref answer) if answer.status.success()) {
-            refuse(line, -32_603, "Internal error");
+            internal_error(line);
         }
     }
 }
@@ -224,17 +220,16 @@ fn stop_on(mut woken: UnixStream) {
     process::exit(128 + i32::from(signal[0]));
 }
 
-/// A JSON-RPC error for `line`: under its id when it is a request, under a
-/// null id when it cannot be read, and nothing for a notification.
-fn refuse(line: &str, code: i64, message: &str) {
+/// The JSON-RPC internal error for `line`: under its id when it is a request,
+/// under a null id when it cannot be read, and nothing for a notification.
+fn internal_error(line: &str) {
     let id = match serde_json::from_str::<Value>(line) {
         Ok(request) => request.get("id").cloned(),
         Err(_) => Some(Value::Null),
     };
 
     if let Some(id) = id {
-        let error =
-            json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}});
+        let error = json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32_603, "message": "Internal error"}});
         let mut out = io::stdout().lock();
         let _ = writeln!(out, "{}", error);
         let _ = out.flush();

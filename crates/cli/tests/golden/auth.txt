@@ -9,9 +9,13 @@ COMMANDS:
     rebootstrap  Break-glass: recover a lost admin@_system.
     help         Show this help message.
 
+bootstrap reads the one-time token from its standard input, never from an
+argument, which any local user could read:
+    flz auth bootstrap < storage/app/auth/bootstrap.token
+
 rebootstrap is break-glass: it recovers a lost admin@_system. Against a running
-controller it writes storage/app/auth/bootstrap.token and prints it; against a
-stopped one it writes storage/app/auth/REBOOTSTRAP for the next boot.
+controller it writes storage/app/auth/bootstrap.token and prints its path;
+against a stopped one it writes storage/app/auth/REBOOTSTRAP for the next boot.
 
 Break-glass needs write access to storage/app/auth/ and nothing else, which is
 already enough to stop the controller: a claim against a running controller

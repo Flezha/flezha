@@ -122,7 +122,7 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `authz.bootstrap_claimed` | conflict | 6 | this controller's admin is already claimed, so there is no bootstrap token to claim | `flz auth rebootstrap` |
-| `authz.bootstrap_pending` | denied | 4 | authorization is enforced and no admin has claimed the bootstrap yet; its token is in {path} on the controller | `flz auth bootstrap <token>` |
+| `authz.bootstrap_pending` | denied | 4 | authorization is enforced and no admin has claimed the bootstrap yet; its token is in {path} on the controller | `flz auth bootstrap < {path}` |
 | `authz.bootstrap_token_mismatch` | denied | 4 | the token does not match the one in the bootstrap token file |  |
 | `authz.bootstrap_token_missing` | not_found | 5 | no bootstrap token at {path}; a controller writes one at boot while no admin is claimed, relative to the directory it was started from |  |
 | `authz.bootstrap_token_read_failed` | internal | 1 | the bootstrap token at {path} could not be read |  |

@@ -169,7 +169,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 <!-- flz-reference:begin flz auth -->
 | Command | What it does |
 | --- | --- |
-| `flz auth bootstrap <token>` | Claim the first admin with the one-time bootstrap token. |
+| `flz auth bootstrap` | Claim the first admin with the one-time bootstrap token. |
 | `flz auth whoami` | The identity the caller's credential resolves to. |
 | `flz auth rebootstrap [--storage-root <path>]` | Break-glass: recover a lost admin@_system. |
 <!-- flz-reference:end -->

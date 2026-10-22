@@ -19,11 +19,12 @@ const REQUEST: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
 const NOTIFICATION: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
 
 /// A controller that cannot be reached, and a VM of its own that logs a line
-/// at boot, replies, and shows on stderr the expression it was handed.
+/// at boot, replies, and shows on stderr the expression it was handed and the
+/// line its stdin carried.
 const OFFLINE: &str = "#!/bin/sh
 case \"$1\" in
 rpc) echo '--rpc-eval : RPC failed with reason :noconnection' >&2; exit 1 ;;
-eval) echo 'a boot log line'; echo '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}'; echo \"$2\" >&2 ;;
+eval) echo 'a boot log line'; echo '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}'; echo \"$2\" >&2; cat >&2 ;;
 esac
 ";
 
@@ -70,7 +71,12 @@ fn an_unreachable_controller_hands_the_line_to_a_vm_of_its_own() {
         vec![serde_json::json!({"jsonrpc": "2.0", "id": 7, "result": {}})]
     );
     assert!(stderr.contains("a boot log line"), "{}", stderr);
-    assert!(stderr.contains("Flezha.Mcp.Stdio.offline("), "{}", stderr);
+    assert!(
+        stderr.contains("arguments = IO.read(:line); Flezha.Mcp.Stdio.offline(arguments, "),
+        "{}",
+        stderr
+    );
+    assert!(stderr.contains(&format!("{REQUEST}\n")), "{}", stderr);
     assert!(!stderr.contains("noconnection"), "{}", stderr);
 }
 
@@ -120,25 +126,26 @@ fn a_bad_line_does_not_end_the_session() {
     assert_eq!(ids, vec![Value::from(1), Value::from(2)]);
 }
 
+/// A request rides the child's stdin, so one past the 128 KiB a command-line
+/// argument may hold is handed on whole.
 #[test]
-fn a_request_past_the_argument_limit_is_refused_without_a_child() {
-    let shim = Shim::new(FLZ_BIN, FAILING);
+fn a_request_past_the_argument_limit_is_handed_on() {
+    let shim = Shim::new(FLZ_BIN, OFFLINE);
     let large = format!(
-        r#"{{"jsonrpc":"2.0","id":"big","method":"ping","params":{{"pad":"{}"}}}}"#,
+        r#"{{"jsonrpc":"2.0","id":7,"method":"ping","params":{{"pad":"{}"}}}}"#,
         "x".repeat(130 * 1024)
     );
     let out = serve(&shim, &[&large]);
 
-    let answered = replies(&out);
-    assert_eq!(answered[0]["id"], "big");
-    assert_eq!(answered[0]["error"]["code"], -32_600);
-    assert!(!String::from_utf8_lossy(&out.stderr).contains("it broke"));
+    assert_eq!(replies(&out)[0]["id"], 7);
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&format!("{large}\n")));
 }
 
 /// A controller that hangs on a `tools/call`, recording the hung pid beside
 /// itself, and answers anything else at once.
 const HANGS_ON_CALL: &str = "#!/bin/sh
-case \"$2\" in
+read -r line
+case \"$line\" in
 *tools/call*) echo $$ > \"$(dirname \"$0\")/hung.pid\"; exec sleep 30 ;;
 *) echo '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}' ;;
 esac

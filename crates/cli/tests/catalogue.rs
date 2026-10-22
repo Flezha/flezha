@@ -18,15 +18,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
-use common::Shim;
+use common::{door_request, output_fed, Shim, BOOTSTRAP_INPUT, DOOR, ECHOING};
 use serde_json::{Deserializer, Value};
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
-
-/// A `flzvm` that prints each argument on its own line and succeeds.
-const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n";
-
-const DOOR: &str = "Flezha.Service.Cli.call(";
 
 /// One invocation per operation `flz` sends.
 const INVOCATIONS: &[&[&str]] = &[
@@ -53,7 +48,7 @@ const INVOCATIONS: &[&[&str]] = &[
     &["runner", "dropped"],
     &["runner", "readmit", "stable-0123"],
     &["role", "bind", "p", "app", "ns"],
-    &["auth", "bootstrap", "t"],
+    &["auth", "bootstrap"],
     &["namespace", "create", "ns", "--Xmax_relays=3"],
     &["namespace", "delete", "ns"],
     &["namespace", "show", "ns"],
@@ -229,16 +224,22 @@ fn door_name(literal: &str) -> bool {
 
 /// The operation and the arguments one echoed request names.
 fn sent(stdout: &str) -> Option<(String, Vec<Value>)> {
-    let line = stdout.lines().find(|line| line.starts_with(DOOR))?;
-    let mut values = Deserializer::from_str(&line[DOOR.len()..]).into_iter::<Value>();
+    let request = door_request(stdout)?;
+    let call = request.strip_prefix(DOOR)?;
+    let mut values = Deserializer::from_str(call).into_iter::<Value>();
     let name = values.next()?.ok()?.as_str()?.to_string();
-    let rest = line[DOOR.len()..][values.byte_offset()..].trim_start_matches([',', ' ']);
-    let args_text = Deserializer::from_str(rest)
-        .into_iter::<Value>()
+    let rest = call[values.byte_offset()..].trim_start_matches([',', ' ']);
+    let args = Deserializer::from_str(rest)
+        .into_iter::<Vec<Value>>()
         .next()?
         .ok()?;
-    let args: Vec<Value> = serde_json::from_str(args_text.as_str()?).ok()?;
     Some((name, args))
+}
+
+fn run(shim: &Shim, argv: &[&str]) -> std::process::Output {
+    let mut cmd = shim.cmd();
+    cmd.args(argv);
+    output_fed(cmd, BOOTSTRAP_INPUT)
 }
 
 #[test]
@@ -264,7 +265,7 @@ fn every_request_sends_an_operation_its_row_names() {
     let mut wrong: Vec<String> = Vec::new();
 
     for argv in INVOCATIONS {
-        let out = shim.run(argv);
+        let out = run(&shim, argv);
         let Some((name, _args)) = sent(&String::from_utf8_lossy(&out.stdout)) else {
             continue;
         };
@@ -291,7 +292,7 @@ fn every_request_sends_a_count_of_arguments_its_operation_takes() {
     let mut reached = BTreeSet::new();
 
     for argv in INVOCATIONS {
-        let out = shim.run(argv);
+        let out = run(&shim, argv);
         let Some((name, args)) = sent(&String::from_utf8_lossy(&out.stdout)) else {
             wrong.push(format!("flz {} sent no door call", argv.join(" ")));
             continue;

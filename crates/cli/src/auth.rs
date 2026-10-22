@@ -1,11 +1,12 @@
 use std::fs;
-use std::io::Write;
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
 use flz_transport::errors::FlezhaError;
+use serde_json::Value;
 
-use crate::args::{app_dir, storage_root, Positional, Reading, STORAGE_ROOT};
-use crate::dispatch::{Command, Missing, Verb};
+use crate::args::{app_dir, storage_root, Reading, STORAGE_ROOT};
+use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, controller_is_up, DEFAULT_PROBE_TIMEOUT_MS};
 
@@ -15,7 +16,8 @@ pub(crate) const TABLE: Command = Command {
     notes: Some(help::AUTH),
     verbs: &[
         Verb::door("bootstrap")
-            .taking(&[Positional::required("<token>")])
+            .sending(&[Arg::Built(bootstrap_token)])
+            .strict()
             .calls(&["Namespace.bootstrap"]),
         Verb::door("whoami").calls(&["Namespace.whoami"]),
         Verb::new("rebootstrap", handle_rebootstrap)
@@ -25,6 +27,26 @@ pub(crate) const TABLE: Command = Command {
     missing: Missing::Screen,
     unknown_prints_help: false,
 };
+
+const CLAIM: &str = "flz auth bootstrap < storage/app/auth/bootstrap.token";
+
+/// The one-time token, as the first line of `flz`'s own stdin: a credential
+/// written on a command line is readable by any local user. A terminal is
+/// refused rather than waited on, since nothing would say it is being read.
+fn bootstrap_token(_read: &Reading) -> Option<Value> {
+    let stdin = io::stdin();
+    let mut line = String::new();
+    if !stdin.is_terminal() {
+        let _ = stdin.lock().read_line(&mut line);
+    }
+    match line.trim() {
+        "" => rpc::fail(FlezhaError::with(
+            "usage.missing_argument",
+            [("usage", CLAIM.into())],
+        )),
+        token => Some(Value::from(token)),
+    }
+}
 
 // Break-glass recovery for a lost admin@_system. Both readings need filesystem
 // access to `storage/app/auth/` and nothing else — the same trust the original
@@ -63,7 +85,7 @@ fn recover_online(auth_dir: &Path) {
 
     println!("Bootstrap token written to {}.", path.display());
     println!("Claim it against the RUNNING controller:");
-    println!("    flz auth bootstrap {}", token);
+    println!("    flz auth bootstrap < {}", path.display());
     println!(
         "The claim unbinds every admin@_system and revokes its _system admin tokens \
          before binding the new admin, and it is audited as a recovery."

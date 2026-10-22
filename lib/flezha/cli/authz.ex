@@ -12,7 +12,7 @@ defmodule Flezha.Service.Cli.Authz do
     IO.puts("role:      #{identity.role || "-"}")
   end
 
-  @doc "`flz auth bootstrap <token>`."
+  @doc "`flz auth bootstrap`."
   def bootstrap(%{principal: principal, minted_token: minted}, _args, _opts) do
     IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
     if minted, do: IO.puts("admin token (shown once, store it now): #{minted}")

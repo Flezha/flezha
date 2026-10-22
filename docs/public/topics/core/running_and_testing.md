@@ -855,7 +855,7 @@ reported `kept` with the reason and the exit code does not change.
   `<auth_dir>/bootstrap.token` and names the path in its log. Until it is
   claimed, administration verbs are refused and every runner is admitted
   without a credential into any namespace but `_system`. Claim it at once with
-  `flz auth bootstrap <token>`, above all when the reset was meant to revoke a
+  `flz auth bootstrap < <auth_dir>/bootstrap.token`, above all when the reset was meant to revoke a
   leaked secret, then bind roles and issue runner credentials again
   ([`authorization.md`](authorization.md)).
 - **`--include-audit` erases the audit trail.** Copy `storage/app/audit/` first if

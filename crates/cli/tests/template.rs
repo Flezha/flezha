@@ -12,12 +12,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use common::Shim;
+use common::{Shim, ECHOING};
 use tempfile::TempDir;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
-
-const ECHOING: &str = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 0\n";
 
 const TEMPLATE: &str = r##"#!/bin/sh
 echo 'a boot log line'

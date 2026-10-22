@@ -25,9 +25,11 @@ const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 /// Unreachable for the first `$FLZ_TEST_UNREACHABLE` calls, then
 /// `$FLZ_TEST_ANSWER` with exit `$FLZ_TEST_ANSWER_CODE`: on stdout when that is
 /// 0, on stderr otherwise, which is where a controller's verdict lands. Every
-/// call appends its expression to `$FLZ_TEST_CALLS`.
+/// call appends its expression and its stdin's arguments line to
+/// `$FLZ_TEST_CALLS`, as one line.
 const FLAKY_NODE: &str = r#"#!/bin/sh
-printf '%s\n' "$2" >> "$FLZ_TEST_CALLS"
+read -r arguments
+printf '%s %s\n' "$2" "$arguments" >> "$FLZ_TEST_CALLS"
 n=$(wc -l < "$FLZ_TEST_CALLS")
 if [ "$n" -le "$FLZ_TEST_UNREACHABLE" ]; then
   printf '%s\n' '--rpc-eval : RPC failed with reason :noconnection' >&2
@@ -102,12 +104,16 @@ fn read_calls(path: &Path) -> Vec<String> {
 }
 
 /// The milliseconds a `Controller.boot_await` door call asks the node for: the
-/// one number in its argument array.
-fn budget_ms(expression: &str) -> u64 {
-    let args = expression
-        .strip_prefix(r#"Flezha.Service.Cli.call("Controller.boot_await", "["#)
-        .unwrap_or_else(|| panic!("not a boot_await call: {expression}"));
-    args.split(']').next().unwrap().trim().parse().expect("ms")
+/// one number in its arguments line, which follows the expression.
+fn budget_ms(call: &str) -> u64 {
+    let (expression, arguments) = call.rsplit_once(' ').expect("expression and arguments");
+    assert!(
+        expression
+            .starts_with(r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Controller.boot_await", arguments, "#),
+        "not a boot_await call: {call}"
+    );
+    let [ms]: [u64; 1] = serde_json::from_str(arguments).expect("one number");
+    ms
 }
 
 /// Three unreachable answers, then the node's own verdict, which is the answer.

@@ -250,7 +250,8 @@ disk_death() { # disk_death <backend>
   # actually use afterwards.
   local boot_token
   boot_token="$(docker exec "$first" cat /flezha/storage/app/auth/bootstrap.token 2>/dev/null)"
-  flz "$first" auth bootstrap "$boot_token" >"$LOGDIR/${backend}-bootstrap.log" 2>&1
+  printf '%s\n' "$boot_token" | docker exec -i "$first" /flezha/bin/flz auth bootstrap \
+    >"$LOGDIR/${backend}-bootstrap.log" 2>&1
   local admin_token
   admin_token="$(grep -oE 'flzt_[A-Za-z0-9_-]+' "$LOGDIR/${backend}-bootstrap.log" | head -1)"
 
@@ -316,7 +317,8 @@ disk_death() { # disk_death <backend>
     fail "the replacement re-entered the bootstrap flow"
   fi
 
-  flz "$second" auth bootstrap "$boot_token" >"$LOGDIR/${backend}-reclaim.log" 2>&1
+  printf '%s\n' "$boot_token" | docker exec -i "$second" /flezha/bin/flz auth bootstrap \
+    >"$LOGDIR/${backend}-reclaim.log" 2>&1
   refute "the bootstrap claim is not re-runnable" "$LOGDIR/${backend}-reclaim.log" "admin@_system"
 
   docker rm -f "$second" >/dev/null 2>&1

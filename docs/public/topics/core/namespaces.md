@@ -84,7 +84,7 @@ refused, and the refusal says what is missing:
 
 ```output
 error: authorization is enforced and no admin has claimed the bootstrap yet; its token is in storage/app/auth/bootstrap.token on the controller (authz.bootstrap_pending)
-hint: flz auth bootstrap <token>
+hint: flz auth bootstrap < storage/app/auth/bootstrap.token
 ```
 
 ```sh
