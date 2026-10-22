@@ -406,12 +406,17 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp continued?(entry, ref),
     do: Lineage.relation(entry.lineage, Ref.lineage(ref)) == :descendant
 
+  # A local file that refuses to be read (a corrupt record raises from the
+  # fold) fails this reference alone: the shipper serves every relay, and a
+  # crash would stop shipping for all of them.
   defp do_ship(state, ref) do
     if Artifact.whole_payload?(ref) do
       ship_whole_payload(state, ref)
     else
       ship_seq_addressed(state, ref)
     end
+  rescue
+    e in RuntimeError -> {:error, {:unreadable, Exception.message(e)}}
   end
 
   # Whole-payload artifact (the registry cspec, a parked-failure set, a

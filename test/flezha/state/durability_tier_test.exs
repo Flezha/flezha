@@ -595,6 +595,23 @@ defmodule Flezha.State.DurabilityTierTest do
       assert %{failures: 0, pending_since_ms: nil, retry_in_ms: nil} = status_of(ref)
     end
 
+    test "a refused record fails its own reference and every other one still ships", ctx do
+      ref = {:cell, ctx.cell_id}
+      other = {ctx.class, "task", "k2"}
+      TestHelpers.write_wal(other, 0..3)
+      path = Paths.wal_path(ctx.cell_id)
+      :ok = TestHelpers.corrupt_record_body(path, Enum.at(TestHelpers.record_offsets(path), 1))
+      shipper = Process.whereis(Shipper)
+
+      assert {:error, {:unreadable, reason}} = Shipper.ship_now(ref)
+      assert reason =~ "crc_mismatch"
+      assert %{failures: 1, pending_since_ms: pending} = status_of(ref)
+      assert is_integer(pending)
+
+      assert Process.whereis(Shipper) == shipper
+      assert :ok = Shipper.ship_now({:cell, other})
+    end
+
     test "an RPO breach is reported once the target is exceeded", ctx do
       ref = {:cell, ctx.cell_id}
 
