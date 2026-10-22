@@ -61,7 +61,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   end
 
   test "install before the first start, load at boot, and every status across restarts", ctx do
-    example = PluginPackage.example!()
+    example = package_example!(ctx)
 
     # Installed into a release that has never started: no controller to reach.
     {out, 0} = flz(ctx, ["plugin", "install", example])
@@ -164,12 +164,32 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     assert out =~ "answered"
   end
 
+  # The real task, run where a plugin author runs it; it builds into the
+  # example's own `_build`.
+  defp package_example!(ctx) do
+    out = Path.join(ctx.tmp, "pkg")
+
+    {log, status} =
+      System.cmd("mix", ["flezha.plugin.package", "--output", out],
+        cd: "test/apps/example_plugin",
+        env: [{"MIX_ENV", "prod"}],
+        stderr_to_stdout: true
+      )
+
+    if status != 0, do: flunk("mix flezha.plugin.package failed (#{status}):\n#{log}")
+    Path.join(out, "flezha_example_plugin-0.1.0.fpz")
+  end
+
   # The release `flz` copies the release-built binary, so both are built from
-  # the tree under test; `_build/prod/rel` is left alone.
+  # the tree under test. The release compiles under its own build root, so the
+  # repository's `_build/prod` is never written.
   defp build_release!(path) do
+    root = Path.expand("_build/system_release")
+
     for {cmd, args, env} <- [
           {"cargo", ~w(build -p flz --release), []},
-          {"mix", ~w(release flezha --overwrite --quiet --path) ++ [path], [{"MIX_ENV", "prod"}]}
+          {"mix", ~w(release flezha --overwrite --quiet --path) ++ [path],
+           [{"MIX_ENV", "prod"}, {"MIX_BUILD_ROOT", root}]}
         ] do
       {out, status} = System.cmd(cmd, args, env: env, stderr_to_stdout: true)
       if status != 0, do: flunk("#{cmd} #{Enum.join(args, " ")} failed (#{status}):\n#{out}")

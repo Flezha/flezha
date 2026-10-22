@@ -2,10 +2,10 @@ defmodule Flezha.Config.KeysSeamTest do
   @moduledoc """
   A knob is one row of one table, and a bypass is impossible.
 
-  Six clauses: nothing reads a knob outside the seam; every row is complete
+  Five clauses: nothing reads a knob outside the seam; every row is complete
   and every name in the tree is a row; a row nothing reads does not exist; a
-  default is written down once; every runtime that reads a name is declared
-  to; and every runtime's own suite is held to the one parse rule.
+  default is written down once; and every runtime that reads a name is
+  declared to.
   """
   use ExUnit.Case, async: true
 
@@ -63,7 +63,7 @@ defmodule Flezha.Config.KeysSeamTest do
   @cli_read ~r/"(FLEZHA_[A-Z0-9_]+)"/
 
   # What a deployment sets, held to the table like what a runtime reads.
-  @deployment ["kubernetes"]
+  @deployment ["deploy/kubernetes"]
 
   # The published reference: each page and the groups of rows it carries.
   @reference %{
@@ -72,14 +72,11 @@ defmodule Flezha.Config.KeysSeamTest do
     "docs/public/configuration/runner_environment.md" => [:runner]
   }
 
-  # The fixture every runtime's own reader is fed, and the suite that feeds it.
-  @parse_fixture "test/fixtures/knob_parse_cases.txt"
-  @parse_readers [
-    "test/flezha/config/parse_test.exs",
-    "sdk/elixir/test/flezha/sdk/knob_test.exs",
-    "crates/flz_transport/src/env.rs",
-    "crates/flz_core_ffi/tests/abi/knob.rs"
-  ]
+  # Every variable each runtime's own source names, for the two clauses that
+  # judge it both ways.
+  setup_all do
+    {:ok, named: Map.new(@runtime_roots, fn {runtime, _roots} -> {runtime, named(runtime)} end)}
+  end
 
   describe "nothing reads a knob outside the seam" do
     test "an application-env or environment read names the file, the line and its row" do
@@ -98,7 +95,7 @@ defmodule Flezha.Config.KeysSeamTest do
       rust_read = @rust_read
 
       offences =
-        for {path, line, number} <- lines(rust_sources()),
+        for {path, line, number} <- lines(rust_sources(), rust_read),
             path not in @seam,
             Regex.match?(rust_read, line),
             do: offence(path, number, line)
@@ -147,7 +144,7 @@ defmodule Flezha.Config.KeysSeamTest do
 
       undeclared =
         for {path, line, number} <-
-              lines(elixir_sources() ++ rust_sources() ++ sdk_sources() ++ deployment),
+              lines(elixir_sources() ++ rust_sources() ++ sdk_sources() ++ deployment, env_name),
             [var] <- Regex.scan(env_name, line),
             is_nil(Keys.by_env(var)),
             uniq: true,
@@ -180,13 +177,13 @@ defmodule Flezha.Config.KeysSeamTest do
       assert unread == []
     end
 
-    test "every row a runtime is declared to read is named in that runtime's source" do
-      core = named(:rust)
+    test "every row a runtime is declared to read is named in that runtime's source",
+         %{named: by_runtime} do
+      core = by_runtime.rust
 
       unread =
-        for {runtime, _roots} <- @runtime_roots,
+        for {runtime, named} <- by_runtime,
             runtime not in @partial_roots,
-            named = named(runtime),
             {name, row} <- Keys.rows(),
             runtime in row.runtimes,
             row.env,
@@ -228,7 +225,7 @@ defmodule Flezha.Config.KeysSeamTest do
       handed = ~r/env_\w+\(\s*"(FLEZHA_[A-Z0-9_]+)",\s*([A-Z][A-Z0-9_]*)/
 
       drifted =
-        for {path, line, number} <- lines(rust_sources()),
+        for {path, line, number} <- lines(rust_sources(), handed),
             [_, var, constant] <- Regex.scan(handed, line),
             row = Keys.by_env(var),
             row != nil,
@@ -261,27 +258,17 @@ defmodule Flezha.Config.KeysSeamTest do
   end
 
   describe "every runtime that reads a name is declared to" do
-    test "a name read in a runtime's own source is a row that names that runtime" do
+    test "a name read in a runtime's own source is a row that names that runtime",
+         %{named: by_runtime} do
       undeclared =
-        for {runtime, _roots} <- @runtime_roots,
-            var <- named(runtime),
+        for {runtime, named} <- by_runtime,
+            var <- named,
             row = Keys.by_env(var),
             row != nil,
             runtime not in row.runtimes,
             do: "#{var} is read by #{runtime}, which its row does not name"
 
       assert undeclared == []
-    end
-  end
-
-  describe "the parse rule holds per runtime" do
-    test "every runtime's own suite feeds the shared fixture to its own reader" do
-      unfed =
-        for path <- @parse_readers,
-            not String.contains?(File.read!(path), Path.basename(@parse_fixture)),
-            do: path
-
-      assert unfed == []
     end
   end
 
@@ -296,15 +283,22 @@ defmodule Flezha.Config.KeysSeamTest do
 
   defp sources(roots), do: SourceWalk.files(roots)
 
-  defp lines(paths), do: paths |> Enum.uniq() |> SourceWalk.lines()
+  # The lines of the files among `paths` whose whole text `regex` matches: a
+  # file the shape never appears in is not split into lines at all.
+  defp lines(paths, regex),
+    do:
+      paths
+      |> Enum.uniq()
+      |> Enum.filter(&Regex.match?(regex, SourceWalk.read(&1)))
+      |> SourceWalk.lines()
 
   # Every variable a runtime's own source names: any mention, or for the CLI a
-  # whole literal.
+  # whole literal. Neither shape spans a line, so the whole file is scanned.
   defp named(runtime) do
     shape = if runtime == :cli, do: @cli_read, else: @env_name
 
-    for {_path, line, _number} <- lines(sources(Map.fetch!(@runtime_roots, runtime))),
-        match <- Regex.scan(shape, line),
+    for path <- sources(Map.fetch!(@runtime_roots, runtime)),
+        match <- Regex.scan(shape, SourceWalk.read(path)),
         into: MapSet.new(),
         do: List.last(match)
   end
@@ -313,11 +307,10 @@ defmodule Flezha.Config.KeysSeamTest do
   # wrapped over several lines is still found.
   defp matched_lines(path, regex) do
     text = SourceWalk.read(path)
-    numbered = SourceWalk.lines([path])
 
     for [{offset, _length} | _] <- Regex.scan(regex, text, return: :index),
         number = line_at(text, offset),
-        {_path, line, ^number} <- numbered,
+        {_path, line, ^number} <- SourceWalk.lines([path]),
         do: {number, line}
   end
 

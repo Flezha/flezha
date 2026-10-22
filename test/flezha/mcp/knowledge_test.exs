@@ -22,15 +22,10 @@ defmodule Flezha.Mcp.KnowledgeTest do
     refute guide =~ "catalogue.json"
   end
 
-  test "the SDK example holds every tracked file of that SDK's echo" do
+  # What the kit holds against its sources is `Mix.Tasks.Flezha.AiKitTest`'s.
+  test "the SDK example is the kit's page for that SDK" do
     assert {:text, example} = Knowledge.call("Flezha.sdk_example", ["python"])
-
-    {listed, 0} = System.cmd("git", ["-C", "sdk/python", "ls-files", "examples/echo"])
-
-    for file <- String.split(listed, "\n", trim: true), Path.basename(file) != ".gitignore" do
-      assert example =~ "\n## #{file}\n"
-      assert example =~ File.read!(Path.join("sdk/python", file))
-    end
+    assert example == File.read!("priv/ai_kit/sdk/python.md")
   end
 
   test "an error's meaning is the catalogue's" do
@@ -70,16 +65,18 @@ defmodule Flezha.Mcp.KnowledgeTest do
     assert {:ok, json} = Knowledge.call("Flezha.new_project", ["python", nil])
     assert %{"files" => files, "run" => run} = Jason.decode!(json)
 
-    {listed, 0} = System.cmd("git", ~w(-C sdk/python ls-files examples/starter))
+    kit = "priv/ai_kit/templates/python/starter"
 
-    paths =
-      for file <- String.split(listed, "\n", trim: true),
-          do: Path.relative_to(file, "examples/starter")
+    copies =
+      for full <- Path.wildcard(Path.join(kit, "**"), match_dot: true),
+          File.regular?(full),
+          do: Path.relative_to(full, kit)
 
-    assert Enum.sort(Enum.map(files, & &1["path"])) == Enum.sort(paths)
+    assert Enum.sort(Enum.map(files, & &1["path"])) == Enum.sort([".gitignore" | copies])
 
-    for %{"path" => path, "content" => content, "executable" => false} <- files,
-        do: assert(content == File.read!(Path.join("sdk/python/examples/starter", path)))
+    for %{"path" => path, "content" => content} <- files,
+        path != ".gitignore",
+        do: assert(content == File.read!(Path.join(kit, path)))
 
     assert ".venv/bin/python runner.py" in run
   end

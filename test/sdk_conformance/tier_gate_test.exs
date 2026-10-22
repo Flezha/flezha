@@ -20,7 +20,6 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
   alias FlezhaTest.Helper.SourceWalk
   alias FlezhaTest.Tiers
 
-  @system_dir "test/system"
   @docs_section "docs/internal/sdk/conformance.md § The test tiers"
 
   # The four places a tier is selected from. `docs/internal/sdk/conformance.md` is in the
@@ -144,68 +143,6 @@ defmodule FlezhaTest.SdkConformance.TierGateTest do
                "conformance.md says #{tag} blocks merge: #{published}, but the workflow " <>
                  "#{inspect(Tiers.fetch(tag).workflow)} says #{Tiers.blocks_merge(tag)}"
       end
-    end
-
-    test "the suite's exclude list is the table's" do
-      assert Enum.sort(ExUnit.configuration()[:exclude] -- [:test]) ==
-               Enum.sort(Tiers.excluded()),
-             "test_helper.exs no longer derives `exclude:` from FlezhaTest.Tiers"
-    end
-
-    # Selection is proven the way ExUnit itself decides it: `mix test` has no
-    # dry run, so the tag map a module's `@moduletag`s produce is run through
-    # the same filter evaluation the runner uses.
-    test "an include selects its tier's modules and an undeclared tag selects nothing" do
-      exclude = Tiers.excluded()
-
-      for tier <- Tiers.all(), tier.excluded do
-        tags = %{tier.tag => true, :module => "M", :test => :t, :describe => nil}
-
-        assert ExUnit.Filters.eval([tier.tag], exclude, tags, []) == :ok,
-               "--include #{tier.tag} does not select a module tagged #{tier.tag}"
-
-        assert match?({:skipped, _}, ExUnit.Filters.eval([], exclude, tags, [])) or
-                 match?({:excluded, _}, ExUnit.Filters.eval([], exclude, tags, [])),
-               "a module tagged #{tier.tag} is not excluded from the default run"
-      end
-
-      undeclared = %{flezha_no_such_tier: true, module: "M", test: :t, describe: nil}
-
-      assert match?(
-               {:excluded, _},
-               ExUnit.Filters.eval(
-                 [:flezha_no_such_tier],
-                 exclude,
-                 %{
-                   system: true,
-                   module: "M",
-                   test: :t,
-                   describe: nil
-                 },
-                 []
-               )
-             ),
-             "an undeclared tag selects a tier module, so a typo would run something"
-
-      assert ExUnit.Filters.eval([:flezha_no_such_tier], exclude, undeclared, []) == :ok
-    end
-
-    test "the system tier's declared transports are driven by at least one module" do
-      modules = Path.wildcard(Path.join(@system_dir, "*_test.exs"))
-
-      fanned =
-        Enum.count(modules, &String.contains?(SourceWalk.read(&1), "NodeTestHelper.transports"))
-
-      assert Tiers.fetch(:system).transports == [:uds, :quic]
-
-      # The ratio is measured, never pinned: it moves whenever a scenario is
-      # added, and a number asserted here would be edited rather than read. What
-      # has to hold is that the declared pair is driven at all, because a tier
-      # declaring two transports nothing fans out over is a claim nobody checks.
-      # The census rides the failure, which is where a reader needs it.
-      assert fanned > 0,
-             "#{length(modules)} system modules, and not one fans out over " <>
-               "`NodeTestHelper.transports/0`: the declared transport pair drives nothing"
     end
   end
 

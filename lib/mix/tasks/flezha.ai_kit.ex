@@ -97,9 +97,11 @@ defmodule Mix.Tasks.Flezha.AiKit do
 
   # Everything the kit holds but the hand-written rules, for the map `map`.
   defp files(map) do
+    tracked = Map.new(Knowledge.languages(), &{&1, tracked("sdk/#{&1}")})
+
     [{"llms.txt", map}] ++
-      sdk_files() ++
-      template_files() ++
+      sdk_files(tracked) ++
+      template_files(tracked) ++
       for page <- linked(map), do: {"docs/" <> page, File.read!(source!(page))}
   end
 
@@ -115,13 +117,13 @@ defmodule Mix.Tasks.Flezha.AiKit do
     for [_, page] <- Regex.scan(~r/\]\(([^)\/]+\.md)\)/, map), uniq: true, do: page
   end
 
-  defp sdk_files do
+  defp sdk_files(tracked) do
     for language <- Knowledge.languages(),
-        do: {"sdk/#{language}.md", example(language)}
+        do: {"sdk/#{language}.md", example(tracked, language)}
   end
 
-  defp example(language) do
-    files = Enum.reject(listed(language, "echo"), &(Path.basename(&1) == ".gitignore"))
+  defp example(tracked, language) do
+    files = Enum.reject(listed(tracked, language, "echo"), &(Path.basename(&1) == ".gitignore"))
 
     IO.iodata_to_binary([
       "# The #{language} SDK's echo example\n\n",
@@ -135,12 +137,12 @@ defmodule Mix.Tasks.Flezha.AiKit do
     ])
   end
 
-  defp template_files do
+  defp template_files(tracked) do
     {entries, copies} =
       Enum.unzip(
         for language <- Knowledge.languages(),
             example <- @examples,
-            do: template(language, example)
+            do: template(tracked, language, example)
       )
 
     manifest = Jason.encode!(%{templates: entries}, pretty: true)
@@ -148,12 +150,12 @@ defmodule Mix.Tasks.Flezha.AiKit do
   end
 
   # One template's manifest entry, and its copies.
-  defp template(language, example) do
+  defp template(tracked, language, example) do
     from = "sdk/#{language}/examples/#{example}/"
 
     {ignores, files} =
-      language
-      |> listed(example)
+      tracked
+      |> listed(language, example)
       |> Enum.map(&String.replace_prefix(&1, "examples/#{example}/", ""))
       |> Enum.split_with(&(Path.basename(&1) == ".gitignore"))
 
@@ -208,14 +210,21 @@ defmodule Mix.Tasks.Flezha.AiKit do
     if String.valid?(body), do: body, else: Mix.raise("#{path} is not UTF-8 text")
   end
 
-  # What git tracks under an SDK's `examples/<example>`: never a stray working
-  # file, whoever's checkout it is.
-  defp listed(language, example) do
-    args = ["-C", "sdk/#{language}", "ls-files", "examples/#{example}"]
+  defp listed(tracked, language, example) do
+    case Enum.filter(tracked[language], &String.starts_with?(&1, "examples/#{example}/")) do
+      [] -> Mix.raise("sdk/#{language} lists no examples/#{example}: check out its submodule")
+      files -> files
+    end
+  end
 
-    case System.cmd("git", args, stderr_to_stdout: true) do
-      {listed, 0} when listed != "" -> listed |> String.split("\n", trim: true) |> Enum.sort()
-      _none -> Mix.raise("sdk/#{language} lists no examples/#{example}: check out its submodule")
+  @doc false
+  # What git tracks under the `examples/` of the SDK checkout `dir`, sorted:
+  # never a stray working file, whoever's checkout it is.
+  @spec tracked(Path.t()) :: [Path.t()]
+  def tracked(dir) do
+    case System.cmd("git", ["-C", dir, "ls-files", "examples"], stderr_to_stdout: true) do
+      {listed, 0} -> listed |> String.split("\n", trim: true) |> Enum.sort()
+      _not_a_checkout -> []
     end
   end
 

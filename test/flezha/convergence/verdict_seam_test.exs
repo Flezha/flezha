@@ -35,8 +35,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     "lib/flezha/convergence/verdict.ex" => "the record",
     "lib/flezha/convergence/probe/judge.ex" => "the judge",
     "lib/flezha/convergence/probe/table.ex" => "the detector declarations",
-    "lib/flezha/convergence/probe/readers.ex" => "the fact readers",
-    "lib/flezha/convergence/probe.ex" => "the probe the readers read",
     "lib/flezha/convergence/diff.ex" => "reads the record's states, mints none",
     "lib/flezha/convergence/snapshot.ex" => "publishes the record and documents its states",
     "lib/flezha/service/relay/diagnose.ex" =>
@@ -46,8 +44,6 @@ defmodule Flezha.Convergence.VerdictSeamTest do
       "`:failed` is an event segment; `:suspended` is a poll outcome journaled for wake",
     "lib/flezha/plugin/provider/http_push.ex" =>
       "`:failed` is the telemetry verb a dropped output is counted under; `:healthy` is its probe's verdict",
-    "lib/flezha/cli/state.ex" =>
-      "both are `{:not_resident, _}` refusal reasons rendered as text, not health",
     "lib/flezha/relay/overwatch.ex" =>
       "both are call refusals naming a lifecycle fact the caller asked against",
     "lib/flezha/relay/lifecycle.ex" =>
@@ -79,10 +75,17 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     end
 
     test "every allow-list entry still exists and still needs its exemption" do
-      for {file, why} <- @allowed do
-        assert File.exists?(file), "allow-listed file is gone: #{file}"
-        assert is_binary(why) and why != ""
-      end
+      states = MapSet.new(Verdict.states())
+
+      unneeded =
+        for {file, _why} <- @allowed,
+            not File.exists?(file) or
+              MapSet.size(MapSet.intersection(atoms(file), states)) < 2,
+            do: file
+
+      assert unneeded == [],
+             "allow-listed files that are gone or carry fewer than two verdict states: " <>
+               Enum.join(unneeded, ", ")
     end
   end
 

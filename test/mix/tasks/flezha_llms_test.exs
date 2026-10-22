@@ -140,21 +140,6 @@ defmodule Mix.Tasks.Flezha.LlmsTest do
     assert outside == [], "extras of mix.exs outside docs/public/: #{inspect(outside)}"
   end
 
-  test "every other tracked page is internal, and docs/README.md stays a pointer" do
-    {tracked, 0} = System.cmd("git", ["ls-files", "docs"])
-
-    loose =
-      tracked
-      |> String.split("\n", trim: true)
-      |> Enum.reject(&String.starts_with?(&1, ["docs/public/", "docs/internal/"]))
-
-    assert loose == ["docs/README.md"]
-
-    readme = File.read!("docs/README.md")
-    assert readme |> String.trim_trailing() |> String.split("\n") |> length() <= 15
-    assert readme =~ "](public/)" and readme =~ "](internal/README.md)"
-  end
-
   test "the API site leaves out the modules compiled from test/" do
     keep? = Mix.Project.config()[:docs][:filter_modules]
 

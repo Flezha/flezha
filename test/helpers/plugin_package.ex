@@ -3,10 +3,9 @@ defmodule Flezha.TestHelpers.PluginPackage do
   The example plugin (`test/apps/example_plugin/`) as a real package, edits of it,
   and loading it into the test VM and out again.
 
-    * `example!/0` packages the example once per test run with
-      `mix flezha.plugin.package` in a subprocess (`MIX_ENV=prod`, the
-      repository's `_build`, so only the two example apps compile) and answers
-      the archive.
+    * `example!/0` packages the example once per test run and answers the
+      archive; `package!/3` packages a plugin project the way
+      `mix flezha.plugin.package` does after it compiles, in this VM.
     * `rewrite/3` writes a copy of an archive with edits and a regenerated
       `CHECKSUMS.sha256`, so a refusal is one edit of the real package rather
       than a hand-built fixture.
@@ -19,6 +18,8 @@ defmodule Flezha.TestHelpers.PluginPackage do
   alias Flezha.Plugin.Installer.Manifest
   alias Flezha.Plugin.Installer.Package
   alias Flezha.Plugin.Providers
+  alias FlezhaTest.Helper.NodeTestHelper
+  alias Mix.Tasks.Flezha.Plugin.Package, as: PackageTask
 
   @example "test/apps/example_plugin"
   @built {__MODULE__, :example}
@@ -28,39 +29,139 @@ defmodule Flezha.TestHelpers.PluginPackage do
   def example!() do
     :global.trans({__MODULE__, self()}, fn ->
       case :persistent_term.get(@built, nil) do
-        nil -> tap(package!(Path.expand(@example)), &:persistent_term.put(@built, &1))
-        archive -> archive
+        nil ->
+          out = NodeTestHelper.claim_tmp_dir("flz_example")
+
+          ExUnit.after_suite(fn _ ->
+            :persistent_term.erase(@built)
+            File.rm_rf!(out)
+          end)
+
+          tap(package!(@example, out), &:persistent_term.put(@built, &1))
+
+        archive ->
+          archive
       end
     end)
   end
 
   @doc """
-  Package the plugin project in `dir` with the task, into a fresh directory, and
-  answer `{exit_status, output, archive_or_nil}`. `args` are the task's options;
-  `build_root` is the build root the project compiles in, the repository's by
-  default.
+  Package the plugin project in `dir` into `output` with the task's own
+  staging, signed with the key file `key` when given, and answer the archive.
+  The project and the path dependencies this VM does not run are compiled into
+  a scratch directory and loaded with the project's configuration of them, as
+  the task finds them after `compile`, then taken back out of the VM.
   """
-  @spec package(Path.t(), [binary()], Path.t()) :: {non_neg_integer(), binary(), Path.t() | nil}
-  def package(dir, args \\ [], build_root \\ Path.expand("_build")) do
-    output = Path.join(System.tmp_dir!(), "flz_pkg_#{System.unique_integer([:positive])}")
-    # The integer repeats across test runs, and an archive an earlier run left
-    # there would read as this run's.
-    File.rm_rf!(output)
+  @spec package!(Path.t(), Path.t(), Path.t() | nil) :: Path.t()
+  def package!(dir, output, key \\ nil),
+    do: :global.trans({__MODULE__, self()}, fn -> stage_package!(dir, output, key) end)
 
-    {out, status} =
-      System.cmd("mix", ["flezha.plugin.package", "--output", output | args],
-        cd: dir,
-        env: [{"MIX_ENV", "prod"}, {"MIX_BUILD_ROOT", build_root}],
-        stderr_to_stdout: true
-      )
+  # The project's modules and applications are the VM's while it is packaged,
+  # so one packaging runs at a time.
+  defp stage_package!(dir, output, key) do
+    root = NodeTestHelper.claim_tmp_dir("flz_pkg")
+    dir = Path.expand(dir)
+    apps = compile_project!(dir, Path.join(root, "lib"))
+    plugin = List.last(apps)
 
-    {status, out, output |> Path.join("*.fpz") |> Path.wildcard() |> List.first()}
+    try do
+      for {app, _} <- apps, do: :ok = Application.load(app)
+
+      for {app, env} <- Config.Reader.read!(Path.join(dir, "config/config.exs"), env: :prod),
+          List.keymember?(apps, app, 0),
+          do: Application.put_all_env([{app, env}])
+
+      PackageTask.build!(elem(plugin, 0), Path.join(root, "stage"), output, key)
+    after
+      for {app, modules} <- apps do
+        _ = :application.unload(app)
+        :code.del_path(String.to_charlist(Path.join([root, "lib", "#{app}", "ebin"])))
+        Enum.each(modules, &drop_module/1)
+      end
+
+      File.rm_rf!(root)
+    end
   end
 
-  defp package!(dir) do
-    case package(dir) do
-      {0, _out, archive} when is_binary(archive) -> archive
-      {status, out, _} -> raise "packaging #{dir} failed (#{status}):\n#{out}"
+  # The project in `dir` and, first, each path dependency the VM does not
+  # already run, compiled into `lib/<app>/ebin` under `lib` with the `.app`
+  # Mix writes and the project's `priv/`. Answers `[{app, modules}]`, the
+  # project last.
+  defp compile_project!(dir, lib) do
+    {project, application} = mix_project(dir)
+
+    deps =
+      for {app, opts} <- Keyword.get(project, :deps, []),
+          opts[:path],
+          do: {app, Path.expand(opts[:path], dir)}
+
+    built =
+      for {app, path} <- deps, Application.spec(app) == nil, reduce: [] do
+        acc -> acc ++ compile_project!(path, lib)
+      end
+
+    app = project[:app]
+    target = Path.join(lib, "#{app}")
+    ebin = Path.join(target, "ebin")
+    File.mkdir_p!(ebin)
+    sources = Path.wildcard(Path.join(dir, "lib/**/*.ex"))
+
+    modules = compile_to!(sources, ebin)
+
+    spec =
+      {:application, app,
+       [
+         modules: Enum.sort(modules),
+         applications:
+           [:kernel, :stdlib, :elixir] ++
+             Keyword.get(application, :extra_applications, []) ++ Keyword.keys(deps),
+         vsn: String.to_charlist(project[:version])
+       ] ++ Keyword.take(application, [:mod, :env])}
+
+    File.write!(Path.join(ebin, "#{app}.app"), :io_lib.format(~c"~p.~n", [spec]))
+
+    if File.dir?(Path.join(dir, "priv")),
+      do: File.ln_s!(Path.join(dir, "priv"), Path.join(target, "priv"))
+
+    true = :code.add_patha(String.to_charlist(ebin))
+    built ++ [{app, modules}]
+  end
+
+  # The VM's protocols are consolidated; a package's implementations are
+  # consolidated again when it loads.
+  defp compile_to!(sources, ebin) do
+    ignored = Code.get_compiler_option(:ignore_already_consolidated)
+    Code.put_compiler_option(:ignore_already_consolidated, true)
+
+    try do
+      {:ok, modules, _} =
+        Kernel.ParallelCompiler.compile_to_path(sources, ebin, return_diagnostics: true)
+
+      modules
+    after
+      Code.put_compiler_option(:ignore_already_consolidated, ignored)
+    end
+  end
+
+  # `project/0` and `application/0` of the `mix.exs` in `dir`, compiled without
+  # `use Mix.Project`, which would push it onto Mix's project stack.
+  defp mix_project(dir) do
+    file = Path.join(dir, "mix.exs")
+    {:defmodule, meta, [_name, [do: body]]} = file |> File.read!() |> Code.string_to_quoted!()
+
+    body =
+      Macro.prewalk(body, fn
+        {:use, _, [{:__aliases__, _, [:Mix, :Project]}]} -> nil
+        node -> node
+      end)
+
+    module = Module.concat(__MODULE__, "Project#{System.unique_integer([:positive])}")
+    [{^module, _}] = Code.compile_quoted({:defmodule, meta, [module, [do: body]]}, file)
+
+    try do
+      {module.project(), module.application()}
+    after
+      drop_module(module)
     end
   end
 
@@ -102,7 +203,7 @@ defmodule Flezha.TestHelpers.PluginPackage do
   end
 
   defp edit(dir, {:app, app, fun}),
-    do: Mix.Tasks.Flezha.Plugin.Package.update_app(app_file(dir, app), app, fun)
+    do: PackageTask.update_app(app_file(dir, app), app, fun)
 
   defp edit(dir, {:put, path, bytes}) do
     full = Path.join(dir, path)
@@ -228,9 +329,7 @@ defmodule Flezha.TestHelpers.PluginPackage do
   @spec compile_unloaded(binary()) :: [{module(), binary()}]
   def compile_unloaded(source) do
     for {module, binary} <- Code.compile_string(source) do
-      :code.purge(module)
-      :code.delete(module)
-      :code.purge(module)
+      drop_module(module)
       {module, binary}
     end
   end
@@ -278,11 +377,7 @@ defmodule Flezha.TestHelpers.PluginPackage do
 
     for path <- :code.get_path(), under?.(path), do: :code.del_path(path)
 
-    for module <- modules do
-      :code.purge(module)
-      :code.delete(module)
-      :code.purge(module)
-    end
+    Enum.each(modules, &drop_module/1)
 
     for protocol <- protocols do
       :code.purge(protocol)
@@ -291,5 +386,11 @@ defmodule Flezha.TestHelpers.PluginPackage do
 
     Providers.reset_installed()
     Loader.reset()
+  end
+
+  defp drop_module(module) do
+    :code.purge(module)
+    :code.delete(module)
+    :code.purge(module)
   end
 end

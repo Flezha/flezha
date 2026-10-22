@@ -55,14 +55,20 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
       "the outbox flush tuple, whose name is written literally in `state/task_journal.ex`"
   }
 
+  # Clause 1 judges one walk three ways.
+  setup_all do
+    {:ok, written: written_events()}
+  end
+
   describe "clause 1: every event name reaches an exporter" do
-    test "every event name the tree writes is mapped or unexported with a reason" do
+    test "every event name the tree writes is mapped or unexported with a reason",
+         %{written: written} do
       derived = TelemetryBridge.provider_mapping()
       mapped = MapSet.new(Map.keys(Map.merge(derived, TelemetryBridge.mapping())))
       unexported = MapSet.new(TelemetryBridge.unexported())
 
       offenders =
-        for {event, where} <- written_events(),
+        for {event, where} <- written,
             not MapSet.member?(mapped, event),
             not MapSet.member?(unexported, event),
             uniq: true,
@@ -72,11 +78,12 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
              "event names reaching no exporter: " <> Enum.join(Enum.sort(offenders), "; ")
     end
 
-    test "the unexported list is a ratchet, is really written, and every entry has a reason" do
+    test "the unexported list is a ratchet, is really written, and every entry has a reason",
+         %{written: written} do
       assert length(TelemetryBridge.unexported()) <= 21,
              "the unexported list may only shrink"
 
-      written = MapSet.new(written_events(), fn {event, _where} -> event end)
+      written = MapSet.new(written, fn {event, _where} -> event end)
 
       stale = Enum.reject(TelemetryBridge.unexported(), &MapSet.member?(written, &1))
       assert stale == [], "unexported events nothing writes: #{inspect(stale)}"
@@ -87,8 +94,8 @@ defmodule Flezha.Observability.TelemetryEventSeamTest do
       end
     end
 
-    test "a mapped event nothing writes is named, and only those are" do
-      written = MapSet.new(written_events(), fn {event, _where} -> event end)
+    test "a mapped event nothing writes is named, and only those are", %{written: written} do
+      written = MapSet.new(written, fn {event, _where} -> event end)
       mapped = MapSet.new(Map.keys(TelemetryBridge.mapping()))
 
       assert MapSet.equal?(

@@ -51,10 +51,6 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
     "crates/flz_core/src/host/issue.rs"
   ]
 
-  # Sites that carry a verdict `flz_core` already reached without deciding
-  # one. The list only ever shrinks: an entry that stops matching is removed.
-  @carries_a_verdict []
-
   # The authoring contract's §5, which lists the short-form refusal names. A row
   # whose `needs` starts with `shorthand` refuses something the core never sees,
   # so it is judged against this file instead of the issue vocabulary.
@@ -205,7 +201,7 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
       assert "crates/flz_core/src/host/register.rs" in matched,
              "the seam itself no longer matches its own shape; @shape is measuring something else"
 
-      strangers = matched -- (@seam_files ++ @carries_a_verdict)
+      strangers = matched -- @seam_files
 
       assert strangers == [],
              """
@@ -213,18 +209,6 @@ defmodule FlezhaTest.SdkConformance.TopologyCheckTest do
              growing back: one rule would then have to be changed in two places \
              and the second is the one that gets missed.
              #{Enum.join(strangers, "\n")}
-             """
-    end
-
-    test "the exception list names only sites the tree still holds" do
-      stale = @carries_a_verdict -- matching_files()
-
-      assert stale == [],
-             """
-             a file listed here no longer matches the shape, so the allowance \
-             guards nothing and hides whatever is written there next. An \
-             exception list only shrinks:
-             #{Enum.join(stale, "\n")}
              """
     end
   end

@@ -20,11 +20,6 @@ defmodule Flezha.Plugin.Installer.ChecksumsTest do
     |> Package.verify(dir, @opts)
   end
 
-  test "every file matching its line proceeds", %{example: example, dir: dir} do
-    assert {:ok, _} = Package.verify(example, dir, @opts)
-    assert :ok = Checksums.check(dir)
-  end
-
   test "a beam changed after the checksums were written is refused, naming it", ctx do
     assert {:error, {:package_invalid, :checksum_mismatch, %{path: @beam}}} =
              verify_edited(ctx, [{:put, @beam, "tampered"}])

@@ -54,26 +54,36 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
   @impl Mix.Task
   def run(args) do
     {opts, _rest} = OptionParser.parse!(args, strict: [output: :string, sign: :string])
-    config = Mix.Project.config()
-    plugin = config[:app]
 
     Mix.Task.run("compile", [])
-    check_locks!()
-
-    release = MapSet.new(closure([:flezha | @release_extras]))
-    bundled = Enum.reject(closure([plugin]), &MapSet.member?(release, &1))
-    providers = providers!(plugin)
-
-    manifest = %{
-      id: Atom.to_string(plugin),
-      version: config[:version],
-      built_with: Manifest.runtime(),
-      apps: Enum.map(bundled, &{&1, to_string(Application.spec(&1, :vsn))}),
-      providers: providers
-    }
+    flezha_lock = Mix.Dep.Lock.read(Path.join(Mix.Project.deps_paths()[:flezha], "mix.lock"))
+    check_locks!(flezha_lock, Mix.Dep.cached())
 
     # One per OS process: two packagings of a project share its build path.
     stage = Path.join(Mix.Project.build_path(), "flezha_plugin_package_#{System.pid()}")
+    output = opts[:output] || Path.dirname(Mix.Project.build_path())
+    archive = build!(Mix.Project.config()[:app], stage, output, opts[:sign])
+    Mix.shell().info("Wrote #{archive}")
+  end
+
+  @doc false
+  # Stage the loaded application `plugin` with the part of its runtime closure
+  # the release does not ship in `stage`, signed with the key file `key` when
+  # given, and write its archive into `output`. Answers the archive's path.
+  @spec build!(atom(), Path.t(), Path.t(), Path.t() | nil) :: Path.t()
+  def build!(plugin, stage, output, key) do
+    release = MapSet.new(closure([:flezha | @release_extras]))
+    bundled = Enum.reject(closure([plugin]), &MapSet.member?(release, &1))
+    vsn = &to_string(Application.spec(&1, :vsn))
+
+    manifest = %{
+      id: Atom.to_string(plugin),
+      version: vsn.(plugin),
+      built_with: Manifest.runtime(),
+      apps: Enum.map(bundled, &{&1, vsn.(&1)}),
+      providers: providers!(plugin, Application.get_env(plugin, :flezha_providers))
+    }
+
     File.rm_rf!(stage)
 
     try do
@@ -81,25 +91,25 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
       File.write!(Path.join(stage, "manifest.exs"), Manifest.render(manifest))
       ok!(Package.check_contents(stage, manifest))
       checksums = Checksums.write(stage)
-      if key = opts[:sign], do: sign!(stage, checksums, key)
+      if key, do: sign!(stage, checksums, key)
 
-      output = opts[:output] || Path.dirname(Mix.Project.build_path())
       File.mkdir_p!(output)
       archive = Path.join(output, "#{manifest.id}-#{manifest.version}.fpz")
       :ok = Package.create(stage, archive)
-      Mix.shell().info("Wrote #{archive}")
+      archive
     after
       File.rm_rf!(stage)
     end
   end
 
+  @doc false
   # A library the release ships at one version cannot be loaded at another: the
-  # boot would refuse the package, so the build refuses it first.
-  defp check_locks!() do
-    flezha_lock = Mix.Dep.Lock.read(Path.join(Mix.Project.deps_paths()[:flezha], "mix.lock"))
-
+  # boot would refuse the package, so the build refuses `deps` against Flezha's
+  # lock first.
+  @spec check_locks!(map(), [Mix.Dep.t()]) :: :ok
+  def check_locks!(flezha_lock, deps) do
     offenders =
-      for dep <- Mix.Dep.cached(),
+      for dep <- deps,
           locked = flezha_lock[dep.app],
           resolved(dep) != pinned(locked),
           do:
@@ -112,6 +122,8 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
       #{Enum.join(offenders, "\n")}
       """)
     end
+
+    :ok
   end
 
   # A path dependency is what was built from it, whatever lock entry shares its
@@ -157,10 +169,13 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
 
   defp loadable?(app), do: Application.load(app) in [:ok, {:error, {:already_loaded, app}}]
 
+  @doc false
   # Membership in the plugin application is the manifest's check, which the
-  # staged package goes through; this one says what the entry must be.
-  defp providers!(plugin) do
-    case Application.get_env(plugin, :flezha_providers) do
+  # staged package goes through; this one says what `providers`, the plugin's
+  # `:flezha_providers`, must be.
+  @spec providers!(atom(), term()) :: map()
+  def providers!(plugin, providers) do
+    case providers do
       %{} = providers when map_size(providers) > 0 ->
         for {id, module} <- providers, not is_binary(id) or not Providers.provider?(module) do
           Mix.raise(
@@ -193,7 +208,8 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
         Path.extname(file) in [".beam", ".app"],
         do: File.cp!(Path.join([source, "ebin", file]), Path.join(ebin, file))
 
-    if app != plugin, do: write_env!(app, Path.join(ebin, "#{app}.app"))
+    if app != plugin,
+      do: write_env!(app, Application.get_all_env(app), Path.join(ebin, "#{app}.app"))
 
     priv = Path.join(source, "priv")
 
@@ -201,11 +217,13 @@ defmodule Mix.Tasks.Flezha.Plugin.Package do
       do: File.cp_r!(priv, Path.join(target, "priv"), dereference_symlinks: true)
   end
 
+  @doc false
   # A library reads its defaults from its `.app`, and nothing else of the
   # project's configuration reaches the controller, so the loaded environment
-  # (the library's defaults under the project's settings) is written there.
-  defp write_env!(app, path) do
-    env = Enum.sort(Application.get_all_env(app))
+  # `env` (the library's defaults under the project's settings) is written there.
+  @spec write_env!(atom(), keyword(), Path.t()) :: :ok
+  def write_env!(app, env, path) do
+    env = Enum.sort(env)
 
     for {key, value} <- env, {:error, _term, reason} <- [Mix.Utils.consultable(value)] do
       Mix.raise(

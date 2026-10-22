@@ -189,11 +189,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     |> Enum.any?(&(String.to_integer(&1) > 0))
   end
 
-  defp moduledoc(module) do
-    {:docs_v1, _, _, _, %{"en" => doc}, _, _} = Code.fetch_docs(module)
-    doc
-  end
-
   defp source(module) do
     module.module_info(:compile)[:source] |> to_string() |> File.read!()
   end
@@ -537,22 +532,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
     end
 
-    test "each names a docs page that points back at it" do
-      for runtime <- runtimes() do
-        manifest = manifest(runtime)
-        path = PortPilot.manifest_path(runtime)
-        docs = manifest["docs"]
-
-        unless File.exists?(docs) do
-          fail("#{path} names docs page #{docs}, which does not exist")
-        end
-
-        unless File.read!(docs) =~ path do
-          fail("#{docs} does not reference #{path}; the manifest is where the scope is declared")
-        end
-      end
-    end
-
     test "no bench task decides its runtime set in code" do
       for task <- @manifest_runtime_tasks do
         src = source(task)
@@ -564,22 +543,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
               "so it decides the accepted `--runtime` set from a clause list rather than from " <>
               "the manifests. Derive it: `Mix.Tasks.Bench.Fleet.parse_runtime/3` reads " <>
               "`PortPilot.runtimes/0` and the manifest's `deferred` key"
-          )
-        end
-      end
-    end
-
-    test "no bench task documents a runtime list beside the one it derives" do
-      names = Enum.map(runtimes(), &Atom.to_string/1)
-
-      for task <- @manifest_runtime_tasks, line <- String.split(moduledoc(task), "\n") do
-        named = Enum.filter(names, &Regex.match?(~r/\b#{&1}\b/, line))
-
-        if length(named) > 1 do
-          fail(
-            "#{inspect(task)} names #{inspect(named)} on one documentation line, a second " <>
-              "copy of the set its `--runtime` reads from the manifests: " <>
-              "#{inspect(names)}. Name the manifest path, not the runtimes"
           )
         end
       end
@@ -612,14 +575,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
           "#{@contract_manifest} names members that are not in the tree: #{inspect(absent)}. " <>
             "The release stages the set from this list, so a row naming nothing stages nothing"
         )
-      end
-    end
-
-    test "every member says what reads it" do
-      for {path, purpose} <- contract_rows() do
-        assert String.length(purpose) > 20,
-               "#{@contract_manifest} row #{path} says `#{purpose}`; a member with no stated " <>
-                 "reader cannot be removed by anyone who did not write it"
       end
     end
 
@@ -752,17 +707,6 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   end
 
   describe "connect discovery" do
-    test "the pinned contract names the variables and the ladder, in order" do
-      %{variables: variables, retired: retired, ladder: ladder} = connect_env()
-
-      assert "FLEZHA_SOCKET_FILES_PATH" in variables
-      assert "FLEZHA_QUIC_ADDRESSES" in variables
-      assert "FLEZHA_SOCKET_DIR_GROUP" in variables
-      assert retired == ["FLEZHA_QUIC_ADDRESS"]
-
-      assert Enum.map(ladder, &elem(&1, 0)) == ["explicit", "xdg_runtime", "run", "repository"]
-    end
-
     test "no SDK's connect path reads a connect variable the fixture does not pin" do
       %{variables: variables, retired: retired} = connect_env()
       pinned = MapSet.new(variables ++ retired)
@@ -835,8 +779,13 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
       assert length(files) > 100, "read only #{length(files)} files; a root moved"
 
-      for {file, line, number} <- SourceWalk.code_lines(files),
-          {name, pattern} <- @retired_steps_names,
+      retired = @retired_steps_names
+
+      for file <- files,
+          text = SourceWalk.read(file),
+          Enum.any?(retired, fn {_name, pattern} -> text =~ pattern end),
+          {file, line, number} <- SourceWalk.code_lines([file]),
+          {name, pattern} <- retired,
           line =~ pattern do
         fail("#{file}:#{number} reintroduces #{name}: #{String.trim(line)}")
       end

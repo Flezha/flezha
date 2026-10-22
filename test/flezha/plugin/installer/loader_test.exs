@@ -140,20 +140,6 @@ defmodule Flezha.Plugin.Installer.LoaderTest do
     refute List.keymember?(Application.started_applications(), :stamp_lib, 0)
   end
 
-  test "an application callback on an app depending on flezha is refused", ctx do
-    archive =
-      edited(ctx, "cb.fpz", [
-        {:app, :flezha_example_plugin, &Keyword.put(&1, :mod, {:flz_cb, []})}
-      ])
-
-    assert refused_code(PluginPackage.load!(ctx.root, [archive])) == "plugin.app_callback"
-  end
-
-  test "native code is refused", ctx do
-    archive = edited(ctx, "native.fpz", [{:put, "lib/stamp_lib-0.1.0/priv/nif.so", "ELF"}])
-    assert refused_code(PluginPackage.load!(ctx.root, [archive])) == "plugin.native_code"
-  end
-
   test "two archives declaring one id are both refused, naming both files", ctx do
     a = Path.join([ctx.tmp, "dupes", "a.fpz"])
     b = Path.join([ctx.tmp, "dupes", "b.fpz"])

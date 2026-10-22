@@ -270,8 +270,7 @@ defmodule FlezhaTest.Tiers do
       {expanded, expanded != spec}
     end
     |> then(fn specs ->
-      # One listing for every spec: each naming_gate.py start costs over a
-      # second, and a workflow can name dozens of specs.
+      # One listing for every spec: a workflow can name dozens of specs.
       groups = for line <- gate_list("all"), [_id, group | _] <- [String.split(line)], do: group
 
       specs
@@ -291,7 +290,17 @@ defmodule FlezhaTest.Tiers do
         &(String.starts_with?(&1, "@") and String.trim_leading(&1, "@") not in groups)
       )
 
+  # Kept for the test run: every tier a workflow runs lists the same specs.
   defp gate_list(spec) do
+    key = {__MODULE__, :gate_list, spec}
+
+    case :persistent_term.get(key, nil) do
+      nil -> tap(list_gates!(spec), &:persistent_term.put(key, &1))
+      rows -> rows
+    end
+  end
+
+  defp list_gates!(spec) do
     case System.cmd("python3", ["scripts/naming_gate.py", "--list", spec], stderr_to_stdout: true) do
       {rows, 0} -> String.split(rows, "\n", trim: true)
       {output, _} -> raise "naming_gate.py --list #{spec} failed:\n#{output}"

@@ -5,7 +5,7 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
   package's provider, and the controllers of a namespace that lack a provider.
   """
 
-  use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
+  use FlezhaTest.Case, async: false
 
   @moduletag :capture_log
 
@@ -14,10 +14,24 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
   alias Flezha.Plugin.Providers
   alias Flezha.Service.Cli
   alias Flezha.TestHelpers.PluginPackage
+  alias FlezhaTest.Helper.NodeTestHelper
 
-  setup %{tmp: tmp} do
+  # Every clause reads the one boot, so the packages load once for the module.
+  setup_all do
+    tmp = NodeTestHelper.claim_tmp_dir("flz_cli_packages")
     root = Path.join(tmp, "plugins")
-    on_exit(fn -> PluginPackage.unload!(root) end)
+    plugins = Application.fetch_env(:flezha, :plugins)
+
+    on_exit(fn ->
+      PluginPackage.unload!(root)
+
+      case plugins do
+        {:ok, value} -> Application.put_env(:flezha, :plugins, value)
+        :error -> Application.delete_env(:flezha, :plugins)
+      end
+
+      File.rm_rf!(tmp)
+    end)
 
     refused =
       PluginPackage.sibling(Path.join(tmp, "flz_refused.fpz"), "flz_refused", [

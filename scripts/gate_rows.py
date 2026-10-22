@@ -271,9 +271,15 @@ MULTI_NODE_TAG = re.compile(r"@(?:module|describe)?tag\b[^\n#]*:multi_node\b")
 def _multi_node():
     """The `:multi_node` tier in two rows, the handover suite apart: in one VM the
     tier outgrew the 600 s a row may take. `e2e-multi-node` stands for both."""
-    tagged = sorted(os.path.relpath(path, ROOT)
-                    for path in glob.glob(f"{ROOT}/test/**/*_test.exs", recursive=True)
-                    if "/test/apps/" not in path and MULTI_NODE_TAG.search(open(path).read()))
+    tagged = []
+    # test/apps is pruned: its runner links lead into whole SDK trees.
+    for base, dirs, names in os.walk(f"{ROOT}/test"):
+        if base == f"{ROOT}/test":
+            dirs.remove("apps")
+        tagged += [os.path.relpath(os.path.join(base, name), ROOT) for name in names
+                   if name.endswith("_test.exs")
+                   and MULTI_NODE_TAG.search(open(os.path.join(base, name)).read())]
+    tagged.sort()
     rest = [path for path in tagged if path != HANDOVER]
     return [_mix_test("e2e-multi-node-1", "e2e-multi-node", "--only", "multi_node", HANDOVER),
             _mix_test("e2e-multi-node-2", "e2e-multi-node", "--only", "multi_node", *rest),

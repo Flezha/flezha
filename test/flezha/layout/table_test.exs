@@ -95,10 +95,10 @@ defmodule FlezhaTest.Layout.TableTest do
         SourceWalk.files(["lib"], [".ex"])
         |> Enum.reject(&(&1 in ["lib/flezha/layout/table.ex", "lib/flezha/config/keys.ex"]))
         |> Enum.filter(fn file ->
-          file
-          |> SourceWalk.read()
-          |> strip_prose()
-          |> String.match?(~r|storage/app/[a-z_]+|)
+          source = SourceWalk.read(file)
+
+          String.contains?(source, "storage/app/") and
+            String.match?(strip_prose(source), ~r|storage/app/[a-z_]+|)
         end)
 
       assert offenders == [],

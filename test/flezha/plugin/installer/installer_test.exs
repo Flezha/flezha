@@ -13,6 +13,45 @@ defmodule Flezha.Plugin.InstallerTest do
   alias Flezha.Plugin.Installer.Package
   alias Flezha.Transport.CertGenerator
   alias Flezha.TestHelpers.PluginPackage
+  alias FlezhaTest.Helper.NodeTestHelper
+
+  # The transport's own generator: a CA and a `localhost` certificate it signs,
+  # written once for the module, and one HTTPS origin serving the example.
+  setup_all do
+    dir = NodeTestHelper.claim_tmp_dir("flz_installer_certs")
+    previous = Application.get_all_env(:flezha)
+
+    files = [
+      ca_cert_path: "ca.pem",
+      server_cert_path: "server.pem",
+      server_key_path: "server.key",
+      client_cert_path: "client.pem",
+      client_key_path: "client.key"
+    ]
+
+    for {key, file} <- files, do: Application.put_env(:flezha, key, Path.join(dir, file))
+    :ok = CertGenerator.ensure_certs()
+
+    for {key, _} <- files do
+      case Keyword.fetch(previous, key) do
+        {:ok, value} -> Application.put_env(:flezha, key, value)
+        :error -> Application.delete_env(:flezha, key)
+      end
+    end
+
+    [{:Certificate, ca, _}] = :public_key.pem_decode(File.read!(Path.join(dir, "ca.pem")))
+    archive = File.read!(PluginPackage.example!())
+
+    {port, stop} =
+      serve_https(Path.join(dir, "server.pem"), Path.join(dir, "server.key"), archive)
+
+    on_exit(fn ->
+      stop.()
+      File.rm_rf!(dir)
+    end)
+
+    {:ok, base: "https://localhost:#{port}", cacerts: [ca]}
+  end
 
   setup %{tmp: tmp} do
     root = Path.join(tmp, "plugins")
@@ -217,33 +256,6 @@ defmodule Flezha.Plugin.InstallerTest do
   end
 
   describe "fetching over HTTPS" do
-    # The transport's own generator: a CA and a `localhost` certificate it signs.
-    setup %{example: example, tmp: tmp} do
-      dir = Path.join(tmp, "certs")
-
-      for {key, file} <- [
-            ca_cert_path: "ca.pem",
-            server_cert_path: "server.pem",
-            server_key_path: "server.key",
-            client_cert_path: "client.pem",
-            client_key_path: "client.key"
-          ],
-          do: Application.put_env(:flezha, key, Path.join(dir, file))
-
-      :ok = CertGenerator.ensure_certs()
-      [{:Certificate, ca, _}] = :public_key.pem_decode(File.read!(Path.join(dir, "ca.pem")))
-
-      {port, stop} =
-        serve_https(
-          Path.join(dir, "server.pem"),
-          Path.join(dir, "server.key"),
-          File.read!(example)
-        )
-
-      on_exit(stop)
-      {:ok, base: "https://localhost:#{port}", cacerts: [ca]}
-    end
-
     test "follows an HTTPS redirect and places the archive", %{
       base: base,
       cacerts: cacerts,

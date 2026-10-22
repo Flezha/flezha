@@ -20,7 +20,7 @@ defmodule Flezha.Plugin.Installer.PackageTest do
   defp rewrite(%{example: example, tmp: tmp}, edits),
     do: PluginPackage.rewrite(example, Path.join(tmp, "edited.fpz"), edits)
 
-  test "a well-formed package passes the format checks", %{example: example, dir: dir} do
+  test "a well-formed package passes every check", %{example: example, dir: dir} do
     assert {:ok, verified} = verify(example, dir)
     assert verified.manifest.id == "flezha_example_plugin"
     assert Enum.map(verified.apps, & &1.name) == [:flezha_example_plugin, :stamp_lib]

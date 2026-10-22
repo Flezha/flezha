@@ -42,10 +42,13 @@ defmodule Flezha.Process.SeamTest do
   end
 
   # `SourceWalk` holds the walk and the comment strip for the run: six clauses
-  # asking six questions of one tree is one read, not six.
+  # asking six questions of one tree is one read, not six. A file whose text
+  # never matches is not split into lines.
   defp hits(pattern, allow \\ [], roots \\ ["lib/flezha"]) do
-    for {path, line, n} <- SourceWalk.code_lines(sources(roots)),
+    for path <- sources(roots),
         path not in allow,
+        Regex.match?(pattern, SourceWalk.read(path)),
+        {_path, line, n} <- SourceWalk.code_lines([path]),
         Regex.match?(pattern, line),
         do: "#{path}:#{n}"
   end

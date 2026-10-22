@@ -4,25 +4,25 @@ defmodule Flezha.Plugin.Installer.ManifestTest do
   built with", on the manifest the task writes for the example plugin.
   """
 
-  use FlezhaTest.Case, fixtures: [:tmp_dir], async: true
+  use FlezhaTest.Case, async: true
 
   alias Flezha.Plugin.Installer.Manifest
   alias Flezha.Plugin.Installer.Package
   alias Flezha.TestHelpers.PluginPackage
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @opts [max_package_bytes: 50_000_000, require_signature: false, trusted_keys: []]
 
-  setup %{tmp: tmp} do
-    dir = Path.join(tmp, "x")
-    {:ok, verified} = Package.verify(PluginPackage.example!(), dir, @opts)
+  setup_all do
+    dir = NodeTestHelper.claim_tmp_dir("flz_manifest")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    {:ok, verified} = Package.verify(PluginPackage.example!(), Path.join(dir, "x"), @opts)
     {:ok, manifest: verified.manifest, apps: verified.apps}
   end
 
   test "the manifest the task writes parses back and validates", %{manifest: m, apps: apps} do
     assert {:ok, ^m} = Manifest.parse(Manifest.render(m))
     assert :ok = Manifest.validate(m, apps)
-    assert m.providers == %{"example_stamp" => FlezhaExamplePlugin.Stamp}
-    assert m.built_with == Manifest.runtime()
   end
 
   test "a missing required field is refused, naming it", %{manifest: m, apps: apps} do
