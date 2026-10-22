@@ -28,13 +28,15 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     release = build_release!(Path.join(tmp, "rel"))
 
     dirs =
-      for name <- ~w(plugins sockets state audit), into: %{} do
+      for name <- ~w(plugins sockets state audit home), into: %{} do
         path = Path.join(tmp, name)
         File.mkdir_p!(path)
         {name, path}
       end
 
     env = [
+      # The user's HOME, so a cookie OTP would put there is seen, not the caller's.
+      {"HOME", dirs["home"]},
       {"FLEZHA_NODE_NAME", "flzpkg#{System.unique_integer([:positive])}"},
       {"RELEASE_COOKIE", "flz_pkg_release_test"},
       {"FLEZHA_PLUGIN_ROOT", dirs["plugins"]},
@@ -50,7 +52,14 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
       {"FLEZHA_TESTNET_ENABLED", "false"}
     ]
 
-    ctx = %{tmp: tmp, env: env, root: dirs["plugins"], audit: dirs["audit"], release: release}
+    ctx = %{
+      tmp: tmp,
+      env: env,
+      root: dirs["plugins"],
+      audit: dirs["audit"],
+      home: dirs["home"],
+      release: release
+    }
 
     on_exit(fn ->
       stop!(ctx)
@@ -164,6 +173,57 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     assert out =~ "answered"
   end
 
+  # Any local user reads /proc/<pid>/cmdline, so the cookie is on the command
+  # line of no process the release starts, and the user's own HOME gets no
+  # `.erlang.cookie`: each distributed VM reads it from a private directory.
+  test "the cookie reaches no command line and no file in the user's HOME", ctx do
+    cookie = "flz_pkg_release_test"
+    stop!(ctx)
+
+    # The release's `elixir` launcher prints the command it would exec, so
+    # this is the child's whole argv.
+    for {bin, args} <- [
+          {"flz", ["controller", "status"]},
+          {"flzvm", ["eval", "IO.puts(1)"]},
+          {"flzvm", ["rpc", "IO.puts(1)"]}
+        ] do
+      {out, _} = run(ctx, bin, args, [{"ELIXIR_CLI_DRY_RUN", "1"}])
+      assert out =~ "start_cli", "#{bin} #{Enum.join(args, " ")} printed no command: #{out}"
+      refute out =~ cookie, "#{bin} #{Enum.join(args, " ")} carries the cookie: #{out}"
+      refute out =~ "-setcookie", "#{bin} #{Enum.join(args, " ")} names a cookie: #{out}"
+    end
+
+    start!(ctx)
+
+    try do
+      on_argv =
+        for dir <- Path.wildcard("/proc/[0-9]*"),
+            {:ok, argv} <- [File.read(Path.join(dir, "cmdline"))],
+            String.contains?(argv, cookie),
+            do: {dir, String.replace(argv, <<0>>, " ")}
+
+      assert on_argv == []
+
+      # A verb still connects, and the controller runs with the user's HOME.
+      assert rpc(ctx, ~s|IO.puts(System.get_env("HOME"))|) =~ ctx.home
+      refute File.exists?(Path.join(ctx.home, ".erlang.cookie"))
+
+      # Where the cookie is instead: every level the user's alone.
+      {_, name} = List.keyfind(ctx.env, "FLEZHA_NODE_NAME", 0)
+      homes = Path.join(ctx.release, "tmp/home")
+
+      for dir <- [
+            homes,
+            Path.join(homes, "#{name}@127.0.0.1"),
+            Path.join([homes, "#{name}@127.0.0.1", "node"])
+          ] do
+        assert Bitwise.band(File.stat!(dir).mode, 0o777) == 0o700, dir
+      end
+    after
+      stop!(ctx)
+    end
+  end
+
   # The real task, run where a plugin author runs it; it builds into the
   # example's own `_build`.
   defp package_example!(ctx) do
@@ -204,10 +264,10 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
   # Run from the scratch directory: every path the controller does not get from
   # `env` resolves against its working directory, which is the repository's
   # own `storage` otherwise.
-  defp run(ctx, bin, args) do
+  defp run(ctx, bin, args, env \\ []) do
     System.cmd(Path.join(ctx.release, "bin/#{bin}"), args,
       cd: ctx.tmp,
-      env: ctx.env,
+      env: ctx.env ++ env,
       stderr_to_stdout: true
     )
   end

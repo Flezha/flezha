@@ -622,6 +622,7 @@ defmodule Flezha.MixProject do
 
     File.cp!("_build/.target/#{env}/flz", Path.join(release.path, "bin/flz"))
     File.rename!(Path.join(release.path, "bin/flezha"), Path.join(release.path, "bin/flzvm"))
+    strip_cookie_flags(Path.join(release.path, "bin/flzvm"))
 
     for file <- ~w(LICENSE rel/third_party/THIRD_PARTY_NOTICES.md),
         do: File.cp!(file, Path.join(release.path, Path.basename(file)))
@@ -636,6 +637,34 @@ defmodule Flezha.MixProject do
     )
 
     announce_binaries(release)
+  end
+
+  # Mix's launcher hands every VM `--cookie "$RELEASE_COOKIE"`, which lands on
+  # its command line, readable by any local user. `rel/env.sh.eex` gives each
+  # distributed VM the cookie through a private HOME instead, so the flag goes.
+  # Each line is matched exactly: a Mix that writes them differently fails the
+  # build here rather than shipping the flag again.
+  @cookie_flags [
+    {"--hidden --cookie \"$RELEASE_COOKIE\" \\\n", "--hidden \\\n", 2},
+    {"       --cookie \"$RELEASE_COOKIE\" \\\n", "", 2}
+  ]
+
+  defp strip_cookie_flags(launcher) do
+    script =
+      Enum.reduce(@cookie_flags, File.read!(launcher), fn {flag, kept, count}, script ->
+        found = length(String.split(script, flag)) - 1
+
+        if found != count,
+          do:
+            Mix.raise(
+              "bin/flzvm holds #{found} of `#{flag}`, not #{count}; review strip_cookie_flags"
+            )
+
+        String.replace(script, flag, kept)
+      end)
+
+    if script =~ "--cookie", do: Mix.raise("bin/flzvm still passes --cookie")
+    File.write!(launcher, script)
   end
 
   # Mix's own closing message names `bin/<release name>`, which the rename

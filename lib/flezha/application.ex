@@ -19,6 +19,7 @@ defmodule Flezha.Application do
 
   @impl true
   def start(_type, _args) do
+    restore_user_env()
     :ok = Environment.check!()
 
     # The legacy `:backends` Logger config is deprecated in newer Elixir.
@@ -176,6 +177,23 @@ defmodule Flezha.Application do
   defp open?(:always), do: true
   defp open?(gate) when is_function(gate, 0), do: gate.()
   defp open?(key), do: Config.get(key)
+
+  # The launcher runs the VM with HOME at a private directory, only so OTP
+  # reads the distribution cookie there (`rel/env.sh.eex`); processes the
+  # controller spawns get the user's HOME back, and not the cookie, which
+  # nothing past the boot reads. `:init.get_argument(:home)`, and so
+  # `System.user_home/0`, keeps naming the private directory the emulator was
+  # started with.
+  defp restore_user_env() do
+    case System.get_env("RELEASE_USER_HOME") do
+      nil ->
+        :ok
+
+      home ->
+        if home == "", do: System.delete_env("HOME"), else: System.put_env("HOME", home)
+        Enum.each(~w(RELEASE_USER_HOME RELEASE_COOKIE), &System.delete_env/1)
+    end
+  end
 
   defp testnet?(), do: Config.get(:testnet_enabled) and Code.ensure_loaded?(Flezha.Testnet)
 

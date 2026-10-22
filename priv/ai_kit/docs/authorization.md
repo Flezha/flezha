@@ -401,7 +401,19 @@ cookie given to both, so a minted cookie leaves a node clustering with nobody,
 which is what a silent failure to form a cluster looks like. Generate one with
 `openssl rand -base64 48`, keep it in your secret manager, and in Kubernetes
 inject it from a Secret through `envFrom`. An explicit `RELEASE_COOKIE` wins:
-nothing is minted and no file is read.
+nothing is minted and the cookie file is not read. Keep it to printable ASCII,
+the only characters Erlang takes from a cookie file.
+
+**No command line carries the cookie**, since any local user can read one. Each
+VM the release starts that joins distribution, the controller and the one behind
+each `flz` verb, reads it from `.erlang.cookie` in a private directory under
+the release's `tmp/home/` (`RELEASE_TMP`; `0700`, the file `0600`), one per node
+name, which the release writes from the cookie before the VM starts. Your
+`~/.erlang.cookie` is never read or created. The controller puts your own `HOME`
+back in its environment, so the processes it starts see it, and drops
+`RELEASE_COOKIE` from it. Erlang's own idea of the home directory stays the
+private one, so `System.user_home/0` and a `~` it expands name it, and a shell
+from `flzvm remote` or `flzvm start_iex` does not load your `~/.iex.exs`.
 
 Where the release can neither read nor mint a cookie (no `/dev/urandom`, an
 unwritable state directory, a read-only file system), it logs why and starts

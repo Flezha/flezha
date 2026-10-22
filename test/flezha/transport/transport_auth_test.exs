@@ -152,6 +152,9 @@ defmodule Flezha.Transport.TransportAuthTest do
   describe "release cookie" do
     defp cookie_file(), do: Path.join([tmp_base(), "state", "cookie"])
 
+    defp home(kind),
+      do: Path.join([tmp_base(), "release_tmp", "home", "cookie_test@127.0.0.1", kind])
+
     # rel/env.sh.eex rendered the way `mix release` renders it.
     defp env_sh() do
       script = EEx.eval_file("rel/env.sh.eex", assigns: [release: %{name: :flezha_controller}])
@@ -163,69 +166,115 @@ defmodule Flezha.Transport.TransportAuthTest do
     # Sources the script in a clean shell as the release command `command`
     # would: the distribution posture must come from the script alone.
     defp source_env_sh(command, env \\ []) do
+      {out, 0} = sourced(command, env)
+      [_, dist, cookie, home] = Regex.run(~r/^dist=(\S*) cookie=(\S*) home=(\S*)$/m, out)
+      {out, dist, cookie, home}
+    end
+
+    defp sourced(command, env) do
       clean = %{
         "RELEASE_COMMAND" => command,
         "RELEASE_COOKIE" => nil,
         "RELEASE_DISTRIBUTION" => nil,
-        "FLEZHA_STATE_DIR" => nil,
-        "FLEZHA_COOKIE_FILE" => cookie_file()
+        "FLEZHA_STATE_DIR" => Path.dirname(cookie_file()),
+        "FLEZHA_COOKIE_FILE" => cookie_file(),
+        "FLEZHA_NODE_NAME" => "cookie_test",
+        "FLEZHA_NODE_HOST" => "127.0.0.1",
+        "RELEASE_TMP" => Path.join(tmp_base(), "release_tmp"),
+        "HOME" => Path.join(tmp_base(), "user")
       }
 
-      {out, 0} =
-        System.cmd(
-          "sh",
-          ["-c", ". #{env_sh()}; echo \"dist=$RELEASE_DISTRIBUTION cookie=$RELEASE_COOKIE\""],
-          env: Enum.to_list(Map.merge(clean, Map.new(env))),
-          stderr_to_stdout: true
-        )
-
-      [_, dist, cookie] = Regex.run(~r/^dist=(\S*) cookie=(\S*)$/m, out)
-      {out, dist, cookie}
+      System.cmd(
+        "sh",
+        [
+          "-c",
+          ". #{env_sh()}; echo \"dist=$RELEASE_DISTRIBUTION cookie=$RELEASE_COOKIE home=$HOME\""
+        ],
+        env: Enum.to_list(Map.merge(clean, Map.new(env))),
+        stderr_to_stdout: true
+      )
     end
 
     test "a start that cannot mint a cookie refuses to start distribution" do
       # A regular file where the state directory belongs: nothing can be written under it.
       File.write!(Path.dirname(cookie_file()), "")
 
-      {out, dist, _cookie} = source_env_sh("start")
+      {out, dist, _cookie, _home} = source_env_sh("start")
       assert out =~ "refusing to start Erlang distribution"
       assert dist == "none"
     end
 
+    # OTP reads `$HOME/.erlang.cookie` when no command line names a cookie, so
+    # the provisioned value reaches the VM there, in a directory of its own.
     test "a provisioned cookie enables distribution without any constant fallback" do
-      {out, dist, cookie} = source_env_sh("start", [{"RELEASE_COOKIE", "provisioned-secret"}])
+      {out, dist, cookie, home} =
+        source_env_sh("start", [{"RELEASE_COOKIE", "provisioned-secret"}])
+
       refute out =~ "refusing"
-      assert {dist, cookie} == {"name", "provisioned-secret"}
+      assert {dist, cookie, home} == {"name", "provisioned-secret", home("node")}
+      assert File.read!(Path.join(home, ".erlang.cookie")) == "provisioned-secret"
+      assert mode_bits(Path.join(home, ".erlang.cookie")) == 0o600
+      assert mode_bits(home) == 0o700
       refute File.exists?(cookie_file())
       refute File.read!("rel/env.sh.eex") =~ "flezha_cluster_cookie"
     end
 
+    # OTP's boot would crash on a cookie it cannot read; a directory another
+    # user could have placed is never trusted with one.
+    test "a cookie Erlang cannot read, or a private HOME that is a link, is refused" do
+      {out, "none", _cookie, _home} =
+        source_env_sh("start", [{"RELEASE_COOKIE", "cookié"}])
+
+      assert out =~ "printable ASCII only); refusing to start Erlang distribution"
+
+      elsewhere = Path.join(tmp_base(), "elsewhere")
+      File.mkdir_p!(elsewhere)
+      File.mkdir_p!(Path.dirname(home("node")))
+      File.ln_s!(elsewhere, home("node"))
+
+      {out, "none", _cookie, _home} = source_env_sh("start", [{"RELEASE_COOKIE", "fine"}])
+      assert out =~ "could not be placed in #{home("node")}"
+      assert File.ls!(elsewhere) == []
+    end
+
     test "only a command that starts a node mints the node-local cookie; the rest only read it" do
-      for command <- ~w(rpc eval remote stop restart pid version) do
-        {out, dist, cookie} = source_env_sh(command)
-        refute File.exists?(cookie_file()), "#{command} wrote a cookie"
-        # A value nobody keeps, so the call starts and finds no node to reach.
-        assert {dist, out =~ "[flezha]"} == {"name", false}, command
-        assert cookie =~ ~r/^[0-9a-f]{64}$/, command
+      # With no cookie there is no node to reach: the call answers as an
+      # unreachable one does, starts no VM and writes nothing.
+      for command <- ~w(rpc remote stop restart pid) do
+        assert {out, 1} = sourced(command, [])
+        assert out == "--rpc-eval : RPC failed with reason :noconnection\n", command
+        refute File.exists?(Path.dirname(cookie_file())), "#{command} wrote a cookie"
+      end
+
+      for command <- ~w(eval version) do
+        assert {out, "none", "", home} = source_env_sh(command)
+        refute out =~ "[flezha]", command
+        assert home == Path.join(tmp_base(), "user"), command
+        refute File.exists?(Path.dirname(cookie_file())), "#{command} wrote a cookie"
       end
 
       for command <- ~w(start start_iex daemon daemon_iex) do
         File.rm_rf!(Path.dirname(cookie_file()))
 
-        {out, "name", cookie} = source_env_sh(command)
+        {out, "name", cookie, home} = source_env_sh(command)
         assert File.read!(cookie_file()) == cookie <> "\n", command
         assert mode_bits(cookie_file()) == 0o600
         assert out =~ "using the node-local cookie in #{cookie_file()}"
+        assert {home, File.read!(Path.join(home, ".erlang.cookie"))} == {home("node"), cookie}
 
-        assert {_, "name", ^cookie} = source_env_sh("rpc")
+        assert {_, "name", ^cookie, cli} = source_env_sh("rpc")
+        assert {cli, File.read!(Path.join(cli, ".erlang.cookie"))} == {home("cli"), cookie}
       end
+
+      refute File.exists?(Path.join([tmp_base(), "user", ".erlang.cookie"]))
     end
 
-    # The window a command racing a first start falls into: it has found no
-    # cookie file and is still inside the script when the start writes one. `od`
-    # runs in exactly that window, so a stand-in for it runs the whole start
-    # there. Returns the cookie `command` exported and the one the start did.
-    defp race_a_first_start(command) do
+    # The window a start racing a first start falls into: it has found no
+    # cookie file and is still inside the script when the other writes one. `od`
+    # runs in exactly that window, so a stand-in for it runs the whole other
+    # start there. Returns the cookie each start exported, outer first. A verb
+    # has no such window: it never mints, so it reads a file or reaches nothing.
+    defp race_a_first_start() do
       shims = Path.join(tmp_base(), "shims")
       started = Path.join(tmp_base(), "started")
       File.mkdir_p!(shims)
@@ -241,27 +290,22 @@ defmodule Flezha.Transport.TransportAuthTest do
 
       File.chmod!(Path.join(shims, "od"), 0o755)
 
-      {_out, "name", cookie} =
-        source_env_sh(command, [{"PATH", shims <> ":" <> System.get_env("PATH")}])
+      {_out, "name", cookie, _home} =
+        source_env_sh("start", [{"PATH", shims <> ":" <> System.get_env("PATH")}])
 
       # The start really ran inside the window, and minted.
       assert <<_::binary-size(64)>> = start_cookie = File.read!(started)
       {cookie, start_cookie}
     end
 
-    test "a verb racing a first start leaves one cookie in the file, the start's" do
-      {_verb_cookie, start_cookie} = race_a_first_start("rpc")
-      assert File.read!(cookie_file()) == start_cookie <> "\n"
-      assert {_, "name", ^start_cookie} = source_env_sh("rpc")
-    end
-
     # The inner start writes first and the outer one last. Either node may win
     # the name contest, so both must have exported the value the file keeps.
     test "two starts racing a first boot each export the cookie the file holds" do
-      {outer_cookie, inner_cookie} = race_a_first_start("start")
+      {outer_cookie, inner_cookie} = race_a_first_start()
       kept = File.read!(cookie_file())
       assert {inner_cookie <> "\n", outer_cookie <> "\n"} == {kept, kept}
       assert mode_bits(cookie_file()) == 0o600
+      assert File.read!(Path.join(home("node"), ".erlang.cookie")) <> "\n" == kept
     end
   end
 
