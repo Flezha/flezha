@@ -39,7 +39,7 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
     runner_id = "exec_rc_#{System.unique_integer([:positive])}"
     name = :"rc_#{System.unique_integer([:positive])}"
 
-    {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
+    {:ok, pid} = StreamChannel.start_link({"_system", runner_id, name, :primary})
     :ok = GenServer.call(name, {:relay_pid_update, relay_id, [self()]})
 
     {runner_id, name, pid}

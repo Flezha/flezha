@@ -660,7 +660,10 @@ does not name, as owner or as the target of a running migrate, is refused at the
 it. The refusal counts into the channel's `foreign_frame_refused` slot, emits
 `[:flezha, :runner, :foreign_frame_refused]` once per session and relay, and tells that runner
 to remove its copy. A Change for a relay with no ownership record on this node reaches the
-writer under the session fence alone.
+writer under the session fence alone when the relay's durable state belongs to the session's
+namespace (`Flezha.State.Paths.namespace_of_class/1`), and is refused the same way otherwise. A
+cell id whose relay class or tasklet id would name another directory (`.`, `..`, or one holding
+`/` or NUL) does not decode (`Flezha.State.Wire.decode_cell_id/1`), so no path is built from it.
 
 ## Persisted `runner_id` is advisory
 

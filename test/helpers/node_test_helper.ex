@@ -815,13 +815,28 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   A channel in this state answers every `io_in/3` with `{:error, :no_stream}`,
   which is the window `input-delivery-guarantee` is about. It stays unbound
-  until the caller binds a stream to it.
+  until the caller binds a stream to it. Its session is in `_system`, the
+  namespace a class nobody claimed resolves to, so a frame for such a class is
+  judged as the session's own.
   """
   def unbound_stream_channel(runner_id \\ "test_runner") do
     name = :"unbound_chan_#{System.unique_integer([:positive])}"
-    {:ok, pid} = StreamChannel.start_link({runner_id, name, :primary})
+    {:ok, pid} = StreamChannel.start_link({"_system", runner_id, name, :primary})
     ExUnit.Callbacks.on_exit(fn -> ensure_stopped(pid) end)
     {name, pid}
+  end
+
+  @doc """
+  Wait for every task `Flezha.Process.DurableTasks` runs now to end: what a
+  channel started while handling a frame it has already answered for.
+  """
+  def await_durable_tasks() do
+    for task <- Task.Supervisor.children(Flezha.Process.DurableTasks) do
+      ref = Process.monitor(task)
+      ExUnit.Assertions.assert_receive({:DOWN, ^ref, :process, ^task, _}, 5_000)
+    end
+
+    :ok
   end
 
   @doc """

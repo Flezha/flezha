@@ -61,7 +61,7 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
         5_000 -> flunk("the driver never reported the peer's connection")
       end
 
-    {:ok, pid} = StreamChannel.start_link({"send_gate_runner", name, :primary})
+    {:ok, pid} = StreamChannel.start_link({"_system", "send_gate_runner", name, :primary})
     :ok = Native.controlling_process(stream, pid)
     :ok = GenServer.call(pid, {:bind, stream})
 

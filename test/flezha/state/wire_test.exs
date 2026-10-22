@@ -91,4 +91,24 @@ defmodule Flezha.State.WireTest do
   test "every correction row decodes to the target event time the core encoded" do
     assert_decodes("correction", @corrections, &Wire.decode_correction_request/1)
   end
+
+  # Fails when: a relay class or tasklet id that would name another directory
+  # under the state root is decoded and joined into a path.
+  test "a cell id whose relay class or tasklet id names another directory is refused" do
+    for bad <- [".", "..", "../x", "a/b", "/abs", "a\0b"],
+        {rc, sh} <- [{bad, "task"}, {"relay", bad}, {"", "task"}] do
+      assert {:error, _} = Wire.decode_cell_id(Wire.encode_cell_id(rc, sh, "k")),
+             "#{inspect({rc, sh})} decoded"
+    end
+
+    # A partition member, a schedule slot and a dotted name are directory names,
+    # and a relay-level frame (a processed prefix) names no tasklet.
+    for {rc, sh} <- [
+          {"orders#p15", "Elixir.Shop.Tasks"},
+          {"tick@2026-01-01T00:00:00Z", "..x"},
+          {"orders", ""}
+        ] do
+      assert Wire.decode_cell_id(Wire.encode_cell_id(rc, sh, "../k")) == {:ok, {rc, sh, "../k"}}
+    end
+  end
 end

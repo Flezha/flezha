@@ -18,7 +18,6 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Process.DurableTasks
   alias Flezha.Relay.{ClassRegistry, Overwatch, Suspend}
   alias Flezha.Runner.{ControlChannel, ControlUnit, StreamChannel}
   alias Flezha.Runner.ControlChannel.Commits
@@ -161,15 +160,29 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
       {:iter_park, %RunnerCommands.IterPark{relay_id: foreign, iter: 3, wake_deadline_ms: 0}}
     )
 
-    # The park runs in a durable task the channel started: wait for it to end.
     _ = :sys.get_state(ctx.channel_b)
-
-    for task <- Task.Supervisor.children(DurableTasks) do
-      ref = Process.monitor(task)
-      assert_receive {:DOWN, ^ref, :process, ^task, _}, 1_000
-    end
+    NodeTestHelper.await_durable_tasks()
 
     refute parked?(foreign), "a park was journaled at #{Paths.journal_path(foreign)}"
+    # Refused at the ownership check, before the park reached any path.
+    runner_b = ctx.runner_b
+    assert_received {:rem_relay, ^runner_b, ^foreign}
+  end
+
+  # Fails when: a control request's relay id, which no cell-id decode checks,
+  # names a directory past its namespace and the park is written there.
+  test "KB-877: an IterPark whose relay id climbs out of its namespace writes nothing" do
+    runner = "binding_runner_sys_#{System.unique_integer([:positive])}"
+    climbing = "../team-other/planted"
+
+    write_frame(
+      start_channel(runner, "_system"),
+      {:iter_park, %RunnerCommands.IterPark{relay_id: climbing, iter: 0, wake_deadline_ms: 0}}
+    )
+
+    assert_receive {:rem_relay, ^runner, ^climbing}, 1_000
+    NodeTestHelper.await_durable_tasks()
+    refute File.exists?(Path.join([Paths.state_root(), "team-other", "planted"]))
   end
 
   # KB-632: during a hub merge's hand-over the hub still lists the source
@@ -303,7 +316,9 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     %{relay_id: op, runner_b: runner_b} = ctx
     :ok = ClassRegistry.put_overwatch(op, self(), ctx.runner_a)
 
-    {:ok, channel} = StreamChannel.start_link({runner_b, :"binding_sc_#{runner_b}", :secondary})
+    {:ok, channel} =
+      StreamChannel.start_link({@ns, runner_b, :"binding_sc_#{runner_b}", :secondary})
+
     on_exit(fn -> NodeTestHelper.ensure_stopped(channel, :normal, 1_000) end)
 
     send(channel, {:flz_data, 0, op, "forged-by-b", %{}})
@@ -335,7 +350,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
 
   defp parked?(instance_id), do: Suspend.sleep_record(instance_id) != nil
 
-  defp start_channel(runner_id) do
+  defp start_channel(runner_id, namespace \\ @ns) do
     test_pid = self()
 
     write_fun = fn ref, _payload_id, message, _metadata ->
@@ -343,8 +358,8 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
       :ok
     end
 
-    {:ok, worker} = Commits.start_link({@ns, runner_id})
-    {:ok, pid} = ControlChannel.start_link({@ns, runner_id, make_ref(), write_fun})
+    {:ok, worker} = Commits.start_link({namespace, runner_id})
+    {:ok, pid} = ControlChannel.start_link({namespace, runner_id, make_ref(), write_fun})
 
     on_exit(fn ->
       NodeTestHelper.ensure_stopped(pid, :normal, 1_000)

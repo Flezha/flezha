@@ -102,7 +102,7 @@ Every exit trigger SHALL drive the single existing `RelayCompleted` teardown, in
 #### Scenario: An output that beats the stream's routing is still delivered
 
 - **WHEN** a chain emits within its first milliseconds, before the owning session's stream channel holds a route for it
-- **THEN** the stream SHALL route the frame through the Overwatch the ownership record names, which the class registered before its SDK start, and cache the route; a frame for a relay neither the channel nor the record knows SHALL be counted as a drop, never discarded silently
+- **THEN** the stream SHALL route the frame through the Overwatch the ownership record names, which the class registered before its SDK start, and cache the route; a frame for a relay of the session's namespace neither the channel nor the record knows SHALL be counted as a drop, never discarded silently
 
 #### Scenario: An output for a replaced Overwatch is still delivered
 

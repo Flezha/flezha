@@ -23,7 +23,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       |> String.replace(~r/[^a-zA-Z0-9_]/, "_")
       |> String.to_atom()
 
-    {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
+    {:ok, pid} = StreamChannel.start_link({"_system", "ce_test", name, :primary})
 
     on_exit(fn ->
       NodeTestHelper.ensure_stopped(pid)
@@ -89,7 +89,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       name = :stream_channel_teardown_test
 
       start_supervised!(
-        Supervisor.child_spec({StreamChannel, {"ce_test", name, :secondary}}, id: name)
+        Supervisor.child_spec({StreamChannel, {"_system", "ce_test", name, :secondary}}, id: name)
       )
 
       :ok = GenServer.call(name, {:bind, :ref_teardown})
@@ -162,7 +162,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       # Heartbeats only arrive on secondary streams; the check is gated to them.
       sec_name = :"#{name}_secondary"
-      {:ok, pid} = StreamChannel.start_link({"ce_test", sec_name, :secondary})
+      {:ok, pid} = StreamChannel.start_link({"_system", "ce_test", sec_name, :secondary})
       on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
 
       %{pid: pid, name: sec_name}
@@ -207,7 +207,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
     test "primary (send-only) stream is never flagged even when bound and silent" do
       name = :"sc_primary_#{System.unique_integer([:positive])}"
-      {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
+      {:ok, pid} = StreamChannel.start_link({"_system", "ce_test", name, :primary})
       on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
 
       :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
@@ -366,6 +366,86 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     end
   end
 
+  # A session proven to `shop` names a Cell of `billing`'s relay, which has no
+  # Overwatch on this node: directly, or through a path under its own relay.
+  describe "a runner frame never reaches another namespace's state" do
+    setup [:set_mimic_global_until_exit, :stub_rem_relay]
+
+    setup %{name: name} do
+      FlezhaTest.Case.install([:tmp_app_data])
+      ClassRegistry.ensure_table()
+      on_exit(NodeTestHelper.override_log_level(:warning))
+
+      n = System.unique_integer([:positive])
+      runner = "ce_shop_#{n}"
+      own = "orders_#{n}"
+      victim = "payments_#{n}"
+      :ok = Paths.claim_namespace(own, "shop")
+      :ok = Paths.claim_namespace(victim, "billing")
+      :ok = ClassRegistry.put_overwatch(own, self(), runner)
+
+      {:ok, shop} = StreamChannel.start_link({"shop", runner, :"#{name}_shop", :primary})
+
+      cell = {victim, "main", "k1"}
+      files = [Paths.wal_path(cell), Paths.snapshot_path(cell, 3)]
+      File.mkdir_p!(Paths.state_dir(cell))
+      Enum.each(files, &File.write!(&1, "victim"))
+
+      on_exit(fn ->
+        NodeTestHelper.ensure_stopped(shop)
+        ClassRegistry.delete(own)
+      end)
+
+      %{shop: shop, runner: runner, own: own, victim: victim, files: files}
+    end
+
+    # Fails when: a relay of another namespace with no record on this node is
+    # admitted as unrecorded and its Cell deleted.
+    test "naming an unrecorded relay of another namespace is refused and deletes nothing",
+         %{shop: shop, runner: runner, victim: victim, files: files} do
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          send_delete(shop, Wire.encode_cell_id(victim, "main", "k1"))
+          assert_received {:rem_relay, ^runner, ^victim}
+        end)
+
+      assert log =~ "#{inspect(victim)}, which belongs to \"billing\"; refused"
+      assert Enum.all?(files, &File.exists?/1), "billing's Cell state was deleted"
+    end
+
+    # Fails when: a relay class or tasklet id is joined into a path unchecked,
+    # so the sender's own relay, or a class named past its namespace, walks
+    # into another namespace's tree.
+    test "a relay class or tasklet id naming another directory is refused at decode",
+         %{shop: shop, own: own, victim: victim, files: files} do
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          send_delete(shop, Wire.encode_cell_id(own, "../../billing/#{victim}/main", "k1"))
+          send_delete(shop, Wire.encode_cell_id("../billing/#{victim}", "main", "k1"))
+        end)
+
+      assert log =~ "delete_cell_state decode failed: :bad_cell_id"
+      refute_received {:rem_relay, _, _}
+      assert Enum.all?(files, &File.exists?/1), "billing's Cell state was deleted"
+    end
+
+    # Fails when: the namespace rule refuses the unrecorded relay of the
+    # session's own namespace, such as a steps Cell after its relay ended.
+    test "an unrecorded relay of the session's own namespace is still admitted",
+         %{shop: shop} do
+      mine = "shop_unrecorded_#{System.unique_integer([:positive])}"
+      :ok = Paths.claim_namespace(mine, "shop")
+      wal = Paths.wal_path({mine, "main", "k1"})
+      File.mkdir_p!(Path.dirname(wal))
+      File.write!(wal, "mine")
+
+      send_delete(shop, Wire.encode_cell_id(mine, "main", "k1"))
+
+      refute File.exists?(wal), "the session's own unrecorded Cell was kept"
+      refute_received {:rem_relay, _, _}
+    end
+  end
+
   describe "route cache invalidation" do
     setup do
       FlezhaTest.Case.install([:tmp_app_data])
@@ -427,17 +507,11 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   end
 
   describe "an output is routed only for the runner that owns its relay" do
-    setup :set_mimic_global_until_exit
+    setup [:set_mimic_global_until_exit, :stub_rem_relay]
 
     setup do
       class = "owned_#{System.unique_integer([:positive])}"
-      test_pid = self()
       on_exit(fn -> ClassRegistry.delete(class) end)
-
-      stub(ControlUnit, :stop_relay_async, fn runner_id, id ->
-        send(test_pid, {:rem_relay, runner_id, id})
-        :ok
-      end)
 
       %{class: class}
     end
@@ -511,6 +585,27 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert_received {:drop, %{count: 1}, %{relay_id: ^class, reason: :unrouted}}
       refute_received {:rem_relay, _, _}
     end
+  end
+
+  # A refusal's `RemRelay` reaches the test process as `{:rem_relay, runner, relay}`.
+  defp stub_rem_relay(_context) do
+    test_pid = self()
+
+    stub(ControlUnit, :stop_relay_async, fn runner_id, id ->
+      send(test_pid, {:rem_relay, runner_id, id})
+      :ok
+    end)
+
+    :ok
+  end
+
+  # Send one `delete_cell_state` and wait out whatever it started: the channel
+  # handles the frame before it answers the call, and runs a deletion in a
+  # durable task.
+  defp send_delete(channel, frame) do
+    send(channel, {:flz_data, :ref_kb877, "delete_cell_state", frame, %{}})
+    _ = GenServer.call(channel, :stream_ref_status)
+    NodeTestHelper.await_durable_tasks()
   end
 
   defp monitors_of(pid) do
@@ -629,7 +724,7 @@ defmodule Flezha.Runner.StreamChannelLivenessTest do
     exec = "exec_sc_#{System.unique_integer([:positive])}"
     name = :"sc_#{System.unique_integer([:positive])}"
 
-    {:ok, _pid} = StreamChannel.start_link({exec, name, :primary})
+    {:ok, _pid} = StreamChannel.start_link({"_system", exec, name, :primary})
 
     {:error, :no_stream} = StreamChannel.io_in(name, "relay1", {"msg", %{}})
     {:error, :no_stream} = StreamChannel.io_in(name, "relay1", {"msg", %{}})
@@ -674,7 +769,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
       |> String.replace(~r/[^a-zA-Z0-9_]/, "_")
       |> String.to_atom()
 
-    {:ok, pid} = StreamChannel.start_link({"ce_repro", name, :primary})
+    {:ok, pid} = StreamChannel.start_link({"_system", "ce_repro", name, :primary})
     on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     %{pid: pid, name: name}
   end

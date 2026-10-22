@@ -51,16 +51,31 @@ defmodule Flezha.State.Wire do
 
   @doc """
   Decode the on-wire `cell_id_bytes` into `{relay_class, tasklet_id, cell_key}`.
+
+  The relay class and tasklet id each become one directory under the state
+  root, so a value that would name another directory (`path_segment?/1`) is
+  refused here, before any path is built from it. The tasklet id alone may be
+  empty: a relay-level frame, such as a processed prefix, names no tasklet.
   """
   @spec decode_cell_id(binary()) :: {:ok, {binary(), binary(), binary()}} | {:error, term()}
   def decode_cell_id(
         <<rc_len::8, relay_class::binary-size(rc_len), sh_len::8, tasklet_id::binary-size(sh_len),
           pk_len::16-big, cell_key::binary-size(pk_len)>>
       ) do
-    {:ok, {relay_class, tasklet_id, cell_key}}
+    if path_segment?(relay_class) and (tasklet_id == "" or path_segment?(tasklet_id)),
+      do: {:ok, {relay_class, tasklet_id, cell_key}},
+      else: {:error, :bad_cell_id}
   end
 
   def decode_cell_id(_), do: {:error, :bad_cell_id}
+
+  @doc """
+  Whether `segment` names exactly one directory level: not empty, `.` or `..`,
+  and holding no `/` or NUL. Binary matching only, as it runs per state frame.
+  """
+  @spec path_segment?(binary()) :: boolean()
+  def path_segment?(segment) when segment in ["", ".", ".."], do: false
+  def path_segment?(segment), do: :binary.match(segment, ["/", <<0>>]) == :nomatch
 
   @doc """
   Decode an inbound `cell_state_change` / `cell_state_snapshot`

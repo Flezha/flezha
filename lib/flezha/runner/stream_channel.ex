@@ -29,8 +29,8 @@ defmodule Flezha.Runner.StreamChannel do
   use GenServer
   use Flezha.Process.Timer, keys: [:io_liveness]
 
-  def start_link({runner_id, name, type}) do
-    GenServer.start_link(__MODULE__, {runner_id, type, name}, name: name)
+  def start_link({namespace, runner_id, name, type}) do
+    GenServer.start_link(__MODULE__, {namespace, runner_id, type, name}, name: name)
   end
 
   # Every payload-id this channel forwards onto a Cell's durable write path;
@@ -107,7 +107,7 @@ defmodule Flezha.Runner.StreamChannel do
   defdelegate heartbeat_keys(), to: LivenessCounters
 
   @impl true
-  def init({runner_id, type, name}) do
+  def init({namespace, runner_id, type, name}) do
     # The runner heartbeats every SECONDARY stream every ~10s; a bound
     # secondary whose last frame (heartbeat or data) is older than the
     # threshold is stalled — a silent data-plane wedge that raises no
@@ -122,6 +122,9 @@ defmodule Flezha.Runner.StreamChannel do
     {
       :ok,
       %{
+        # The session's proven namespace, which a relay with no ownership
+        # record on this node is judged against.
+        namespace: namespace,
         runner_id: runner_id,
         # The stable identity this session presented, which a relay's
         # ownership record is judged against.

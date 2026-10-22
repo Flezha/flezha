@@ -47,7 +47,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   test "TaskCommit is journaled durably and acked with an empty error" do
-    inst = "opc_inst_#{System.unique_integer([:positive])}"
+    inst = claimed("opc_inst_#{System.unique_integer([:positive])}")
     {control_channel, stream_ref} = start_control_channel("ok")
 
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
@@ -69,7 +69,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   test "a completing commit journals its result on both barriers, and a plain one none" do
-    inst = "opc_done_#{System.unique_integer([:positive])}"
+    inst = claimed("opc_done_#{System.unique_integer([:positive])}")
     {control_channel, stream_ref} = start_control_channel("done")
 
     for payload <- [
@@ -91,7 +91,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   # stopping) reaches the runner as the reason the commit failed.
   test "an append whose journal writer is closed under it is answered as the writer gone" do
     on_exit(override_log_level(:warning))
-    inst = "opc_closed_#{System.unique_integer([:positive])}"
+    inst = claimed("opc_closed_#{System.unique_integer([:positive])}")
     {control_channel, stream_ref} = start_control_channel("closed")
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(inst))
     :ok = :sys.suspend(writer)
@@ -113,7 +113,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   test "a re-sent barrier under the same reference_id is acked again from the one entry" do
-    inst = "opc_resend_#{System.unique_integer([:positive])}"
+    inst = claimed("opc_resend_#{System.unique_integer([:positive])}")
     {control_channel, stream_ref} = start_control_channel("resend")
 
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
@@ -161,7 +161,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     pong =
       TestHelpers.in_one_window(fn ->
         for i <- 1..100 do
-          inst = "storm_#{i}_#{System.unique_integer([:positive])}"
+          inst = claimed("storm_#{i}_#{System.unique_integer([:positive])}")
           payload = build_task_commit_payload(inst, 0, [], [{1, "h"}], "ref-storm-#{i}")
           send(channel, {:flz_data, :stream_id, "control_command", payload, %{}})
         end
@@ -317,7 +317,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     end
 
     test "the ack is withheld until the barrier is on the remote store" do
-      inst = "opc_sync_#{System.unique_integer([:positive])}"
+      inst = claimed("opc_sync_#{System.unique_integer([:positive])}")
       ClassRegistry.put_remote(inst, true)
       {control_channel, stream_ref} = start_control_channel("sync")
 
@@ -336,7 +336,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     end
 
     test "a failed remote ship withholds the ack's success and re-runs the task on resume" do
-      inst = "opc_sync_down_#{System.unique_integer([:positive])}"
+      inst = claimed("opc_sync_down_#{System.unique_integer([:positive])}")
       ClassRegistry.put_remote(inst, true)
       {control_channel, stream_ref} = start_control_channel("syncdown")
 
@@ -365,7 +365,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     end
 
     test "a class that declares nothing acks on local fsync exactly as before" do
-      inst = "opc_async_#{System.unique_integer([:positive])}"
+      inst = claimed("opc_async_#{System.unique_integer([:positive])}")
       {control_channel, stream_ref} = start_control_channel("async")
 
       seg = Wire.encode_cell_id(inst, "TaskA", "s0")
@@ -490,7 +490,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   test "the iteration boundary requests no snapshot: the Watchdog compacts a steps relay's Cells" do
-    inst = "iter_snap_#{System.unique_integer([:positive])}"
+    inst = claimed("iter_snap_#{System.unique_integer([:positive])}")
 
     seg_id = {inst, "TaskA", "s0"}
     {:ok, writer} = Flezha.State.Supervisor.find_or_start(seg_id)
@@ -515,7 +515,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   test "IterPark journals the unread release, then hands the park record to the instance's Overwatch" do
-    inst = "park_inst_#{System.unique_integer([:positive])}"
+    inst = claimed("park_inst_#{System.unique_integer([:positive])}")
     {control_channel, _stream_ref} = start_control_channel("park")
 
     # Stand in as the instance's Overwatch: the suspension is cast at us. The
@@ -734,6 +734,14 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   defp journal(inst) do
     {:ok, pid} = Flezha.State.Supervisor.lookup(Paths.journal_id(inst))
     pid
+  end
+
+  # Stand in for an instance whose Overwatch runs on no node here: its bind
+  # claimed the namespace before any of its state was written, and a barrier
+  # with no ownership record is judged by that claim.
+  defp claimed(inst) do
+    :ok = Paths.claim_namespace(inst, @namespace)
+    inst
   end
 
   # Stand in as the bound relay, owned by the channel's own session.

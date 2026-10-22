@@ -45,7 +45,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
   test "the stream channel persists a marker for each compensation frame" do
     name = :"stream_comp_#{System.unique_integer([:positive])}"
-    {:ok, pid} = StreamChannel.start_link({"exec-comp", name, :secondary})
+    {:ok, pid} = StreamChannel.start_link({"_system", "exec-comp", name, :secondary})
 
     seg = {"comp_rc", "comp_op", "comp_seg"}
     frame = comp_frame(seg)

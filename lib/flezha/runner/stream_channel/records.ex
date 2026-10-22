@@ -42,6 +42,18 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   require Logger
 
+  @typedoc """
+  What an ownership check reads of the session it judges, held alike by a
+  stream channel's and a control channel's state.
+  """
+  @type session :: %{
+          required(:runner_id) => binary(),
+          required(:identity) => binary(),
+          required(:namespace) => binary(),
+          required(:liveness_ref) => term(),
+          optional(atom()) => term()
+        }
+
   @doc """
   Write one relay's route into the cache: `relay_mapping` is what
   `route/2` reads first, in front of `ClassRegistry` — which refuses a dead
@@ -93,8 +105,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
   the relay's ownership record: the owner's first output, which can beat
   the publish that seeds the route, is routed through
   the record's Overwatch and the route cached; a frame from any other runner
-  is refused (`admit/3`). A frame for a relay nobody records, or whose
-  recorded Overwatch is gone, is the only true drop, and it is counted.
+  is refused (`admit/3`). A frame for a relay of the session's namespace
+  nobody records, or whose recorded Overwatch is gone, is the only true drop,
+  and it is counted.
   """
   def route(state, relay_id) do
     case Map.get(state.relay_mapping, relay_id, []) do
@@ -157,13 +170,15 @@ defmodule Flezha.Runner.StreamChannel.Records do
   Whether the session behind `state` may act on the relay whose class is
   `relay_class` (its id, unless it declared a class): the session's stable
   identity is the owner the ownership record names, or no record exists on
-  this node. `kind` names the frame in the report.
+  this node and the relay's durable state belongs to the session's namespace
+  (`Flezha.State.Paths.namespace_of_class/1`). `kind` names the frame in the
+  report.
 
   A refusal is counted on the channel every time. The event, the warning and
   the `RemRelay` that stops the sender's copy go out once per session and
   relay, however many of the session's channels the copy speaks on.
   """
-  @spec admit(map(), binary(), atom()) :: boolean()
+  @spec admit(session(), binary(), atom()) :: boolean()
   def admit(state, relay_class, kind),
     do: ownership(state, relay_class, kind) != :refused
 
@@ -174,7 +189,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   through the hub. During a hub merge's hand-over the hub can still list the
   source node's departing Overwatch, which would lose the frame.
   """
-  @spec admit_to(map(), binary(), atom()) :: {:ok, pid() | nil} | :refused
+  @spec admit_to(session(), binary(), atom()) :: {:ok, pid() | nil} | :refused
   def admit_to(state, relay_class, kind) do
     case ownership(state, relay_class, kind) do
       {:owner, pid} -> {:ok, pid}
@@ -187,7 +202,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   Whether the session behind `state` is the owner the relay's ownership record
   names: unlike `admit/3`, a relay with no record on this node is not its.
   """
-  @spec owned?(map(), binary(), atom()) :: boolean()
+  @spec owned?(session(), binary(), atom()) :: boolean()
   def owned?(state, relay_class, kind),
     do: match?({:owner, _pid}, ownership(state, relay_class, kind))
 
@@ -201,8 +216,8 @@ defmodule Flezha.Runner.StreamChannel.Records do
     do: relay_id |> ClassRegistry.state_keys() |> List.last() |> ClassRegistry.get()
 
   # The one read of the ownership record: the session owns the relay and
-  # the record names its Overwatch, no record exists on this node, or the
-  # frame is refused.
+  # the record names its Overwatch, no record exists on this node and the
+  # relay's state belongs to the session's namespace, or the frame is refused.
   defp ownership(state, relay_class, kind) do
     case ClassRegistry.owner(relay_class) do
       {:ok, pid, owner} ->
@@ -211,8 +226,21 @@ defmodule Flezha.Runner.StreamChannel.Records do
           else: refuse(state, relay_class, owner, kind)
 
       :error ->
-        :unrecorded
+        unrecorded(state, relay_class, kind)
     end
+  end
+
+  # No record here means a hub hand-over's old copy still speaking, a steps
+  # Cell after its relay ended, or a lost ownership table, so the namespace the
+  # relay's state belongs to on this node is what is judged. A control
+  # request's relay id passed no `Wire.decode_cell_id/1`, so it is held to the
+  # same path rule before it names a directory.
+  defp unrecorded(state, relay_class, kind) do
+    namespace = if Wire.path_segment?(relay_class), do: Paths.namespace_of_class(relay_class)
+
+    if namespace == state.namespace,
+      do: :unrecorded,
+      else: refuse(state, relay_class, namespace, kind)
   end
 
   defp refuse(state, relay_class, owner, kind) do
@@ -221,7 +249,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
     if Marks.first_refusal?(state.runner_id, relay_class) do
       Logger.warning(
         "[runner] #{state.runner_id} (identity #{state.identity}) sent #{kind} for " <>
-          "#{inspect(relay_class)}, which is bound to #{inspect(owner)}; refused, and the " <>
+          "#{inspect(relay_class)}, which belongs to #{inspect(owner)}; refused, and the " <>
           "runner is told to remove its copy"
       )
 

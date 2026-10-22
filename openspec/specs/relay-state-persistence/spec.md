@@ -882,7 +882,7 @@ A realign SHALL be honoured only when the divergent Changes arrive via the Cell'
 current owner binding — the session the takeover logic most recently bound to the
 Cell's write path — and only from a session whose stable identity the relay's
 ownership record names as its owner or as pending, or when the record is absent on
-this node. Changes forwarded by a superseded session SHALL be refused at the binding
+this node and the relay's durable state belongs to that session's namespace. Changes forwarded by a superseded session SHALL be refused at the binding
 (the superseded session's channels are unbound during takeover, before the new session
 is bound) and SHALL NOT trigger a realign; a Change from a session whose identity the
 record does not name SHALL be refused at the stream channel before it reaches the

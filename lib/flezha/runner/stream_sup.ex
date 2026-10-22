@@ -17,25 +17,25 @@ defmodule Flezha.Runner.StreamSup do
 
   use Supervisor
 
-  def stream_specs(runner_id, type) do
+  def stream_specs(namespace, runner_id, type) do
     for id <- StreamPool.stream_ids(runner_id, type) do
-      Supervisor.child_spec({StreamChannel, {runner_id, id, type}}, id: id)
+      Supervisor.child_spec({StreamChannel, {namespace, runner_id, id, type}}, id: id)
     end
   end
 
-  def start_link({runner_id, type}) do
+  def start_link({namespace, runner_id, type}) do
     name =
       case type do
         :primary -> Identificator.stream_sup_primary(runner_id)
         :secondary -> Identificator.stream_sup_secondary(runner_id)
       end
 
-    Supervisor.start_link(__MODULE__, {runner_id, type}, name: name)
+    Supervisor.start_link(__MODULE__, {namespace, runner_id, type}, name: name)
   end
 
   @impl true
-  def init({runner_id, type}) do
-    children = stream_specs(runner_id, type)
+  def init({namespace, runner_id, type}) do
+    children = stream_specs(namespace, runner_id, type)
 
     Supervisor.init(children, strategy: :one_for_one)
   end

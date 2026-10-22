@@ -51,12 +51,12 @@ defmodule Flezha.Runner.RunnerSupervisor do
       ),
       Cspec.build(
         :primary_stream_sup,
-        {Flezha.Runner.StreamSup, :start_link, [{runner_id, :primary}]},
+        {Flezha.Runner.StreamSup, :start_link, [{namespace, runner_id, :primary}]},
         :worker_permanent
       ),
       Cspec.build(
         :secondary_stream_sup,
-        {Flezha.Runner.StreamSup, :start_link, [{runner_id, :secondary}]},
+        {Flezha.Runner.StreamSup, :start_link, [{namespace, runner_id, :secondary}]},
         :worker_permanent
       )
     ]

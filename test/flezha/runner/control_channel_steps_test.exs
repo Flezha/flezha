@@ -20,7 +20,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.RelayManager
-  alias Flezha.State.Completion
+  alias Flezha.State.{Completion, Paths}
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
@@ -185,7 +185,11 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     {pid, stream_ref}
   end
 
+  # No Overwatch runs here, so the namespace claim its bind would write stands
+  # in for it: a relay with no ownership record is judged by that claim.
   defp build_relay_completed_payload(relay_id, status, error, result, reference_id) do
+    :ok = Paths.claim_namespace(relay_id, @namespace)
+
     ControlFrameTestHelper.encode_request(
       reference_id,
       {:relay_completed,
@@ -412,14 +416,16 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   `write_fun` instead of mocking `Native.send_data/2`.
   """
 
-  # async: false: Mimic global mode; Mimic stubs; the live controller and its fleet.
+  # async: false: Mimic global mode; Mimic stubs; the live controller and its
+  # fleet; a fresh state root, under which the relays' namespace claims are kept.
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.HubManager
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -521,7 +527,11 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
     {pid, stream_ref}
   end
 
+  # The relay's namespace claim, which its Overwatch's bind writes on the node
+  # it ran on, stands in for it: a relay with no ownership record is judged by it.
   defp build_notification_payload(relay_id, serialized_state, reference_id) do
+    :ok = Paths.claim_namespace(relay_id, @namespace)
+
     ControlFrameTestHelper.encode_request(
       reference_id,
       {:runner_shutdown_notification,

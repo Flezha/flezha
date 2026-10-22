@@ -565,7 +565,8 @@ sequenceDiagram
 Above the fences is the **identity check**. `Flezha.Runner.StreamChannel.Records.admit/3`
 refuses an output, a cell write, a processed-prefix marker or a control frame
 (`RelayCompleted`, `IterPark`, `RunnerShutdownNotification`,
-`TaskCommit`, `IterCommit`) when the relay's record names another identity as its owner. A
+`TaskCommit`, `IterCommit`) when the relay's record names another identity as its owner, or,
+with no record on this node, when the relay's durable state belongs to another namespace. A
 refusal acts on nothing. It is counted on the channel, reported once per session and relay
 as `[:flezha, :runner, :foreign_frame_refused]`, and answered with `RemRelay`, so a runner
 that was evicted while still alive is told to stop the first time it speaks. An admitted

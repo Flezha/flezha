@@ -214,10 +214,15 @@ speaks. Every frame the controller reads that names
 a relay (an output frame, the seven cell-write payloads, `correction_request`,
 `RelayCompleted`, `IterPark`, `RunnerShutdownNotification`,
 `TaskCommit` and `IterCommit`) SHALL be accepted only when the record names the sending session's
-identity as the owner, or when no record exists for the relay. A
-frame the record refuses SHALL NOT act on the relay: it SHALL be counted on the
+identity as the owner, or when no record exists for the relay on this node and the
+relay's durable state belongs to the sending session's namespace. A relay id with no
+record that would name another directory under the state root (`.`, `..`, or one
+holding `/` or NUL) SHALL be refused the same way, and a cell id whose relay class or
+non-empty tasklet id would do so SHALL NOT decode, so no path is built from it. A
+frame refused this way SHALL NOT act on the relay: it SHALL be counted on the
 sending channel, reported on `[:flezha, :runner, :foreign_frame_refused]` with the
-runner, its identity, the recorded owner, the relay and the frame kind, and the
+runner, its identity, the recorded owner (with no record, the namespace the relay's
+state belongs to), the relay and the frame kind, and the
 sending runner SHALL be told `RemRelay` for that relay once per session. A
 refused durability barrier SHALL be acked with a non-empty error; a refused shutdown
 notification SHALL still be acked; a refused completion SHALL write no record and
@@ -277,12 +282,31 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 - **THEN** the channel SHALL route it through the record's Overwatch and cache the
   route, and the frame SHALL NOT be refused or dropped
 
-#### Scenario: A relay nobody records is handled as before
+#### Scenario: A relay of the session's namespace nobody records is handled as before
 
-- **WHEN** a frame names a relay for which no record exists on this node
+- **WHEN** a frame names a relay for which no record exists on this node and whose
+  durable state belongs to the sending session's namespace
 - **THEN** an output SHALL be the counted `:unrouted` drop it is today, a cell
   write SHALL reach its writer under the session fence alone, and a control frame
   SHALL be handled as one whose Overwatch is absent
+
+#### Scenario: A relay of another namespace nobody records is refused
+
+- **GIVEN** relay `X` of namespace `billing`, with Cell state on this node and no
+  record here
+- **WHEN** a session proven to namespace `shop` sends a cell-write or control frame
+  naming `X`
+- **THEN** the frame SHALL be refused and reported naming `billing` as the owner, the
+  session SHALL be sent `RemRelay` for `X` once, and `X`'s WAL and snapshots SHALL
+  remain
+
+#### Scenario: A cell id naming another directory does not decode
+
+- **WHEN** a cell-write frame names a relay class that is empty, `.` or `..`, or a
+  relay class or tasklet id holding `/` or NUL, such as tasklet
+  `../../billing/X/main` under the sender's own relay
+- **THEN** the frame SHALL be reported undecodable once per session and kind, and no
+  file outside the named relay's own state directory SHALL be written or removed
 
 ### Requirement: A refused runner connect SHALL be answered with its error
 

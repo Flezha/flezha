@@ -79,7 +79,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     class = "credit_class_#{uniq}"
     name = :"sc_credit_#{uniq}"
 
-    {:ok, channel} = StreamChannel.start_link({runner_id, name, :secondary})
+    {:ok, channel} = StreamChannel.start_link({"_system", runner_id, name, :secondary})
     on_exit(fn -> NodeTestHelper.ensure_stopped(channel) end)
 
     %{channel: channel, runner_id: runner_id, class: class, name: name}
