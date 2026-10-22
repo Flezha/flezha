@@ -113,7 +113,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
       factory: cfg.factory,
       throughput: Run.rate(cfg.n, m.whole_window),
       unit: "steps/s",
-      p50_ms: Run.p50_ms(st.done),
+      p50_ms: Tally.latency_ms(st.done).p50,
       commits_s: Run.rate(c1.task - c0.task, m.whole_window),
       integrity: Run.integrity(st, m.missing)
     )
@@ -215,7 +215,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
       factory: cfg.factory,
       throughput: Run.rate(st.out.received, window),
       unit: "turns/s",
-      p50_ms: Run.p50_ms(st.out),
+      p50_ms: Tally.latency_ms(st.out).p50,
       commits_s: Run.rate(c1.task - c0.task, window),
       integrity: Run.integrity(st, missing)
     )
@@ -415,7 +415,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
       factory: cfg.factory,
       throughput: Run.rate(n, window),
       unit: "wakes/s",
-      p50_ms: Run.p50_ms(st.out),
+      p50_ms: Tally.latency_ms(st.out).p50,
       commits_s: Run.rate(c1.task - c0.task, max(window, 1)),
       integrity:
         Run.integrity(%{st | out: %{st.out | duplicates: st.out.duplicates}}, n - st.out.seen)
@@ -520,8 +520,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
   defp paced_loop(_cfg, _sink, [], _t0, _issued, _main), do: :ok
 
   defp paced_loop(cfg, sink, pending, t0, issued, main) do
-    due = trunc((Run.now_ns() - t0) / 1.0e9 * cfg.rate) - issued
-    {now, rest} = Enum.split(pending, max(due, 0))
+    {now, rest} = Enum.split(pending, Tally.due(t0, cfg.rate, issued))
     Enum.each(now, fn seq -> Task.start(fn -> spawn_one(cfg, sink, seq, main, nil) end) end)
     Process.sleep(5)
     paced_loop(cfg, sink, rest, t0, issued + length(now), main)
@@ -606,7 +605,7 @@ defmodule Mix.Tasks.Bench.Steps.Scenarios do
 
     allowed =
       if cfg.rate > 0 do
-        trunc((Run.now_ns() - t0) / 1.0e9 * cfg.rate) - sent
+        Tally.due(t0, cfg.rate, sent)
       else
         cap - (sent - :counters.get(received, 1))
       end

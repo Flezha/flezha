@@ -306,12 +306,9 @@ defmodule Mix.Tasks.Bench.Steps.Run do
         {:timer_wake, String.to_integer(fired_at)}
 
       _ ->
-        with [seq, ts] <- String.split(body, ",", parts: 2),
-             {seq, ""} <- Integer.parse(seq),
-             {ts, ""} <- Integer.parse(ts) do
-          {:turn, seq, ts}
-        else
-          _ -> :unknown
+        case Tally.parse_stamp(body) do
+          {seq, ts} -> {:turn, seq, ts}
+          :error -> :unknown
         end
     end
   end
@@ -433,8 +430,6 @@ defmodule Mix.Tasks.Bench.Steps.Run do
   def integrity(%{stalled: true}, _missing), do: :stall
   def integrity(%{out: %{duplicates: 0}}, 0), do: :clean
   def integrity(_st, _missing), do: :loss
-
-  def p50_ms(tally), do: Float.round(Tally.percentiles(tally, [0.50])[0.50] / 1_000_000, 2)
 
   # One verdict for a measured phase: stalled, clean, or an integrity failure
   # (a missing or duplicated seq).

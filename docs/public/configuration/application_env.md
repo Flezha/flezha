@@ -119,6 +119,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:authn_authz[:token_expiry_warning_ms]` | ms | `86400000` |
 | `:authn_authz[:token_ttl_default_seconds]` | int | `86400` |
 | `:auto_restore_enabled` | bool | `true` |
+| `:bench_durability_owned` | bool | `false` |
 | `:bench_skip_build` | bool | `false` |
 | `:bind_restore_concurrency` | positive_int | `16` |
 | `:boot_replay_timeout_ms` | ms | `60000` |

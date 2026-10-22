@@ -147,10 +147,19 @@ defmodule Mix.Tasks.Bench.ReportTest do
           artifacts: []
         })
 
-      assert Enum.any?(warnings, &(&1 =~ "powersave"))
-      assert Enum.any?(warnings, &(&1 =~ "load average"))
-      assert Enum.any?(warnings, &(&1 =~ "dirty"))
-      assert Enum.any?(warnings, &(&1 =~ "durability"))
+      assert {:box, _} = Enum.find(warnings, &(elem(&1, 1) =~ "powersave"))
+      assert {:box, _} = Enum.find(warnings, &(elem(&1, 1) =~ "load average"))
+      assert {:box, _} = Enum.find(warnings, &(elem(&1, 1) =~ "dirty"))
+      assert {:workload, text} = Enum.find(warnings, &(elem(&1, 1) =~ "durability"))
+      # A stateful shape still fsyncs locally with the tier off.
+      assert text =~ "remote durability tier is off"
+      refute text =~ "persisting anything"
+    end
+
+    test "a store the bench cannot clear is a workload warning" do
+      warnings = Report.warnings(%{system: %{}, durability: "s3", durability_kept: true})
+      assert [{:workload, text}] = Enum.reject(warnings, &(elem(&1, 1) =~ "MIX_ENV"))
+      assert text =~ "may be restored"
     end
 
     test "a fit box warns about nothing it need not" do
@@ -163,7 +172,8 @@ defmodule Mix.Tasks.Bench.ReportTest do
 
       # `MIX_ENV` is `test` under the suite, so exactly that one condition
       # holds and nothing else does.
-      assert Enum.all?(warnings, &(&1 =~ "MIX_ENV"))
+      assert [{:box, text}] = warnings
+      assert text =~ "MIX_ENV"
     end
 
     test "a fallback or debug artifact is called out by name" do
@@ -180,8 +190,9 @@ defmodule Mix.Tasks.Bench.ReportTest do
           ]
         })
 
-      assert Enum.any?(warnings, &(&1 =~ "target/release/rust_runner does not exist"))
-      assert Enum.any?(warnings, &(&1 =~ "is a debug build"))
+      texts = for {:box, text} <- warnings, do: text
+      assert Enum.any?(texts, &(&1 =~ "target/release/rust_runner does not exist"))
+      assert Enum.any?(texts, &(&1 =~ "is a debug build"))
     end
 
     test "an absent system field never raises" do
@@ -210,15 +221,20 @@ defmodule Mix.Tasks.Bench.ReportTest do
     end
   end
 
+  defp tmp_report_path() do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "flezha-bench-report-#{System.unique_integer([:positive])}/report.json"
+      )
+
+    on_exit(fn -> File.rm_rf!(Path.dirname(path)) end)
+    path
+  end
+
   describe "the run lifecycle" do
     test "open → emit → finish carries the header into the report" do
-      path =
-        Path.join(
-          System.tmp_dir!(),
-          "flezha-bench-report-#{System.unique_integer([:positive])}/report.json"
-        )
-
-      on_exit(fn -> File.rm_rf!(Path.dirname(path)) end)
+      path = tmp_report_path()
 
       output =
         ExUnit.CaptureIO.capture_io(fn ->
@@ -246,6 +262,38 @@ defmodule Mix.Tasks.Bench.ReportTest do
       assert decoded["metrics"]["first_out_ms"] === 1000.0
       # The run block's own context reaches the warnings.
       assert Enum.any?(decoded["warnings"], &(&1 =~ "durability"))
+    end
+
+    test "strict refuses a box warning after printing it" do
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Report.open("test bench", [{"runtime", "rust"}])
+
+          # `MIX_ENV` is `test` under the suite: a box warning always holds.
+          error = assert_raise Mix.Error, fn -> Report.emit(%{durability: "s3", strict: true}) end
+          assert error.message =~ "--strict"
+          assert error.message =~ "MIX_ENV"
+          refute error.message =~ "durability"
+        end)
+
+      assert output =~ "! MIX_ENV=test"
+    end
+
+    test "a warning learned after measuring is printed and reported" do
+      path = tmp_report_path()
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Report.open("test bench", [{"runtime", "rust"}])
+          Report.emit(%{durability: "none"})
+          Report.warn("the paced sender fell behind")
+          Report.finish(path, %{metrics: %{}})
+        end)
+
+      assert output =~ "! the paced sender fell behind"
+      warnings = path |> File.read!() |> Jason.decode!() |> Map.fetch!("warnings")
+      assert List.last(warnings) == "the paced sender fell behind"
+      assert Enum.any?(warnings, &(&1 =~ "durability"))
     end
 
     test "emit is idempotent — a per-pool sweep prints one header" do

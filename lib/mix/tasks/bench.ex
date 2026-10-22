@@ -1,11 +1,12 @@
 defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Config
-  alias Flezha.Plugin.Host
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
+  alias Mix.Tasks.Bench.Inputs
   alias Mix.Tasks.Bench.Report
+  alias Mix.Tasks.Bench.Tally
 
   @shortdoc "Run performance tests for Flezha relays"
   @moduledoc """
@@ -58,6 +59,27 @@ defmodule Mix.Tasks.Bench do
       `Flezha.Plugin.Host.inject/5` in `:verdict` mode carrying a `flz.msg_id`,
       the path a plugin source takes; each relay is fed by its own caller,
       since a verdict waits for its relay).
+    * `--latency` - Stamp every input with its seq and send time and report
+      p50 / p95 / p99 / p99.9 / max over the outputs that carry the stamp back.
+      The inputs are then sent from a process of their own, so an output is
+      never timed behind the bench's own send loop. Every fixture the bench
+      drives passes its input through to its output except `sleeping_counter`,
+      which folds an integer and so reports `n=0`; `cell_stress` emits eight
+      outputs per input, and the first one is the one timed.
+    * `--rate` - Send at this many inputs per second in total, round-robin over
+      the relays, instead of one burst. Latency under a burst includes queueing
+      behind every input sent before it; at a fixed rate below saturation it is
+      the figure other systems publish. Needs `--via cast`; not for `cell`.
+    * `--payload-bytes` - Pad every input to exactly this many bytes. Every run
+      reports its input size, with or without it. Not for `sleeping`.
+    * `--strict` - Refuse to measure when a box or build warning holds
+      (governor, load, `MIX_ENV`, dirty tree, skipped build, fallback or debug
+      artifact). Workload warnings such as the durability one never refuse.
+
+  `FLEZHA_DURABILITY_BACKEND` selects the remote durability tier. A
+  `local_path` store that `scripts/bench.sh` chose (`FLEZHA_BENCH_DURABILITY_OWNED`)
+  is cleared with the namespace before each run; any other store is kept, with
+  a warning. Every run reports what it persisted during the measured window.
 
   ## Comparing SDKs
 
@@ -95,7 +117,11 @@ defmodule Mix.Tasks.Bench do
     pool_sizes: :string,
     warmup: :integer,
     hook_url: :string,
-    via: :string
+    via: :string,
+    latency: :boolean,
+    rate: :integer,
+    payload_bytes: :integer,
+    strict: :boolean
   ]
 
   @aliases [
@@ -115,12 +141,12 @@ defmodule Mix.Tasks.Bench do
     via = parse_via(opts[:via])
 
     {num_relays, messages_per_relay} = dimensions_for_shape(shape, opts)
+    inputs = Inputs.parse(opts, shape, via, {num_relays, messages_per_relay}, warmup)
 
     Process.put(:bench_runtime, runtime)
     Process.put(:bench_hook_url, opts[:hook_url])
-    Process.put(:bench_via, via)
-
-    open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}, via)
+    Process.put(:bench_inputs, inputs)
+    Process.put(:bench_strict, opts[:strict] || false)
 
     # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
     # block, so its relays stay in the hub's declared set and their state
@@ -130,6 +156,8 @@ defmodule Mix.Tasks.Bench do
     # so reset it before the controller boots and can restore anything. The
     # `default` namespace is left alone — it may hold runners this task reuses.
     Fleet.reset_namespace(@bench_namespace)
+
+    open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}, inputs)
 
     Mix.Task.run("app.start")
     Report.apply_log_level()
@@ -143,7 +171,7 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  defp open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}, via) do
+  defp open_report(runtime, shape, pool_sizes, warmup, {num_relays, messages_per_relay}, inputs) do
     Report.open(
       "mix bench",
       [
@@ -151,13 +179,14 @@ defmodule Mix.Tasks.Bench do
         {"toolchain", Report.toolchain(runtime)},
         {"transport", to_string(Config.get(:transport))},
         {"shape", to_string(shape)},
-        {"durability", durability_backend()},
+        {"durability", durability_row()},
         {"relays", to_string(num_relays)},
         {"messages/relay", to_string(messages_per_relay)},
         {"warmup/relay", to_string(warmup)}
       ] ++
+        Inputs.header_rows(inputs) ++
         if(shape == :cell, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
-        if(via == :cast, do: [], else: [{"via", to_string(via)}]) ++
+        if(inputs.via == :cast, do: [], else: [{"via", to_string(inputs.via)}]) ++
         [{"mix env", to_string(Mix.env())}]
     )
   end
@@ -166,7 +195,7 @@ defmodule Mix.Tasks.Bench do
   #
   # `:regression` is byte-identical to the historical default behaviour.
   # The keyed shapes reuse the same harness with their own factory and keyed
-  # inputs (see `input_for_shape/3`).
+  # inputs (see `Mix.Tasks.Bench.Inputs`).
 
   defp run_default_shape(runtime, num_relays, messages_per_relay, shape, warmup) do
     # `:send` grants its runners a role, which only the scratch namespace takes.
@@ -179,7 +208,7 @@ defmodule Mix.Tasks.Bench do
       end
 
     try do
-      Report.emit(%{durability: durability_backend()})
+      Report.emit(report_ctx())
 
       metrics =
         run_performance_test(namespace, num_relays, messages_per_relay, shape, warmup)
@@ -203,7 +232,7 @@ defmodule Mix.Tasks.Bench do
         Fleet.setup(@bench_namespace, 2, [{"FLEZHA_WORKER_POOL_SIZE", pool}])
 
         try do
-          Report.emit(%{durability: durability_backend()})
+          Report.emit(report_ctx())
           IO.puts("\ncell stress: worker pool = #{pool}\n")
 
           metrics =
@@ -254,6 +283,21 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp durability_backend(), do: to_string(Config.get(:durability_backend))
+
+  defp durability_row() do
+    case Config.get(:durability_backend) do
+      :local_path -> "local_path (#{Config.get(:durability_path)})"
+      backend -> to_string(backend)
+    end
+  end
+
+  defp report_ctx() do
+    %{
+      durability: durability_backend(),
+      durability_kept: Fleet.durability_kept?(),
+      strict: Process.get(:bench_strict, false)
+    }
+  end
 
   # `bench-<runtime>-<shape>`; `Report.finish/2` stamps the run id and places it.
   defp report_name(shape), do: "bench-#{Fleet.runtime()}-#{shape}"
@@ -321,38 +365,41 @@ defmodule Mix.Tasks.Bench do
 
   defp run_performance_test(namespace, num_relays, test_messages_per_relay, shape, warmup) do
     factory = factory_for_shape(shape)
+    inputs = Process.get(:bench_inputs)
     IO.puts("Starting #{num_relays} relays (factory=#{factory})...")
 
     enable_hooks(namespace, Process.get(:bench_hook_url))
     {creation_us, relay_infos, counted} = start_shape(namespace, shape, num_relays)
     plugin_setup_us = enable_forwarders(namespace, counted)
-    warmup_us = warmup_pass(relay_infos, shape, warmup)
 
+    warmup_total = length(relay_infos) * warmup
     total_messages = length(relay_infos) * test_messages_per_relay
+    tally = if inputs.latency, do: Tally.new(warmup_total + total_messages, warmup_total)
+    {warmup_us, tally} = warmup_pass(relay_infos, shape, warmup, inputs, tally)
 
     IO.puts("Sending #{total_messages} inputs (#{test_messages_per_relay} per relay)...")
 
-    {send_us, _} =
-      :timer.tc(fn -> send_inputs(relay_infos, shape, test_messages_per_relay) end)
+    relay_ids = MapSet.new(relay_infos ++ counted, &elem(&1, 0))
 
-    expected_responses = expected_responses(shape, total_messages)
-
-    {receive_us, _} =
-      :timer.tc(fn -> await_responses(expected_responses, "message", shape) end)
+    {send_us, receive_us, persisted, tally} =
+      measured_pass(relay_infos, relay_ids, shape, test_messages_per_relay, warmup_total, tally)
 
     metrics =
       metrics(%{
         relays: length(relay_infos),
         total_messages: total_messages,
-        expected_responses: expected_responses,
+        expected_responses: expected_responses(shape, total_messages),
         creation_us: creation_us,
         plugin_setup_us: plugin_setup_us,
         warmup_us: warmup_us,
         send_us: send_us,
-        receive_us: receive_us
+        receive_us: receive_us,
+        inputs: inputs,
+        persisted: persisted,
+        tally: tally
       })
 
-    print_results(metrics, warmup)
+    print_results(metrics, warmup, inputs)
 
     RelayManager.stop_all_relays(namespace)
 
@@ -382,7 +429,7 @@ defmodule Mix.Tasks.Bench do
     {elapsed, infos} =
       :timer.tc(fn ->
         Flezha.Parallel.map(1..num_relays, fn i ->
-          relay_id = "flow_test_#{i}#{suffix}"
+          relay_id = Inputs.relay_id(i, suffix)
 
           relay = %Flezha.Relay.Builder{
             id: relay_id,
@@ -467,26 +514,88 @@ defmodule Mix.Tasks.Bench do
     elapsed
   end
 
-  defp warmup_pass(_relay_infos, _shape, warmup) when warmup <= 0, do: nil
+  defp warmup_pass(_relay_infos, _shape, warmup, _inputs, tally) when warmup <= 0,
+    do: {nil, tally}
 
-  defp warmup_pass(relay_infos, shape, warmup) do
+  # Warm-up takes the first seqs, which the tally's prime counts and never times.
+  defp warmup_pass(relay_infos, shape, warmup, inputs, tally) do
     warmup_total = length(relay_infos) * warmup
 
-    {elapsed, _} =
-      :timer.tc(fn ->
-        send_inputs(relay_infos, shape, warmup)
-        await_responses(expected_responses(shape, warmup_total), "warmup", shape)
-      end)
-
-    elapsed
+    :timer.tc(fn ->
+      Inputs.send_burst(inputs, relay_infos, shape, warmup, 0)
+      await_responses(expected_responses(shape, warmup_total), "warmup", shape, tally)
+    end)
   end
 
-  # The send and receive `:timer.tc` blocks run back to back, so their sum is
+  # With latency measured, or a paced send, the inputs go out from a process of
+  # their own while this one takes the outputs: timed here behind a send loop
+  # still running, an output's latency would be the bench's own. The windows
+  # keep their meaning: send ends when the sender is done, end-to-end at the
+  # last response. Persistence is read around the same window.
+  defp measured_pass(relay_infos, relay_ids, shape, messages_per_relay, base, tally) do
+    inputs = Process.get(:bench_inputs)
+    total = length(relay_infos) * messages_per_relay
+    expected = expected_responses(shape, total)
+    persisted_before = Tally.persisted(relay_ids)
+
+    send_all = fn ->
+      if inputs.rate,
+        do: Inputs.send_paced(inputs, relay_infos, shape, messages_per_relay, base),
+        else: Inputs.send_burst(inputs, relay_infos, shape, messages_per_relay, base)
+    end
+
+    started = System.monotonic_time(:microsecond)
+
+    sent_at =
+      if inputs.latency or inputs.rate do
+        bench = self()
+
+        {:ok, _} =
+          Task.start_link(fn ->
+            send_all.()
+            send(bench, {:bench_sent, System.monotonic_time(:microsecond)})
+          end)
+
+        :pending
+      else
+        send_all.()
+        System.monotonic_time(:microsecond)
+      end
+
+    tally = await_responses(expected, "message", shape, tally)
+    done = System.monotonic_time(:microsecond)
+
+    sent =
+      with :pending <- sent_at do
+        receive do
+          {:bench_sent, at} -> at
+        end
+      end
+
+    check_rate(inputs.rate, total, sent - started)
+    {sent - started, done - sent, Tally.persisted(relay_ids, persisted_before), tally}
+  end
+
+  defp check_rate(nil, _total, _send_us), do: :ok
+
+  defp check_rate(rate, total, send_us) do
+    achieved = total * 1_000_000 / max(send_us, 1)
+
+    if achieved < 0.95 * rate do
+      Report.warn(
+        "the paced sender reached #{Report.rate(achieved)}/s of the #{Report.rate(rate)}/s " <>
+          "asked; the latency was taken at saturation, not at the asked rate"
+      )
+    end
+  end
+
+  # The send and receive windows run back to back, so their sum is
   # the wall time from the first input to the last response. That is the
   # honest window — responses stream in while the send loop is still casting,
   # so the receive window alone credits work the send window paid for.
   defp metrics(w) do
     end_to_end_us = w.send_us + w.receive_us
+    {payload_min, payload_max} = w.inputs.payload
 
     %{
       relays: w.relays,
@@ -499,8 +608,23 @@ defmodule Mix.Tasks.Bench do
       receive_ms: rounded_ms(w.receive_us),
       end_to_end_ms: rounded_ms(end_to_end_us),
       throughput_msg_per_sec: round(w.total_messages * 1_000_000 / end_to_end_us),
-      receive_window_msg_per_sec: round(w.total_messages * 1_000_000 / w.receive_us)
+      receive_window_msg_per_sec: round(w.total_messages * 1_000_000 / max(w.receive_us, 1)),
+      payload_bytes: %{min: payload_min, max: payload_max},
+      persisted: w.persisted
     }
+    |> Map.merge(if w.tally, do: %{latency_ms: latency_metrics(w.tally)}, else: %{})
+    |> Map.merge(
+      if w.inputs.rate,
+        do: %{send_rate_msg_per_sec: round(w.total_messages * 1_000_000 / max(w.send_us, 1))},
+        else: %{}
+    )
+  end
+
+  defp latency_metrics(tally) do
+    Map.merge(Tally.latency_ms(tally), %{
+      unstamped: tally.foreign,
+      duplicates: tally.duplicates
+    })
   end
 
   defp rounded_ms(microseconds), do: Float.round(microseconds / 1000, 1)
@@ -508,7 +632,7 @@ defmodule Mix.Tasks.Bench do
   # Both windows are reported, each labelled with what it measures: they differ
   # by the send window and are not interchangeable, and only the label says
   # which one a quoted figure came from.
-  defp print_results(m, warmup) do
+  defp print_results(m, warmup, inputs) do
     IO.puts("")
 
     Report.section(
@@ -541,6 +665,41 @@ defmodule Mix.Tasks.Bench do
         [:left, :right, :right]
       )
     )
+
+    latency_section(m[:latency_ms], inputs)
+    persisted_section(m.persisted)
+  end
+
+  defp latency_section(nil, _inputs), do: :ok
+
+  defp latency_section(l, inputs) do
+    mode =
+      if inputs.rate,
+        do: "paced at #{Report.rate(inputs.rate)}/s",
+        else: "burst, includes queueing behind earlier inputs"
+
+    Report.section(
+      "latency (#{mode})",
+      Tally.render_latency(l) <> "\nunstamped #{l.unstamped}, duplicates #{l.duplicates}"
+    )
+  end
+
+  # A shape whose outputs do not wait on its writes can persist after the window
+  # closes, so the label names the window.
+  @persisted_title "persisted (within the measured window)"
+
+  defp persisted_section(%{changes: 0, bytes: 0, fsyncs: 0}),
+    do: Report.section(@persisted_title, "nothing persisted")
+
+  defp persisted_section(p) do
+    Report.section(
+      @persisted_title,
+      Report.kv([
+        {"changes", Report.rate(p.changes)},
+        {"bytes", Report.bytes(p.bytes)},
+        {"fsyncs", Report.rate(p.fsyncs)}
+      ])
+    )
   end
 
   defp phases_section(m, warmup) do
@@ -568,52 +727,21 @@ defmodule Mix.Tasks.Bench do
     )
   end
 
-  defp send_inputs(relay_infos, shape, messages_per_relay),
-    do: send_inputs(Process.get(:bench_via), relay_infos, shape, messages_per_relay)
+  defp await_responses(expected, _phase, _shape, tally) when expected <= 0, do: tally
 
-  defp send_inputs(:cast, relay_infos, shape, messages_per_relay) do
-    Enum.each(relay_infos, fn {relay_id, %{pid: relay_pid}} ->
-      for msg_num <- 1..messages_per_relay do
-        GenServer.cast(
-          relay_pid,
-          {:io_in, input_for_shape(shape, relay_id, msg_num), %{}}
-        )
-      end
-    end)
-  end
-
-  defp send_inputs(:host_inject, relay_infos, shape, messages_per_relay) do
-    Flezha.Parallel.each(
-      relay_infos,
-      fn {relay_id, %{pid: relay_pid}} ->
-        for msg_num <- 1..messages_per_relay do
-          # Unique across the warmup and the measured pass, which repeat `msg_num`.
-          metadata = %{"flz.msg_id" => "#{relay_id}:#{System.unique_integer([:positive])}"}
-          input = input_for_shape(shape, relay_id, msg_num)
-
-          with {:error, reason} <- Host.inject(relay_pid, input, metadata, :verdict),
-               do: Mix.raise("#{relay_id} refused an input: #{inspect(reason)}")
-        end
-      end,
-      max_concurrency: max(length(relay_infos), 1)
-    )
-  end
-
-  defp await_responses(expected, _phase, _shape) when expected <= 0, do: []
-
-  defp await_responses(expected, phase, shape) do
-    for x <- 1..expected//1, do: await_response(x, expected, phase, shape)
+  defp await_responses(expected, phase, shape, tally) do
+    Enum.reduce(1..expected//1, tally, &await_response(&1, expected, phase, shape, &2))
   end
 
   # A `timer_churn` firing lands whenever its timer was not cancelled in time,
   # so its count is not the inputs'; it is drained and not counted.
-  defp await_response(x, expected, phase, shape) do
+  defp await_response(x, expected, phase, shape, tally) do
     receive do
       {:message_forward, "fired:" <> _} when shape == :timer ->
-        await_response(x, expected, phase, shape)
+        await_response(x, expected, phase, shape, tally)
 
-      {:message_forward, _msg} ->
-        :ok
+      {:message_forward, msg} ->
+        time_output(tally, msg)
     after
       10_000 ->
         IO.puts("Timeout waiting for #{phase} #{x}/#{expected}")
@@ -633,19 +761,15 @@ defmodule Mix.Tasks.Bench do
 
   defp expected_responses(_shape, total_messages), do: total_messages
 
-  # Per-shape wire input. The keyed shapes prefix a bounded key (`k0`..`k7`)
-  # so a steady burst exercises 8 Cells per relay without tripping the
-  # dynamic soft cap; `sleeping_counter` folds the value as an integer delta.
-  defp input_for_shape(:sleeping, _relay_id, msg_num), do: "k#{rem(msg_num, 8)}:1"
+  # The receive time is taken first, so parsing is not part of the latency.
+  defp time_output(nil, _msg), do: nil
 
-  defp input_for_shape(shape, relay_id, msg_num) when shape in [:dynamic, :tier] do
-    "k#{rem(msg_num, 8)}:test_msg_#{relay_id}_#{msg_num}"
-  end
+  defp time_output(tally, msg) do
+    now = System.monotonic_time(:nanosecond)
 
-  defp input_for_shape(:send, relay_id, msg_num),
-    do: "#{relay_id}_sink:test_msg_#{relay_id}_#{msg_num}"
-
-  defp input_for_shape(_shape, relay_id, msg_num) do
-    "test_msg_#{relay_id}_#{msg_num}"
+    case is_binary(msg) && Tally.parse_stamp(msg) do
+      {seq, sent_ns} -> Tally.record({seq, max(now - sent_ns, 0)}, tally)
+      _ -> %{tally | foreign: tally.foreign + 1}
+    end
   end
 end

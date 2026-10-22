@@ -69,6 +69,38 @@ defmodule Mix.Tasks.Bench.Tally do
     end
   end
 
+  @doc """
+  The `{seq, send_ns}` stamp a bench input carries as `<seq>,<send_ns>[,<pad>]`,
+  or `:error`. A key prefix up to the first `:` or `=` is skipped, so a keyed
+  input (`k3:`) and a `key=value` output (`k3=`) parse like a bare one.
+  """
+  @spec parse_stamp(binary()) :: {integer(), integer()} | :error
+  def parse_stamp(body) when is_binary(body) do
+    with [seq, ts | _] <- body |> strip_key() |> String.split(",", parts: 3),
+         {seq, ""} <- Integer.parse(seq),
+         {ts, ""} <- Integer.parse(ts) do
+      {seq, ts}
+    else
+      _ -> :error
+    end
+  end
+
+  # Only the head is searched: a key is short, and a padded body can be long.
+  defp strip_key(body) do
+    case :binary.match(body, [":", "="], scope: {0, min(byte_size(body), 64)}) do
+      {pos, 1} -> binary_part(body, pos + 1, byte_size(body) - pos - 1)
+      :nomatch -> body
+    end
+  end
+
+  @doc """
+  How many sends are due by now on a `rate`/s schedule started at `t0_ns`,
+  given `issued` already sent. Never negative.
+  """
+  @spec due(integer(), pos_integer(), non_neg_integer()) :: non_neg_integer()
+  def due(t0_ns, rate, issued),
+    do: max(trunc((System.monotonic_time(:nanosecond) - t0_ns) / 1.0e9 * rate) - issued, 0)
+
   @doc "Seqs never recorded, up to `limit` of them."
   @spec missing(t(), pos_integer()) :: [non_neg_integer()]
   def missing(%{expected: expected, bits: bits}, limit \\ 10) do
@@ -90,7 +122,10 @@ defmodule Mix.Tasks.Bench.Tally do
     targets =
       qs |> Enum.map(&{&1, max(round(tally.received * &1), 1)}) |> Enum.sort_by(&elem(&1, 1))
 
-    scan(tally.hist, 1, 0, targets, %{})
+    # A bucket's midpoint can sit above the largest sample in it.
+    tally.hist
+    |> scan(1, 0, targets, %{})
+    |> Map.new(fn {q, ns} -> {q, min(ns, tally.max_ns)} end)
   end
 
   defp scan(_hist, _bucket, _cum, [], acc), do: acc
@@ -109,16 +144,37 @@ defmodule Mix.Tasks.Bench.Tally do
 
   @doc "`p50 / p95 / p99 / p99.9 / max` in ms, one line."
   @spec latency_line(t()) :: String.t()
-  def latency_line(tally) do
+  def latency_line(tally), do: tally |> latency_ms() |> render_latency()
+
+  @doc """
+  The percentiles and max as millisecond numbers, with the count they cover:
+  what a report ships, and what `render_latency/1` prints.
+  """
+  @spec latency_ms(t()) :: %{atom() => number()}
+  def latency_ms(tally) do
     pct = percentiles(tally, [0.50, 0.95, 0.99, 0.999])
 
-    "p50 #{ms(pct[0.50])} / p95 #{ms(pct[0.95])} / p99 #{ms(pct[0.99])} / " <>
-      "p99.9 #{ms(pct[0.999])} / max #{ms(tally.max_ns)} ms (n=#{tally.received})"
+    %{
+      p50: ms(pct[0.50]),
+      p95: ms(pct[0.95]),
+      p99: ms(pct[0.99]),
+      p99_9: ms(pct[0.999]),
+      max: ms(tally.max_ns),
+      n: tally.received
+    }
+  end
+
+  @doc "`latency_ms/1`'s map as one line."
+  @spec render_latency(map()) :: String.t()
+  def render_latency(l) do
+    "p50 #{text(l.p50)} / p95 #{text(l.p95)} / p99 #{text(l.p99)} / " <>
+      "p99.9 #{text(l.p99_9)} / max #{text(l.max)} ms (n=#{l.n})"
   end
 
   # Two decimals: the histogram resolves to 0.01 ms and a percentile that reads
   # `0.05` says something `0.1` does not.
-  defp ms(ns), do: Report.ms_from_ns(ns, 2)
+  defp ms(ns), do: Float.round(ns / 1_000_000, 2)
+  defp text(ms), do: Report.decimal(ms, 2)
 
   @doc "The namespace's state directory on disk: bytes, `.wal` and `.snap.*` counts."
   @spec state_dir_summary(String.t()) :: String.t()
@@ -144,6 +200,28 @@ defmodule Mix.Tasks.Bench.Tally do
           {bytes, wals, snaps}
       end
     end)
+  end
+
+  @doc """
+  Changes, bytes and fsyncs persisted by the Cells of `relay_ids`, read from
+  the state layer's own per-Cell counters; given an earlier reading, the growth
+  since it. A Cell id leads with its relay class, a flow relay's id.
+  """
+  @spec persisted(MapSet.t(String.t()), map() | nil) :: %{atom() => non_neg_integer()}
+  def persisted(relay_ids, since \\ nil) do
+    now =
+      for {{class, _tasklet, _key}, counters} <- Metrics.snapshot_all(),
+          MapSet.member?(relay_ids, class),
+          reduce: %{changes: 0, bytes: 0, fsyncs: 0} do
+        acc ->
+          %{
+            changes: acc.changes + counters.persisted_changes_total,
+            bytes: acc.bytes + counters.persisted_bytes_total,
+            fsyncs: acc.fsyncs + counters.fsync_total
+          }
+      end
+
+    if since, do: Map.new(now, fn {k, v} -> {k, v - since[k]} end), else: now
   end
 
   @doc """

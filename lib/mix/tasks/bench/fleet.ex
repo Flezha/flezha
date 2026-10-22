@@ -280,8 +280,25 @@ defmodule Mix.Tasks.Bench.Fleet do
   end
 
   @doc """
+  Whether the durability tier keeps lineages this run cannot clear: a store the
+  bench does not own, which an earlier run's relays may be restored from.
+  """
+  def durability_kept?() do
+    case Config.get(:durability_backend) do
+      :local_path -> not durability_owned?()
+      backend -> backend in [:postgres, :s3]
+    end
+  end
+
+  # Remote keys carry no namespace, so the bench can only clear a whole store,
+  # and only one the wrapper chose for it.
+  defp durability_owned?(),
+    do: Config.get(:durability_backend) == :local_path and Config.get(:bench_durability_owned)
+
+  @doc """
   Remove `namespace`'s durable state and hub registry before the controller
-  boots, so nothing a previous run left behind is restored into this one.
+  boots, so nothing a previous run left behind is restored into this one. The
+  bench's own `local_path` durability store goes with it.
 
   Runs `app.config` first: until the runtime config is loaded the state root
   is the default, not the `FLEZHA_STATE_DIR` the run will boot with.
@@ -292,6 +309,8 @@ defmodule Mix.Tasks.Bench.Fleet do
     for dir <- [Paths.namespace_dir(namespace), Layout.file(:process_hub, "#{namespace}_hub")] do
       File.rm_rf!(dir)
     end
+
+    if durability_owned?(), do: File.rm_rf!(Config.get(:durability_path))
   end
 
   @doc "Spawn `count` runner processes and return their connected runner ids."

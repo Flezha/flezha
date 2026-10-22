@@ -9,9 +9,9 @@ report that is the machine contract CI reads.
 
 Every bench task (`mix bench`, `mix bench.steps`) SHALL print, before any measurement, a header composed of three blocks rendered by one shared module:
 
-* **run** — the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (relays, messages per relay, warmup), and `MIX_ENV`.
-* **system** — CPU model and logical core count, total memory, 1-minute load average, CPU governor, OTP release, Elixir version, the launched runtime's own toolchain version, and the git SHA with a dirty flag.
-* **artifacts** — for each launched runtime: the resolved artifact path, its mtime and size, whether that path was the profile's first choice or a fallback, and whether the manifest `build` command ran or was skipped.
+* **run**: the SDK runtime and its dispatch model (from the manifest's `dispatch` key, with the current value of each env var it names), the transport, whether the runner is embedded or spawned (derived from the transport, not declared), the workload shape, the durability backend, the dimensions (relays, messages per relay, warmup), and `MIX_ENV`. A `mix bench` run SHALL also name the input payload size in bytes as a `min–max` range, the send mode (`burst`, or the paced rate in inputs per second), whether latency is measured, and, when the durability backend is `local_path`, its root path.
+* **system**: CPU model and logical core count, total memory, 1-minute load average, CPU governor, OTP release, Elixir version, the launched runtime's own toolchain version, and the git SHA with a dirty flag.
+* **artifacts**: for each launched runtime, the resolved artifact path, its mtime and size, whether that path was the profile's first choice or a fallback, and whether the manifest `build` command ran or was skipped.
 
 The blocks SHALL be derived from the same sources the run itself uses; no field SHALL be re-derived by a second path that can disagree with the first. On a platform where a field cannot be read the field SHALL be reported as unavailable and the run SHALL proceed.
 
@@ -27,19 +27,40 @@ The blocks SHALL be derived from the same sources the run itself uses; no field 
 - **WHEN** a runtime's first-choice artifact is absent and a later candidate is used
 - **THEN** the header's artifact row names the path actually launched, marks it a fallback, and names the first choice that was missing
 
+#### Scenario: A default run states its payload size and send mode
+- **WHEN** `./scripts/bench.sh -n 100 -m 100` is run with no new option
+- **THEN** the run block names a payload range in bytes derived from the inputs the run sends, the send mode `burst`, and latency as off, and the report's `metrics` block carries the payload range as numbers
+
 ### Requirement: A bench warns about an unfit box or build without refusing to run
 
-Before the measurement, the shared module SHALL evaluate a fixed set of preflight conditions and print any that hold as a warning block above the numbers, each naming the condition and why it affects the measurement. The conditions SHALL be: a CPU governor other than `performance`; a 1-minute load average above the logical core count; `MIX_ENV` other than `prod`; a debug-profile artifact resolved for the `bench` profile; a skipped build (`FLEZHA_BENCH_SKIP_BUILD`); a fallback artifact; a dirty git tree; and a disabled durability backend.
+Before the measurement, the shared module SHALL evaluate a fixed set of preflight conditions and print any that hold as a warning block above the numbers, each naming the condition and why it affects the measurement. Each condition SHALL be of one of two kinds.
 
-The run SHALL proceed in every case. No condition SHALL abort a bench, because a number produced on an unfit box is still that box's number and the report SHALL say what was wrong with it.
+* **box**: a CPU governor other than `performance`; a 1-minute load average above the logical core count; `MIX_ENV` other than `prod`; a debug-profile artifact resolved for the `bench` profile; a skipped build (`FLEZHA_BENCH_SKIP_BUILD`); a fallback artifact; a dirty git tree.
+* **workload**: the remote durability tier off; a durability root the bench did not clear, whose earlier lineages may be restored; a paced send that fell behind its requested rate.
+
+The durability warning SHALL say that the remote durability tier is off and that the number excludes that tier's cost. It SHALL NOT claim that nothing is persisted, because a shape that keeps state still persists to its local WAL with the tier off.
+
+The run SHALL proceed in every case unless it was started with `--strict`. Without `--strict`, no condition SHALL abort a bench, because a number produced on an unfit box is still that box's number and the report SHALL say what was wrong with it. With `--strict`, a run SHALL refuse to start its measurement when any box condition holds, naming every one that holds; workload conditions SHALL NOT refuse a run under `--strict`, because they describe what was asked for.
 
 #### Scenario: A powersave laptop still produces a number, with the reason attached
-- **WHEN** a bench is run with the CPU governor set to `powersave` and a dirty working tree
+- **WHEN** a bench is run with the CPU governor set to `powersave` and a dirty working tree, without `--strict`
 - **THEN** the warning block names both conditions before the results, the run completes normally, and both appear in the report's `warnings` array
 
 #### Scenario: A clean run prints no warning block
-- **WHEN** a bench is run on an idle `performance`-governor host with `MIX_ENV=prod`, a clean tree, and a build that ran
+- **WHEN** a bench is run on an idle `performance`-governor host with `MIX_ENV=prod`, a clean tree, a build that ran, and a durability backend other than `none`
 - **THEN** no warning block is printed and the report's `warnings` array is empty
+
+#### Scenario: Strict refuses an unfit box before measuring
+- **WHEN** `./scripts/bench.sh --strict` is run with the CPU governor set to `powersave` and a dirty working tree
+- **THEN** the warning block is printed, the run stops with an error naming both conditions, no input is sent, and the bench's runners and relays are cleaned up
+
+#### Scenario: Strict does not refuse a workload choice
+- **WHEN** `./scripts/bench.sh --strict` is run on a fit box with the durability backend `none`
+- **THEN** the durability warning is printed and the run completes
+
+#### Scenario: The durability warning tells the truth about a stateful shape
+- **WHEN** `./scripts/bench.sh --shape tier` is run with the durability backend `none`
+- **THEN** the warning says the remote durability tier is off, and the persisted section reports the local changes and fsyncs the run made
 
 ### Requirement: Results render as aligned tables with fixed precision
 

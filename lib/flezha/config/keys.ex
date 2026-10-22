@@ -642,6 +642,10 @@ defmodule Flezha.Config.Keys do
     {:bench_log, :path, nil, runtimes: [:bench], env: "FLEZHA_BENCH_LOG"},
     {:bench_skip_build, :bool, false,
      key: true, runtimes: [:bench], env: "FLEZHA_BENCH_SKIP_BUILD"},
+    # Set by `scripts/bench.sh` when it chose the `local_path` store itself, so
+    # the bench may clear that store before a run and never one a user named.
+    {:bench_durability_owned, :bool, false,
+     key: true, runtimes: [:bench], env: "FLEZHA_BENCH_DURABILITY_OWNED"},
     {:bench_checkpoint_every, :positive_int, 500,
      runtimes: [:bench], env: "FLEZHA_BENCH_CHECKPOINT_EVERY"},
     {:bench_checkpoint_outputs, :string, nil,

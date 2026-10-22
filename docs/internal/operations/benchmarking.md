@@ -48,12 +48,18 @@ environment and forwards them.
 | ---------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`, `node`, `php`, `python`, `ruby` | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), whose `bench` build command runs before every measurement (`FLEZHA_BENCH_SKIP_BUILD=1` skips it). |
 | `-t` / `--transport`               | `uds` (default), `quic`                     | Sets `FLEZHA_TRANSPORT`. QUIC generates self-signed certs at `storage/app/certs/` on first run.                                                                                                                                                                                |
-| `-s` / `--shape`                   | `regression` (default), `cell`, `dynamic` | The workload (below). `cell` ignores `-n`/`-m`.                                                                                                                                                                                                                               |
+| `-s` / `--shape`                   | `regression` (default), `cell`, `dynamic`, `tier`, `sleeping`, `timer`, `send` | The workload (below). `cell` ignores `-n`/`-m`.                                                                                                                                                                                                                               |
 | `-n` / `--num-relays`          | int (default 100)                           | Relay count, `regression` and `dynamic`.                                                                                                                                                                                                                                |
 | `-m` / `--messages-per-relay`  | int (default 100)                           | Messages per relay, `regression` and `dynamic`.                                                                                                                                                                                                                         |
 | `--pool-sizes`                     | comma list (default `1,8`)                  | Worker-pool sizes to sweep, `cell` only; each spawns fresh runners with `FLEZHA_WORKER_POOL_SIZE=<N>`.                                                                                                                                                                     |
 | `-w` / `--warmup`                  | int (default 10, `0` disables)              | Untimed messages per relay drained before the measured phase, so runner cold start (class loading, JIT, lazy codec init) stays out of the numbers.                                                                                                                      |
 | `--via`                            | `cast` (default), `host_inject`             | How each input reaches its relay: an `{:io_in, ...}` cast, or `Flezha.Plugin.Host.inject/5` in `:verdict` mode with a `flz.msg_id`, the path a plugin source takes (one caller per relay). |
+| `--latency`                        | flag                                        | Stamps each input with its seq and send time and reports p50 / p95 / p99 / p99.9 / max over the outputs that carry the stamp back. The inputs then go out from a sender process of their own. See [Latency](#latency). |
+| `--rate`                           | int, inputs/s in total                      | Paces the send round-robin over the relays instead of one burst. Needs `--via cast`; not for `cell`. A sender that falls below 95 % of the rate is a warning. |
+| `--payload-bytes`                  | int                                         | Pads every input to exactly N bytes, key prefix and stamp included. Below the unpadded input it is refused with the minimum; not for `sleeping`. |
+| `--durability` (script only)       | `none` (default), `local_path`, `postgres`, `s3` | Sets `FLEZHA_DURABILITY_BACKEND`. `local_path` with no `FLEZHA_DURABILITY_PATH` uses `storage/app/bench/durability`, a store the bench owns (`FLEZHA_BENCH_DURABILITY_OWNED=1`) and clears before each run. `postgres` and `s3` read their `FLEZHA_DURABILITY_*` settings and are never cleared. |
+| `--strict`                         | flag                                        | Refuses to measure when a box or build warning holds. See [Preflight warnings](#preflight-warnings). |
+| `--governor` (script only)         | a governor the CPU offers                   | Switches every CPU to it for the run with `sudo -n cpupower` and restores each CPU's governor on exit, Ctrl-C included. Needs `cpupower` and a cached credential (`sudo -v`). |
 
 Runner placement: the Rust runtime reuses runners already connected in the
 `default` namespace, otherwise (and always for every other runtime) two runners
@@ -87,19 +93,25 @@ result tables.
 ### Preflight warnings
 
 Printed above the numbers and carried in the report. **None of them abort the
-run** — a number produced on an unfit box is still that box's number, and the
-report says what was wrong with it.
+run unless it was started with `--strict`**: a number produced on an unfit box
+is still that box's number, and the report says what was wrong with it.
 
-| Warning                   | Why it matters                                                       |
-| ------------------------- | -------------------------------------------------------------------- |
-| CPU governor not `performance` | Clock scaling makes the number irreproducible run to run.        |
-| Load average above cores  | The box is contended; the bench is not the only thing running.        |
-| `MIX_ENV` not `prod`      | The controller is not running the code it ships.                      |
-| Dirty working tree        | The number cannot be attributed to a commit.                          |
-| `FLEZHA_BENCH_SKIP_BUILD` | The artifact measured is whatever was on disk, not necessarily this tree. |
-| Fallback artifact         | The profile's own artifact is missing; a different build was launched. |
-| Debug-profile artifact    | Not a bench artifact.                                                 |
-| Durability backend off    | The number excludes the cost of persisting anything (the wrapper's default). |
+Each warning is of one kind. A **box** warning is a defect of the machine or
+the build, and `--strict` refuses to measure while one holds. A **workload**
+warning describes what the run was asked to do and never refuses.
+
+| Warning                   | Kind     | Why it matters                                                       |
+| ------------------------- | -------- | -------------------------------------------------------------------- |
+| CPU governor not `performance` | box | Clock scaling makes the number irreproducible run to run. `--governor performance` fixes it for one run. |
+| Load average above cores  | box      | The box is contended; the bench is not the only thing running.        |
+| `MIX_ENV` not `prod`      | box      | The controller is not running the code it ships.                      |
+| Dirty working tree        | box      | The number cannot be attributed to a commit. Nothing in the bench cleans it. |
+| `FLEZHA_BENCH_SKIP_BUILD` | box      | The artifact measured is whatever was on disk, not necessarily this tree. |
+| Fallback artifact         | box      | The profile's own artifact is missing; a different build was launched. |
+| Debug-profile artifact    | box      | Not a bench artifact.                                                 |
+| Remote durability tier off | workload | The number excludes the tier's cost (the wrapper's default). A shape that keeps state still fsyncs its local WAL; the persisted section shows it. |
+| Durability store not the bench's own | workload | Lineages an earlier run left in a user path, Postgres or S3 may be restored into this run. |
+| Paced sender fell behind  | workload | Printed after the measurement: the latency was taken at saturation, not at the asked rate. |
 
 ### Throughput windows
 
@@ -118,6 +130,48 @@ There is no `Average time per relay`: it divided total elapsed time across
 four unrelated phases by a count of concurrently-running relays and
 measured nothing.
 
+### Latency
+
+With `--latency` every input body starts with `<seq>,<send_ns>`, and the bench
+times each output that carries it back. Every fixture passes its input through
+except `sleeping_counter`, which reports `n=0` and its unstamped count;
+`cell_stress` emits eight outputs per input and the first one is timed.
+Warm-up inputs are stamped too but never enter the percentiles. The histogram
+resolves to 0.01 ms.
+
+The section names its send mode. Under a burst, an output's latency includes
+queueing behind every input sent before it, so p50 grows with `-m`. Latency at
+a fixed `--rate` below saturation is the figure other systems publish. Parsing
+the stamps costs the bench's own receive loop, so quote throughput from a run
+without `--latency`, and never put the two figures from different runs side by
+side as one result.
+
+### Payload and persistence
+
+The run block names the input size as `min–max` bytes, taken from the input
+generator at its extreme indices. Without `--payload-bytes` the default bodies
+grow with the relay and message numbers.
+
+The **persisted** section reports the changes, bytes and fsyncs written over
+the measured window, read from the state layer's per-Cell counters before the
+send and after the drain and summed over the run's relays. Only a shape whose
+outputs wait on their writes (`tier`, `sleeping`) persists inside that window
+in full; `dynamic` and `timer` keep state but write it on their own schedule,
+so part or all of it lands after the window and is not counted. The default
+`regression` relay keeps no state, so it reads `nothing persisted` whatever the
+durability backend; a durability figure needs a shape that keeps state, such
+as `tier`.
+
+### A comparable run
+
+```sh
+./scripts/bench.sh --governor performance --strict --durability local_path \
+  --shape tier --latency --rate 20000 --payload-bytes 256 -n 100 -m 1000
+```
+
+Lower the rate until no shortfall warning is printed, and state the rate,
+payload, shape and durability with every figure taken from it.
+
 ### The structured report
 
 Every run writes `local_dev/bench/reports/bench-<runtime>-<shape>-<run_id>.json`.
@@ -129,7 +183,9 @@ value.
 matching printed prose, so the rendering above can change without touching a
 CI job: `metrics.throughput_msg_per_sec` (the end-to-end headline) and
 `metrics.receive_window_msg_per_sec` for the regression run,
-`metrics.scaling_ratio` for the cell sweep.
+`metrics.scaling_ratio` for the cell sweep. Every `mix bench` run also carries
+`metrics.payload_bytes` and `metrics.persisted`; a `--latency` run carries
+`metrics.latency_ms`, and a `--rate` run `metrics.send_rate_msg_per_sec`.
 `local_dev/bench/reports/` is gitignored.
 
 `FLEZHA_BENCH_LOG` sets the logger level for a run (default `warning`).

@@ -203,8 +203,9 @@ defmodule Mix.Tasks.Bench.Report do
 
   @doc """
   Print the run, system, artifacts and warnings blocks, once. `ctx` carries
-  what only the calling run knows — today `:durability`; the artifacts come
-  from `record_artifact/1`.
+  what only the calling run knows (`:durability`, `:durability_kept`); the
+  artifacts come from `record_artifact/1`. With `strict: true` in `ctx`, a box
+  or build warning refuses the run after the block is printed.
   """
   @spec emit(map()) :: :ok
   def emit(ctx \\ %{}) do
@@ -226,18 +227,53 @@ defmodule Mix.Tasks.Bench.Report do
         ctx
         |> Map.merge(%{system: system, artifacts: artifacts})
         |> warnings()
-        |> print_warnings()
+
+      print_warnings(warnings)
 
       header = %{
         run: Map.new(run, fn {k, v} -> {k, to_string(v)} end),
         system: system,
         artifacts: artifacts,
-        warnings: warnings
+        warnings: Enum.map(warnings, &elem(&1, 1))
       }
 
       Process.put(:bench_report, Map.put(state, :header, header))
-      :ok
+      refuse_unfit(warnings, ctx[:strict])
     end
+  end
+
+  defp refuse_unfit(warnings, true) do
+    case for({:box, text} <- warnings, do: text) do
+      [] ->
+        :ok
+
+      unfit ->
+        Mix.raise(
+          "--strict: refusing to measure on an unfit box or build:\n" <>
+            Enum.map_join(unfit, "\n", &("  ! " <> &1))
+        )
+    end
+  end
+
+  defp refuse_unfit(_warnings, _strict), do: :ok
+
+  @doc """
+  A condition the run only learns once it has measured, such as a paced sender
+  that fell behind: printed now and carried in the report with the preflight
+  warnings.
+  """
+  @spec warn(String.t()) :: :ok
+  def warn(text) do
+    print_warnings([{:workload, text}])
+    state = state()
+    header = state[:header] || empty_header()
+
+    Process.put(
+      :bench_report,
+      Map.put(state, :header, %{header | warnings: header.warnings ++ [text]})
+    )
+
+    :ok
   end
 
   @doc """
@@ -422,37 +458,44 @@ defmodule Mix.Tasks.Bench.Report do
 
   @doc """
   Conditions that make a number harder to trust, printed above it and carried
-  in the report. Never fatal: a number produced on an unfit box is still that
-  box's number, and refusing would break a CI runner whose governor and load
-  are not ours to set.
+  in the report, each as `{kind, text}`. A `:box` warning is a defect of the
+  machine or the build; a `:workload` warning describes what the run was asked
+  to do. Neither is fatal unless the run asked for `--strict`, which refuses
+  the box kind only: a number produced on an unfit box is still that box's
+  number, and refusing by default would break a CI runner whose governor and
+  load are not ours to set.
 
   `ctx` carries what only the calling run knows: `:artifacts` (from
-  `artifact/3`) and `:durability`.
+  `artifact/3`), `:durability` and `:durability_kept`.
   """
-  @spec warnings(map()) :: [String.t()]
+  @spec warnings(map()) :: [{:box | :workload, String.t()}]
   def warnings(ctx) do
     system = Map.get_lazy(ctx, :system, &system/0)
     artifacts = Map.get(ctx, :artifacts, [])
 
-    [
-      governor_warning(system),
-      load_warning(system),
-      mix_env_warning(),
-      dirty_warning(system),
+    box =
+      [
+        governor_warning(system),
+        load_warning(system),
+        mix_env_warning(),
+        dirty_warning(system),
+        skip_build_warning()
+      ] ++ Enum.flat_map(artifacts, &artifact_warnings/1)
+
+    workload = [
       durability_warning(Map.get(ctx, :durability)),
-      skip_build_warning()
+      kept_lineage_warning(Map.get(ctx, :durability_kept))
     ]
-    |> Enum.concat(Enum.flat_map(artifacts, &artifact_warnings/1))
-    |> Enum.reject(&is_nil/1)
+
+    for {kind, texts} <- [box: box, workload: workload], text <- texts, text, do: {kind, text}
   end
 
-  @doc "Print `warnings/1`'s result, if any, and return it."
-  @spec print_warnings([String.t()]) :: [String.t()]
-  def print_warnings([]), do: []
+  @doc "Print `warnings/1`'s result, if any."
+  @spec print_warnings([{atom(), String.t()}]) :: :ok
+  def print_warnings([]), do: :ok
 
   def print_warnings(warnings) do
-    section("warnings", Enum.map_join(warnings, "\n", &("! " <> &1)))
-    warnings
+    section("warnings", Enum.map_join(warnings, "\n", fn {_kind, text} -> "! " <> text end))
   end
 
   defp governor_warning(%{cpu_governor: g}) when is_binary(g) and g != "performance",
@@ -480,10 +523,19 @@ defmodule Mix.Tasks.Bench.Report do
 
   defp dirty_warning(_), do: nil
 
+  # A stateful shape still fsyncs its local WAL with the tier off, so the
+  # warning names the tier and claims nothing about local persistence.
   defp durability_warning(backend) when backend in [nil, "none", :none],
-    do: "durability backend is off — the number excludes the cost of persisting anything"
+    do: "the remote durability tier is off; the number excludes its cost"
 
   defp durability_warning(_), do: nil
+
+  defp kept_lineage_warning(true),
+    do:
+      "the durability store is not the bench's own and is not cleared, so lineages " <>
+        "an earlier run left in it may be restored into this one"
+
+  defp kept_lineage_warning(_), do: nil
 
   defp skip_build_warning() do
     if Config.get(:bench_skip_build),
