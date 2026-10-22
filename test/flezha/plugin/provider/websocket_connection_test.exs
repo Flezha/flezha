@@ -337,6 +337,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
   import FlezhaTest.Helper.ProviderPrepare, only: [prepare: 2, activate: 2]
 
   alias Flezha.Plugin.Provider.Websocket
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.WebhookServer
@@ -349,6 +350,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
 
   test "a live socket adds and removes a subscription without ever reconnecting" do
     Process.flag(:trap_exit, true)
+    on_exit(TestHelpers.override_env(:ws_subscription_min_interval_ms, 10))
 
     ws = WebsocketServer.start()
     origin = start_origin(["BTC/USD"])
@@ -358,7 +360,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
         uri: "ws://127.0.0.1:#{ws.port}/",
         plugin_id: "live_ws",
         subscription_url: "http://127.0.0.1:#{origin.port}/subs",
-        subscription_interval_ms: 1_000,
+        subscription_interval_ms: 50,
         subscribe_template: @sub,
         unsubscribe_template: @unsub
       })
@@ -388,8 +390,7 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
     assert remove["params"]["symbol"] == ["ETH/USD"]
     WebsocketServer.ack(ws, remove["req_id"])
 
-    # ---- converged: the source is steady across a full poll cycle
-    # (subscription_interval_ms is floored at 1_000 by the provider) — the
+    # ---- converged: the source is steady across a full poll cycle, so the
     # next reconcile finds nothing to send, and nothing more is sent
     assert NodeTestHelper.wait_until(
              fn ->

@@ -39,12 +39,8 @@ defmodule FlezhaTest.Plugin.SharedTest do
   # One runner for the module; each test's relays and plugins go with it.
   setup_all do
     TestHelpers.reset_all_cells()
-    runner_id = NodeTestHelper.start_runner(@namespace)
-
-    on_exit(fn ->
-      NodeTestHelper.stop_runner(@namespace, runner_id)
-      FleetManager.stop_namespace(@namespace)
-    end)
+    NodeTestHelper.start_runner(@namespace)
+    on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
 
     :ok
   end
@@ -130,7 +126,11 @@ defmodule FlezhaTest.Plugin.SharedTest do
 
     assert_receive {:ingested, ^a, "frame-1"}, 5_000
     assert_receive {:ingested, ^b, "frame-1"}, 5_000
-    refute_receive {:ingested, _, "frame-1"}, 200
+    # A second copy of frame-1 would reach each relay ahead of frame-2.
+    WebsocketServer.broadcast(server, "frame-2")
+    assert_receive {:ingested, ^a, "frame-2"}, 5_000
+    assert_receive {:ingested, ^b, "frame-2"}, 5_000
+    refute_received {:ingested, _, "frame-1"}
     assert WebsocketServer.connections(server) == 1
     assert [_one] = copies()
   end
@@ -142,9 +142,16 @@ defmodule FlezhaTest.Plugin.SharedTest do
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     :ok = PluginManager.bind_plugin(@namespace, "trades", b)
     assert_receive {:ws_open, socket}, 5_000
+    [copy] = copies()
 
     :ok = RelayManager.stop_relay(@namespace, a)
-    refute_receive {:ws_closed, ^socket}, 300
+    # The copy has taken `a`'s leave and still serves `b`.
+    assert NodeTestHelper.wait_until(
+             fn -> map_size(:sys.get_state(copy).subscribers) == 1 end,
+             5_000
+           )
+
+    refute_received {:ws_closed, ^socket}
 
     :ok = RelayManager.stop_relay(@namespace, b)
     assert_receive {:ws_closed, ^socket}, 2_000
@@ -420,6 +427,7 @@ defmodule FlezhaTest.Plugin.SharedTest do
     end
 
     test "a copy that cannot say in time whether it retires is waited for", ctx do
+      on_exit(TestHelpers.override_env(:plugin_call_timeout_ms, 100))
       test = self()
 
       mute =
@@ -472,11 +480,16 @@ defmodule FlezhaTest.Plugin.SharedTest do
     end
   end
 
-  # A copy that replaces a retiring one, answering whether its upstream is open.
+  # A copy that replaces a retiring one, answering whether its upstream is open
+  # and that it is not retiring itself.
   defp successor(connecting) do
     receive do
       {:"$gen_call", from, :connecting?} ->
         GenServer.reply(from, connecting)
+        successor(connecting)
+
+      {:"$gen_call", from, :retiring?} ->
+        GenServer.reply(from, false)
         successor(connecting)
 
       {:connecting, now} ->
@@ -570,7 +583,10 @@ defmodule FlezhaTest.Plugin.SharedTest do
     :ok = PluginManager.unbind_plugin(@namespace, "trades", group)
     assert_receive {:ws_closed, _}, 5_000
     assert_receive {:ws_closed, _}, 5_000
-    refute_receive {:ws_closed, _}, 300
+    # The shared connection still delivers after the unbind.
+    WebsocketServer.broadcast(server, "after-unbind")
+    assert_receive {:ingested, ^a, "after-unbind"}, 5_000
+    refute_received {:ws_closed, _}
     assert WebsocketServer.open(server) == 1
     assert [_shared] = copies()
   end
@@ -584,7 +600,9 @@ defmodule FlezhaTest.Plugin.SharedTest do
     assert {:ok, %{applied: :unchanged}} =
              PluginManager.update_plugin(@namespace, "trades", %{channel: "input"})
 
-    refute_receive {:ws_closed, ^socket}, 500
+    WebsocketServer.broadcast(server, "after-update")
+    assert_receive {:ingested, ^a, "after-update"}, 5_000
+    refute_received {:ws_closed, ^socket}
     assert WebsocketServer.connections(server) == 1
   end
 end

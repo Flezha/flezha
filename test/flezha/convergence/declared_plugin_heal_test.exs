@@ -38,7 +38,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
     ConvergenceSnapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
 
-    runner_id = NodeTestHelper.start_runner(namespace)
+    NodeTestHelper.start_runner(namespace)
 
     {:ok, %{relay_id: relay_id}} =
       "self_heal_relay"
@@ -64,8 +64,6 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
              15_000
            ),
            "loop did not re-attach the declared plugin"
-
-    NodeTestHelper.stop_runner(namespace, runner_id)
   end
 
   test "declared plugin self-reporting unhealthy is restarted by the loop" do
@@ -73,7 +71,7 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
     ConvergenceSnapshot.reset_recovery_states()
     {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
 
-    runner_id = NodeTestHelper.start_runner(namespace)
+    NodeTestHelper.start_runner(namespace)
 
     {:ok, %{relay_id: relay_id}} =
       "sick_plugin_relay"
@@ -120,15 +118,12 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
     stable = FlezhaTest.SickProvider.activations()
     Loop.tick_now()
     assert FlezhaTest.SickProvider.activations() == stable
-
-    NodeTestHelper.stop_runner(namespace, runner_id)
   end
 
   describe "a binding whose plugin is disabled" do
     setup do
       ConvergenceSnapshot.reset_recovery_states()
-      runner_id = NodeTestHelper.start_runner(@temp_namespace)
-      on_exit(fn -> NodeTestHelper.stop_runner(@temp_namespace, runner_id) end)
+      NodeTestHelper.start_runner(@temp_namespace)
 
       {:ok, %{relay_id: relay_id}} =
         "disabled_binding_relay"
@@ -178,20 +173,22 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
 
     test "more of them than the per-tick cap do not make the loop re-tick", %{relay_id: rid} do
       disabled_bindings(rid, Planner.max_ops() + 1)
-      tick_ms = 300
-      {:ok, _} = start_supervised({Loop, tick_ms: tick_ms})
 
-      loop = Process.whereis(Loop)
-      :erlang.trace(loop, true, [:receive, {:tracer, self()}])
-      Process.sleep(6 * tick_ms)
-      :erlang.trace(loop, false, [:receive])
-      ref = :erlang.trace_delivered(loop)
-      assert_receive {:trace_delivered, ^loop, ^ref}
+      Telemetry.capture([:flezha, :convergence, :heal],
+        as: fn _event, _measurements, meta -> {:heal, meta.primitive, meta.target} end
+      )
 
-      # About seven at `tick_ms`; a declared fact may add a few. The spin this
-      # guards against ticks well over a hundred times in the same window.
-      ticks = count_ticks(loop)
-      assert ticks <= 15, "the loop ticked #{ticks} times in #{6 * tick_ms} ms"
+      Telemetry.capture([:flezha, :convergence, :tick],
+        as: fn _event, measurements, meta -> {:tick, meta.state, measurements.actions_issued} end
+      )
+
+      {:ok, _} = start_supervised({Loop, tick_ms: 60_000})
+      assert_receive {:tick, :ticking, 0}, 5_000
+
+      # The tick filled its cap with unmet ops; a spin would have left the next
+      # tick already requested.
+      assert length(collect(do: ({:heal, :start_plugin, ^rid} -> true))) == Planner.max_ops()
+      refute :sys.get_state(Loop).tick_pending?
     end
 
     test "is a pause: the relay reads healthy and diagnose names it as a note", %{relay_id: rid} do
@@ -286,16 +283,6 @@ defmodule FlezhaTest.Convergence.DeclaredPluginHealTest do
 
   defp phase(ow, plugin_id),
     do: Table.phase(GenServer.call(ow, :get_overwatch_state).extensions, plugin_id)
-
-  defp count_ticks(loop) do
-    ticks =
-      collect do
-        {:trace, ^loop, :receive, :tick} -> true
-        {:trace, ^loop, :receive, _} -> false
-      end
-
-    Enum.count(ticks, & &1)
-  end
 
   defp subscribed_plugin?(ow, plugin_id) do
     case GenServer.call(ow, :get_overwatch_state) do

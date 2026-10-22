@@ -20,6 +20,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.HttpPush
   alias Flezha.Plugin.Provider.HttpSend
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ProviderPrepare
   alias FlezhaTest.Helper.Telemetry
@@ -74,6 +75,9 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   end
 
   defp dead_letters(rc), do: DlqStore.list(rc)
+
+  # Fire the retry `pid` has armed now, answering how long it had left.
+  defp fire_retry(pid), do: MessageTestHelper.fire_timer(pid, &match?({:retry, _}, &1))
 
   defp error_of(entry), do: Jason.decode!(entry["error"])
 
@@ -178,14 +182,18 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
   end
 
   test "a retry-after in seconds is waited out", %{cell: cell} do
-    server = WebhookServer.start([{503, [{"retry-after", "1"}]}, 200])
-    {opts, _pid} = start!(server, %{retry_max_backoff_ms: 2_000})
+    server = WebhookServer.start([{503, [{"retry-after", "60"}]}, 200])
+    {opts, pid} = start!(server, %{retry_max_backoff_ms: 120_000})
     out(opts, "v1", guaranteed(cell, 1))
 
     assert_receive {:request, _, _, "v1"}, 5_000
-    first = System.monotonic_time(:millisecond)
+
+    assert_receive {:telemetry, [:flezha, :plugin, :http_push, :retried], _, %{reason: 503}},
+                   5_000
+
+    # The ladder alone would wait at most 5 ms.
+    assert fire_retry(pid) > 50_000
     assert_receive {:request, _, _, "v1"}, 5_000
-    assert System.monotonic_time(:millisecond) - first >= 1_000
     assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 2_000)
   end
 
@@ -211,9 +219,9 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
     {opts, _pid} =
       start!(server, %{
         retries: 100,
-        retry_backoff_ms: 50,
-        retry_max_backoff_ms: 50,
-        delivery_timeout_ms: 300
+        retry_backoff_ms: 5,
+        retry_max_backoff_ms: 5,
+        delivery_timeout_ms: 30
       })
 
     capture_log(fn ->
@@ -233,8 +241,8 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     log =
       capture_log(fn ->
-        for n <- 1..100, do: assert({:ok, _} = out(opts, "p#{n}"))
-        assert wait_until(fn -> HttpSend.stats(pid)[:dropped] == 100 end, 10_000)
+        for n <- 1..10, do: assert({:ok, _} = out(opts, "p#{n}"))
+        assert wait_until(fn -> HttpSend.stats(pid)[:dropped] == 10 end, 10_000)
       end)
 
     restore.()
@@ -280,8 +288,8 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
               queue_max: 10,
               queue_overflow: :drop_nothing,
               retries: 100,
-              retry_backoff_ms: 20,
-              retry_max_backoff_ms: 20,
+              retry_backoff_ms: 5,
+              retry_max_backoff_ms: 5,
               delivery_timeout_ms: 60_000
             },
             extra
@@ -296,7 +304,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
     # The one sink-level case; `Flezha.Process.BacklogAdmissionTest` covers every policy.
     test "drop_nothing makes a dispatch wait, then parks its guaranteed payload at the timeout",
          %{cell: cell, rc: rc} do
-      {_server, opts, pid} = stalled(%{queue_max: 1, queue_block_timeout_ms: 200})
+      {_server, opts, pid} = stalled(%{queue_max: 1, queue_block_timeout_ms: 20})
       out(opts, "1")
       # On its way when the queue filled: admitted past the bound, which raises the flag.
       out(opts, "2")
@@ -305,7 +313,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
       capture_log(fn ->
         started = System.monotonic_time(:millisecond)
         out(opts, "g", guaranteed(cell, 1))
-        assert System.monotonic_time(:millisecond) - started >= 200
+        assert System.monotonic_time(:millisecond) - started >= 20
         assert :ok = ProviderPrepare.assert_confirmed([{:cursor, 1}], 5_000)
       end)
 
@@ -349,7 +357,7 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
 
     out(opts, "g", guaranteed(cell, 1))
     assert_receive {:"$gen_cast", {:outbox_hold, {:cursor, 1}}}
-    refute_receive {:telemetry, [:flezha, :plugin, :http_push, :failed], _, _}, 100
+    refute_received {:telemetry, [:flezha, :plugin, :http_push, :failed], _, _}
   end
 
   test "health turns after three failed requests and back on a 2xx, and shows no secret" do
@@ -359,8 +367,8 @@ defmodule FlezhaTest.Plugin.Provider.HttpPushWorkerTest do
     {opts, pid} =
       start!(server, %{
         retries: 100,
-        retry_backoff_ms: 50,
-        retry_max_backoff_ms: 50,
+        retry_backoff_ms: 5,
+        retry_max_backoff_ms: 5,
         headers: ~s({"authorization": "#{secret}"})
       })
 

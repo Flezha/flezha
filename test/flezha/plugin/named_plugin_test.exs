@@ -11,6 +11,7 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
   import ExUnit.CaptureLog
 
   alias Flezha.Plugin
+  alias Flezha.Plugin.Home
   alias Flezha.Plugin.Provider.File.Sink, as: FileSink
   alias Flezha.Plugin.Provider.File.Source, as: FileSource
   alias Flezha.Plugin.Provider.Websocket
@@ -31,12 +32,8 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
   # own names.
   setup_all do
     TestHelpers.reset_all_cells()
-    runner_id = NodeTestHelper.start_runner(@namespace)
-
-    on_exit(fn ->
-      NodeTestHelper.stop_runner(@namespace, runner_id)
-      FleetManager.stop_namespace(@namespace)
-    end)
+    NodeTestHelper.start_runner(@namespace)
+    on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
 
     :ok
   end
@@ -141,23 +138,57 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
           plugin("race_in", FileSource, %{path: "named_race.txt", channel: "input"})
         )
 
-      # Each bind reads its relay's bindings after its check: held open
-      # here, both checks run before either write lands.
+      {_spec, [{_node, home} | _]} = Home.row(@namespace, "race_in")
+
+      # Each bind's check is held until the other bind is in as well: checking
+      # alongside it, or queued behind it at the plugin's home.
+      test_pid = self()
+      gate = :atomics.new(1, [])
+
       stub(HubManager, :relay_bindings, fn namespace, relay_id ->
-        Process.sleep(300)
+        if relay_id in [a, b] and :atomics.get(gate, 1) == 0 do
+          send(test_pid, {:checking, self()})
+          receive do: (:go -> :ok)
+        end
+
         Mimic.call_original(HubManager, :relay_bindings, [namespace, relay_id])
       end)
 
-      outcomes =
-        [a, b]
-        |> Enum.map(fn op ->
-          Task.async(fn -> PluginManager.bind_plugin(@namespace, "race_in", op, []) end)
-        end)
-        |> Task.await_many(10_000)
+      # The serialized check runs under the home, which the stub must reach.
+      allow(HubManager, self(), home)
+      :erlang.trace(home, true, [:receive, {:tracer, self()}])
+
+      tasks =
+        for op <- [a, b],
+            do: Task.async(fn -> PluginManager.bind_plugin(@namespace, "race_in", op, []) end)
+
+      checking = contending(home, [], 0)
+      :erlang.trace(home, false, [:receive])
+      :atomics.put(gate, 1, 1)
+      Enum.each(checking, &send(&1, :go))
+      outcomes = Task.await_many(tasks, 10_000)
 
       assert [:ok] = Enum.filter(outcomes, &(&1 == :ok))
       assert [refused] = Enum.reject(outcomes, &(&1 == :ok))
       assert code(refused) == "plugin.not_shareable"
+    end
+
+    # Both binds are in once two checks run at once, or one runs while the
+    # other is queued at `home`.
+    defp contending(_home, [_, _] = checking, _queued), do: checking
+    defp contending(_home, [_] = checking, queued) when queued >= 2, do: checking
+
+    defp contending(home, checking, queued) do
+      receive do
+        {:checking, pid} ->
+          contending(home, [pid | checking], queued)
+
+        {:trace, ^home, :receive, {:"$gen_call", _, {:serialized, _}}} ->
+          contending(home, checking, queued + 1)
+      after
+        5_000 ->
+          flunk("the binds never contended: #{length(checking)} checking, #{queued} queued")
+      end
     end
 
     test "unbind of a binding the relay does not have is plugin.not_bound" do

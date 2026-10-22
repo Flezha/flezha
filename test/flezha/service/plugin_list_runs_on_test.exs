@@ -53,12 +53,8 @@ defmodule FlezhaTest.Service.PluginListRunsOnTest do
   setup_all do
     TestHelpers.reset_all_cells()
     start_supervised!({WorkerSup, name: WorkerSup.family(DownProvider)})
-    runner_id = NodeTestHelper.start_runner(@namespace)
-
-    on_exit(fn ->
-      NodeTestHelper.stop_runner(@namespace, runner_id)
-      FleetManager.stop_namespace(@namespace)
-    end)
+    NodeTestHelper.start_runner(@namespace)
+    on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
 
     :ok
   end

@@ -27,6 +27,7 @@ defmodule Flezha.Service.PluginManagerTest do
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Service.PluginManager
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
 
@@ -322,6 +323,7 @@ defmodule Flezha.Service.PluginManagerTest do
       store: store,
       overwatch: overwatch
     } do
+      on_exit(TestHelpers.override_env(:plugin_call_timeout_ms, 50))
       assert :ok = PluginManager.bind_plugin(@namespace, "un_wedged", @relay_id)
       send(overwatch, :go_silent)
 
@@ -366,7 +368,7 @@ defmodule Flezha.Service.PluginManagerTest do
       Mimic.stub(Directory, :plugin_hosts, fn @namespace, "gone_home" -> [copy] end)
 
       # A stop that never gets an answer is asked again until its budget runs out.
-      on_exit(Flezha.State.TestHelpers.override_env(:hub_start_child_ms, 300))
+      on_exit(TestHelpers.override_env(:hub_start_child_ms, 50))
 
       # The answer a stop forwarded to a start target that left gets.
       Mimic.stub(ProcessHub, :stop_children, fn _hub, [id], _opts ->
@@ -415,6 +417,7 @@ defmodule Flezha.Service.PluginManagerTest do
       store: store,
       overwatch: overwatch
     } do
+      on_exit(TestHelpers.override_env(:plugin_call_timeout_ms, 50))
       send(overwatch, :go_silent)
 
       assert {:error, :timeout} =

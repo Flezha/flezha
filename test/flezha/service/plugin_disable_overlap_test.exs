@@ -16,6 +16,7 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
+  alias Flezha.State.TestHelpers
   alias ProcessHub.Service.ProcessRegistry
 
   setup :set_mimic_global_until_exit
@@ -42,6 +43,7 @@ defmodule Flezha.Service.PluginDisableOverlapTest do
   end
 
   test "M unreachable relays cost one inner bound, not M", %{ids: ids} do
+    on_exit(TestHelpers.override_env(:plugin_call_timeout_ms, 200))
     inner_ms = Durations.get(:plugin_call_timeout_ms)
 
     {elapsed_us, reply} = :timer.tc(fn -> PluginManager.unbind_all(@namespace, ids) end)

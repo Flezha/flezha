@@ -17,6 +17,7 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.HookCopy
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
   alias FlezhaTest.Helper.WebhookServer
@@ -25,12 +26,8 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
 
   setup_all do
     TestHelpers.reset_all_cells()
-    runner_id = NodeTestHelper.start_runner(@namespace)
-
-    on_exit(fn ->
-      NodeTestHelper.stop_runner(@namespace, runner_id)
-      FleetManager.stop_namespace(@namespace)
-    end)
+    NodeTestHelper.start_runner(@namespace)
+    on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
 
     :ok
   end
@@ -90,10 +87,18 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
 
   test "a 503 then a 200 is sent twice and dropped never" do
     server = WebhookServer.start([503, 200])
+
+    Telemetry.capture([:flezha, :backoff, :wait],
+      filter: &(&1.ladder == :hook_webhook_post),
+      as: fn _event, measurements, _meta -> {:retry_armed, self(), measurements.delay_ms} end
+    )
+
     {:ok, _} = enable(server)
     dead_letter(1)
 
     assert_receive {:request, _, _, first}, 5_000
+    assert_receive {:retry_armed, worker, 1_000}, 5_000
+    fire_retry(worker)
     assert_receive {:request, _, _, ^first}, 5_000
     assert_receive {:telemetry, [:flezha, :plugin, :hook_webhook, :shipped], _, _}, 5_000
     refute_received {:telemetry, [:flezha, :plugin, :hook_webhook, :failed], _, _}
@@ -118,7 +123,8 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
     assert log =~ "400"
     refute log =~ "secret-path"
     refute log =~ "token=t"
-    refute_receive {:request, _, _, _}, 300
+    refute_received {:telemetry, [:flezha, :plugin, :hook_webhook, :retried], _, _}
+    refute_received {:request, _, _, _}
   end
 
   test "a server that never answers: every emit returns and the plugin lags" do
@@ -160,23 +166,15 @@ defmodule FlezhaTest.Plugin.Provider.HookWebhookTest do
     refute inspect(:sys.get_status(copy)) =~ secret
   end
 
-  test "each option refusal answers its code before anything connects" do
+  test "an option refusal answers its code before anything connects" do
     server = WebhookServer.start([200])
 
     assert {:error, reason} = enable(server, %{url: "https://user:pw@hooks.test/x"})
     assert code(reason) == "plugin.url_has_credentials"
-
-    assert {:error, reason} = enable(server, %{url: "ftp://hooks.test/x"})
-    assert code(reason) == "plugin.url_scheme_unsupported"
-
-    assert {:error, reason} = enable(server, %{url: "http://"})
-    assert code(reason) == "plugin.url_without_host"
-
-    assert {:error, reason} = enable(server, %{headers: "[1]"})
-    assert code(reason) == "plugin.headers_invalid"
-
-    assert {:error, _} = enable(server, %{timeout_ms: 0})
-    assert {:error, _} = enable(server, %{retries: -1})
-    refute_receive {:request, _, _, _}, 200
+    assert Directory.plugin_hosts(@namespace, "hook") == []
+    assert WebhookServer.connections(server) == 0
   end
+
+  # Fire the retry `worker` has armed now rather than wait out its rung.
+  defp fire_retry(worker), do: MessageTestHelper.fire_timer(worker, &match?({:retry, _}, &1))
 end

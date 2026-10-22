@@ -50,6 +50,7 @@ defmodule FlezhaTest.Plugin.ControllerPluginRetryTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.PluginRecords
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.RefusingProvider
   alias FlezhaTest.RefusingWorker
@@ -84,10 +85,10 @@ defmodule FlezhaTest.Plugin.ControllerPluginRetryTest do
           copy = waiting_copy()
 
           RefusingWorker.allow()
+          fire_restart(copy)
 
-          # A few retry periods, so a late tick on a loaded machine still lands.
           assert_receive {:worker_up, _worker},
-                         3 * Durations.get(:convergence_tick_ms),
+                         5_000,
                          "the copy was never placed again after its worker could start"
 
           assert Directory.plugin_hosts(@namespace, "retry") == [copy]
@@ -142,6 +143,11 @@ defmodule FlezhaTest.Plugin.ControllerPluginRetryTest do
     assert [%{name: "retry", controllers: []}] = PluginRecords.plugins(@namespace)
     copy
   end
+
+  # The retry the waiting copy armed for its next probe window, fired now.
+  defp fire_restart(copy),
+    do:
+      assert(MessageTestHelper.fire_timer(copy, :restart) <= Durations.get(:convergence_tick_ms))
 
   defp enable(single) do
     PluginManager.enable_plugin("retry", %Plugin{

@@ -25,6 +25,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
   alias Flezha.Plugin.Provider.Websocket
   alias Flezha.Plugin.Provider.WorkerSup
   alias Flezha.Plugin.Shared
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.WebsocketServer
 
@@ -86,8 +87,8 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       opts: %{
         url: "http://127.0.0.1:#{origin.port}/config",
         channel: "config_in",
-        interval_ms: 1_000,
-        timeout_ms: 500
+        interval_ms: 50,
+        timeout_ms: 40
       }
     }
   end
@@ -133,6 +134,11 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       {:unbind, from} ->
         Table.teardown_all(table, :now)
         send(from, :unbound)
+        forward(test, table, verdict)
+
+      {:ping, from} ->
+        send(from, :pong)
+        forward(test, table, verdict)
     end
   end
 
@@ -221,7 +227,12 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       unbind(other)
       WebsocketServer.broadcast(server, "one")
       assert {"one", _} = cast_frame()
-      refute_receive {:other, _, _}, 200
+      # The socket has injected "one" everywhere it still does, and the
+      # unbound relay has passed on whatever reached it.
+      :sys.get_state(WorkerSup.worker_pid(Websocket, {@namespace, "mixed_feed"}))
+      send(other, {:ping, self()})
+      assert_receive :pong
+      refute_received {:other, _, _}
       Table.teardown_all(table, :now)
     end
   end
@@ -277,6 +288,7 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
 
   describe "an http poller" do
     setup do
+      on_exit(TestHelpers.override_env(:http_poll_min_interval_ms, 10))
       %{origin: start_origin(body: "v1", etag: "e1")}
     end
 

@@ -129,7 +129,7 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
       ] do
     test "a retried delivery is absorbed rather than duplicated (#{tier} target)" do
       inst = "kb591_#{unquote(tier)}_#{System.unique_integer([:positive])}"
-      start_target(inst, unquote(overrides))
+      host = start_target(inst, unquote(overrides))
       start_worker(inst)
       drop_first_confirmation()
 
@@ -145,7 +145,9 @@ defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
 
       assert retry_verdict == {:ok, :absorbed}
       assert [{0, "tick", _metadata}] = InputLog.undelivered(inst)
-      refute_receive {:forwarded, ^inst, _}, 200
+      # The target has handled the retry and everything it queued for itself.
+      :sys.get_state(host)
+      refute_received {:forwarded, ^inst, _}
     end
   end
 
