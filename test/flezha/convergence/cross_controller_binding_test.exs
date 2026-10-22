@@ -56,6 +56,9 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
                _ -> nil
              end)
 
+    # Stopped while the peer still hosts it: stopping the peer first moves it
+    # onto this node while the teardown stops this node's runner.
+    NodeTestHelper.stop_namespace(@ns)
     NodeTestHelper.stop_peer_node(peer_pid, peer)
   end
 
