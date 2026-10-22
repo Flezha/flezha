@@ -150,7 +150,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     assert :ok = RelayManager.stop_relay(namespace, relay_id)
     assert {:ok, _} = RelayManager.start_relay(namespace, builder)
     RelayTestHelper.cast_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
-    assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
+    assert wait_until(fn -> applied?(namespace, relay_id, key, "second") end, 15_000)
 
     assert seen(namespace, relay_id, key) == ["#{key}:second"],
            "the new instance was served the stopped instance's in-memory state"
@@ -172,11 +172,16 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     assert wait_until(fn -> cell_keys(namespace, relay_id) in [nil, []] end, 15_000)
 
     RelayTestHelper.cast_io(relay_id, namespace, "#{key}:second", %{"input_type" => "2"})
-    assert wait_until(fn -> seen(namespace, relay_id, key) != nil end, 15_000)
+    assert wait_until(fn -> applied?(namespace, relay_id, key, "second") end, 15_000)
 
     assert seen(namespace, relay_id, key) == ["#{key}:second"],
            "the re-minted Cell was served the evicted Cell's in-memory state"
   end
+
+  # A Cell is readable once an input mints it, before its work has run, and
+  # reads as init_state then: wait for the input itself, not the key.
+  defp applied?(namespace, relay_id, key, input),
+    do: "#{key}:#{input}" in (seen(namespace, relay_id, key) || [])
 
   defp seen(namespace, relay_id, key) do
     case RelayManager.get_cell_state(namespace, relay_id, %{tasklet: @tasklet, cell_key: key}) do

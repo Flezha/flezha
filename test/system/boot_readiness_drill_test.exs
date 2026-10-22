@@ -79,8 +79,11 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     assert_all_refuse(port, "recovering", "hubs_recovered")
 
     # 4. Hubs are back, but a durable registry on disk has not been reloaded:
-    #    a hub this boot never started left one, and auto-restore is on.
+    #    a hub this boot never started left one, and auto-restore is on. The
+    #    starter's record is node-global: another case's finished starter would
+    #    say nothing is owed, and a folder nothing owes holds no readiness.
     Snapshot.observe_recovery(hub_id, :normal)
+    Starter.reset()
     %{tmp: tmp} = FlezhaTest.Case.install([:tmp_dir])
     on_exit(TestHelpers.override_env(:auto_restore_enabled, true))
     on_exit(TestHelpers.override_env(:process_hub_registry_root, tmp))
