@@ -6,13 +6,13 @@ TBD - created by archiving change cell-timers. Update Purpose after archive.
 ### Requirement: A Tasklet SHALL be able to register per-Cell timers of two kinds
 
 The tasklet context (`Ctx`) SHALL offer `timer_at_event_time(ts_ms)` and `timer_after(duration)`
-(Rust) / `timerAtEventTime(long)` and `timerAfter(Duration)` (Java) / `Flezha.SDK.Ctx.timer_at_event_time/2` and `timer_after/2` taking milliseconds and answering `{:ok, at}` (Elixir), each returning
+(Rust) / `timerAtEventTime(long)` and `timerAfter(Duration)` (Java) / `Flezha.SDK.Ctx.timer_at_event_time/2` and `timer_after/2` taking milliseconds and answering `{:ok, at}` (Elixir) / `TimerAtEventTime(uint64)` and `TimerAfter(uint64)` taking milliseconds (Go), each returning
 the absolute millisecond timestamp the timer is scheduled at, and each SHALL offer one
-cancellation taking the timer's kind and that timestamp: `cancel_timer(kind, at)` (Python, Ruby), `cancelTimer(kind, at)` (Node, PHP), `cancelTimer(TimerKind, long)` (Java), `cancel_timer(TimerKind, u64)` (Rust) and `Flezha.SDK.Ctx.cancel_timer/3` (Elixir). No SDK SHALL offer a cancellation per kind. Registering the same kind and timestamp twice on
+cancellation taking the timer's kind and that timestamp: `cancel_timer(kind, at)` (Python, Ruby), `cancelTimer(kind, at)` (Node, PHP), `cancelTimer(TimerKind, long)` (Java), `cancel_timer(TimerKind, u64)` (Rust), `CancelTimer(TimerKind, uint64)` (Go) and `Flezha.SDK.Ctx.cancel_timer/3` (Elixir). No SDK SHALL offer a cancellation per kind. Registering the same kind and timestamp twice on
 one Cell SHALL be idempotent — pending timers are a set, not a queue. Timers SHALL
 be scoped to the Cell that registered them and SHALL NOT be visible to any other
 Cell. A hosted SDK's cancellation SHALL answer nothing about whether the timer was pending
-(Java `void`, Elixir `:ok`, as Python, Ruby, PHP and Node already do): the pending set is the
+(Java `void`, Elixir `:ok`, Go only an `error`, as Python, Ruby, PHP and Node already do): the pending set is the
 core's, and the core applies the cancellation when the item settles.
 
 #### Scenario: A timer is registered and returns its absolute time
@@ -48,7 +48,7 @@ core's, and the core applies the cancellation when the item settles.
 
 `Tasklet` SHALL gain an `on_timer` hook receiving one firing record, which carries the
 timer's `kind` and its `scheduled_at`, and the same `Ctx` as `run`: `on_timer(firing, ctx)`, and
-`on_timer(firing, state, ctx)` in Elixir. The record SHALL be `TimerFiring` in Rust, Java, PHP, Node
+`on_timer(firing, state, ctx)` in Elixir. The record SHALL be `TimerFiring` in Rust, Java, PHP, Node, Go
 and Elixir (`Flezha.SDK.TimerFiring`) and a mapping with `kind` and `scheduled_at` keys in Python
 and Ruby; no SDK SHALL pass the two as separate arguments. The hook receives the `Ctx` `run` receives, so it MAY apply changes, emit, and
 register further timers. The record's `scheduled_at` SHALL be the timestamp the timer was **scheduled
@@ -253,7 +253,7 @@ every committed firing, in every SDK.
 
 #### Scenario: Firings move the counter on every SDK
 
-- **WHEN** a processing-time timer fires and its item settles on a Python, Ruby, PHP, Node, Java, Elixir or Rust runner
+- **WHEN** a processing-time timer fires and its item settles on a Python, Ruby, PHP, Node, Java, Elixir, Go or Rust runner
 - **THEN** the runner's heartbeat `timers_fired` SHALL rise by one and the Tasklet's fired counter SHALL rise by one
 
 ### Requirement: A Cell timer belongs to a tasklet of either kind

@@ -79,6 +79,16 @@ c |> input("in", codec: :text) |> into(Echo.Tasklet) |> output("out")
 
 [Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/relay.ex)
 
+### Go
+
+```go
+// relay.go: the echo relay's channels
+in := flezha.Input[string](c, "in", flezha.InputOptions{Codec: flezha.Text})
+flezha.Into(in, Echo{}).Output("out")
+```
+
+[Full file](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/relay.go)
+
 <!-- tabs-close -->
 
 `in` names the channel messages come in on, and `out` the channel they leave on. A file

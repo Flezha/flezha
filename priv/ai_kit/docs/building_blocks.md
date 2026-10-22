@@ -536,6 +536,62 @@ tree, so a crash restarts it and it reconnects under the same identity.
 named by the list. The example depends on the `flezha_sdk` package alone,
 which starts no controller.
 
+### Go
+
+```go
+// tasklet.go: the tasklet. The processing stage the graph routes each message into.
+type Echo struct{}
+
+func (Echo) Spec() flezha.Spec { return flezha.Spec{Name: "echo"} }
+
+func (Echo) Run(in string, ctx *flezha.Ctx[flezha.NoState, string]) error {
+	return ctx.Emit("echo: " + in)
+}
+```
+
+Full file: [`tasklet.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/tasklet.go).
+
+```go
+// relay.go: the relay. The graph, and the unit the controller schedules.
+type EchoRelay struct{}
+
+func (EchoRelay) Spec() flezha.RelaySpec { return flezha.RelaySpec{FactoryID: "echo"} }
+
+func (EchoRelay) Channels(c *flezha.ChannelBuilder) {
+	in := flezha.Input[string](c, "in", flezha.InputOptions{Codec: flezha.Text})
+	flezha.Into(in, Echo{}).Output("out")
+}
+```
+
+Full file: [`relay.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/relay.go).
+
+```go
+// main.go: the runner. Connects, registers the echo factory, and serves.
+runner, err := flezha.CreateRunner(namespace)
+if err != nil {
+	log.Fatal(err)
+}
+if err := runner.RegisterFactory(EchoRelay{}); err != nil {
+	log.Fatal(err)
+}
+if err := runner.Start(); err != nil {
+	log.Fatal(err)
+}
+if err := runner.AwaitTermination(); err != nil {
+	log.Fatal(err)
+}
+```
+
+Full file: [`main.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/main.go).
+
+**The tasklet is your own type**, `Echo`, with a `Spec` and a `Run`. Its state
+type is `flezha.NoState`, so it keeps nothing and journals nothing.
+`flezha.Input[string]` is the entry channel and the type it carries, read as
+text here; without a codec the channel reads JSON into its type. `Output("out")`
+names the channel it ends on the plugin layer. A stream wired into a tasklet
+that cannot take its values fails `go build`. Every call returns an `error`,
+and `Run` returning `nil` completes the item.
+
 <!-- tabs-close -->
 
 Registering a factory is the same call whether its class runs in flow or in
@@ -643,6 +699,17 @@ defmodule Echo do
 end
 ```
 
+### Go
+
+```go
+var EchoRelay = flezha.ShortRelay("echo", func(value string, _ *flezha.Ctx[flezha.NoState, string]) (string, bool) {
+	return "echo: " + value, true
+}, flezha.ShortOptions{Input: "in", Codec: flezha.Text, Output: "out"})
+```
+
+The value is the output when the boolean is true, and nothing leaves when it is
+false. `EchoRelay` is the relay the runner registers.
+
 <!-- tabs-close -->
 
 Rules every SDK shares:
@@ -668,8 +735,9 @@ reference pages have each SDK's rules: [Java](https://github.com/flezha/flezha/b
 [Node](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/node_sdk.md#the-short-form),
 [Python](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md#the-short-form),
 [Ruby](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/ruby_sdk.md#the-short-form),
-[PHP](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md#the-short-form) and
-[Elixir](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/elixir_sdk.md#the-short-form).
+[PHP](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md#the-short-form),
+[Elixir](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/elixir_sdk.md#the-short-form) and
+[Go](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/go_sdk.md#authoring).
 
 ## Concurrency per language
 
@@ -776,6 +844,17 @@ library for the core's next activation, so no wait holds a BEAM scheduler, and
 the pool grows when every worker is busy (`FLEZHA_WORKER_POOL_SIZE`,
 `FLEZHA_WORKER_POOL_MAX`). The runner connects over UDS or QUIC wherever it
 runs, the controller's own BEAM included.
+
+### Go
+
+**A pool of poll goroutines**, each looping `poll -> dispatch -> complete` on
+itself, plus one supervisor parked in the core's starvation wait. The base is
+`FLEZHA_WORKER_POOL_SIZE`, the host's core count by default, and the pool
+grows up to `FLEZHA_WORKER_POOL_MAX`, ten times the base by default.
+
+Handler bodies of different cells run in parallel. No goroutine stays locked
+to its thread: a blocking core call holds its OS thread, and the Go scheduler
+starts another for the rest.
 
 <!-- tabs-close -->
 

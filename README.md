@@ -144,6 +144,7 @@ Decide which ones, then specify each in OpenSpec. -->
 | Ruby | [flezha_ruby_sdk](https://github.com/flezha/flezha_ruby_sdk) |
 | PHP | [flezha_php_sdk](https://github.com/flezha/flezha_php_sdk) |
 | Elixir | [flezha_elixir_sdk](https://github.com/flezha/flezha_elixir_sdk) |
+| Go | [flezha_go_sdk](https://github.com/flezha/flezha_go_sdk) |
 
 Each one is also a git submodule of this repository, under `sdk/<language>`.
 

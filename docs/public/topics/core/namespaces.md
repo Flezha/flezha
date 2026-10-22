@@ -196,6 +196,20 @@ namespace = List.first(System.argv(), "trading")
 
 Full file: [`lib/tradedesk/application.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/application.ex).
 
+### Go
+
+```go
+// main.go: the runner. Joins trading and registers both factories.
+namespace := "trading"
+if len(os.Args) > 1 {
+	namespace = os.Args[1]
+}
+
+runner, err := flezha.CreateRunner(namespace)
+```
+
+Full file: [`main.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/main.go).
+
 <!-- tabs-close -->
 
 Once it runs, the runner is listed under its namespace, with the namespace as
@@ -352,6 +366,7 @@ which is on the runner itself:
 | Ruby | `runner.control` | `control.start_relay("order_worker", id: "orders")` |
 | PHP | `$runner->control()` | `$control->startRelay('order_worker', id: 'orders')` |
 | Elixir | `Flezha.SDK.Control` | `Control.start_relay(runner, "order_worker", id: "orders")` |
+| Go | `runner.Control()` | `control.StartRelay("order_worker", "orders", nil, nil)` |
 
 [`running_and_testing.md`](running_and_testing.md#from-application-code) shows
 them in the echo runner of each SDK.

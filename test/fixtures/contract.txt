@@ -22,7 +22,7 @@
 # Adding a member: add the file, add the row, and teach whichever SDK reads it
 # to resolve it through the contract root.
 test/fixtures/contract.txt|This list. Vendored with the set so a consumer can see what it got and why.
-test/fixtures/abi_surface.txt|Every `extern "C"` entry point the C ABI exports. The PHP, Python, Ruby, Node and Elixir SDKs each assert their declared surface against it.
+test/fixtures/abi_surface.txt|Every `extern "C"` entry point the C ABI exports. The PHP, Python, Ruby, Node, Elixir and Go SDKs each assert their declared surface against it.
 test/fixtures/jni_surface.txt|Every `static native` method of the Java SDK's `FlzCore` and the entry point it reaches. Java's `JniSurfaceTest` asserts the class against it.
 test/fixtures/channel_codecs.txt|One payload rule per channel codec. Every SDK whose channels carry no type asserts its coder against it.
 test/fixtures/error_rendering.json|The error model's rendering cases: a code and its details, the text and the JSON they render to. The controller, the Rust renderer and the Elixir SDK render each byte for byte.

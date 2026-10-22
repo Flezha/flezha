@@ -25,7 +25,7 @@ Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conforman
 
 `pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
 
-`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for seven SDKs, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for seven SDKs, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for seven SDKs. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for seven SDKs. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for seven SDKs, so the last deferrer carries it and the gate's inverse direction promotes it.
+`state_persistence` joins the required set the same way: the record stream, the restore fold, the compaction snapshot, the live read and the credit window live once in the shared core for every SDK, so the last deferrer carries it and the gate's inverse direction promotes it. `keyed_channels`, `dynamic_cell` and `schema_evolution` join it the same way: the identity stamps, the idle reaper with its cap and trace, and the per-Tasklet schema declaration with its migrations live once in the shared core for every SDK, so the last deferrer carries them and the gate's inverse direction promotes them. `cell_timers` joins the same way: the pending set, its ops as records in the Cell's own log, the two firing paths and the clock kinds live once in the shared core for every SDK. `effectively_once` joins the same way: the staged interval, the effect record, the checkpoint close, the tier-on park and the deterministic-effects contract live once in the shared core for every SDK. `correction_window` joins the same way, and it is the smallest of the five because the controller half is SDK-blind and already complete: the lateness classification against the Cell's event-time high-water, the correction request, the replay-slice buffer and its event-time ordering live once in the shared core for every SDK, so the last deferrer carries it and the gate's inverse direction promotes it.
 
 The required set SHALL be a declaration a person writes, never a value computed from the manifests, and the gate SHALL enforce the two directions separately because their remedies differ: a manifest that defers a required capability SHALL fail naming that manifest and the required set, and a capability no manifest defers that is absent from the required set SHALL fail naming the capability and the declaration it belongs in. A capability therefore cannot leave the required set as a side effect of a manifest edit — an SDK that genuinely cannot carry one defers it by name and removes it from the required set in the same change, and both halves are read by a reviewer.
 
@@ -518,7 +518,7 @@ refused or counted and never held; a durable record is held in a bounded ring,
 drop-oldest counted, and replayed in write order on the next bound stream; a
 plugin or steps output is held already framed so its channel and identity
 stamps survive the replay — with the shared core carrying them for the Rust,
-Java, Node, Python, Ruby, PHP and Elixir SDKs.
+Java, Node, Python, Ruby, PHP, Go and Elixir SDKs.
 
 A conformance scenario SHALL prove this on the real wire for every runtime the
 manifest does not defer: the stream is severed mid-burst, the runner rebinds,
@@ -584,7 +584,7 @@ connection on the way out.
 The data heartbeat's metadata keys SHALL be one contract, and the static drift gate SHALL compare every producer of that contract against it on every default-suite run.
 
 There is one producer: `flz_core`'s heartbeat builder, which serves the Rust,
-Java, node, python, ruby, php and Elixir runtimes through one function. The gate
+Java, node, python, ruby, php, go and Elixir runtimes through one function. The gate
 SHALL read the key set from the producer's own sources and compare it with
 the controller's mirror, so that a key the producer carries and the mirror omits is
 a build failure rather than a silent gap.
@@ -1089,7 +1089,7 @@ the effect record, the park body and the correction request. The timer op and th
 be pinned embedded in the effect and park rows rather than as rows of their own. It SHALL be a
 member of the contract set. A `flz_core` test SHALL encode each row's case from the real Rust
 struct and assert the bytes. The controller's `Flezha.State.Wire` tests SHALL decode every body it
-decodes in production from the fixture; the Java and PHP codec tests SHALL read their rows from the
+decodes in production from the fixture; the Java, PHP and Go codec tests SHALL read their rows from the
 fixture and SHALL NOT copy bytes or parse Rust source.
 
 #### Scenario: A Rust body field is reordered

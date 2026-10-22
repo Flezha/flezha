@@ -285,6 +285,22 @@ defmodule Orders do
 end
 ```
 
+### Go
+
+The settings are fields of `RelaySpec`, from `Spec()`:
+
+```go
+func (OrdersRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{
+		FactoryID:     "orders",
+		Run:           map[string]any{"steps": map[string]any{"each": "per_input", "on_failure": "keep_progress"}},
+		Durable:       map[string]any{"local": map[string]any{"sleep_after": 10_000}},
+		MaxDurationMs: 600_000,
+		Description:   "one order per message",
+	}
+}
+```
+
 <!-- tabs-close -->
 
 A few spellings differ from the tree's names:
@@ -306,13 +322,18 @@ A few spellings differ from the tree's names:
 - **Elixir**: a branch with members is a tuple, such as
   `{:effectively_once, ack: ack, correction_ms: ms, beyond_window: :drop}` or
   `{:checkpoint, every: n, max_delay_ms: ms, outputs: :at_checkpoint}`.
+- **Go**: `RelaySpec` holds the tree as data. `Run` and `Durable` take the bare
+  value (`"steps"`, `false`, `"local"`) or a one-key `map[string]any` holding
+  the branch's members, such as
+  `map[string]any{"local": map[string]any{"sleep_after": 2000}}`.
 
 The SDK reference pages list each SDK's whole spelling:
 [Java](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/java_sdk.md#the-settings-tree),
 [Node](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/node_sdk.md), [Python](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md#class-settings),
 [Ruby](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/ruby_sdk.md#class-settings),
-[PHP](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md#class-settings) and
-[Elixir](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/elixir_sdk.md#the-settings-tree).
+[PHP](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/php_sdk.md#class-settings),
+[Elixir](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/elixir_sdk.md#the-settings-tree) and
+[Go](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/go_sdk.md#authoring).
 
 ## How the tree is checked
 
@@ -487,6 +508,25 @@ end
 
 Full file: [`lib/tradedesk/order_executor.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/order_executor.ex).
 `run:` is a tuple: the branch, then its members as a keyword list.
+
+### Go
+
+```go
+// order_executor.go: the workflow. It runs in steps, once, undoing everything on a failure.
+func (OrderExecutorRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{
+		FactoryID: "order_executor",
+		Run: map[string]any{"steps": map[string]any{
+			"each":       "once",     // one instance per order; each step runs once
+			"on_failure": "undo_all", // a failed step undoes the finished ones
+		}},
+	}
+}
+```
+
+Full file: [`order_executor.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/order_executor.go).
+`Run` takes the tree as data, spelled as the core reads it; the fields left
+unwritten keep the defaults for `Durable`, `MaxDurationMs` and `Description`.
 
 <!-- tabs-close -->
 
@@ -709,6 +749,39 @@ use Flezha.SDK.Relay,
 ```
 
 Full file: [`lib/agentdesk/gateway_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/gateway_relay.ex).
+
+### Go
+
+```go
+// agent.go: one conversation, one turn per message, asleep when idle.
+func (AgentRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{
+		FactoryID: "agent",
+		Run: map[string]any{"steps": map[string]any{
+			"each":       "per_input",     // one turn per message
+			"on_failure": "keep_progress", // a failed turn fails alone
+		}},
+		Durable: map[string]any{"local": map[string]any{
+			"sleep_after": 10_000, // an idle session sleeps after 10 s
+		}},
+	}
+}
+```
+
+Full file: [`agent.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/agentdesk/agent.go).
+
+```go
+// gateway.go: the HTTP side, in flow, effectively once.
+func (GatewayRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{
+		FactoryID: "gateway",
+		// each request and answer on disk before it runs
+		Run: map[string]any{"flow": map[string]any{"exactly": "effectively_once"}},
+	}
+}
+```
+
+Full file: [`gateway.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/agentdesk/gateway.go).
 
 <!-- tabs-close -->
 

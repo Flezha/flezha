@@ -284,6 +284,17 @@ Elixir runner is your own application, so it starts the way your application
 starts. A runner in the controller's own BEAM starts with that application:
 `Flezha.SDK` is a child in its supervision tree.
 
+### Go
+
+```sh
+$ go run .
+```
+
+The namespace is the first argument: `go run . my_app`. Until the Go SDK is
+published, set the folder up once as its README's
+[Building from a checkout](https://github.com/flezha/flezha_go_sdk/tree/main/examples/echo#building-from-a-checkout)
+says.
+
 <!-- tabs-close -->
 
 ## Check that it connected

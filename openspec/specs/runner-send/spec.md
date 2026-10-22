@@ -187,7 +187,7 @@ the controller's code. The control surface SHALL not offer this call.
 The core SHALL carry the payload of every SDK's runner `send` to `Relay.send` as base64 with the
 `payload: "base64"` option `Relay.call_channel` already takes, so a send and a call encode a payload
 one way and whatever an SDK's `send` accepts reaches the relay byte for byte: a text message as its
-UTF-8 bytes, and a byte string from an SDK whose `send` takes one (Ruby, PHP, Elixir) unchanged even
+UTF-8 bytes, and a byte string from an SDK whose `send` takes one (Ruby, PHP, Elixir, Go) unchanged even
 when it is not UTF-8. No SDK's `send` signature changes. `Relay.send`
 SHALL read `payload: "text"` (the default, as `flz relay send --text` sends) and `"base64"`, and
 refuse any other value with `usage.unknown_word`.

@@ -494,7 +494,7 @@ sequence counters SHALL live with the outstanding activation and SHALL be releas
 so a token that is no longer outstanding is `part.outside_invocation`.
 
 The entry SHALL be listed in `test/fixtures/abi_surface.txt`, and every host binding
-(the JNI, napi, Python and Ruby glue and the PHP declaration) SHALL declare and export it
+(the JNI, napi, Python and Ruby glue, the PHP declaration and the Go cgo preamble) SHALL declare and export it
 through its surface table, asserted by that binding's surface test. The Rust SDK SHALL reach
 the same function through the crate API. The fake controller SHALL record every `output_part`
 frame it receives, so each veneer's tests can assert what a part carried.
@@ -514,7 +514,7 @@ frame it receives, so each veneer's tests can assert what a part carried.
 
 #### Scenario: Every binding exports the entry
 
-- **WHEN** the surface tests of the JNI, napi, Python, Ruby and PHP bindings run
+- **WHEN** the surface tests of the JNI, napi, Python, Ruby, PHP and Go bindings run
 - **THEN** each SHALL find `flz_core_part` in its declaration and in its exports, and the
   crate's own test SHALL find it in `test/fixtures/abi_surface.txt`
 
@@ -581,9 +581,9 @@ host SHALL register a hook that writes notices through its own log: the
 controller and the Elixir SDK through an Elixir process writing `Logger`, Node
 through its host log callback, Java through its runner's logger, Rust through
 `tracing` once the application installed the SDK's default subscriber, and
-Python, Ruby, PHP and Java through a bounded queue their own threads drain off the
+Python, Ruby, PHP, Go and Java through a bounded queue their own threads drain off the
 per-activation path (Java's on a daemon thread, never the user's logger on a
-core thread); Python, Ruby and PHP's threaded executor SHALL drain it on every answer of the
+core thread); Python, Ruby, Go and PHP's threaded executor SHALL drain it on every answer of the
 core pool governor's supervisor entry, which answers at least once per supervisor wait (1 s),
 `idle` when there is nothing to spawn. No hook SHALL call `OwnedEnv` send on a BEAM scheduler thread:
 there it SHALL queue, and a core-owned thread SHALL send. Node's host callback
@@ -655,7 +655,7 @@ shares, SHALL carry a parse rule of its own.
 
 #### Scenario: One rule answers every host
 
-- **WHEN** `FLEZHA_WORKER_POOL_SIZE` is `"0"` in a Python, Ruby, Node, PHP and Java runner
+- **WHEN** `FLEZHA_WORKER_POOL_SIZE` is `"0"` in a Python, Ruby, Node, PHP, Go and Java runner
 - **THEN** each runner SHALL keep its SDK's default pool size, because the core's pool governor read the knob by the one rule and found it "unset"
 
 ### Requirement: The core SHALL decode the call `Response` envelope for every host

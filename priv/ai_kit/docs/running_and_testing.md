@@ -391,6 +391,25 @@ Functions rather than methods: each takes the runner and answers
 `{:ok, result}` or `{:error, reason}`. The runner is connected once its child
 has started, so the calls can follow `Supervisor.start_link/2`.
 
+### Go
+
+```go
+// main.go: the runner's control and send calls
+control := runner.Control()
+if _, err := control.StartRelay("echo", "my_echo", nil, nil); err != nil {
+	log.Fatal(err)
+}
+if _, err := runner.Send("my_echo", "in", []byte("hello world"), flezha.MsgID("hello-1")); err != nil {
+	log.Fatal(err)
+}
+```
+
+Full file: [`main.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/main.go).
+Use `Start()` rather than `Run()`: `Run()` is `Start()` followed by
+`AwaitTermination()` and does not return until shutdown, so the calls go
+between the two. Each call answers the controller's result and an `error`; a
+refusal is a `*flezha.Error`, read with `errors.As`.
+
 <!-- tabs-close -->
 
 The same retry rule applies here: a start without an id that is retried after
@@ -460,6 +479,7 @@ output, feed an input channel, and run until the graph is idle.
 | Ruby | `Flezha::LocalRelay.start` | [`sdk/ruby/examples/local_word_count.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/local_word_count.rb) |
 | PHP | `LocalRelay::start` | [`sdk/php/examples/E07_LocalMode.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/E07_LocalMode.php) |
 | Elixir | `Flezha.SDK.Local.start` | the snippet below |
+| Go | `flezha.StartLocal` | `ExampleStartLocal` in [`sdk/go/example_test.go`](https://github.com/flezha/flezha_go_sdk/blob/main/example_test.go) |
 
 ### Example: counting words
 

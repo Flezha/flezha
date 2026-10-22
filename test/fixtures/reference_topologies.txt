@@ -137,8 +137,8 @@ commit_block_chain | 1 | mid | inter_task | 0 | 1 | mid
 #              lack this one
 #   schema     a JSON Schema declared on an entry channel
 #   shorthand_typed_output  a short form on a tasklet whose output the SDK can
-#              see at declaration time. Rust, Java and Python (return hint)
-#              can; Node, Ruby, PHP and Elixir cannot
+#              see at declaration time. Rust, Java, Go and Python (return
+#              hint) can; Node, Ruby, PHP and Elixir cannot
 
 # `long_channel_name` declares a 256-character `named(...)`: one byte past the
 # metadata region's one-byte length prefix, which is the whole of what the row

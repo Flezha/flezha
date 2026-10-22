@@ -33,6 +33,7 @@ ROWS = [
     ("core-cli", ".", ["crates/cli/src"]),
     ("sdk-elixir", "sdk/elixir", ["lib"]),
     ("sdk-elixir-native", "sdk/elixir", [":(glob)native/*/src/**"]),
+    ("sdk-go", "sdk/go", [":(glob)*.go", "internal", "flezhatest"]),
     ("sdk-java", "sdk/java", [":(glob)*/src/main/**"]),
     ("sdk-node", "sdk/node", ["src"]),
     ("sdk-php", "sdk/php", ["src"]),

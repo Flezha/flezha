@@ -195,6 +195,35 @@ end
 
 [`lib/tradedesk/trade_watcher.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/trade_watcher.ex)
 
+### Go
+
+```go
+// trade_watcher.go: the ETL stream
+type TradeMessage struct {
+	Channel string  `json:"channel"`
+	Data    []Trade `json:"data"`
+}
+
+type TradeWatcherRelay struct{}
+
+func (TradeWatcherRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{FactoryID: "trade_watcher"}
+}
+
+func (TradeWatcherRelay) Channels(c *flezha.ChannelBuilder) {
+	messages := flezha.Input[TradeMessage](c, "trades")                                   // JSON from the exchange
+	messages = messages.Filter(func(m TradeMessage) bool { return m.Channel == "trade" }) // trade messages only
+	trades := flezha.FlatMap(messages, func(m TradeMessage) []Trade { return m.Data })    // a message into its trades
+	trades = trades.Filter(func(t Trade) bool { return t.OrdType == "market" })           // market orders only
+	trades = trades.KeyBy(func(t Trade) string { return t.Symbol })                       // one cell per symbol
+	moves := flezha.Into(trades, TrackPrices{})
+	signals := flezha.Into(moves, BuyAboveAverage{}) // fed by the tasklet above
+	signals.Output("signals")                        // out to the file plugin
+}
+```
+
+[`trade_watcher.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/trade_watcher.go)
+
 <!-- tabs-close -->
 
 > Start `trade_watcher` as two partitions. The runner from

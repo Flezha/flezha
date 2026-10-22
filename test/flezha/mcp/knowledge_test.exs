@@ -48,7 +48,7 @@ defmodule Flezha.Mcp.KnowledgeTest do
     assert {:error, %{code: "mcp.unknown_language", hint: hint}} =
              Knowledge.call("Flezha.sdk_example", ["cobol"])
 
-    assert hint =~ "elixir, java, node, php, python, ruby, rust"
+    assert hint =~ "elixir, go, java, node, php, python, ruby, rust"
 
     for page <- ["no_such_page", "../rules.md", "../../../mix.exs", nil] do
       assert {:error, %{code: "mcp.unknown_page", hint: hint}} =

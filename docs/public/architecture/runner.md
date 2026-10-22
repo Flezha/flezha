@@ -333,7 +333,8 @@ What a host keeps beside that is small: a registry its executor serves from,
 which a factory change after start updates as it tells the core, and handing
 SIGTERM and SIGINT to the core where its runtime would end the process first
 (Ruby, Node and Java replace that default handler before the core starts; one
-the application installed stays).
+the application installed stays. Go tells the core to install none and hands
+it the signal through `flz_core_terminate`).
 
 Two places remain where the in-process Rust SDK runs its own code on a core
 thread, and an FFI host never does: `TypedBuffer<S>` serializes changes on the
@@ -445,7 +446,8 @@ The rules every SDK follows:
   | 5 | Ruby | MessagePack |
   | 6 | PHP | JSON |
   | 7 | Python | MessagePack |
-  | 8 to 254 | free, given out as SDKs land | none |
+  | 8 | Go | JSON |
+  | 9 to 254 | free, given out as SDKs land | none |
   | 255 | reserved | none |
 
   Every class declares its byte (the core refuses one that does not), every

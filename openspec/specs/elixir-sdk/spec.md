@@ -461,7 +461,7 @@ Every class the SDK declares to the core SHALL carry its settings tree as the mo
 
 ### Requirement: The Elixir SDK is a veneer host over flz_core
 
-The Elixir SDK SHALL run every relay through `flz_core` by way of `flz_core_ffi::veneer`, as the Rust, Java, Python, Node, Ruby and PHP SDKs do, and SHALL carry no runtime of its own. Placement, Cells and their mailboxes, the record stream, restore folds, compaction, sleep, timers and clocks, the steps driver, the retry and reconnect ladders, the effectively-once tier, late-input correction, dynamic Cell eviction and caps, spawn handles, parts, recorded effects, local sends, liveness and the activity read SHALL be the core's. The host SHALL answer each activation the core hands it:
+The Elixir SDK SHALL run every relay through `flz_core` by way of `flz_core_ffi::veneer`, as the Rust, Java, Python, Node, Ruby, PHP and Go SDKs do, and SHALL carry no runtime of its own. Placement, Cells and their mailboxes, the record stream, restore folds, compaction, sleep, timers and clocks, the steps driver, the retry and reconnect ladders, the effectively-once tier, late-input correction, dynamic Cell eviction and caps, spawn handles, parts, recorded effects, local sends, liveness and the activity read SHALL be the core's. The host SHALL answer each activation the core hands it:
 
 - work items by running `run/3` or `on_timer/4`;
 - `restore_fold` by folding the snapshot and the changes through `apply_change/2`, migrating with `migrate_state/2` and `migrate_change/2` when a record's stamped version asks for it;

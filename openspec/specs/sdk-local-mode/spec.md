@@ -190,7 +190,7 @@ which is the one place the word is correct.
 ### Requirement: Local mode SHALL be available in every SDK
 
 The capability SHALL ship in every SDK this repository publishes — Rust, Java,
-Elixir, Node, Python, Ruby and PHP — and the behaviour observed through each
+Elixir, Node, Python, Ruby, PHP and Go — and the behaviour observed through each
 SHALL be equivalent for an equivalent declaration. Every SDK reaches one
 implementation through `flz_core`.
 

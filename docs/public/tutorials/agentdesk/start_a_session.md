@@ -99,6 +99,39 @@ end
 
 [`lib/agentdesk/agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
+### Go
+
+```go
+// agent.go: the session: one pass per message
+type AgentRelay struct{}
+
+func (AgentRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{
+		FactoryID: "agent",
+		Run: map[string]any{"steps": map[string]any{
+			"each":       "per_input",     // one turn per message
+			"on_failure": "keep_progress", // a failed turn fails alone
+		}},
+		Durable: map[string]any{"local": map[string]any{
+			"sleep_after": 10_000, // an idle session sleeps after 10 s
+		}},
+	}
+}
+
+func (AgentRelay) Channels(c *flezha.ChannelBuilder) {
+	// entry 1: `flz relay call`
+	turn := flezha.Input[string](c, "turn", flezha.InputOptions{Codec: flezha.Text})
+	flezha.Into(turn, Reply{}).
+		Output("answer") // to whoever called, and whoever listens
+
+	// entry 2: the gateway, into the same Reply
+	message := flezha.Input[Message](c, "message")
+	flezha.Into(flezha.Map(message, func(m Message) string { return m.Text }), Reply{})
+}
+```
+
+[`agent.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/agentdesk/agent.go)
+
 <!-- tabs-close -->
 
 > Build the runner, then start both containers, from the agentdesk folder.
@@ -137,6 +170,12 @@ TODO: this page is not yet written for PHP.
 ```sh
 $ mix deps.get
 $ MIX_ENV=prod mix release
+```
+
+### Go
+
+```sh
+$ go build
 ```
 
 <!-- tabs-close -->

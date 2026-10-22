@@ -57,9 +57,11 @@ and a replay of history schedules a past instant, which fires at once.
 | Ruby | `ctx.timer_after(ms)` | `ctx.timer_at_event_time(ts)` | `ctx.cancel_timer(kind, ts)` | `on_timer(timer, ctx)`, `timer` a Hash |
 | PHP | `$ctx->timerAfter($ms)` | `$ctx->timerAtEventTime($ts)` | `$ctx->cancelTimer($kind, $ts)` | `onTimer(TimerFiring $timer, Ctx $ctx)` |
 | Elixir | `timer_after(ctx, ms)` | `timer_at_event_time(ctx, ts)` | `cancel_timer(ctx, kind, ts)` | `on_timer(firing, state, ctx)` |
+| Go | `ctx.TimerAfter(ms)` | `ctx.TimerAtEventTime(ts)` | `ctx.CancelTimer(kind, ts)` | `OnTimer(timer TimerFiring, ctx *Ctx[S, O]) error` |
 
-In the host SDKs, `kind` is `"processing_time"` or `"event_time"`, in Elixir the atom, in Rust and
-Java a `TimerKind` (`TimerKind::ProcessingTime`, `TimerKind.PROCESSING_TIME`). The Elixir
+In the host SDKs, `kind` is `"processing_time"` or `"event_time"`, in Elixir the atom, in Rust, Java
+and Go a `TimerKind` (`TimerKind::ProcessingTime`, `TimerKind.PROCESSING_TIME`,
+`flezha.ProcessingTime`). The Elixir
 functions are `Flezha.SDK.Ctx`'s, imported by `use Flezha.SDK.Tasklet`.
 
 - Setting a timer returns its **absolute** scheduled time, which is what a cancel takes.
@@ -67,7 +69,7 @@ functions are `Flezha.SDK.Ctx`'s, imported by `use Flezha.SDK.Tasklet`.
   that is not set changes nothing. A Rust cancel answers whether one was pending; the others
   answer nothing (Elixir `:ok`).
 - An event-time timer needs an event-time clock: the tasklet must write its event-time
-  function (`event_time`, `eventTime` or `event_time/1`). Otherwise it is refused as
+  function (`event_time`, `eventTime`, `EventTime` or `event_time/1`). Otherwise it is refused as
   `runtime.event_time_timer_without_event_time_clock`: in Rust at the call; in the other SDKs
   the item fails when it settles, as [Bounds and observing](#bounds-and-observing) describes.
 - A tasklet that sets a timer must handle it. Setting one is a runtime call, so a missing
@@ -190,7 +192,7 @@ uses a timer.
 - `max_timers_per_cell` (default 10 000) bounds a cell's pending set: `max_timers_per_cell()`
   in Rust, `@Tasklet.Spec(maxTimersPerCell = n)` in Java, `maxTimersPerCell` in Node and in
   PHP's `#[Tasklet\Spec]`, `max_timers_per_cell` in Python and Ruby, `max_timers_per_cell/0` in
-  Elixir. Setting a timer past it is refused as `runtime.timer_cap_exceeded`, naming the
+  Elixir, `MaxTimersPerCell` in Go's `flezha.Spec`. Setting a timer past it is refused as `runtime.timer_cap_exceeded`, naming the
   tasklet and the bound.
 - Rust refuses at the call. In the other SDKs the core judges an item's timer calls when the
   item settles, against the cell's pending set: an item a refusal names fails, not retried,

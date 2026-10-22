@@ -471,6 +471,17 @@ with {:ok, quote} <- effect(ctx, "model", fn -> Pricing.quote(pair) end) do
 end
 ```
 
+### Go
+
+```go
+// quote.go, in Run: ask the pricing model once per input
+quote, err := flezha.Effect(ctx, "model", func() (string, error) { return pricing.Quote(pair) })
+if err != nil {
+	return err
+}
+return ctx.Emit(quote)
+```
+
 <!-- tabs-close -->
 
 In Python an `async def` function makes the call awaitable

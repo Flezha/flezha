@@ -1,9 +1,10 @@
 # Node SDK
 
-`@flezha/sdk` is a poll host over `flz_core`, the runner kernel the Rust and
-Java SDKs also drive. The kernel owns transport, ordering, per-cell
-exclusivity, durability, retries, timers, credit, routing and the steps relay
-driver. This package supplies threads and user code, and nothing else —
+`@flezha/sdk` is a poll host over `flz_core`, the runner kernel the Rust,
+Java, Python, Ruby, PHP, Elixir and Go SDKs also drive. The kernel owns
+transport, ordering, per-cell exclusivity, durability, retries, timers, credit,
+routing and the steps relay driver. This package supplies threads and user
+code, and nothing else:
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
 **Support tier:** [tier 2](../../public/publishing/maturity.md#sdk-node), passes the full

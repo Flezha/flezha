@@ -115,7 +115,7 @@ SHALL announce once for the life of the process.
 
 For the QUIC transport there are three such points, and each SHALL announce: the
 controller's QUIC listener at startup; the transport selection in `flz_transport`, which
-the Rust, Java, Node, Python, Ruby and PHP runners all reach; and the Elixir SDK's own
+the Rust, Java, Node, Python, Ruby, PHP and Go runners all reach; and the Elixir SDK's own
 transport selection, which does not go through `flz_transport`.
 
 A support tier SHALL NOT be announced at runtime.

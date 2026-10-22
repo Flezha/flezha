@@ -434,7 +434,7 @@ Two `needs` surfaces say what a spelling can write:
 | Surface | Carried by |
 | --- | --- |
 | `shorthand` | every manifest; the short form itself |
-| `shorthand_typed_output` | Rust, Java, Python — the SDKs that can see a tasklet declares no output |
+| `shorthand_typed_output` | Rust, Java, Python, Go: the SDKs that can see a tasklet declares no output |
 
 ### A compile-time refusal is cited, and the citation is checked
 
@@ -452,7 +452,7 @@ the compile-fail test that pins it:
 The drill checks the cited file exists and carries the code, so a citation
 nothing holds fails the same way a missing refusal does. Under
 `FLEZHA_REFUSAL_FIXTURE` the app prints the code and the path and exits
-non-zero. `topology.duplicate_factory_id` is a runtime refusal in all eight, so that row
+non-zero. `topology.duplicate_factory_id` is a runtime refusal in every SDK, so that row
 boots for real everywhere.
 
 ## Golden declaration snapshots
@@ -624,7 +624,7 @@ never crosses languages.
 ### `sdk_version`
 
 Bytes 1:5 of the same header name the *writing* SDK's own released version, not
-the kernel's: eight SDKs release on their own cadences over a core that may not
+the kernel's: the SDKs release on their own cadences over a core that may not
 move, and "which SDK build wrote this record" is the question a migration asks.
 
 Declare it as the version string your package metadata already spells — the core
@@ -635,10 +635,10 @@ value that packs to zero is refused at declaration time naming the field.
 The shape is one literal in the language's package metadata, one reader, and the
 gate failing when the two disagree. Where the reader *is* the manifest — the Rust
 compiler's `env!`, the Elixir app spec, Ruby's single `VERSION` — there is
-nothing to compare and the gate's table says so. The PHP SDK is the one with
-nothing to compare *against*: `composer.json` declares no `version` key by
-design, so its constant is that SDK's sole source of truth and the release
-checklist owes the bump.
+nothing to compare and the gate's table says so. The PHP and Go SDKs are the
+ones with nothing to compare *against*: `composer.json` declares no `version`
+key by design and a Go module carries none in `go.mod`, so each one's constant
+is that SDK's sole source of truth and the release checklist owes the bump.
 
 The field is advisory. `sdk_lang` decides which codec wrote a body and
 `schema_version` decides its shape; no reader decides how to read a record from
@@ -673,5 +673,5 @@ green.
 - [`authoring_contract.md`](authoring_contract.md) — what a conforming authoring surface expands to
 - [`../../public/architecture/runner.md`](../../public/architecture/runner.md) — the kernel split and the "one change, every SDK" rule
 - [`elixir_sdk.md`](elixir_sdk.md), [`java_sdk.md`](java_sdk.md), [`node_sdk.md`](node_sdk.md),
-  [`ruby_sdk.md`](ruby_sdk.md), [`php_sdk.md`](php_sdk.md),
+  [`ruby_sdk.md`](ruby_sdk.md), [`php_sdk.md`](php_sdk.md), [`go_sdk.md`](go_sdk.md),
   [`python_sdk.md`](python_sdk.md) — the per-SDK scope pages

@@ -195,6 +195,35 @@ end
 
 [`lib/tradedesk/application.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/application.ex)
 
+### Go
+
+```go
+// main.go: the runner: joins trading and registers both factories
+func main() {
+	namespace := "trading"
+	if len(os.Args) > 1 {
+		namespace = os.Args[1]
+	}
+
+	runner, err := flezha.CreateRunner(namespace)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := runner.RegisterFactory(TradeWatcherRelay{}); err != nil {
+		log.Fatal(err)
+	}
+	if err := runner.RegisterFactory(OrderExecutorRelay{}); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := runner.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+[`main.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/main.go)
+
 <!-- tabs-close -->
 
 > Start the desk's runner from your language's `tradedesk` folder, with your
@@ -249,6 +278,12 @@ $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrd
 ```sh
 $ mix deps.get
 $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra mix run --no-halt
+```
+
+### Go
+
+```sh
+$ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra go run .
 ```
 
 <!-- tabs-close -->

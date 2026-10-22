@@ -132,7 +132,7 @@ source reads that no row declares for that runtime SHALL fail the seam test.
 
 #### Scenario: Every runtime answers "0" the same way
 
-- **WHEN** `FLEZHA_WORKER_POOL_SIZE=0` is set for a Rust, Java, Python, Ruby, Node, PHP or
+- **WHEN** `FLEZHA_WORKER_POOL_SIZE=0` is set for a Rust, Java, Python, Ruby, Node, PHP, Go or
   Elixir runner
 - **THEN** each reads its documented default, and the shared fixture's row for `0` passes in
   every runtime's suite

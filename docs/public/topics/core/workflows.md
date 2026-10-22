@@ -301,6 +301,31 @@ end
 
 Full file: [`lib/tradedesk/reserve_funds.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/reserve_funds.ex).
 
+### Go
+
+```go
+// reserve_funds.go: step one. Puts the money aside, and releases it on an undo.
+func (ReserveFunds) Spec() flezha.Spec { return flezha.Spec{Name: "reserve_funds"} }
+...
+// Run is the step: reserve the money under an id, remember the id, and hand
+// the order on.
+func (ReserveFunds) Run(order OrderTicket, ctx *flezha.Ctx[Reservation, Reserved]) error {
+	id := "res-" + ctx.StableID() // the same id when the step runs again
+	if err := ctx.Change(Reserving{ID: id}); err != nil {
+		return err
+	}
+	return ctx.Emit(Reserved{Order: order, ReservationID: id})
+}
+
+// Compensate is the undo: release the money, by the id the state kept.
+func (ReserveFunds) Compensate(_ []Reserved, ctx *flezha.Ctx[Reservation, Reserved]) error {
+	fmt.Println("[undo] released", ctx.State().ID)
+	return nil
+}
+```
+
+Full file: [`reserve_funds.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/reserve_funds.go).
+
 <!-- tabs-close -->
 
 Two things in this step matter for any workflow:
@@ -332,8 +357,9 @@ emitted twice. The retry settings belong to the edge that feeds the step:
 
 A non-retryable error skips the retries: `TaskletError::non_retryable(..)` in
 Rust, an error carrying `nonRetryable: true` in Node, `NonRetryableError` in
-Python, `Flezha::NonRetryableError` in Ruby, and an
-`{:error, {:non_retryable, reason}}` answer in Elixir. Every other error is
+Python, `Flezha::NonRetryableError` in Ruby, an
+`{:error, {:non_retryable, reason}}` answer in Elixir, and an error wrapped
+by `flezha.NonRetryable` in Go. Every other error is
 retried, a panic included.
 
 When the attempts run out, the step fails. Where a stream would set the
@@ -498,6 +524,22 @@ end
 ```
 
 Full file: [`lib/tradedesk/confirm_fill.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/confirm_fill.ex).
+
+### Go
+
+```go
+// confirm_fill.go: asks the exchange whether the order filled, and ends the order with the answer.
+func (ConfirmFill) Run(placed PlacedOrder, ctx *flezha.Ctx[flezha.NoState, flezha.NoOutput]) error {
+	time.Sleep(10 * time.Second) // the paper exchange takes ten seconds to answer
+	quantity := placed.Order.Quantity
+	if quantity > exchangeMax {
+		return fmt.Errorf("the exchange fills at most %d a time, and this is %d", exchangeMax, quantity) // tried again, then the order is undone
+	}
+	return ctx.Complete(fmt.Sprintf("filled %s %d as %s", placed.Order.Symbol, quantity, placed.OrderID))
+}
+```
+
+Full file: [`confirm_fill.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/confirm_fill.go).
 
 <!-- tabs-close -->
 
@@ -695,6 +737,23 @@ end
 
 Full file: [`lib/tradedesk/order_executor.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/order_executor.ex).
 
+### Go
+
+```go
+// order_executor.go: the workflow's steps, in the order they run.
+func (OrderExecutorRelay) Channels(c *flezha.ChannelBuilder) {
+	order := flezha.Input[OrderTicket](c, "order") // the order to carry out
+	reserved := flezha.Into(order, ReserveFunds{}) // step one
+	placed := flezha.Into(reserved, PlaceOrder{})  // step two, once step one is done
+	placed.Branch(
+		func(fill flezha.Stream[PlacedOrder]) { flezha.Into(fill, ConfirmFill{}) }, // two arms, side by side
+		func(book flezha.Stream[PlacedOrder]) { flezha.Into(book, RecordOrder{}) },
+	)
+}
+```
+
+Full file: [`order_executor.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/order_executor.go).
+
 <!-- tabs-close -->
 
 In this graph both arms of the `branch` get the same placed order. If
@@ -772,6 +831,7 @@ The factory and the payload come first; the id and the policy are optional:
 | Ruby | `ctx.spawn_steps("triage", payload)` | `ctx.spawn_steps("triage", payload, id: id, if_running: "deliver")` |
 | PHP | `$ctx->spawnSteps('triage', $payload)` | `$ctx->spawnSteps('triage', $payload, id: $id, ifRunning: 'deliver')` |
 | Elixir | `spawn_steps(ctx, "triage", input)` | `spawn_steps(ctx, "triage", input, id: id, if_running: :deliver)` |
+| Go | `ctx.SpawnSteps("triage", payload)` | `ctx.SpawnSteps("triage", payload, flezha.SpawnID(id), flezha.IfRunning("deliver"))` |
 
 Rust and Java build the options only from an id, so a policy without an id cannot be written
 there; in the other SDKs the core refuses it at the call with `spawn.if_running_without_id`, and
@@ -822,6 +882,7 @@ read that waits and one that never waits:
 | Python, Ruby | `wait` | `try_result` |
 | PHP | `wait()` | `tryResult()` |
 | Elixir | `Flezha.SDK.Spawn.await/2` | `Flezha.SDK.Spawn.try_result/1` |
+| Go | `Wait()` | `TryResult()` |
 
 A resolved read carries the id the request resolved to (given or generated) and the outcome,
 `spawned` or `delivered`. A failure comes out of the read in the form that SDK reports errors (a
@@ -925,6 +986,20 @@ order is the workflow's first message. It passes no id, so each buy starts a new
 ```
 
 [Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/buy_above_average.ex)
+
+### Go
+
+```go
+// buy_above_average.go: buys when a price is far enough above its average.
+	quantity := int(math.Round(percent * unitsPerPercent)) // a stronger move buys more
+
+	ticket := OrderTicket{Symbol: m.Symbol, Quantity: quantity}
+	if _, err := ctx.SpawnSteps("order_executor", ticket); err != nil { // one steps relay per order
+		return err
+	}
+```
+
+[Full file](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/buy_above_average.go)
 
 <!-- tabs-close -->
 

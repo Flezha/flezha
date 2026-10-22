@@ -35,8 +35,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # this file; here it is measured against every SDK.
   @connect_env_fixture "test/fixtures/runner_connect_env.txt"
 
-  # Where each SDK decides where its controller is. Rust, Java, Node, Ruby, PHP
-  # and Python reach the shared ladder through `flz_core`, so their own sources
+  # Where each SDK decides where its controller is. Rust, Java, Node, Ruby, PHP,
+  # Python and Go reach the shared ladder through `flz_core`, so their own sources
   # should name no connect variable at all; Elixir asks the same ladder through
   # `flz_nif`.
   @connect_sources %{

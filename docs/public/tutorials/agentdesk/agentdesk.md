@@ -20,14 +20,14 @@ flowchart LR
 > #### What you need {: .tip}
 >
 > - **Docker, with Docker Compose.**
-> - **For the runner**, Java 21 and Maven, or Elixir 1.17 or later. The
->   agentdesk is not yet written for Rust, Node, Python, Ruby, PHP or Go.
+> - **For the runner**, one language's toolchain, as
+>   [Up and running](../up_and_running.html) lists it.
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for the last page.
 > - **git**, to get the example and the HTTP plugin.
 
 > Get the example: clone the repository with its submodules. The agentdesk
-> is in `sdk/java/examples/agentdesk` and `sdk/elixir/examples/agentdesk`, and
-> every command in this tutorial runs from that folder.
+> of each language is in `sdk/<language>/examples/agentdesk`, and every
+> command in this tutorial runs from that folder.
 > {: .step}
 
 ```sh

@@ -7,7 +7,8 @@
 # every key here; `sdk/node/test/decl-keys.test.mjs` asserts the same of the
 # Node builder; `sdk/ruby/test/decl_keys_test.rb` of the Ruby builder;
 # `sdk/php/tests/DeclKeysTest.php` of the PHP builder;
-# `sdk/python/tests/test_decl_keys.py` of the Python builder; and
+# `sdk/python/tests/test_decl_keys.py` of the Python builder;
+# `sdk/go/dispatch_test.go` of the Go builder; and
 # `sdk/elixir/test/flezha/sdk/declaration_test.exs` that the Elixir builder
 # spells no key outside it. A key the core
 # learns that a builder cannot spell is a red build for that SDK; a key a
@@ -15,7 +16,7 @@
 # `deny_unknown_fields`.
 #
 # Adding a key: teach the core, add it here, teach the Rust, Java, Node, Ruby,
-# PHP, Python and Elixir builders — one change, every SDK (docs/public/architecture/runner.md).
+# PHP, Python, Elixir and Go builders — one change, every SDK (docs/public/architecture/runner.md).
 class.factory_id
 class.description
 class.max_duration_ms

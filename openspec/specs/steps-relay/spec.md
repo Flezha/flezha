@@ -20,7 +20,7 @@ The SDK SHALL expose a `Relay` authoring surface distinct from the flow one, reg
 
 #### Scenario: The steps body is the flow body
 
-- **WHEN** a steps class in Rust, Java or Elixir is written with `channels` and the same graph is written in a flow class's `channels`
+- **WHEN** a steps class in Rust, Java, Go or Elixir is written with `channels` and the same graph is written in a flow class's `channels`
 - **THEN** both SHALL register, the two declarations SHALL differ only in the kind and the steps relay's own settings, and a `tasklets` member SHALL exist on no relay type in any SDK
 
 ### Requirement: Starting a relay with the steps run spawns a steps instance

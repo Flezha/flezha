@@ -1,9 +1,10 @@
 # Python SDK
 
 The `flezha` package is a poll host over `flz_core`, the runner kernel the
-Rust, Java, Node and Ruby SDKs also drive. The kernel owns transport, ordering,
-per-cell exclusivity, durability, retries, timers, credit, routing and
-steps runs. This package supplies threads and user code, and nothing else —
+Rust, Java, Node, Ruby, PHP, Elixir and Go SDKs also drive. The kernel owns
+transport, ordering, per-cell exclusivity, durability, retries, timers, credit,
+routing and steps runs. This package supplies threads and user code, and
+nothing else:
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads).
 
 **Support tier:** [tier 2](../../public/publishing/maturity.md#sdk-python), passes the full

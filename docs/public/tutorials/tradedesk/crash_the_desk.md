@@ -181,6 +181,16 @@ trade_watcher#p1/track_prices/239d0c721a1951a6              EUR/USD         trad
 The tasklet was handed a decoded map rather than bytes, so this entry can be
 dropped but not replayed.
 
+### Go
+
+The typed `Trade` struct cannot be read, so the entry channel refuses the
+trade before any tasklet sees it. The error is `encoding/json`'s reason:
+
+```output
+ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/trades/307bcbd6439a080f                    _entry          trades      1    0s        json: cannot unmarshal string into Go struct field Trade.dat
+```
+
 <!-- tabs-close -->
 
 > Drop the entry, using the `ENTRY` your list printed. It will never be

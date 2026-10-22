@@ -54,6 +54,18 @@ TODO: this page is not yet written for PHP.
 
 [`lib/agentdesk/agent_relay.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/agentdesk/lib/agentdesk/agent_relay.ex)
 
+### Go
+
+```go
+// agent.go: reply's output answers the caller and the listeners
+	// entry 1: `flz relay call`
+	turn := flezha.Input[string](c, "turn", flezha.InputOptions{Codec: flezha.Text})
+	flezha.Into(turn, Reply{}).
+		Output("answer") // to whoever called, and whoever listens
+```
+
+[`agent.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/agentdesk/agent.go)
+
 <!-- tabs-close -->
 
 > In a second terminal, with the same `flz` alias, listen to Anna's session for five seconds.

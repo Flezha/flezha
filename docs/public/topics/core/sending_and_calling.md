@@ -183,6 +183,20 @@ c
 c |> input("audit", codec: :text) |> into(AuditOrder)
 ```
 
+### Go
+
+```go
+// orders.go: a struct is read into its schema
+type Order struct {
+	Pair   string  `json:"pair"`
+	Amount float64 `json:"amount"`
+}
+
+place := flezha.Input[Order](c, "place", flezha.InputOptions{Description: "Places an order"})
+flezha.Into(place, Place{}).Output("placed")
+flezha.Into(flezha.Input[string](c, "audit", flezha.InputOptions{Codec: flezha.Text}), Audit{})
+```
+
 <!-- tabs-close -->
 
 A type the SDK cannot read gives no schema and never refuses the class. Python reads a
@@ -324,6 +338,14 @@ $answer = $runner->send('orders', '{"pair":"EURUSD","qty":5}', 'in', msgId: 'ord
   )
 ```
 
+### Go
+
+```go
+// send.go: one order to the orders group, by id and pair
+answer, err := runner.Send("orders", "in", []byte(`{"pair":"EURUSD","qty":5}`),
+	flezha.MsgID("orders/0/41"), flezha.SendKey("EURUSD"))
+```
+
 <!-- tabs-close -->
 
 Ruby spells it `send_to`, because every Ruby object already has a `send`. The same
@@ -378,6 +400,7 @@ the controller. A partition member is listed by its member id, such as
 | Ruby | `runner.relays` |
 | PHP | `$runner->relays()` |
 | Elixir | `Flezha.SDK.relays(runner)`, as `{:ok, ids}` |
+| Go | `runner.Relays()`, a `[]string` and an `error` |
 
 The list is a moment's answer: the controller may move a relay to another
 runner right after it.
@@ -449,6 +472,13 @@ $runner->send('ticks', 'EURUSD 1.0841', 'in', local: true);
 ```elixir
 # ticks.ex: a tick to the ticks relay on this runner
 {:ok, nil} = Flezha.SDK.send(runner, "ticks", "EURUSD 1.0841", "in", local: true)
+```
+
+### Go
+
+```go
+// ticks.go: a tick to the ticks relay on this runner
+_, err := runner.Send("ticks", "in", []byte("EURUSD 1.0841"), flezha.Local())
 ```
 
 <!-- tabs-close -->
@@ -671,6 +701,12 @@ $placed = $runner->call('orders-eu', 'place', ['pair' => 'EUR/USD', 'amount' => 
 {:ok, placed} = Flezha.SDK.call(runner, "orders-eu", "place", %{"pair" => "EUR/USD", "amount" => 1000})
 ```
 
+### Go
+
+```go
+placed, err := runner.Call("orders-eu", "place", Order{Pair: "EUR/USD", Amount: 1000})
+```
+
 <!-- tabs-close -->
 
 The value is encoded as an output with no codec encodes it: bytes as they are,
@@ -861,6 +897,7 @@ result (the answer, or the error that ended the call, in the SDK's one error typ
 | Ruby | `Flezha::Response`: `request`, `value` or `error`, `ok?`, `target`, `created` |
 | PHP | `Flezha\Response`: `request`, `value` or `error`, `ok()`, `target`, `created` |
 | Elixir | `%Flezha.SDK.Response{request, result: {:ok, value} \| {:error, error}, target, created}` |
+| Go | `flezha.Response[Req, Ans]`: `Request`, `Value` or `Err`, `Ok()`, `Target`, `Created` |
 
 ### A steps relay as the caller
 

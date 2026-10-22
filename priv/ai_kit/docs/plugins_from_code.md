@@ -98,11 +98,28 @@ runner = Flezha.SDK.Runner
 
 [Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/application.ex)
 
+### Go
+
+```go
+// main.go: the echo runner's plugin calls
+control := runner.Control()
+_, err = control.EnablePlugin("writer", "relay_file_output",
+	map[string]any{"path": "echo-out.txt"}, false, "", nil)
+if err != nil {
+	log.Fatal(err)
+}
+if _, err := control.BindPlugin("writer", "my_echo", []any{[]any{"on_output", map[string]any{}}}, ""); err != nil {
+	log.Fatal(err)
+}
+```
+
+[Full file](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/main.go)
+
 <!-- tabs-close -->
 
 The `control()` handle also has `unbindPlugin("writer", "my_echo")` and
 `disablePlugin("writer")` (`unbind_plugin` and `disable_plugin` in Rust, Python, Ruby and
-Elixir). [`namespaces.md`](../core/namespaces.md) covers the whole handle. What it cannot do
+Elixir, `UnbindPlugin` and `DisablePlugin` in Go). [`namespaces.md`](../core/namespaces.md) covers the whole handle. What it cannot do
 is install, upgrade or uninstall a plugin package: those are node-wide acts, so they stay
 with the user. An application may attach and detach the plugins its own namespace already
 has.

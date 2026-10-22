@@ -96,7 +96,7 @@ never retried).
 
 #### Scenario: The class-level knobs are gone from every SDK
 
-- **WHEN** every SDK's steps relay surface and `test/fixtures/host_class_decl_keys.txt` are searched for `retry_attempts`, `retryAttempts`, `retry_backoff`, `retryBackoff`, `barrier_retry_attempts` or `barrierRetryAttempts`
+- **WHEN** every SDK's steps relay surface and `test/fixtures/host_class_decl_keys.txt` are searched for `retry_attempts`, `retryAttempts`, `RetryAttempts`, `retry_backoff`, `retryBackoff`, `RetryBackoff`, `barrier_retry_attempts`, `barrierRetryAttempts` or `BarrierRetryAttempts`
 - **THEN** no trait, interface, definition type, decorator keyword, class-body setting, attribute argument, `use` option or declaration key carries one, and `ZeroRetryBackoff` names no refusal in any SDK or in the core
 
 ### Requirement: A backoff wait holds no worker thread

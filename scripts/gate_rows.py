@@ -467,6 +467,21 @@ def _sdk_php():
             _e2e_smoke("php")]
 
 
+def _sdk_go():
+    """The Go SDK's suite under the race detector, its examples included, vet and
+    gofmt, linked against the core library `scripts/build-go-sdk.sh` builds."""
+    g, d = "sdk-go", "sdk/go"
+    go = {"tools": ["go:install Go"], "cwd": d}
+    env = {"CGO_LDFLAGS": f"-L{ROOT}/_build/.target/debug/go"}
+    return [_build("sdk-go-build", g, "go"),
+            _bar("sdk-go-vet", g, "go", "vet", "./...", env=env, **go),
+            _bar("sdk-go-test", g, "go", "test", "-race", "-count=1", "./...", env=env, **go),
+            _bar("sdk-go-gofmt", g, "bash", "-c", 'out=$(gofmt -l .); echo "$out"; test -z "$out"',
+                 **go),
+            _smoke("sdk-go-smoke", g, d, f"{ROOT}/_build/.target/debug/go_runner", "smoke"),
+            _e2e_smoke("go")]
+
+
 def _sdk_elixir():
     """sdk/elixir/scripts/ci.sh (it has no workflow of its own)."""
     g, d = "sdk-elixir", "sdk/elixir"
@@ -511,7 +526,7 @@ GATES += (
     _mix_test("e2e-plugin-package-release", "e2e-rust", "--include", "system", PACKAGE_RELEASE,
               env={"FLEZHA_E2E_RUNTIME": "rust"}, timeout=1800),
     *_plugins(), *_rust(), *_sdk_java(), *_sdk_node(), *_sdk_python(), *_sdk_ruby(),
-    *_sdk_php(), *_sdk_elixir(),
+    *_sdk_php(), *_sdk_elixir(), *_sdk_go(),
     _bar("ledgers", "ledgers", "python3", "local_dev/dev_notes/known-bugs.py", "check"),
     # The committed prost output is what crates/protobufs/regen.sh writes. A
     # generator that cannot run is not a stale file: only diff's 1 is a finding.

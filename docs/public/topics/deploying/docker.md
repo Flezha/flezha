@@ -103,7 +103,7 @@ volumes:
 - **The runner waits for the controller's healthcheck,** and `restart: on-failure` starts
   it again when it exits, as a runner the controller tells to leave does
   ([Run it as a service](connecting_a_runner.md#run-it-as-a-service)). A Node, Python,
-  Ruby or PHP runner also needs `stdin_open: true`.
+  Ruby, PHP or Go runner also needs `stdin_open: true`.
 - **Authorization off and no durability backend** suit the example only.
   [Variables a deployment sets](deploying_a_controller.md#variables-a-deployment-sets) has
   what a real deployment sets instead.

@@ -480,7 +480,7 @@ lists every accumulated `TopologyIssue`, and SHALL NOT register the topology.
 - **AND** the registered topology SHALL be discarded
 
 #### Scenario: The same shape is refused on an erased host
-- **WHEN** a Node, Python, Ruby, PHP or Java builder records two `output` links on one channel
+- **WHEN** a Node, Python, Ruby, PHP, Java or Go builder records two `output` links on one channel
 - **THEN** the core's check refuses `topology.duplicate_plugin_output` naming the channel and the class is not registered
 
 ### Requirement: New TaskletError variant — `PluginSerializerPanic`
@@ -960,8 +960,8 @@ The Rust SDK's `Tasklet` trait SHALL declare `fn init_state(cell_key: Option<&st
 ### Requirement: Every SDK SHALL declare compact_after_bytes on the tasklet
 
 `compact_after_bytes` SHALL be a tasklet setting in every SDK (`compact_after_bytes` in Python,
-Ruby, Elixir and Rust, `compactAfterBytes` in PHP, Node and Java), carried in that tasklet's class
-declaration; no relay builder SHALL offer it.
+Ruby, Elixir and Rust, `compactAfterBytes` in PHP, Node and Java, `Spec.CompactAfterBytes` in Go),
+carried in that tasklet's class declaration; no relay builder SHALL offer it.
 
 #### Scenario: A hosted tasklet declares its own threshold
 

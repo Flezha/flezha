@@ -9,7 +9,7 @@ triage a failed `bench-regression` job.
 - Single entry point: `./scripts/bench.sh` (wraps `mix bench`, sets
   `FLEZHA_TRANSPORT`, defaults `MIX_ENV=prod` and
   `FLEZHA_DURABILITY_BACKEND=none`).
-- Independent axes: **runtime** (rust/java/elixir/node/php/python/ruby) × **transport**
+- Independent axes: **runtime** (rust/java/elixir/node/php/python/ruby/go) × **transport**
   (uds/quic/native) × **shape** (regression/cell/dynamic).
 - No CI job fails on an absolute throughput number; see [CI gates](#ci-gates).
 - Two different kinds of floor live here: the **absolute** reference figures
@@ -46,7 +46,7 @@ environment and forwards them.
 
 | Flag                               | Values                                      | Effect                                                                                                                                                                                                                                                                      |
 | ---------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`, `node`, `php`, `python`, `ruby` | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), whose `bench` build command runs before every measurement (`FLEZHA_BENCH_SKIP_BUILD=1` skips it). |
+| `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`, `node`, `php`, `python`, `ruby`, `go` | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), whose `bench` build command runs before every measurement (`FLEZHA_BENCH_SKIP_BUILD=1` skips it). |
 | `-t` / `--transport`               | `uds` (default), `quic`                     | Sets `FLEZHA_TRANSPORT`. QUIC generates self-signed certs at `storage/app/certs/` on first run.                                                                                                                                                                                |
 | `-s` / `--shape`                   | `regression` (default), `cell`, `dynamic`, `tier`, `sleeping`, `timer`, `send` | The workload (below). `cell` ignores `-n`/`-m`.                                                                                                                                                                                                                               |
 | `-n` / `--num-relays`          | int (default 100)                           | Relay count, `regression` and `dynamic`.                                                                                                                                                                                                                                |

@@ -8,7 +8,7 @@ The tasklet-requested-spawn capability lets a running tasklet ask the cluster fo
 
 Every SDK SHALL expose a context call that takes a steps relay `factory_id` and a `payload` first,
 and an optional `id` and an optional `if_running` as named arguments in the form its language
-has, usable from inside any tasklet: Rust, Java, Node, Python, Ruby, PHP and Elixir through the
+has, usable from inside any tasklet: Rust, Java, Node, Python, Ruby, PHP, Go and Elixir through the
 shared core. The call shapes SHALL be:
 
 - Rust: `ctx.spawn_steps(factory_id, payload)` and
@@ -20,6 +20,7 @@ shared core. The call shapes SHALL be:
 - Ruby: `ctx.spawn_steps(factory_id, payload, id: id, if_running: "error")`
 - PHP: `$ctx->spawnSteps($factoryId, $payload, id: $id, ifRunning: 'error')`
 - Node: `ctx.spawnSteps(factoryId, payload, { id, ifRunning: 'error' })`
+- Go: `ctx.SpawnSteps(factoryID, payload, flezha.SpawnID(id), flezha.IfRunning("error"))`
 
 With an `id` and `if_running: deliver` (the default when an `id` is given), the controller SHALL
 spawn a steps instance of `factory_id` under that id if absent, or deliver `payload` to the
@@ -28,7 +29,7 @@ SHALL fail the requester's read with the code `relay.already_running`. Without a
 generate one as the `generated-relay-ids` capability defines and SHALL always spawn a new
 instance: there is no running instance to deliver to, so `if_running` has no meaning. Rust and
 Java SHALL construct `SpawnOptions` only from an id, so `if_running` without an `id` cannot be
-written there; in Elixir, Python, Ruby, PHP and Node the core SHALL refuse the request at the call
+written there; in Elixir, Python, Ruby, PHP, Node and Go the core SHALL refuse the request at the call
 with `spawn.if_running_without_id` when `if_running` is given without an `id`, the SDK SHALL raise
 that refusal as its one error type, and nothing SHALL be sent. No SDK SHALL check the rule itself.
 Every SDK SHALL wait for a result for the core's bound, `spawn.timeout` after it, and SHALL carry no
@@ -70,7 +71,7 @@ Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn t
 
 #### Scenario: A host SDK's payload is readable by a text entry
 
-- **WHEN** a Python, Ruby, Node or PHP tasklet issues `ctx.spawn_steps("place", "o-1")` and `place`'s entry channel is declared with the `text` codec
+- **WHEN** a Python, Ruby, Node, PHP or Go tasklet issues `ctx.spawn_steps("place", "o-1")` and `place`'s entry channel is declared with the `text` codec
 - **THEN** the spawned instance's tasklet SHALL receive the string `o-1`, and a payload that is a dict, hash, object or array SHALL arrive as its JSON
 
 #### Scenario: if_running without an id is refused at the call
@@ -226,8 +227,8 @@ Every SDK's spawn call SHALL return a handle before the controller answers, and 
 read that waits for the answer and one that never waits. The read names SHALL be: Rust `wait()` and
 `try_result()`; Java `await()` and `tryResult()`; Elixir `Flezha.SDK.Spawn.await/2` and
 `Flezha.SDK.Spawn.try_result/1`; Python and Ruby `wait` and `try_result`; PHP and Node `wait()` and
-`tryResult()`. Node's `spawnSteps` SHALL NOT be `async`: it SHALL return the handle
-synchronously, and its `wait()` SHALL return a promise. A read that never waits SHALL answer that
+`tryResult()`; Go `Wait()` and `TryResult()`. Node's `spawnSteps` SHALL NOT be `async`: it SHALL
+return the handle synchronously, and its `wait()` SHALL return a promise. A read that never waits SHALL answer that
 the result is pending until the answer has arrived. A controller refusal, a timeout or an unavailable
 control plane SHALL be reported by a read, in the form that SDK reports an error (a returned error,
 a thrown exception or a rejected promise), and never by the spawn call itself. A handle SHALL be

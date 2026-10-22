@@ -308,6 +308,36 @@ The entry channel reads JSON, its default codec, so each transform is a
 function over the map a message decodes to. `use Flezha.SDK.Relay` imports
 the builder, so the pipe needs no module prefix.
 
+### Go
+
+```go
+// trade_watcher.go: the stream. Trades in, signals out.
+type TradeMessage struct {
+	Channel string  `json:"channel"`
+	Data    []Trade `json:"data"`
+}
+...
+func (TradeWatcherRelay) Channels(c *flezha.ChannelBuilder) {
+	messages := flezha.Input[TradeMessage](c, "trades")                                   // JSON from the exchange
+	messages = messages.Filter(func(m TradeMessage) bool { return m.Channel == "trade" }) // trade messages only
+	trades := flezha.FlatMap(messages, func(m TradeMessage) []Trade { return m.Data })    // a message into its trades
+	trades = trades.Filter(func(t Trade) bool { return t.OrdType == "market" })           // market orders only
+	trades = trades.KeyBy(func(t Trade) string { return t.Symbol })                       // one cell per symbol
+	moves := flezha.Into(trades, TrackPrices{})
+	signals := flezha.Into(moves, BuyAboveAverage{}) // fed by the tasklet above
+	signals.Output("signals")                        // out to the file plugin
+}
+```
+
+Full file: [`trade_watcher.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/trade_watcher.go).
+
+`Filter` and `KeyBy` are methods of the stream, while `FlatMap` and `Into`
+are package functions, because they change the element type and a Go method
+cannot take type parameters of its own. `go build` refuses a stream wired into
+a tasklet that cannot take its values. `encoding/json` ignores the exchange's
+other fields and leaves a missing one empty, so the subscription confirmation
+decodes as an empty message and the first `Filter` drops it.
+
 <!-- tabs-close -->
 
 Three messages on their way through this path:
@@ -422,6 +452,7 @@ merge, and close it with `into`:
 | Ruby | `c.merge.from(source) { mapping }.from(...).key_by { ... }.into(T)` |
 | PHP | `$c->merge()->from($source, $map)->from(...)->keyBy($f)->into(T::class)` |
 | Elixir | `c \|> merge() \|> from(source, mapping) \|> from(...) \|> key_by(f) \|> into(T)` |
+| Go | `m := flezha.NewMerge[I](c)`, then `flezha.From(m, source, mapping)` per source, `m.KeyBy(f)` and `flezha.MergeInto(m, T{})` |
 
 A source is a stream handle: an entry channel (`input(...)`) or the output of another tasklet.
 
@@ -491,7 +522,7 @@ every SDK:
 | `topology.edge_already_wired` | a consumer edge declared again where either side carries a transform or a key, or a merge source re-wiring an edge already declared |
 | `topology.merge_too_few_sources` | fewer than two sources: wire a single source with `into` instead |
 | `topology.duplicate_merge_source` | the same channel subscribed twice; only this code is reported, because the count includes every `from` written |
-| mapped type differs from the tasklet's input | a compile error in Rust, a registration error naming both types in Java |
+| mapped type differs from the tasklet's input | a compile error in Rust and Go, a registration error naming both types in Java |
 
 `topology.transform_after_terminal` makes the order of declarations matter
 where a channel carries both an output and a transformed consumer: close the

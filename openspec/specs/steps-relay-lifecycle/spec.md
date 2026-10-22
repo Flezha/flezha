@@ -146,7 +146,7 @@ A steps relay SHALL declare one or more entry channels and SHALL receive every m
 
 #### Scenario: An unreadable message on a host SDK is told apart from a tasklet failure
 
-- **WHEN** a Java, Node, Python, Ruby or PHP steps relay's entry decoder rejects a message
+- **WHEN** a Java, Node, Python, Ruby, PHP or Go steps relay's entry decoder rejects a message
 - **THEN** the SDK SHALL report the activation as unreadable, the core SHALL park the message to the dead-letter queue under the entry channel after the ladder, and the run SHALL NOT end, whereas a readable message on which the tasklet throws SHALL end the run as a tasklet failure does
 
 #### Scenario: Input sent while the instance is down is not lost

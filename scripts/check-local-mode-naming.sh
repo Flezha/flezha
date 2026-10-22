@@ -62,6 +62,7 @@ SURFACE = (
     "sdk/php/src/LocalRelay.php",
     "sdk/php/src/LocalOutput.php",
     "sdk/php/examples/E07_LocalMode.php",
+    "sdk/go/local.go",
     "docs/public/topics/core/running_and_testing.md",
 )
 
@@ -80,7 +81,7 @@ SYMBOL = [re.compile(p) for p in (
 # testing word, and, in a Markdown page only (a `#` line elsewhere is a
 # comment), a heading that files the page as testing material.
 DECLARATION = re.compile(
-    r"\b(?:fn|struct|enum|trait|mod|type|const|static|class|interface|record|"
+    r"\b(?:fn|func|struct|enum|trait|mod|type|const|static|class|interface|record|"
     r"defmodule|defstruct|def|defp)\s+[A-Za-z0-9_.]*(?:" + TESTING + r")")
 HEADING = re.compile(r"^\s*#{1,6}\s.*(?:" + TESTING + r")")
 

@@ -39,6 +39,7 @@ Templates (flz template create <language> <dir> [--example <example>]):
 
   LANGUAGE  EXAMPLE   SUMMARY
   elixir    starter   A relay that counts visits per page
+  go        starter   A relay that counts visits per page
   java      starter   A relay that counts visits per page
   node      starter   A relay that counts visits per page
   php       starter   A relay that counts visits per page

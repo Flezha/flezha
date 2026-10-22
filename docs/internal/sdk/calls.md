@@ -36,6 +36,7 @@ The Response channel is an entry channel named after the calling channel with `.
 | Ruby | `Flezha::Response`: `request`, `value` or `error`, `ok?`, `target`, `created` |
 | PHP | `Flezha\Response`: `request`, `value` or `error`, `ok()`, `target`, `created` |
 | Elixir | `%Flezha.SDK.Response{request, result: {:ok, value} \| {:error, error}, target, created}` |
+| Go | `flezha.Response[Req, Ans]`: `Request`, `Value` or `Err`, `Ok()`, `Target`, `Created` |
 
 On the wire a `Response` is one JSON document the controller writes, the request and the answer
 in base64: `{"call", "target", "created", "request", "value" | "error"}`, `error` being the

@@ -302,6 +302,53 @@ runs the fold, records `{:price_seen, price}` and answers the new state for
 change it that could slip past the record. The `state` block generates the
 decoding of a state read back from the controller.
 
+### Go
+
+```go
+// track_prices.go: keeps a symbol's last ten prices, and compares each new one with their average.
+// PriceWindow is what each symbol's cell remembers.
+type PriceWindow struct {
+	Prices []float64 `json:"prices"`
+}
+
+// PriceSeen is how a price joins the window.
+type PriceSeen struct {
+	Price float64 `json:"price"`
+}
+
+func (s PriceSeen) ApplyTo(w *PriceWindow) {
+	w.Prices = append(w.Prices, s.Price)
+	if len(w.Prices) > window {
+		w.Prices = w.Prices[1:]
+	}
+}
+...
+func (TrackPrices) Changes() flezha.Changes[PriceWindow] {
+	return flezha.Changes[PriceWindow]{"price_seen": PriceSeen{}}
+}
+
+func (TrackPrices) Run(trade Trade, ctx *flezha.Ctx[PriceWindow, Move]) error {
+	if prices := ctx.State().Prices; len(prices) > 0 { // a symbol's first trade has nothing to compare with
+		if err := ctx.Emit(Move{Symbol: trade.Symbol, Price: trade.Price, Average: average(prices)}); err != nil {
+			return err
+		}
+	}
+	return ctx.Change(PriceSeen{Price: trade.Price})
+}
+```
+
+Full file: [`track_prices.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/track_prices.go).
+
+`Run`'s input type and `Ctx[PriceWindow, Move]` name what comes in, what the
+cell remembers, and what goes out. A new cell's state is the zero value of
+`PriceWindow`, unless the tasklet writes `InitState(cellKey *string)`. A change
+is any type with an `ApplyTo` method, listed under a name in `Changes`; the
+record carries that name rather than the Go type's, so renaming the type keeps
+every saved record readable, and recording a change that is not listed is
+refused. `ctx.State()` returns a copy, so assigning one of its fields changes
+nothing, but a slice or map inside it is shared with the live state and is not
+guarded. The test harness's `ReplayEquals` is what catches a write through one.
+
 <!-- tabs-close -->
 
 ## Where the state is kept

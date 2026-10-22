@@ -440,6 +440,20 @@ member asks the exchange for those pairs only.
 
 [Full file](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/trade_watcher.ex)
 
+### Go
+
+```go
+// trade_watcher.go: the desk's stream, keyed by currency pair.
+	messages := flezha.Input[TradeMessage](c, "trades")                                   // JSON from the exchange
+	messages = messages.Filter(func(m TradeMessage) bool { return m.Channel == "trade" }) // trade messages only
+	trades := flezha.FlatMap(messages, func(m TradeMessage) []Trade { return m.Data })    // a message into its trades
+	trades = trades.Filter(func(t Trade) bool { return t.OrdType == "market" })           // market orders only
+	trades = trades.KeyBy(func(t Trade) string { return t.Symbol })                       // one cell per symbol
+	moves := flezha.Into(trades, TrackPrices{})
+```
+
+[Full file](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/trade_watcher.go)
+
 <!-- tabs-close -->
 
 ## Hot keys: aggregate in two stages

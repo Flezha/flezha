@@ -12,7 +12,7 @@ defmodule Flezha.Mcp.Knowledge do
 
   alias Flezha.Error
 
-  @languages ~w(elixir java node php python ruby rust)
+  @languages ~w(elixir go java node php python ruby rust)
 
   # Declared as catalogue entries are, so `Flezha.Mcp` gives them their tool
   # name, schema and argument handling as it gives an operation's.

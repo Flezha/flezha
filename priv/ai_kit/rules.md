@@ -1,8 +1,8 @@
 # Working with Flezha
 
 Flezha runs relays: small graphs of tasklets, written with one of the SDKs
-(Elixir, Java, Node, PHP, Python, Ruby, Rust) and served by a runner process
-that connects to a controller. These rules hold for every task.
+(Elixir, Go, Java, Node, PHP, Python, Ruby, Rust) and served by a runner
+process that connects to a controller. These rules hold for every task.
 
 1. To start a new Flezha project, call `flezha_new_project` and write its
    files, rather than writing SDK code from memory.

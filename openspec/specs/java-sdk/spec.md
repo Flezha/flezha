@@ -965,7 +965,8 @@ are the ones a user most needs to see.
 The Java SDK SHALL let the application replace the logger through a builder method on the runner, so diagnostics can be routed into whatever logging pipeline the host already runs.
 
 This is the same authoring surface Node (`runner.logger(l)`), PHP
-(`Runner->logger()`) and Ruby (`Flezha.log =`) already carry. A host that wants
+(`Runner->logger()`), Ruby (`Flezha.log =`) and Go (`flezha.WithLogger(l)`)
+already carry. A host that wants
 SLF4J, Log4j, structured fields or spans supplies them; the SDK depends on none
 of them.
 
@@ -984,7 +985,7 @@ of them.
 
 The Java SDK SHALL read its default diagnostic level from `FLEZHA_LOG_LEVEL`, with the same level names and the same `warn` default the other SDKs use.
 
-`FLEZHA_LOG_LEVEL` is read by the Node, Ruby, PHP and Python SDKs and by the
+`FLEZHA_LOG_LEVEL` is read by the Node, Ruby, PHP, Python and Go SDKs and by the
 controller's own configuration. A user setting one variable across a fleet
 of mixed-language runners SHALL not have to except the Java ones.
 

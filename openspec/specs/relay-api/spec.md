@@ -26,7 +26,7 @@ No step beyond declaring the channels SHALL be needed for a channel to be in the
 Every SDK SHALL accept a description on an entry channel and an explicit JSON Schema on a `json`
 entry channel. The Java SDK SHALL derive a schema from a record input type, the Python SDK from a
 `TypedDict`, a dataclass or a type with `model_json_schema()`, the PHP SDK from a class with typed
-constructor-promoted properties, and the Rust SDK from a type implementing `schemars::JsonSchema`
+constructor-promoted properties, the Go SDK from a struct type's exported fields, and the Rust SDK from a type implementing `schemars::JsonSchema`
 when its `schemars` feature is on. An explicit schema SHALL override a derived one. An explicit
 schema that is not a JSON object with a `type` SHALL refuse the class at registration with
 `topology.schema_invalid`. A type that cannot be read SHALL give no schema and SHALL NOT refuse

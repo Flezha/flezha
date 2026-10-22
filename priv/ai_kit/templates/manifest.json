@@ -45,6 +45,44 @@
     },
     {
       "run": [
+        "go test ./...",
+        "go run .",
+        "flz relay start starter --id starter",
+        "flz relay call starter --channel hit --arg page=home"
+      ],
+      "language": "go",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "count.go",
+          "executable": false
+        },
+        {
+          "path": "count_test.go",
+          "executable": false
+        },
+        {
+          "path": "go.mod",
+          "executable": false
+        },
+        {
+          "path": "main.go",
+          "executable": false
+        },
+        {
+          "path": "relay.go",
+          "executable": false
+        }
+      ],
+      "summary": "A relay that counts visits per page",
+      "example": "starter",
+      "gitignore": "/starter\n/go.work\n/go.work.sum\n"
+    },
+    {
+      "run": [
         "mvn -q package",
         "java -jar target/starter.jar",
         "flz relay start starter --id starter",

@@ -212,6 +212,40 @@ end
 
 [`lib/tradedesk/order_executor.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/tradedesk/lib/tradedesk/order_executor.ex)
 
+### Go
+
+```go
+// order_executor.go: the workflow: one instance is one order
+type OrderTicket struct {
+	Symbol   string `json:"symbol"`
+	Quantity int    `json:"quantity"`
+}
+
+type OrderExecutorRelay struct{}
+
+func (OrderExecutorRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{
+		FactoryID: "order_executor",
+		Run: map[string]any{"steps": map[string]any{
+			"each":       "once",     // one instance per order; each step runs once
+			"on_failure": "undo_all", // a failed step undoes the finished ones
+		}},
+	}
+}
+
+func (OrderExecutorRelay) Channels(c *flezha.ChannelBuilder) {
+	order := flezha.Input[OrderTicket](c, "order") // the order to carry out
+	reserved := flezha.Into(order, ReserveFunds{}) // step one
+	placed := flezha.Into(reserved, PlaceOrder{})  // step two, once step one is done
+	placed.Branch(
+		func(fill flezha.Stream[PlacedOrder]) { flezha.Into(fill, ConfirmFill{}) }, // two arms, side by side
+		func(book flezha.Stream[PlacedOrder]) { flezha.Into(book, RecordOrder{}) },
+	)
+}
+```
+
+[`order_executor.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/tradedesk/order_executor.go)
+
 <!-- tabs-close -->
 
 > Start an order by hand, with the order as its first message on the channel
@@ -360,6 +394,21 @@ nothing else up:
 [book] USD/JPY 26 as ord-ede5ec420ad25a28e43b3ef7c91614dd
 [undo] cancelled ord-58e3ac18a7fe8475163037e27b670fd4
 [undo] released res-ba40dbe26a826d9b4abbabf1dda4c20d
+```
+
+### Go
+
+The runner logs through `log/slog`, so each try is a `WARN` record. Other
+orders' bookings can land in between, because the wait holds nothing else up:
+
+```output
+[book] EUR/USD 124 as ord-5ccdf17d50fa96943db297f0eef3e16b
+[book] USD/JPY 30 as ord-df5ff2f9b80aa232be21a839d76ef137
+[book] USD/JPY 27 as ord-885885b5b1f077a42d51da288832fcf6
+time=2026-10-22T20:42:29.522+02:00 level=WARN msg="tasklet confirm_fill attempt 1/3 failed (retrying in 35 ms): the exchange fills at most 100 a time, and this is 124" target=flz_core::retry
+time=2026-10-22T20:42:39.524+02:00 level=WARN msg="tasklet confirm_fill attempt 2/3 failed (retrying in 116 ms): the exchange fills at most 100 a time, and this is 124" target=flz_core::retry
+[undo] cancelled ord-5ccdf17d50fa96943db297f0eef3e16b
+[undo] released res-6f69debedeb2f717a42f0826281fe852
 ```
 
 <!-- tabs-close -->

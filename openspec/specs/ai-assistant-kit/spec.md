@@ -76,8 +76,8 @@ callable, whatever the token.
 Every MCP server of Flezha SHALL list five tools to every caller: `flezha_guide`,
 `flezha_sdk_example`, `flezha_error`, `flezha_docs` and `flezha_new_project`. They SHALL read no
 controller state and SHALL be marked read-only. `flezha_guide` SHALL answer the working rules and
-the docs map; `flezha_sdk_example` the echo example of one of elixir, java, node, php, python,
-ruby and rust; `flezha_error` the class, message and hint of an error code from the error
+the docs map; `flezha_sdk_example` the echo example of one of elixir, go, java, node, php,
+python, ruby and rust; `flezha_error` the class, message and hint of an error code from the error
 catalogue; `flezha_docs` one guide page the map lists; `flezha_new_project` the files of one
 template the release carries (each with its path, content and executable bit, its `.gitignore`
 included) and the template's run commands, for a language and an example defaulting to

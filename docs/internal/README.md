@@ -38,6 +38,7 @@ published page links one of these by its GitHub URL.
 - [`sdk/cell_timers.md`](sdk/cell_timers.md): Implementation notes for timers: folded state, where the code lives
 - [`sdk/conformance.md`](sdk/conformance.md): The cross-SDK conformance suite: manifests, capabilities, the gate, adding an SDK
 - [`sdk/elixir_sdk.md`](sdk/elixir_sdk.md): The Elixir SDK on the shared core, wherever its runner runs
+- [`sdk/go_sdk.md`](sdk/go_sdk.md): The Go SDK over the C ABI with cgo: building, authoring, concurrency, signals
 - [`sdk/java_sdk.md`](sdk/java_sdk.md): The Java SDK: scope, how its artifacts are built, how it is tested
 - [`sdk/multi_input_tasklets.md`](sdk/multi_input_tasklets.md): Implementation notes for merged inputs: replay, where the code lives
 - [`sdk/naming_conventions.md`](sdk/naming_conventions.md): The numbered naming rules every SDK surface follows

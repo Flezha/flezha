@@ -38,6 +38,7 @@ defmodule Mix.Tasks.Flezha.AiKit do
   @fences %{
     ".ex" => "elixir",
     ".exs" => "elixir",
+    ".go" => "go",
     ".java" => "java",
     ".mjs" => "javascript",
     ".json" => "json",

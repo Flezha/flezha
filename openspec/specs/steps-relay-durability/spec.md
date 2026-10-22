@@ -19,7 +19,7 @@ A steps relay class SHALL be **durable by default**; an author MAY **opt out** p
 
 #### Scenario: The opt-out is honoured on both sides
 
-- **WHEN** a steps class opts out of persistence in Java, Node, Python, Ruby, PHP, Rust or Elixir and an instance of it is rebound after its runner died
+- **WHEN** a steps class opts out of persistence in Java, Node, Python, Ruby, PHP, Go, Rust or Elixir and an instance of it is rebound after its runner died
 - **THEN** the runner SHALL have shipped no `cell_state_change` frame for it, the controller SHALL ship no `RestoreInitState` and no `task_journal`, and every tasklet SHALL re-run from the top
 
 #### Scenario: An opted-out steps relay's output keeps its identity

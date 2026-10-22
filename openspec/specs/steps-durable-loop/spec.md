@@ -230,8 +230,8 @@ Everything else SHALL end the instance as it does today: a failure under all-or-
 failure in a `once` or a `chained` loop; a failure in a pass a timer firing opened; a stage
 or iteration commit the controller refuses; a stop; `max_duration`. An unreadable message
 SHALL keep being parked without a pass, as today. Both steps drivers SHALL behave alike:
-the shared core's, which runs the steps relays of the Rust, Java, Node, Python, Ruby
-and PHP SDKs, and the Elixir SDK's.
+the shared core's, which runs the steps relays of the Rust, Java, Node, Python, Ruby,
+PHP and Go SDKs, and the Elixir SDK's.
 
 #### Scenario: A model error does not end the session
 

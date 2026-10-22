@@ -8,7 +8,7 @@ definition the line budget reads; its Rust test code (a `#[cfg(test)]` item and
 every file one declares) and generated files are not measured, and a new file
 not yet staged is. A file is its newline count. A function runs from its head
 to its closing line: a brace match with strings and comments blanked for Rust,
-Java, TypeScript/JavaScript and PHP; the `end` at the head's indent for Elixir;
+Java, TypeScript/JavaScript, PHP and Go; the `end` at the head's indent for Elixir;
 indentation for Python and Ruby.
 
 THE BASELINE. scripts/ceilings_baseline.txt records every breaker the tree held
@@ -45,7 +45,7 @@ BASELINE_HEADER = """\
 # per line, sorted.
 """
 
-SRC_EXT = {".ex", ".exs", ".rs", ".java", ".ts", ".js", ".mjs", ".py", ".rb", ".php"}
+SRC_EXT = {".ex", ".exs", ".rs", ".java", ".ts", ".js", ".mjs", ".py", ".rb", ".php", ".go"}
 
 RS_FN = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:default\s+)?(?:const\s+)?(?:async\s+)?'
                    r'(?:unsafe\s+)?(?:extern\s+"[^"]*"\s+)?fn\s+(\w+)')
@@ -59,8 +59,9 @@ TS_FN = re.compile(r'^\s*(?:export\s+)?(?:default\s+)?(?:(?:public|private|prote
                    r'(?::[^=]+)?=>)')
 PHP_FN = re.compile(r'^\s*(?:(?:public|private|protected|static|final|abstract)\s+)*'
                     r'function\s+&?(\w+)\s*\(')
+GO_FN = re.compile(r'^func\s+(?:\([^)]*\)\s*)?(\w+)')
 BRACE_FN = {".rs": RS_FN, ".java": JAVA_FN, ".ts": TS_FN, ".js": TS_FN, ".mjs": TS_FN,
-            ".php": PHP_FN}
+            ".php": PHP_FN, ".go": GO_FN}
 NOT_FN = {"if", "for", "while", "switch", "catch", "return", "new", "else", "do", "try",
           "synchronized", "super", "this", "throw", "case", "function", "await", "typeof", "sizeof"}
 EX_FN = re.compile(r'^(\s*)(def|defp|defmacro|defmacrop)\s+([\w?!]+)')

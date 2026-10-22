@@ -213,7 +213,7 @@ before the chain.
 - **THEN** the map and `cells_for` SHALL run on the worker completing that item, the held output SHALL name the consumer cells, and the thread that later releases it on the commit ack SHALL run neither
 
 #### Scenario: The input form comes from the core
-- **WHEN** a Python, Ruby, PHP, Node, Java or Elixir host receives an entry payload, a steps stage's released value and a stream edge's value in one activation
+- **WHEN** a Python, Ruby, PHP, Node, Java, Go or Elixir host receives an entry payload, a steps stage's released value and a stream edge's value in one activation
 - **THEN** the items carry the forms `untransformed`, `untransformed` and `transformed`, and the host applies the consuming edge's chain to the first two only
 
 ### Requirement: Host classes reach full capability
@@ -283,7 +283,7 @@ other park sites do for a steps relay.
 - **THEN** that payload SHALL climb the channel's retry→park ladder and no keyless-drop path SHALL exist
 
 #### Scenario: A host steps relay's release is keyed by the crossing
-- **WHEN** a Java, Node, Python, Ruby or PHP steps relay's first tasklet releases three values into a tasklet reached by `keyBy`
+- **WHEN** a Java, Node, Python, Ruby, PHP or Go steps relay's first tasklet releases three values into a tasklet reached by `keyBy`
 - **THEN** the core stages the three payloads for one crossing on the inter-tasklet channel, the host answers each value's key by running the edge's chain, three Cells are minted from the answers, and the keyed stage settles only after the three are addressed and have run
 
 #### Scenario: A resumed host steps relay re-seeds its keyed consumer the same way
@@ -361,7 +361,7 @@ seal.
 
 #### Scenario: A host steps relay's static cells receive their items
 
-- **WHEN** a Java, Node, Python, Ruby or PHP steps tasklet declares static `cell_keys` and a
+- **WHEN** a Java, Node, Python, Ruby, PHP or Go steps tasklet declares static `cell_keys` and a
   stage releases a value to it
 - **THEN** every declared cell SHALL be offered the value and each host cell SHALL run the ones
   `cells_for` names, exactly as a flow tasklet of that host with the same keys does
@@ -570,7 +570,7 @@ A timer firing that is deferred this way SHALL NOT be dropped, and the ordering 
 
 ### Requirement: A poll host SHALL bring a starvation supervisor
 
-Every host that drives `poll` SHALL also bring the core governor's supervisor (`flz_core::poll_pool`) and SHALL start one additional worker on each spawn decision it returns, up to a declared ceiling. The pool policy SHALL be the core's, the same in every SDK: the base and the ceiling read from `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX` by the core over the runtime's own base default (Java's `DEFAULT_FETCHERS`, 2, is that default, not a pool size of its own); a supervisor wait of 1 s, inside which the core waits on starvation itself; a poll timeout of 250 ms; a worker above the base retired after 30 s without work; a pool below its base topped up on the next supervisor wake; a drain bound of 5 s. A host SHALL implement only how a worker is spawned and what it runs: the Rust SDK, the Node host's fetchers and the Elixir host through the governor's spawner, the Python, Ruby, Java and PHP hosts by driving `flz_core_pool_supervise` from a thread of their own and answering the decisions it returns (spawn a grown worker, spawn a base worker, idle, stop), at least one per supervisor wait. Node's completion pool SHALL take its base, ceiling and retire time from the governor and SHALL keep its own growth on a queued completion. No SDK SHALL carry its own pool policy constant (base, ceiling, retire time or supervisor wait); a synchronous executor's poll turn, which runs no pool (PHP's `Runner::POLL_TIMEOUT_MS`), and a host's shutdown budget (the Elixir runner's drain inside OTP's shutdown) stay the host's. A host that ships a fixed worker count with no supervisor SHALL be treated as a defect of that SDK, not as a configuration choice: the supervisor is what buys a thread against a consumer that nobody is draining, and without it a host whose workers are all held wedges with no recovery and no report.
+Every host that drives `poll` SHALL also bring the core governor's supervisor (`flz_core::poll_pool`) and SHALL start one additional worker on each spawn decision it returns, up to a declared ceiling. The pool policy SHALL be the core's, the same in every SDK: the base and the ceiling read from `FLEZHA_WORKER_POOL_SIZE` and `FLEZHA_WORKER_POOL_MAX` by the core over the runtime's own base default (Java's `DEFAULT_FETCHERS`, 2, is that default, not a pool size of its own); a supervisor wait of 1 s, inside which the core waits on starvation itself; a poll timeout of 250 ms; a worker above the base retired after 30 s without work; a pool below its base topped up on the next supervisor wake; a drain bound of 5 s. A host SHALL implement only how a worker is spawned and what it runs: the Rust SDK, the Node host's fetchers and the Elixir host through the governor's spawner, the Python, Ruby, Java, PHP and Go hosts by driving `flz_core_pool_supervise` from a thread of their own (a goroutine in Go) and answering the decisions it returns (spawn a grown worker, spawn a base worker, idle, stop), at least one per supervisor wait. Node's completion pool SHALL take its base, ceiling and retire time from the governor and SHALL keep its own growth on a queued completion. No SDK SHALL carry its own pool policy constant (base, ceiling, retire time or supervisor wait); a synchronous executor's poll turn, which runs no pool (PHP's `Runner::POLL_TIMEOUT_MS`), and a host's shutdown budget (the Elixir runner's drain inside OTP's shutdown) stay the host's. A host that ships a fixed worker count with no supervisor SHALL be treated as a defect of that SDK, not as a configuration choice: the supervisor is what buys a thread against a consumer that nobody is draining, and without it a host whose workers are all held wedges with no recovery and no report.
 
 The supervisor SHALL NOT be claimed to cover the conformance `pool_wedge` condition, which is user code that never returns and which no ceiling can outrun.
 
@@ -580,7 +580,7 @@ The supervisor SHALL NOT be claimed to cover the conformance `pool_wedge` condit
 - **THEN** the Java host SHALL start one more fetcher on the governor's spawn answer, up to its configured ceiling
 
 #### Scenario: A grown worker retires after the same idle time in every SDK
-- **WHEN** a Python, Ruby, Java, PHP (threaded executor), Node, Elixir or Rust runner has grown its pool under starvation and the work then stops
+- **WHEN** a Python, Ruby, Java, PHP (threaded executor), Node, Go, Elixir or Rust runner has grown its pool under starvation and the work then stops
 - **THEN** each grown worker SHALL leave after 30 s without work, the base workers SHALL stay, and no SDK source SHALL hold a retire time or a supervisor wait of its own
 
 ### Requirement: No core call blocks a host thread

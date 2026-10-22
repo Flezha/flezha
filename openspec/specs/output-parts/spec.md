@@ -174,8 +174,8 @@ invocation as any raise does.
 ### Requirement: Every SDK SHALL spell the part call beside its emit
 
 The part call SHALL be spelled `ctx.part(value)` in Rust, Java, Node, Python and Ruby,
-`$ctx->part($value)` in PHP and `part(ctx, value)` in Elixir, where a `use Flezha.SDK.Tasklet`
-module imports it as it imports `emit/2`. Its documentation SHALL sit beside the emit's in
+`$ctx->part($value)` in PHP, `ctx.Part(value)` in Go and `part(ctx, value)` in Elixir,
+where a `use Flezha.SDK.Tasklet` module imports it as it imports `emit/2`. Its documentation SHALL sit beside the emit's in
 each SDK's reference. Every SDK SHALL reach the part through the
 core (the Rust SDK through its crate API, the others through `flz_core_part`), and
 SHALL NOT re-express the numbering, the stamps or the drop rules.

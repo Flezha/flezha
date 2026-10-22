@@ -5,7 +5,7 @@ TBD - created by archiving change let-an-application-administer-its-namespace. U
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 
-The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface reached as `control()` (`control` in Ruby, `$runner->control()` in PHP, `Flezha.SDK.Control` in Elixir) by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting and stopping a relay, enabling and disabling a plugin by name, binding a plugin to a relay and unbinding it, and reading relays, plugins and cell state. It SHALL not carry sending to a relay, which is on the runner object itself, and no SDK SHALL offer the surface under its former name `admin`. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz relay start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and a relay only when the application binds in the same call.
+The SDK SHALL offer, on the runner object rather than on a tasklet context, a surface reached as `control()` (`control` in Ruby, `$runner->control()` in PHP, `runner.Control()` in Go, `Flezha.SDK.Control` in Elixir) by which ordinary application code administers the namespace its connection proved. The surface SHALL cover starting and stopping a relay, enabling and disabling a plugin by name, binding a plugin to a relay and unbinding it, and reading relays, plugins and cell state. It SHALL not carry sending to a relay, which is on the runner object itself, and no SDK SHALL offer the surface under its former name `admin`. It SHALL require no tasklet to be running and SHALL require the application to hold no credential of its own beyond what its connection already presented. Starting SHALL take the same specification `flz relay start` takes: the factory, and an id only when the application chooses one. Enabling SHALL take the same specification `flz plugin enable` takes: the name, the provider and its options, and a relay only when the application binds in the same call.
 
 #### Scenario: An application starts a relay it implements
 
@@ -142,7 +142,8 @@ Every SDK SHALL expose the surface, and the hosts that share `flz_core` SHALL re
 Every SDK's start call SHALL take the factory first and the id as an optional named argument, in
 the form its language has: `RelaySpec::new(factory).id(..)` in Rust,
 `RelaySpec.of(factory).id(..)` in Java, a keyword list in Elixir, keyword arguments in Python
-and Ruby, named arguments in PHP and an options object in Node. A successful start SHALL answer one
+and Ruby, named arguments in PHP, an options object in Node and an id argument in Go, where `""`
+leaves the id to the controller. A successful start SHALL answer one
 result carrying two fields, the same in every SDK: `id`, the id the relay runs under whether
 the application gave it or the controller generated it, and `outcome`, one of `started` and
 `already_running`. `already_running` SHALL be answered only for an id the application gave, when a

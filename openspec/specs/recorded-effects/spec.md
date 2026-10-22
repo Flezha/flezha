@@ -8,8 +8,9 @@ or a move reads the result instead of calling out again.
 ## Requirements
 ### Requirement: Every SDK SHALL offer `ctx.effect(name, fn)`
 
-Each SDK (Rust, Java, Node, Python, Ruby, PHP, Elixir) SHALL offer an `effect`
-call on the tasklet context that takes a name and a function, runs the function at most once
+Each SDK (Rust, Java, Node, Python, Ruby, PHP, Elixir, Go) SHALL offer an `effect`
+call on the tasklet context (in Go the package function `flezha.Effect(ctx, name, fn)`, a Go
+method taking no type parameter) that takes a name and a function, runs the function at most once
 per invocation identity while its result is kept, and returns the function's result. The name
 SHALL be a non-empty string of at most 255 bytes, refused otherwise with a non-retryable
 error. The result SHALL be encoded as a sink naming no codec encodes a value (bytes as they

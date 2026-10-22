@@ -34,6 +34,7 @@ ids, tokens and times will differ.
 > | Ruby | Ruby 3.3 or later, with Bundler |
 > | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
 > | Elixir | Elixir 1.17 or later |
+> | Go | Go 1.26 or later, a C toolchain, and Rust with Cargo to build the core library |
 >
 > - **git**, to get the example.
 
@@ -501,6 +502,70 @@ end
 
 [`lib/echo/application.ex`](https://github.com/flezha/flezha_elixir_sdk/blob/main/examples/echo/lib/echo/application.ex)
 
+### Go
+
+In your clone: `sdk/go/examples/echo` ([on GitHub](https://github.com/flezha/flezha_go_sdk/tree/main/examples/echo)).
+
+```go
+// tasklet.go: the tasklet
+type Echo struct{}
+
+// state is saved under this name, so choose it once
+func (Echo) Spec() flezha.Spec { return flezha.Spec{Name: "echo"} }
+
+func (Echo) Run(in string, ctx *flezha.Ctx[flezha.NoState, string]) error {
+	return ctx.Emit("echo: " + in) // where it goes is the relay's business
+}
+```
+
+[`tasklet.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/tasklet.go)
+
+```go
+// relay.go: the relay
+type EchoRelay struct{}
+
+func (EchoRelay) Spec() flezha.RelaySpec {
+	return flezha.RelaySpec{FactoryID: "echo"} // the name `flz relay start` takes
+}
+
+func (EchoRelay) Channels(c *flezha.ChannelBuilder) {
+	// messages arrive on the entry channel "in"
+	in := flezha.Input[string](c, "in", flezha.InputOptions{Codec: flezha.Text})
+	// each one runs through the echo tasklet; the result leaves on "out", for a
+	// plugin to pick up
+	flezha.Into(in, Echo{}).Output("out")
+}
+```
+
+[`relay.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/relay.go)
+
+```go
+// main.go: the runner
+func main() {
+	namespace := "default"
+	if len(os.Args) > 1 {
+		namespace = os.Args[1]
+	}
+
+	runner, err := flezha.CreateRunner(namespace)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := runner.RegisterFactory(EchoRelay{}); err != nil { // the relays this runner serves
+		log.Fatal(err)
+	}
+	if err := runner.Start(); err != nil { // connects to the controller
+		log.Fatal(err)
+	}
+
+	if err := runner.AwaitTermination(); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+[`main.go`](https://github.com/flezha/flezha_go_sdk/blob/main/examples/echo/main.go)
+
 <!-- tabs-close -->
 
 
@@ -552,6 +617,16 @@ $ composer install && php runner.php
 ```sh
 $ mix deps.get && mix run --no-halt
 ```
+
+### Go
+
+```sh
+$ go run .
+```
+
+Until the Go SDK is published, set the folder up once as its README's
+[Building from a checkout](https://github.com/flezha/flezha_go_sdk/tree/main/examples/echo#building-from-a-checkout)
+says.
 
 <!-- tabs-close -->
 
