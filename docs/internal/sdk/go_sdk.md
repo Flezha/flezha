@@ -188,8 +188,9 @@ which a pool of one recovers from too.
 
 The arithmetic: one poller serves about `1 / body latency` activations a second, and in-flight
 concurrency is the poller count. Per-cell ordering is the core's: a cell never has two activations
-in flight, and different cells run on different pollers at once. No goroutine is locked to its
-thread; a blocking core call holds its OS thread, and the Go scheduler starts another for the rest.
+in flight, and different cells run on different pollers at once. No goroutine stays locked to its
+thread: each core call is pinned only until the error document the core keeps for that thread is
+read, and a blocking call holds its OS thread while the Go scheduler starts another for the rest.
 
 Every buffer the core hands out is copied into Go memory and freed before dispatch, so no Go value
 points into core memory; the SDK's tests run its pool under the race detector with
@@ -218,10 +219,14 @@ if err != nil {
 	return err
 }
 out, err := h.Feed(Order{Pair: "EUR/USD", Qty: 4}, 0, false)
-// out.Outputs is [4], h.State().Sum is 4, and h.ReplayEquals() is nil.
+if err != nil {
+	return err
+}
+fmt.Println(out.Outputs, h.State().Sum, h.ReplayEquals()) // [4] 4 <nil>
 ```
 
-The code on this page is compiled and run as the examples in `sdk/go/example_test.go`.
+The code on this page is compiled as the examples in `sdk/go/example_test.go`, which run it
+where no controller is needed, and `sdk/go/examples/echo` is the echo relay every SDK carries.
 
 ## Size
 

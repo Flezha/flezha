@@ -26,7 +26,7 @@ The SDK SHALL NOT offer a configuration without the supervisor, including a sing
 - **THEN** the supervisor SHALL start a worker, that worker SHALL drain the consumer, and the blocked completion SHALL return
 
 ### Requirement: Per-cell ordering is the core's, not the Go SDK's
-The Go SDK SHALL NOT implement mailboxes, drain gates or ordering of its own. No goroutine SHALL be locked to its OS thread, and an activation MAY be completed from a thread other than the one that polled it, as the core allows.
+The Go SDK SHALL NOT implement mailboxes, drain gates or ordering of its own. No goroutine SHALL stay locked to its OS thread beyond one core call: a call is pinned only until the error document the core keeps for that thread is read. An activation MAY be completed from a thread other than the one that polled it, as the core allows.
 
 #### Scenario: Different cells run concurrently
 - **WHEN** inputs for two distinct cell keys arrive together on a pool of two or more
