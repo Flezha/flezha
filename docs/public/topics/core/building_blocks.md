@@ -159,8 +159,12 @@ through a C ABI.
 
 The kernel owns **what runs and when**. It picks the next activation, holds
 per-cell ordering and exclusivity, runs the retry ladder and durability, and
-caps how much work is underway at once. Each SDK owns **the threads to run it
-on**, and brings whatever its own runtime provides.
+caps how much work is underway at once. Each SDK keeps **its own runtime
+semantics and concurrency model**: your code runs the way the language runs
+code, on virtual threads in Java, goroutines in Go, the event loop in Node,
+threads or asyncio in Python, threads or fibers in Ruby, and processes on the
+BEAM. The kernel never calls into SDK code; the SDK calls the kernel to take
+work and to hand back results.
 
 So the rules the kernel enforces are the same in every language: ordering,
 exclusivity, the retry ladder, durability. What differs is the runtime and the

@@ -138,9 +138,14 @@ durability, and caps how many work activations may be in flight at once
 blocks as if nothing were ready, and the completion that drops below it
 releases the next one.
 
-**The SDK brings the threads.** How many it runs is a detail of how it
-serves the core, not a limit on concurrency; that limit is the core's cap.
-The Rust and Java SDKs do it differently:
+**The SDK brings the threads.** Each SDK keeps its own concurrency model:
+what runs your code, and how, belongs to the language. The one shared part is
+what happens when every thread waiting in `poll` is held. That problem is the
+same in every language, so the core's pool governor answers it once for all of
+them: one more thread when work is stuck, and the extra one retired after 30 s
+idle. Each SDK still picks its own starting count. None of this limits
+concurrency; that limit is the core's cap. The Rust and Java SDKs look like
+this:
 
 | | Rust | Java |
 | --- | --- | --- |
