@@ -72,7 +72,7 @@ functions are `Flezha.SDK.Ctx`'s, imported by `use Flezha.SDK.Tasklet`.
   the item fails when it settles, as [Bounds and observing](#bounds-and-observing) describes.
 - A tasklet that sets a timer must handle it. Setting one is a runtime call, so a missing
   handler cannot be caught at build time: the default `on_timer` panics (Rust) or throws (Java)
-  naming the tasklet; in Node, Python, Ruby and PHP a firing on a tasklet without the callback
+  naming the tasklet; in Node, Python, Ruby, PHP and Go a firing on a tasklet without the callback
   fails as `runtime.timer_without_on_timer`; in Elixir it parks, non-retryable, naming the
   tasklet and the callback.
 - Resolution is milliseconds.
@@ -214,7 +214,7 @@ uses a timer.
 - **In the Java, Node, Python, Ruby and PHP SDKs, a steps tasklet fed by another tasklet has no
   event time.** Their output is passed on without an event time, so such a tasklet reads wall
   time under an event-time clock and its event-time timers never come due. A tasklet fed by the
-  entry channel is not affected, nor is any tasklet in Rust or Elixir.
+  entry channel is not affected, nor is any tasklet in Rust, Elixir or Go.
 - **A firing can run late**: during a restore backlog, or while every worker thread is inside
   user code. Its `scheduled_at` still reports the scheduled time.
 

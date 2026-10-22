@@ -1,8 +1,8 @@
 # SDK Naming Conventions
 
 For SDK implementers adding or reviewing public surface. These twelve rules
-name every public SDK method, error and callback in all seven SDKs (Python,
-Ruby, PHP, Node, Elixir, Java, Rust), each in its own casing, so a new name is
+name every public SDK method, error and callback in all eight SDKs (Python,
+Ruby, PHP, Node, Elixir, Java, Rust, Go), each in its own casing, so a new name is
 decided by one standard rather than per change. Code comments cite the rules by
 number; the numbering is stable.
 
@@ -29,8 +29,8 @@ or `startAsync()`.
 Declaring a relay class tells the runtime what it *may spawn instances of
 later* (via `AddRelay`). One method does it, whichever kind the relay
 is: `registerFactory(Class)` (Java, Node, PHP), `register_factory(relay)`
-(Rust, Python, Ruby, Elixir), legal before and after `start()`. Its one inverse
-is `unregisterFactory` / `unregister_factory`, taking exactly what the
+(Rust, Python, Ruby, Elixir), `RegisterFactory(relay)` (Go), legal before and after `start()`. Its one inverse
+is `unregisterFactory` / `unregister_factory` / `UnregisterFactory`, taking exactly what the
 registration took — never an `undefine*` / `drop*` synonym.
 
 What is registered is a *factory*: the class the controller places by factory
@@ -40,8 +40,8 @@ declaration.
 
 ### 3. The lifecycle verb set is `start()` / `run()` / `awaitTermination()` / `close()`
 
-Identical names in all seven SDKs, each in its own casing (`await_termination`
-in Python, Ruby, Elixir and Rust); Rust's `close()` is `Drop`. A shutdown has
+Identical names in all eight SDKs, each in its own casing (`await_termination`
+in Python, Ruby, Elixir and Rust, `AwaitTermination` in Go); Rust's `close()` is `Drop`. A shutdown has
 one verb: no SDK keeps a `stop` or `drain` beside `close`. gRPC's `Server.start()` / `Server.awaitTermination()` is
 the direct precedent. `run()` is pure sugar (`start()` then
 `awaitTermination()`), never an independent implementation, so the two can
@@ -89,7 +89,7 @@ told apart by the error's `code`, the same string in every SDK:
 
 What Java throws at `registerFactory(...)`, Rust returns as `Err` from
 `register_factory(R)`, with the same code. The three short-form refusals
-(`docs/internal/sdk/authoring_contract.md` §5.2) carry the same code in all seven SDKs,
+(`docs/internal/sdk/authoring_contract.md` §5.2) carry the same code in all eight SDKs,
 and the code appears verbatim in the error an author reads.
 
 ### 7. `create*` constructs an object the caller mutates; `new*` is not used
@@ -178,7 +178,7 @@ Any duration such a surface takes, or reports back, is spelled in the SDK's own
 unit: a `Duration` where the language has one (Rust `timer_after(Duration)`,
 Java `timerAfter(Duration)`), and milliseconds where the SDK's timers already
 speak milliseconds (Node and PHP `timerAfter(ms)`, Ruby, Python and Elixir
-`timer_after(ms)`, and `retry_backoff_ms` on every builder). A surface taking
+`timer_after(ms)`, Go `TimerAfter(ms)`, and `retry_backoff_ms` on every builder). A surface taking
 seconds, or a `Duration` in a millisecond SDK, is the inconsistency this rule
 refuses.
 

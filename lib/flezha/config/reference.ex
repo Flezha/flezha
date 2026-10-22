@@ -25,7 +25,7 @@ defmodule Flezha.Config.Reference do
   defp member?(:environment, row), do: reads?(row, [:controller])
 
   defp member?(:runner, row),
-    do: reads?(row, [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php])
+    do: reads?(row, [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go])
 
   defp member?(:build, row), do: reads?(row, [:build, :shell])
 

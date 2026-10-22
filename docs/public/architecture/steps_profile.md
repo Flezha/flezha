@@ -463,7 +463,7 @@ across every cell of the instance, and a rewind is a loop's way back. The steps 
 
 ## Host languages
 
-Nothing on this page depends on the language. In Rust, Java, Node, Python, Ruby and PHP the
+Nothing on this page depends on the language. In Rust, Java, Node, Python, Ruby, PHP and Go the
 shared runner core, `flz_core`, owns the pass: a small record per instance (the iteration, the
 tasklets running and done, the outputs held for their commit, the completion) moved forward by
 events on whichever thread brings them. A worker finishing a tasklet's last item, the control

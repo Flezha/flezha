@@ -41,8 +41,8 @@ the chapter take one part each:
   relay runs and restarts what fails. Several controllers can form a
   cluster over Erlang distribution; a ProcessHub hub per namespace spreads the
   relays across them.
-- **Runner**: a process you run, written with one of the seven SDKs (Rust,
-  Java, Node, Python, Ruby, PHP, Elixir). It runs your code. A runner always
+- **Runner**: a process you run, written with one of the eight SDKs (Rust,
+  Java, Node, Python, Ruby, PHP, Elixir, Go). It runs your code. A runner always
   dials the controller, never the other way round. It holds state in memory
   only, so it can be replaced at any time: the controller has the copy. Every
   SDK shares one Rust kernel, `flz_core`, for transport, ordering,

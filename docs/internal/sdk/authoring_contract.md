@@ -45,7 +45,11 @@ build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
 named tasklet class whose `run` takes the value and a `Ctx[State, Output]` and
 whose other methods are the hooks, with the input, output, state and change
 types all read from the type hints, which is what makes a wrong edge a
-type-checker error before it is a registration one ([`python_sdk.md`](python_sdk.md)). A surface one
+type-checker error before it is a registration one ([`python_sdk.md`](python_sdk.md)). The Go SDK
+exposes types: a tasklet is a type with a `Spec()` method and a typed `Run(in, ctx)`, its hooks
+are the methods it implements, and every step that changes a stream's element type is a package
+function over generic streams, which is what makes a wrong edge a `go build` error
+([`go_sdk.md`](go_sdk.md)). A surface one
 binding gains, every binding gains in the same change or defers by name:
 [`../../public/architecture/runner.md` → "One change, every SDK"](../../public/architecture/runner.md#one-change-every-sdk).
 
@@ -71,8 +75,9 @@ after a restart, and nothing reports the difference until the restart.
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 | PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `TaskletTestHarness::replayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
 | Python | Runtime rejection. A class declared `@flezha.state` refuses direct attribute assignment, naming the field and the change-based path; the runtime's own path — applying a change and folding a restore — is the one exception, opened per call on the calling thread. Mutation *through* a container a state field holds is not covered, exactly as Rust's interior mutability is not. |
+| Go | A copy. `ctx.State()` returns a copy of the state, so assigning a field of it changes nothing durable, and `ctx.Change` is the one recorded path. Maps, slices and pointers inside the state are shared with the live state and not guarded; `TaskletTestHarness.ReplayEquals` is what catches a write through them. |
 
-`replay_equals` / `replayEquals()` is the gate for all seven: it folds the
+`replay_equals` / `replayEquals()` / `ReplayEquals` is the gate for all eight: it folds the
 recorded change log against a freshly constructed initial state and requires
 the result to equal the live one.
 
@@ -93,6 +98,7 @@ backstop for what typing cannot see.
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
 | PHP | no — the language cannot | registration-time refusals only, in `sdk/php/tests/AuthoringTest.php` |
 | Python | yes, through the generic `Stream[T]` / `Tasklet[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
+| Go | yes, through the generic `Stream[T]` and `Tasklet[I, S, O]` parameters | `sdk/go/testdata/wrong_edge/`, which `sdk/go/compile_fail_test.go` requires `go build` to reject naming both sides, against `right/` as the negative control |
 
 Before writing a new SDK, read
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads):
@@ -125,7 +131,7 @@ three types, and §2.2 says where the rest comes from.
 | `type Output = O`, else nothing                     | `Output`, default `()`: no output channel           |
 | `type State = S`, else nothing                      | `State`, default `()`: stateless                    |
 | `type Change = C` (a `Change<S>`), else nothing     | `Change`, default `NoChange`: nothing journaled     |
-| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: `tasklet_name "…"` in the class body; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Tasklet\Spec(name: …)]` |
+| `name = "…"` (required)                             | `NAME` — Rust: the key; Python: the `name` of `@flezha.tasklet(name=…)`; Ruby: `tasklet_name "…"` in the class body; Java names every tasklet in `@Tasklet.Spec(name = …)`; PHP in `#[Tasklet\Spec(name: …)]`; Go in its `Spec()` method's `Name` |
 | `fn event_time`, else `logical_clock`, else nothing | `CLOCK`: `EventTime`, `Logical`, else `Wall`        |
 | `fn init_state`, else nothing                       | `init_state` returning `State::default()`           |
 | `fn compensate` / `fn cells_for` / `fn max_cells` / `fn mailbox_capacity` | the matching `*_OVERRIDDEN` flag set to `true` |
@@ -223,8 +229,8 @@ map of defaults and `state_from_json/1` reading each field's string key. It
 generates no change: every change is a `defchange`, with or without a block,
 and a `use` module that writes `apply_change/2` by hand fails to compile, so
 a field-granular derivation is **deferred for Elixir**. A field-granular
-derivation is likewise **deferred for Python, Node, Ruby and PHP**, which
-declare their change types by hand. Java declares its change types
+derivation is likewise **deferred for Python, Node, Ruby, PHP and Go**, which
+declare their change types by hand (Go lists them under explicit names in `Changes()`). Java declares its change types
 by hand too, as its one form: a record implementing `Change<State>` whose
 `applyTo` performs the mutation.
 
@@ -349,6 +355,9 @@ Python tasklet class's `run`, and a short form declared on a class, returns
 the input. A Node `run`, a tasklet's or a short form's, is typed to return
 `void | Promise<void>` and emits through `ctx.emit`, so TypeScript refuses one
 that returns a value, and the SDK ignores what a plain JavaScript `run` returns.
+A Go function short form (`flezha.ShortRelay`) returns `(O, bool)`: it emits on `true` and
+nothing on `false`. A Go tasklet's `Run` returns only an `error` and emits through its typed
+context, so emitting nothing is not calling `ctx.Emit`.
 
 **Keyed output.** On a `.keyed()` output channel the plain emit carries
 the emitting Cell's **own key** (the key its input routed by), so a keyed
@@ -497,7 +506,7 @@ shared between them.
 Exactly **one** topology may be written short: a single tasklet from a
 controller input to at most one named output (`input → tasklet → plugin(output)`,
 or `input → tasklet` with no output), as a relay of either run. **Every
-SDK carries it**: Rust, Java, Python, Node, Ruby, PHP and Elixir.
+SDK carries it**: Rust, Java, Python, Node, Ruby, PHP, Go and Elixir.
 
 **The short form is a relay declaration**, written at the SDK's one
 relay entry point, the one a full-form relay already uses. A relay
@@ -518,6 +527,7 @@ is an address a user types and a rename must not move it.
 | Node | `defineRelay({ factoryId: 'echo', output: 'out', input: 'in', codec: 'text', run: (s, ctx) => ctx.emit(s) })` | `defineRelay({ ..., steps: {} })` |
 | Ruby | `class Echo < Flezha::Relay; factory_id "echo"; output "out"; input "in"; codec :text; def run(s, ctx) = ctx.emit(s); end` | `run :steps` in the class body |
 | PHP | `#[Relay(factoryId: 'echo', output: 'out', input: 'in', codec: ChannelCodec::Text)] final class Echo extends \Flezha\Relay { public function run(mixed $s, Ctx $ctx): void }` | `#[Relay(..., run: 'steps')]` |
+| Go | `flezha.ShortRelay("echo", func(s string, ctx *flezha.Ctx[flezha.NoState, string]) (string, bool) { return s, true }, flezha.ShortOptions{Output: "out", Input: "in", Codec: flezha.Text})`, or `flezha.ShortTasklet("echo", Echo{}, ...)` for a tasklet type | `flezha.ShortOptions{..., Run: "steps"}` |
 | Elixir | `use Flezha.SDK.Relay, factory_id: "echo", output: "out", input: "in", codec: :text` with `run/3` | `use Flezha.SDK.Relay, ..., run: :steps` |
 
 **`output` is optional.** With an `output`, the generated relay declares an
@@ -529,7 +539,7 @@ tasklet: the relay that only keeps state is one declaration. `input` and
 
 **The generated relay is the hand-written one, nothing more.** One entry
 channel named by `input` (or `input` when none is written) and decoded by
-`codec` where one is written (Python, Node, Ruby, PHP, Elixir); the tasklet; the output
+`codec` where one is written (Python, Node, Ruby, PHP, Go, Elixir); the tasklet; the output
 when one is written; a factory id equal to the identity; and the class
 settings it writes, as the full form takes them. A flow short form is a default
 stream. A steps short form is a `once` steps relay unless it declares another
@@ -545,6 +555,7 @@ stays. The tree is written in the spelling the SDK's full form gives it:
 `run={"steps": {"each": "per_input"}}` on the Python decorator,
 `run steps: { each: :per_input }` in the Ruby class body,
 `run: ['steps' => ['each' => 'per_input']]` on PHP's `#[Relay]`,
+`Run: map[string]any{"steps": map[string]any{"each": "per_input"}}` in Go's `ShortOptions`,
 `run: {:steps, each: :per_input}` on the Elixir `use`. A value outside its
 choice is refused naming it (`topology.invalid_setting`).
 
@@ -626,7 +637,7 @@ the short form's, describing the entry channel it generates.
 ### 5.1 One `register_factory`, one `unregister_factory`
 
 Every SDK has one relay base, `Relay`: a trait in Rust, an interface in
-Java, a base class in Python, Ruby and PHP, `defineRelay` in Node and a `use`
+Java and Go, a base class in Python, Ruby and PHP, `defineRelay` in Node and a `use`
 macro in Elixir. Its members are `factory_id()`, `channels` (the graph, on the
 same builder in every SDK) and one settings tree: `run` (`flow` or `steps` with
 their members), `durable`, `max_duration_ms` and `description`
@@ -645,6 +656,7 @@ same argument:
 | Node | `await runner.registerFactory('./echo.mjs')` | `await runner.unregisterFactory('./echo.mjs')` | read from the module's exports |
 | Ruby | `runner.register_factory(Echo)` | `runner.unregister_factory(Echo)` | read from the class |
 | PHP | `$runner->registerFactory(Echo::class)` | `$runner->unregisterFactory(Echo::class)` | read from the class |
+| Go | `runner.RegisterFactory(EchoRelay{})` | `runner.UnregisterFactory(EchoRelay{})` | `RelaySpec.Run` |
 | Elixir | `Flezha.SDK.register_factory(runner, Echo)`, child spec `relays: [Echo]` | `Flezha.SDK.unregister_factory(runner, Echo)` | the module's `run/0`, from its `use` |
 
 Both are methods on the concrete runner handle (functions over the handle in
@@ -666,7 +678,7 @@ at all: it does not implement `Relay`, so it is a compile error.
 in its connect frame and in each `UpdateFactories`, carries `run`, exactly
 `"flow"` or `"steps"`, with `each` and `on_failure` for a steps class: Rust
 fills it from the registered class, and the shared core fills it for Java,
-Node, Python, Ruby, PHP and Elixir from the class declaration. The controller
+Node, Python, Ruby, PHP, Go and Elixir from the class declaration. The controller
 establishes a factory's run from the first announcement, as it establishes its
 language, and a runner announcing the other run, or none, is never a placement
 candidate for it. So a start names only the factory: `flz relay start` and
@@ -683,7 +695,7 @@ against the running core and every worker.
 
 Each code appears **verbatim** in the error the author reads: in the compile
 error text in Rust, Java and an Elixir `use` declaration, and as the `code` of
-the SDK's one error type in Python, Node, Ruby, PHP and an Elixir registration.
+the SDK's one error type in Python, Node, Ruby, PHP, Go and an Elixir registration.
 These are the codes the conformance refusal table's short-form rows are checked
 against:
 

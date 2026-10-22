@@ -3,13 +3,13 @@
 To the controller, a runner is one box: a process that dials in, accepts
 relays, and sends back state changes and outputs. This page opens that
 box. It is for contributors working on an SDK or on the shared kernel, and
-for anyone who wants to know why the seven SDKs behave the same.
+for anyone who wants to know why the eight SDKs behave the same.
 
 A runner has **two layers**. Transport, ordering, durability, retries,
 timers, credit, routing and a steps relay's progress live in one Rust
 kernel, `flz_core`. The SDK for each language brings the surface you write
 your code against and the threads that run it. Between them sits one poll
-loop. All seven SDKs share `flz_core`. What the
+loop. All eight SDKs share `flz_core`. What the
 [kernel](kernel.md), [flow](flow_profile.md) and [steps](steps_profile.md)
 pages describe works the same in every SDK because it sits below that loop.
 
@@ -55,7 +55,7 @@ flowchart TB
 what lets Python keep asyncio and Java keep JVM threads without either
 negotiating with the other. The core's notices (a retry, a reconnect, a
 refusal, the local-mode banner) reach each SDK's own log without breaking
-that rule: Python, Ruby, PHP and Java take them from a queue
+that rule: Python, Ruby, PHP, Java and Go take them from a queue
 (`flz_core_take_notices`) on a thread of their own; Node takes them through
 its log callback, Elixir through a process it registers and Rust through
 `tracing`. A C host may register `flz_core_set_log_callback`, which is called
@@ -119,7 +119,7 @@ encoded itself, the outputs (to an edge or a plugin, with an optional key),
 the consumed offset, the event time, timer changes, a checkpoint flag, a
 dead-letter entry if it parked, and a verdict (`ok`, retryable or
 non-retryable). The change bytes are **opaque to the core**: postcard from
-Rust, Kryo from Java, MessagePack from Node, Ruby and Python, JSON from PHP.
+Rust, Kryo from Java, MessagePack from Node, Ruby and Python, JSON from PHP and Go.
 The controller stores them without decoding them either.
 
 The [key-group check](flow_profile.md#partitioned-relays) also lives below
@@ -369,12 +369,12 @@ points (`flz_core_local_start`, `flz_core_local_on_sink`,
 
 ## One change, every SDK
 
-The kernel has seven hosts today. The Rust SDK uses it as a crate. Java, Node,
+The kernel has eight hosts today. The Rust SDK uses it as a crate. Java, Node,
 Ruby, Python and Elixir load `flz_core_ffi` built with a thin binding layer of
 its own for each (JNI, N-API, magnus, PyO3, Rustler), each a one-to-one layer
 over the C entry points. The PHP SDK calls the C ABI directly through `ext-ffi`, with no
 compiled layer of its own, because PHP has no stable binary interface across
-minor versions.
+minor versions. The Go SDK calls the C ABI through cgo, linked statically.
 
 So a change below the boundary reaches every SDK at once; a change above the
 boundary reaches no SDK by itself.
@@ -389,7 +389,7 @@ The rules every SDK follows:
   author declared to `flz_core::host::register::check`
   (`crates/flz_core/src/host/register.rs`), which holds the refusals and the
   derivation rules. A new refusal is one variant and one fixture row, not an
-  edit to seven builders.
+  edit to eight builders.
 - **A host that brings its own workers replaces them.** A worker that leaves
   for any reason other than shutdown is replaced without user action: the
   governor answers the next supervisor wait with a replacement. Every
@@ -398,7 +398,7 @@ The rules every SDK follows:
   unanswered activation keeps its cell reserved for the life of the process.
   A host with a worker set also runs the governor's **supervisor**: one
   thread whose wait on the core's starvation signal answers one more worker
-  per observation, up to the ceiling. Rust, Java, Node, Ruby, Python, Elixir and the PHP
+  per observation, up to the ceiling. Rust, Java, Node, Ruby, Python, Elixir, Go and the PHP
   SDK's `SwooleExecutor` have one. The PHP SDK's default `SyncExecutor` runs one
   loop per process, so its unit of replacement is the process, which the
   orchestrator already restarts. Every host reports `inflight` and

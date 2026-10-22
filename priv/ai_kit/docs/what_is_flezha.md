@@ -38,7 +38,7 @@ Plugins can be added, swapped and removed while the relay runs, and when the
 one you need does not exist, you can
 [write your own](../topics/plugins/writing_a_plugin.md).
 
-You write the code in Java, Rust, Node, Python, Ruby, PHP or Elixir, and
+You write the code in Java, Rust, Node, Python, Ruby, PHP, Go or Elixir, and
 relays in different languages run side by side in one deployment.
 
 ## The pieces
@@ -77,7 +77,7 @@ flowchart LR
   Several controllers can run as [one cluster](../topics/deploying/clustering.md):
   they share the relays between them, and a controller that is stopped
   hands its relays to the others before it exits.
-- A **runner** is a process of yours, in any of the seven languages, that runs
+- A **runner** is a process of yours, in any of the eight languages, that runs
   your code. It offers capacity to a controller and does what it is told. One
   controller can have many runners, written in different languages and running
   different code, and a cluster of controllers, each with runners of its own,
@@ -192,9 +192,9 @@ you can reach from code.
 - **Effectively-once delivery** for the outputs that must never arrive twice.
 - **Scale out, not up.** Split a relay into partitions, add runners, and run
   several controllers that hand work over to each other when one stops.
-- **Seven languages, one engine.** The SDKs share one engine, so ordering,
+- **Eight languages, one engine.** The SDKs share one engine, so ordering,
   retries and durability follow the same rules whichever language you write in,
-  and handlers in all seven run side by side.
+  and handlers in all eight run side by side.
 - **Plugins in the box.** Files and S3 buckets, HTTP polling, WebSocket feeds,
   Kafka, Postgres, and forwarding from one relay to another ship with
   Flezha, attach with one command, and change without touching your code.

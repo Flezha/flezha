@@ -203,7 +203,7 @@ Three things matter when a supervisor runs it:
   to 30 seconds. It exits when it crashes, and when the controller tells a
   stuck runner to leave, with exit code 70, so that its supervisor starts a
   fresh one.
-- **Keep standard input open for Node, Python, Ruby and PHP.** These runners
+- **Keep standard input open for Node, Python, Ruby, PHP and Go.** These runners
   stop when standard input closes, unless it is a terminal, so a supervisor
   that starts them without one stops them at once. `docker run -i` keeps it
   open, and so does `stdin_open: true` in a compose file.

@@ -45,3 +45,7 @@
 	path = plugins/flezha_postgres_cdc_plugin
 	url = git@github.com:Flezha/flezha_postgres_cdc_plugin.git
 	branch = main
+[submodule "sdk/go"]
+	path = sdk/go
+	url = https://github.com/flezha/flezha_go_sdk.git
+	branch = main

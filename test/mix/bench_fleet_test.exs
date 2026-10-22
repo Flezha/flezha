@@ -39,7 +39,7 @@ defmodule Mix.Tasks.Bench.FleetTest do
           "steps" not in (PortPilot.manifest(runtime)["deferred"] || [])
         end)
 
-      assert Enum.sort(accepted) == [:elixir, :java, :node, :php, :python, :ruby, :rust]
+      assert Enum.sort(accepted) == [:elixir, :go, :java, :node, :php, :python, :ruby, :rust]
 
       for runtime <- accepted do
         assert Fleet.parse_runtime(Atom.to_string(runtime), :steps) == runtime

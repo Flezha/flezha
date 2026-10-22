@@ -21,7 +21,7 @@ flowchart LR
 >
 > - **Docker, with Docker Compose.**
 > - **For the runner**, Java 21 and Maven, or Elixir 1.17 or later. The
->   agentdesk is not yet written for Rust, Node, Python, Ruby or PHP.
+>   agentdesk is not yet written for Rust, Node, Python, Ruby, PHP or Go.
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for the last page.
 > - **git**, to get the example and the HTTP plugin.
 

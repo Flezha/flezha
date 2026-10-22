@@ -568,10 +568,11 @@ change whose apply step is not a pure fold.
 | Ruby | `Flezha::Testing::TaskletTestHarness`, after `require "flezha/testing"` | `replay_equals` | [`examples/starter/count_test.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/starter/count_test.rb) |
 | PHP | `Flezha\Testing\TaskletTestHarness` | `replayEquals()` | [`examples/starter/tests/CountHitsTest.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/starter/tests/CountHitsTest.php) |
 | Elixir | `Flezha.SDK.TaskletTestHarness` | `replay_equals/1` | - |
+| Go | `flezhatest.TaskletTestHarness`, from `github.com/flezha/flezha_go_sdk/flezhatest` | `ReplayEquals()` | - |
 
 A timer the tasklet sets stays pending in the harness until the test fires it, which runs the
 tasklet's timer hook at the timer's scheduled time: `fire_timer(kind, at)` (Rust, Python,
-Ruby, Elixir) or `fireTimer(kind, at)` (Java, PHP, Node). Rust, Java, Python and Elixir also
+Ruby, Elixir), `fireTimer(kind, at)` (Java, PHP, Node) or `FireTimer(kind, at)` (Go). Rust, Java, Python and Elixir also
 fire every event-time timer due by a given event time, with `advance_event_time` or
 `advanceEventTime`, and Rust and Java list what is pending, with `pending_timers(kind)` or
 `pendingTimers()`.

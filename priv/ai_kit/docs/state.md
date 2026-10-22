@@ -347,8 +347,8 @@ that sleeps, or of a class kept in memory, cannot be read this way. The other
 | Pending-timer cap per cell; past it, the item fails with `runtime.timer_cap_exceeded` (in Rust, the call) | `Tasklet::max_timers_per_cell()` | `@Tasklet.Spec(maxTimersPerCell = n)` | `max_timers_per_cell/0` | 10 000 |
 | Wait between flushes of recorded changes | `FLEZHA_FLUSH_LINGER_MS` | `FLEZHA_FLUSH_LINGER_MS` | none: records ship at the end of each invocation | 5 ms |
 
-The Node, Python, Ruby and PHP SDKs carry the same settings under their own
-spellings (`schemaVersion` / `schema_version` on the tasklet's declaration),
+The Node, Python, Ruby, PHP and Go SDKs carry the same settings under their own
+spellings (`schemaVersion` / `schema_version` / `SchemaVersion` on the tasklet's declaration),
 listed on each SDK's reference page. When the class's tasklets declare
 different `compact_after_bytes`, the smallest one applies. How to change a
 state or change type after it has been deployed, with `migrate_state` and
@@ -392,7 +392,8 @@ names each one.
 ## Limits and gotchas
 
 - **A direct write is lost on a crash** in Java, Ruby and PHP, where the
-  language does not stop it. Rust, Node, Python and Elixir refuse it.
+  language does not stop it. Rust, Node, Python and Elixir refuse it. Go's
+  `ctx.State()` is a copy, so only a write through a map, slice or pointer in it is lost.
 - **Eviction is destructive.** A dynamic cell evicted after its idle time loses
   its state, its log and its snapshot.
 - **Keep large data small.** Every change is a log record; record deltas.

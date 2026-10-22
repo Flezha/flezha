@@ -1,7 +1,7 @@
 # Code standards
 
 The rules a change to this repository is held to, in every language it carries:
-Elixir, Rust, Java, and the Node, Python, Ruby and PHP SDKs.
+Elixir, Rust, Java, and the Node, Python, Ruby, PHP and Go SDKs.
 
 Most of them are written here to be read and applied, not measured by a tool.
 Some have gates, and where one exists it is named below. A gate is the

@@ -19,7 +19,9 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
   rerouting onto the other runtime.
 
   Tagged `:interop` as well as `:system`; it needs BOTH test apps built.
-  Run with `mix test --include system --include interop`.
+  Run with `mix test --include system --include interop`. The pair is Rust then
+  Java unless `FLEZHA_INTEROP_PAIR` names another, `<first>,<second>`: the first
+  establishes the factory, so a new SDK proves the guard from its own side.
   """
 
   use FlezhaTest.SystemCase, capability: :runner_lifecycle
@@ -46,16 +48,23 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
   # A `runner_lifecycle` fixture both reference apps register under the same id.
   @shared_factory "bench_echo"
 
-  @rust PortPilot.sdk_lang(:rust)
+  @pair "FLEZHA_INTEROP_PAIR"
+        |> System.get_env("rust,java")
+        |> String.split(",")
+        |> Enum.map(&String.to_atom/1)
+  @first hd(@pair)
+  @second List.last(@pair)
+
+  @first_lang PortPilot.sdk_lang(@first)
 
   setup_all do
     # The factory must start unestablished: a leftover record from another run
     # would decide the outcome before either runner connects.
     ClassRegistry.delete_established(@namespace, @shared_factory)
 
-    # The Rust runner connects FIRST and establishes the factory's language.
-    {rust_port, rust_runner} = NodeTestHelper.start_runner_port(@namespace, runtime: :rust)
-    {java_port, java_runner} = NodeTestHelper.start_runner_port(@namespace, runtime: :java)
+    # The first runner connects FIRST and establishes the factory's language.
+    {first_port, first_runner} = NodeTestHelper.start_runner_port(@namespace, runtime: @first)
+    {second_port, second_runner} = NodeTestHelper.start_runner_port(@namespace, runtime: @second)
 
     on_exit(fn ->
       # Order matters: the namespace must leave the fleet while its hub is
@@ -65,7 +74,7 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
       for step <- [
             fn -> RelayManager.stop_all_relays(@namespace) end,
             fn -> FleetManager.stop_namespace(@namespace) end,
-            fn -> Enum.each([rust_port, java_port], &Port.close/1) end,
+            fn -> Enum.each([first_port, second_port], &Port.close/1) end,
             fn -> ClassRegistry.delete_established(@namespace, @shared_factory) end
           ] do
         try do
@@ -77,9 +86,9 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
     end)
 
     %{
-      rust_port: rust_port,
-      rust_runner: rust_runner,
-      java_runner: java_runner
+      first_port: first_port,
+      first_runner: first_runner,
+      second_runner: second_runner
     }
   end
 
@@ -88,16 +97,16 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
   # would pass or fail on the seed's ordering.
   test "placement never crosses languages, and a dead runner does not hand its factory over",
        ctx do
-    assert ClassRegistry.established(@namespace, @shared_factory, :sdk_lang) == @rust,
-           "the Rust runner connected first, so it establishes #{@shared_factory}"
+    assert ClassRegistry.established(@namespace, @shared_factory, :sdk_lang) == @first_lang,
+           "the #{@first} runner connected first, so it establishes #{@shared_factory}"
 
     # -- both advertise the id; only the established language is a candidate --
     candidates = FleetManager.runners_for_factory(@namespace, @shared_factory)
-    assert candidates == [ctx.rust_runner]
+    assert candidates == [ctx.first_runner]
 
-    refute ctx.java_runner in candidates,
-           "a Java runner advertising a Rust-established factory is not a candidate: " <>
-             "its Kryo codec cannot read the factory's postcard state"
+    refute ctx.second_runner in candidates,
+           "a #{@second} runner advertising a #{@first}-established factory is not a " <>
+             "candidate: its codec cannot read the factory's state"
 
     # -- placement lands on the established language --
     placed = %Builder{
@@ -109,10 +118,10 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
     assert {:ok, _} = RelayManager.start_relay(@namespace, placed)
 
     assert RelayManager.assign_runner(@namespace, @shared_factory, placed.id) ==
-             ctx.rust_runner
+             ctx.first_runner
 
     # -- the reroute off a dead runner reads the same filter --
-    {:os_pid, os_pid} = :erlang.port_info(ctx.rust_port, :os_pid)
+    {:os_pid, os_pid} = :erlang.port_info(ctx.first_port, :os_pid)
     System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
 
     assert NodeTestHelper.wait_until(
@@ -121,9 +130,9 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
              end,
              10_000
            ),
-           "the Java runner became a candidate after the Rust runner died"
+           "the #{@second} runner became a candidate after the #{@first} runner died"
 
-    assert FleetManager.placement_refusal(@namespace, @shared_factory) == {:language, @rust}
+    assert FleetManager.placement_refusal(@namespace, @shared_factory) == {:language, @first_lang}
 
     # -- and the refusal names the language, never "does not exist" --
     {:error, reason} =
@@ -133,6 +142,6 @@ defmodule FlezhaTest.System.CrossSdkPlacementE2ETest do
         opts: []
       })
 
-    assert {:factory_language_unserved, @namespace, @shared_factory, @rust} = reason
+    assert {:factory_language_unserved, @namespace, @shared_factory, @first_lang} = reason
   end
 end

@@ -218,7 +218,7 @@ A relay declaration carrying both a tasklet body and a topology body SHALL be re
 - **THEN** each is one relay declaration carrying its factory id and a tasklet body (an `output` on all but `sugar_state_only`, and `prices` or `order` for the named entries), no separate tasklet declaration and one registration call, and every runtime's declaration equals the reference golden
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's flow and steps authoring surfaces SHALL be rooted in the shared `Relay` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP, Python and Go SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's flow and steps authoring surfaces SHALL be rooted in the shared `Relay` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
 An SDK whose authoring surface is a set of factory functions, or a set of classes, rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
 
@@ -235,11 +235,11 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 #### Scenario: A declaration key lands in every SDK or is deferred by name
 
 - **WHEN** a change adds a key to `HostClassDecl` (for example a checkpoint option)
-- **THEN** the same change adds its spelling to the Rust, Java, Node, Ruby, PHP and Python builders, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
+- **THEN** the same change adds its spelling to the Rust, Java, Node, Ruby, PHP, Python and Go builders, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
 
 #### Scenario: A performance claim is measured per runtime
 
-- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java, Elixir, Ruby, PHP and Python runners all carry
+- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java, Elixir, Ruby, PHP, Python and Go runners all carry
 - **THEN** its notes report a number per runtime from the same bench protocol, and a runtime without a number is named as unmeasured rather than covered by the Rust number
 
 #### Scenario: The Ruby surface is bound by the contract, not beside it
@@ -261,6 +261,11 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 
 - **WHEN** the Python SDK's authoring surface is compared against the contract's inference rules
 - **THEN** its decorator-based sugar SHALL expand to the same topology and associated-type mapping as the other SDKs', and a divergence SHALL be a defect of the Python SDK rather than a contract exception
+
+#### Scenario: The Go surface is bound by the contract, not beside it
+
+- **WHEN** a Go tasklet type's `Spec()` method, its implemented hook interfaces and its typed `Run` are compared against the contract's inference rules
+- **THEN** they SHALL yield the same declaration a Rust macro or a Java annotation yields for the equivalent class, and a divergence SHALL be a defect of the Go SDK rather than a contract exception
 
 ### Requirement: Keyed and collection state journaling
 The authoring contract SHALL define journaling mutators for per-key map state so a stateful tasklet whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
@@ -287,7 +292,7 @@ The defined modes are:
 - **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
 
 ### Requirement: Emit-or-skip output return
-The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::relay]` / `#[flezha::relay]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java, Rust or PHP tasklet's `run` returns no output and emits through its context, typed in Java and Rust, so the shape does not apply there: emitting nothing is not calling `emit`. A PHP short form is a class whose `run` is a tasklet's, so it emits through its context too. A Python short form declared on a function (`@flezha.relay` / `@flezha.relay`) takes the same shape, `None` being its absent value; a Python tasklet class's `run`, and a Python short form declared on a class, returns `None` and emits through its typed context, so the shape does not apply there. A Ruby tasklet's `run`, and a Ruby short form's, emits through its context as well, so the shape does not apply there; a Ruby method answers its last expression, so a Ruby `run` may answer a value, and the SDK ignores it. A Node tasklet's `run`, and a Node short form's, a definition object carrying a tasklet's fields and `run`, emits through its typed context as well, so the shape does not apply there; a Node `run` is typed to return nothing, so TypeScript refuses one that returns a value, and the SDK ignores a value a plain JavaScript `run` returns.
+The authoring contract SHALL define an optional-output return shape for a short form declared on a function (Rust `#[flezha::relay]` / `#[flezha::relay]` on a `fn`): a function returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged. A Java, Rust or PHP tasklet's `run` returns no output and emits through its context, typed in Java and Rust, so the shape does not apply there: emitting nothing is not calling `emit`. A PHP short form is a class whose `run` is a tasklet's, so it emits through its context too. A Python short form declared on a function (`@flezha.relay` / `@flezha.relay`) takes the same shape, `None` being its absent value; a Python tasklet class's `run`, and a Python short form declared on a class, returns `None` and emits through its typed context, so the shape does not apply there. A Ruby tasklet's `run`, and a Ruby short form's, emits through its context as well, so the shape does not apply there; a Ruby method answers its last expression, so a Ruby `run` may answer a value, and the SDK ignores it. A Node tasklet's `run`, and a Node short form's, a definition object carrying a tasklet's fields and `run`, emits through its typed context as well, so the shape does not apply there; a Node `run` is typed to return nothing, so TypeScript refuses one that returns a value, and the SDK ignores a value a plain JavaScript `run` returns. A Go short form declared on a function (`flezha.ShortRelay`) takes the same shape, its optional value being the pair `(O, bool)` and `false` its absent value; a Go tasklet's `Run` returns only an `error` and emits through its typed context, so the shape does not apply there.
 
 #### Scenario: A function short form emits on present and skips on absent
 
@@ -328,6 +333,16 @@ The authoring contract SHALL define an optional-output return shape for a short 
 
 - **WHEN** a plain JavaScript tasklet's or short form's `run` returns a value without calling `ctx.emit` for an input
 - **THEN** nothing SHALL be emitted for that input, the returned value SHALL be ignored, and the same `run` written in TypeScript SHALL fail to type-check
+
+#### Scenario: A Go function short form emits on true and skips on false
+
+- **WHEN** a Go short form returns `(v, false)` for one input and `(w, true)` for the next
+- **THEN** the relay emits nothing for the first input and emits `w` for the second, without the author touching the context
+
+#### Scenario: A Go tasklet that emits nothing
+
+- **WHEN** a Go tasklet's `Run` returns `nil` without calling `ctx.Emit` for an input
+- **THEN** nothing SHALL be emitted for that input
 
 ### Requirement: Single hand-written path determinism
 The authoring contract SHALL state how each SDK keeps a tasklet's live and replay paths from diverging. A tasklet mutating state only through generated journaling recorders (Elixir's `state` block) has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same recorder definitions. A Rust or Java tasklet's change applies itself (`apply_to` / `applyTo`), and that one fold is what `ctx.change` runs live and what a restore runs on replay. The replay-determinism conformance test remains the gate for all tasklets.

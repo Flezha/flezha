@@ -518,7 +518,7 @@ defmodule Flezha.Config.Keys do
      env: "FLEZHA_LOG_PATH", runtimes: [:controller]},
     {:log_level, {:enum, [:debug, :info, :warn, :error]}, [controller: :info, runner: :warn],
      env: "FLEZHA_LOG_LEVEL",
-     runtimes: [:controller, :elixir_sdk, :rust, :java, :node, :python, :ruby, :php]},
+     runtimes: [:controller, :elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go]},
     {:log_max_bytes, :int, 10_485_760, env: "FLEZHA_LOG_MAX_BYTES", runtimes: [:controller]},
     {:log_keep_files, :positive_int, 5, env: "FLEZHA_LOG_KEEP_FILES", runtimes: [:controller]},
 
@@ -527,13 +527,13 @@ defmodule Flezha.Config.Keys do
     # A runner reads these in ITS OWN process: the names are shared, the readers
     # are not. `Flezha.Config` never answers them for the controller.
     {:mailbox_capacity, :positive_int, 1_024,
-     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go],
      env: "FLEZHA_MAILBOX_CAPACITY"},
     {:worker_pool_size, :positive_int, nil,
-     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go],
      env: "FLEZHA_WORKER_POOL_SIZE"},
     {:worker_pool_max, :positive_int, nil,
-     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go],
      env: "FLEZHA_WORKER_POOL_MAX"},
     {:node_workers, :positive_int, nil, runtimes: [:node], env: "FLEZHA_NODE_WORKERS"},
     # The cadence at which a keyed host sweeps idle cells. The default is
@@ -547,10 +547,10 @@ defmodule Flezha.Config.Keys do
     # runner claims is checked against what its own credential entitles; a
     # deployment whose peers authenticate with a SPIFFE certificate needs none.
     {:namespace_secret, :string, nil,
-     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go],
      env: "FLEZHA_NAMESPACE_SECRET"},
     {:runner_start_wait_ms, :ms, 10_000,
-     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php],
+     runtimes: [:elixir_sdk, :rust, :java, :node, :python, :ruby, :php, :go],
      env: "FLEZHA_RUNNER_START_WAIT_MS"},
     {:token, :string, nil, runtimes: [:cli], env: "FLEZHA_TOKEN"},
     {:reconnect_ring_capacity, :positive_int, 1_024,

@@ -388,7 +388,7 @@ retired name. The one file allowed to name a retired variable is the one that
 refuses it.
 
 `connect_discovery` is in the required set, because every SDK carries it — Rust,
-Java, Node, Ruby, PHP, Python and Elixir through `flz_core` —
+Java, Node, Ruby, PHP, Python, Go and Elixir through `flz_core` —
 and `test/system/connect_discovery_e2e_test.exs` drives it under whichever
 runtime the run selects.
 
@@ -452,7 +452,7 @@ the compile-fail test that pins it:
 The drill checks the cited file exists and carries the code, so a citation
 nothing holds fails the same way a missing refusal does. Under
 `FLEZHA_REFUSAL_FIXTURE` the app prints the code and the path and exits
-non-zero. `topology.duplicate_factory_id` is a runtime refusal in all seven, so that row
+non-zero. `topology.duplicate_factory_id` is a runtime refusal in all eight, so that row
 boots for real everywhere.
 
 ## Golden declaration snapshots
@@ -624,7 +624,7 @@ never crosses languages.
 ### `sdk_version`
 
 Bytes 1:5 of the same header name the *writing* SDK's own released version, not
-the kernel's: seven SDKs release on their own cadences over a core that may not
+the kernel's: eight SDKs release on their own cadences over a core that may not
 move, and "which SDK build wrote this record" is the question a migration asks.
 
 Declare it as the version string your package metadata already spells — the core

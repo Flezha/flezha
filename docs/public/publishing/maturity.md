@@ -75,7 +75,7 @@ their pages under `docs/internal/sdk/` and nowhere else.
 
 | id | feature | status | marked | promise | surfaces | announced-by |
 |---|---|---|---|---|---|---|
-| <a id="quic"></a>quic | The QUIC transport, between a runner and a controller. The Unix domain socket transport is the default and is stable. | experimental | 2026-09-10 | Its settings and behaviour may change drastically, and it may be removed, without a compatibility break. Until it graduates, it is far less exercised than the socket transport. | `docs/public/configuration/environment_variables.md`, `docs/public/configuration/application_env.md`, `docs/public/configuration/runner_environment.md`, `docs/public/topics/deploying/connecting_a_runner.md`, `docs/public/topics/core/authorization.md`, `docs/public/topics/deploying/deploying_a_controller.md`, `docs/internal/sdk/protocol_spec.md` | `lib/flezha/transport/server.ex` `listen(:quic)`, the controller's QUIC listener; `crates/flz_transport/src/transport/config.rs` `get_transport_type`, the transport selection the Rust, Java, Node, Python, Ruby, PHP and Elixir runners and the `flz` CLI reach |
+| <a id="quic"></a>quic | The QUIC transport, between a runner and a controller. The Unix domain socket transport is the default and is stable. | experimental | 2026-09-10 | Its settings and behaviour may change drastically, and it may be removed, without a compatibility break. Until it graduates, it is far less exercised than the socket transport. | `docs/public/configuration/environment_variables.md`, `docs/public/configuration/application_env.md`, `docs/public/configuration/runner_environment.md`, `docs/public/topics/deploying/connecting_a_runner.md`, `docs/public/topics/core/authorization.md`, `docs/public/topics/deploying/deploying_a_controller.md`, `docs/internal/sdk/protocol_spec.md` | `lib/flezha/transport/server.ex` `listen(:quic)`, the controller's QUIC listener; `crates/flz_transport/src/transport/config.rs` `get_transport_type`, the transport selection the Rust, Java, Node, Python, Ruby, PHP, Go and Elixir runners and the `flz` CLI reach |
 
 ## SDK support tiers
 
@@ -88,6 +88,7 @@ their pages under `docs/internal/sdk/` and nowhere else.
 | <a id="sdk-python"></a>python | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/python/README.md`, `docs/internal/sdk/python_sdk.md` |
 | <a id="sdk-ruby"></a>ruby | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/ruby/README.md`, `docs/internal/sdk/ruby_sdk.md` |
 | <a id="sdk-php"></a>php | 2 | Passes the full conformance run in CI exactly as tier 1 does, with every capability present but `local_send`, which its single-threaded serving defers, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/php/README.md`, `docs/internal/sdk/php_sdk.md` |
+| <a id="sdk-go"></a>go | 2 | Passes the full conformance run exactly as tier 1 does, with every capability present, and is permanently supported. Not yet run by the maintainer in a live deployment. | `sdk/go/README.md`, `docs/internal/sdk/go_sdk.md` |
 
 ## Changing this record
 

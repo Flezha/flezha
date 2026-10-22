@@ -335,7 +335,7 @@ fn every_request_sends_a_count_of_arguments_its_operation_takes() {
 fn every_catalogue_operation_has_a_caller() {
     let rows: BTreeSet<String> = row_calls().into_values().flatten().collect();
     let (console, sdks) = other_callers();
-    assert_eq!(sdks.len(), 7, "the gate declares seven SDK control modules");
+    assert_eq!(sdks.len(), 8, "the gate declares eight SDK control modules");
 
     let called = |name: &str| {
         rows.contains(name)

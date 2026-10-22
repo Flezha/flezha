@@ -9,7 +9,7 @@ to keep state, a way to recover after a crash, retries, a way to spread the work
 over more machines. Flezha provides that scaffolding, so your code can stay about
 the data.
 
-You write the logic in Java, Rust, Python, Node, Ruby, PHP or Elixir. Flezha runs
+You write the logic in Java, Rust, Python, Node, Ruby, PHP, Go or Elixir. Flezha runs
 it as many small, independent pieces in parallel, on one machine or across
 several, keeps each piece's state on disk, and when a process or a machine fails,
 starts the work again elsewhere and carries on from where it stopped.
@@ -34,7 +34,7 @@ The same building blocks carry many shapes of data processing:
 
 - **The controller** coordinates everything: it decides where work runs, keeps
   its state on disk, and starts it again elsewhere when something fails.
-- **A runner** is your own program, written with one of the seven SDKs. It
+- **A runner** is your own program, written with one of the eight SDKs. It
   connects to the controller and runs the code you registered.
 - **A relay** is one running copy of that code. A relay is a processing unit
   that works like a worker: it keeps its own state and carries data through its

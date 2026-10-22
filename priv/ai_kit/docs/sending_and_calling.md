@@ -67,7 +67,7 @@ it holds:
 | whether it answers, and in which format | an output reachable from the channel; outputs that disagree answer `bytes` |
 | a description | `describe` or the `description` option; optional |
 | the input's JSON Schema, for a `json` channel | derived from the input type where the SDK can read it, or given |
-| the answer's JSON Schema | derived from the output type in Java, Python, PHP and Rust |
+| the answer's JSON Schema | derived from the output type in Java, Python, PHP, Go and Rust |
 
 A channel that reaches no output does not answer: a call to it is a send, answered `accepted`.
 
@@ -826,10 +826,11 @@ into the calling tasklet is fan-in, not a cycle.
 | Ruby | `.call("pricing", deadline_ms: 500)`, `.call(factory: "agent", deadline_ms: ..., create: false, channel: "turn", codec: ...)` | `answer_channel: "quotes"` |
 | PHP | `->call(target: 'pricing', deadlineMs: 500)`, `->call(factory: 'agent', deadlineMs: ..., create: false, channel: 'turn', codec: ...)` | `answerChannel: 'quotes'` |
 | Elixir | `call(s, "pricing", deadline_ms: 500)`, `call(s, factory: "agent", deadline_ms: ..., create: false, channel: "turn", serialize: f, decode: g)` | `answer_channel: "quotes"` |
+| Go | `flezha.Call[Req, Answer](s, flezha.CallSpec{Target: "pricing", DeadlineMs: 500})`, `flezha.CallSpec{Factory: "agent", NoCreate: true, Channel: "turn", Codec: ...}` | `flezha.CallSpec{..., AnswerChannel: "quotes"}` |
 
 The request is written the way an `output` writes, and the answer read the way an `input` reads: the
 answer type in Rust and Java, one named codec for both directions in Node, Python, Ruby and PHP
-(JSON by default), and optional `serialize:` and `decode:` functions in Elixir (by default the
+(JSON by default), both in Go (the answer type, and `CallSpec.Codec` for both directions), and optional `serialize:` and `decode:` functions in Elixir (by default the
 output rule and the raw binary; the Elixir `Response` carries the request as the bytes that were
 sent).
 

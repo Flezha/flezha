@@ -51,7 +51,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     ruby: Path.wildcard("sdk/ruby/lib/**/*.rb"),
     php: Path.wildcard("sdk/php/src/**/*.php"),
     python: Path.wildcard("sdk/python/src/**/*.py"),
-    elixir: Path.wildcard("sdk/elixir/lib/**/*.ex")
+    elixir: Path.wildcard("sdk/elixir/lib/**/*.ex"),
+    go: Path.wildcard("sdk/go/**/*.go")
   }
 
   # A variable this contract governs: the socket directory, the QUIC endpoints,
@@ -90,6 +91,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     python: "sdk/python/src/flezha/control.py",
     ruby: "sdk/ruby/lib/flezha/control.rb",
     php: "sdk/php/src/Control.php",
+    go: "sdk/go/control.go",
     elixir: "sdk/elixir/lib/flezha/sdk/control.ex"
   }
 
@@ -355,9 +357,10 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       # the Rust compiler expands `env!("CARGO_PKG_VERSION")` against Cargo.toml,
       # Elixir reads `Application.spec(:flezha, :vsn)` from mix.exs, and Ruby's
       # `graph.rb` packs the single `Flezha::VERSION` its gemspec also reads.
-      # PHP has nothing to compare *against*: `composer.json` declares no version
-      # by design, so its constant is the sole source of truth and is asserted
-      # only to parse non-zero.
+      # PHP and Go have nothing to compare *against*: `composer.json` declares
+      # no version by design, and a Go module carries none in `go.mod`, so each
+      # constant is the sole source of truth and is asserted only to parse
+      # non-zero.
       reader_is_the_manifest = [:rust, :elixir, :ruby]
 
       pinned = %{
@@ -373,7 +376,10 @@ defmodule FlezhaTest.SdkConformance.GateTest do
            {"sdk/python/pyproject.toml", ~r/^version = "([0-9][^"]*)"/m}}
       }
 
-      php_constant = {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_VERSION = '([0-9][^']*)'/}
+      sole_source = %{
+        php: {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_VERSION = '([0-9][^']*)'/},
+        go: {"sdk/go/decl.go", ~r/const Version = "([0-9][^"]*)"/}
+      }
 
       read = fn {path, pattern} ->
         case Regex.run(pattern, File.read!(path)) do
@@ -383,17 +389,17 @@ defmodule FlezhaTest.SdkConformance.GateTest do
       end
 
       for runtime <- runtimes(), runtime not in reader_is_the_manifest do
-        if runtime == :php do
-          version = read.(php_constant)
-          {path, _} = php_constant
+        if constant = sole_source[runtime] do
+          version = read.(constant)
+          {path, _} = constant
 
           unless names_a_real_version?(version) do
             fail(
-              "#{path} stamps SDK_VERSION #{inspect(version)}, which packs to 0 — " <>
+              "#{path} stamps version #{inspect(version)}, which packs to 0 — " <>
                 "0 means \"the writing SDK did not say\" and the core refuses it at " <>
-                "declaration time. PHP has no package metadata to compare against " <>
-                "(composer.json declares no version by design), so this constant is the " <>
-                "SDK's sole source of truth and the release checklist owes its bump"
+                "declaration time. #{runtime} has no package metadata to compare against, " <>
+                "so this constant is the SDK's sole source of truth and the release " <>
+                "checklist owes its bump"
             )
           end
         else
