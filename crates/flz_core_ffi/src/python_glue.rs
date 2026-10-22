@@ -10,7 +10,7 @@
 //! as a [`PayloadView`] — a buffer-protocol object over bytes this module
 //! owns — so the common decode path allocates no intermediate `bytes`.
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{c_int, c_void};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -133,13 +133,6 @@ impl PayloadView {
         }
         unsafe { fill_readonly_view(view, flags, &slf.get().bytes, slf.clone().into_any()) }
     }
-
-    /// # Safety
-    /// Called by CPython with the `Py_buffer` `__getbuffer__` filled.
-    unsafe fn __releasebuffer__(&self, view: *mut ffi::Py_buffer) {
-        // The format string is the one allocation `__getbuffer__` makes.
-        drop(unsafe { CString::from_raw((*view).format) });
-    }
 }
 
 /// Fill a `Py_buffer` from a read-only slice, keeping `owner` alive for as
@@ -166,8 +159,9 @@ unsafe fn fill_readonly_view(
         (*view).readonly = 1;
         (*view).itemsize = 1;
         (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-            // Freed in `__releasebuffer__`; CPython owns neither end of it.
-            CString::new("B").unwrap().into_raw()
+            // Static, so the export allocates nothing and needs no release
+            // hook; CPython never writes through `format`.
+            c"B".as_ptr().cast_mut()
         } else {
             std::ptr::null_mut()
         };
