@@ -138,12 +138,12 @@ GATES = (
     # lists. xargs collapses every status from 1 to 125 into 123, which alone
     # would make a reuse crash and a file with no licence header the same
     # number, so the wrapper keeps reuse's own 1 and turns every other failure
-    # into 255 — which xargs reports as 124.
+    # into 255 — which xargs reports as 124. The batches run one per CPU.
     {"id": "reuse-lint", "group": "format", "finding": "status:123",
      "tools": ["reuse:pipx install reuse"],
      "argv": ["bash", "-c",
-              "git ls-files -co --exclude-standard -z | "
-              "xargs -0 sh -c 'reuse lint-file \"$@\" || exit $(($? == 1 ? 1 : 255))' reuse-lint"]},
+              "git ls-files -co --exclude-standard -z | xargs -0 -P \"$(nproc)\" -n 300 "
+              "sh -c 'reuse lint-file \"$@\" || exit $(($? == 1 ? 1 : 255))' reuse-lint"]},
     {"id": "third-party-notices", "group": "format", "finding": "status:1",
      "tools": ["cargo-about:cargo install cargo-about"],
      "argv": ["bash", "-c",
@@ -197,9 +197,10 @@ def _mix_test(row_id, group, *args, env=None, **opts):
 
 
 def _deps_compile(name, group, cwd, *envs):
-    """Third-party dependencies alone: their warnings stay in the log and fail
-    nothing. Path dependencies are ours and build in the compile row after."""
-    return [_bar(f"{name}-deps-compile-{env}", group, "mix", "deps.compile", "--skip-local-deps",
+    """The dependencies Mix finds stale, compiled ahead of the quiet rows: their
+    warnings stay in the log and fail nothing. Path dependencies build here too;
+    each is judged by its own project's compile row."""
+    return [_bar(f"{name}-deps-compile-{env}", group, "mix", "deps.loadpaths",
                  cwd=cwd, env={"MIX_ENV": env}, quiet=False) for env in envs]
 
 
@@ -236,7 +237,7 @@ def _core():
             _build("core-prep-runner", "core", "rust"),
             _bar("core-prep-certs", "core", "mix", "run", "--no-start", "-e",
                  "Flezha.Transport.CertGenerator.ensure_certs()", env={"MIX_ENV": "test"},
-                 stderr_ok=True)]
+                 stderr_ok=True, builds=True)]
     small = []
     for directory in _files("test/flezha/*/"):
         if len(glob.glob(f"{ROOT}/{directory}/**/*_test.exs", recursive=True)) >= 15:
@@ -317,20 +318,20 @@ PLUGIN_LOCKS = r"""
 
 def _plugins():
     """The plugin packages build against this checkout; their broker-backed
-    integration tags stay excluded, as each test_helper sets."""
+    integration tags stay excluded, as each test_helper sets. Each package has
+    its own `deps` and `_build`, so each is a lane; `@plugins` stands for all."""
     rows = [_bar("plugin-locks", "plugins", "bash", "-c", PLUGIN_LOCKS)]
+    lanes = []
     for path in _files("plugins/*/"):
         name = os.path.basename(path).removesuffix("_plugin").removeprefix("flezha_")
-        rows += [_bar(f"plugin-{name}-deps", "plugins", "mix", "deps.get", cwd=path,
-                      stderr_ok=True),
-                 *_deps_compile(f"plugin-{name}", "plugins", path, "dev", "test"),
-                 _bar(f"plugin-{name}-compile", "plugins", "mix", "compile",
-                      "--warnings-as-errors", cwd=path),
-                 _bar(f"plugin-{name}-test", "plugins", "mix", "test", "--warnings-as-errors",
-                      cwd=path),
-                 _bar(f"plugin-{name}-format", "plugins", "mix", "format", "--check-formatted",
-                      cwd=path)]
-    return rows
+        g = f"plugin-{name}"
+        lanes.append(f"@{g}")
+        rows += [_bar(f"{g}-deps", g, "mix", "deps.get", cwd=path, stderr_ok=True),
+                 *_deps_compile(g, g, path, "dev", "test"),
+                 _bar(f"{g}-compile", g, "mix", "compile", "--warnings-as-errors", cwd=path),
+                 _bar(f"{g}-test", g, "mix", "test", "--warnings-as-errors", cwd=path),
+                 _bar(f"{g}-format", g, "mix", "format", "--check-formatted", cwd=path)]
+    return [*rows, {"id": "plugins", "group": "plugins", "groups": ",".join(lanes)}]
 
 
 RUBY = {"RBENV_VERSION": "3.4.10"}
@@ -385,14 +386,13 @@ def _rust():
 
 
 def _sdk_java():
-    """sdk/java/scripts/ci.sh and the workflow's format job."""
+    """sdk/java/scripts/ci.sh and the workflow's format job, whose
+    `spotless:check` the install's verify phase runs in every module."""
     g, d = "sdk-java", "sdk/java"
     return [_build("sdk-java-build", g, "java"),
             _bar("sdk-java-install", g, "mvn", "-B", "-P", "native-verify", "install", cwd=d),
             _bar("sdk-java-starter", g, "mvn", "-B", "-q", "-f", "examples/starter/pom.xml",
                  "package", cwd=d),
-            _bar("sdk-java-spotless", g, "mvn", "-B", "-q", "-DskipTests", "spotless:check",
-                 cwd=d),
             _smoke("sdk-java-smoke", g, d, "java", "-jar", "test_app/target/java_runner.jar",
                    "smoke"),
             _e2e_smoke("java")]

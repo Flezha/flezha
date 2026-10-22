@@ -146,7 +146,9 @@ for triple in "${TRIPLES[@]}"; do
   fi
 
   mkdir -p "${DST_DIR}"
-  cp "${SRC}" "${DST}"
+  # An unchanged binary keeps its timestamp, so the veneer's incremental build
+  # (Maven's resources, then every module after them) has nothing to redo.
+  cmp -s "${SRC}" "${DST}" || cp "${SRC}" "${DST}"
   echo "    -> ${DST}"
 done
 
@@ -158,7 +160,15 @@ command -v cargo-about >/dev/null 2>&1 || {
   echo "  cargo install cargo-about --locked --features cli" >&2
   exit 1
 }
-(cd "${REPO_ROOT}" && cargo about generate -c rel/third_party/about.toml rel/third_party/about.hbs -o rel/third_party/THIRD_PARTY_NOTICES.md)
-echo "    -> ${REPO_ROOT}/rel/third_party/THIRD_PARTY_NOTICES.md"
+# cargo-about has no up-to-date check of its own: it runs when what it reads
+# (the lock, every workspace manifest, its config) is newer than its output.
+notices="${REPO_ROOT}/rel/third_party/THIRD_PARTY_NOTICES.md"
+mapfile -t inputs < <(cd "${REPO_ROOT}" && cargo metadata --no-deps --format-version 1 |
+  grep -o '"manifest_path":"[^"]*"' | cut -d'"' -f4)
+inputs+=("${REPO_ROOT}/Cargo.toml" "${REPO_ROOT}/Cargo.lock" "${REPO_ROOT}"/rel/third_party/about.{toml,hbs})
+if [[ ! -f "${notices}" || -n "$(find "${inputs[@]}" -newer "${notices}")" ]]; then
+  (cd "${REPO_ROOT}" && cargo about generate -c rel/third_party/about.toml rel/third_party/about.hbs -o rel/third_party/THIRD_PARTY_NOTICES.md)
+fi
+echo "    -> ${notices}"
 
 echo "Done. Binaries staged under: ${OUTPUT_DIR}"
