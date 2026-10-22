@@ -8,7 +8,6 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # async: false: writes Application env; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.Wire
@@ -645,11 +644,12 @@ defmodule FlezhaTest.State.TaskJournalTest do
     ClassRegistry.put_compensable_ops(inst, [])
   end
 
+  # The cut is cast to the journal's writer; any call into it after is behind it.
   defp cut_and_await(inst, expected) do
     :ok = TaskJournal.cut(inst)
-
-    assert wait_until(fn -> seqs(inst) == expected end, 2_000),
-           "journal holds #{inspect(seqs(inst))}"
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(Paths.journal_id(inst))
+    _ = WalWriter.last_persisted_seq(writer)
+    assert seqs(inst) == expected
   end
 
   # Two tasks and the boundary per iteration, nothing staged: seqs 3i..3i+2.

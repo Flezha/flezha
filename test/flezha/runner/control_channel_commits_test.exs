@@ -17,6 +17,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
+  alias Flezha.Identificator
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
@@ -84,26 +85,6 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     assert {task.type, task.payload.completion} == {:task_committed, "3"}
     assert {iter.type, iter.payload.completion} == {:iter_committed, "3"}
     assert plain.payload.completion == nil
-  end
-
-  test "a refused append (oversized handoff) rides back in the error field" do
-    on_exit(TestHelpers.override_env(:wal_high_watermark_bytes, 1024))
-
-    inst = "opc_fat_#{System.unique_integer([:positive])}"
-    {control_channel, stream_ref} = start_control_channel("fat")
-
-    fat = :binary.copy(<<0>>, TaskJournal.max_entry_bytes() + 1)
-    payload = build_task_commit_payload(inst, 0, [], [{1, fat}], "ref-opc-fat")
-    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
-
-    assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
-    response = decode_reply(reply)
-
-    assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: error}} =
-             response.command
-
-    assert error.code == "commit.oversized_handoff"
-    assert {:ok, []} = TaskJournal.read(inst)
   end
 
   # Fails when: the exit of a journal writer closed under an append (its relay
@@ -253,9 +234,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     payload = build_task_commit_payload(inst, 0, [{seg, 0, 0, ["out"]}], [], "ref-records")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    refute_receive {:test_writer_called, ^stream_ref, _reply}, 200
+    assert "ref-records" in waiting(control_channel)
+    refute_received {:test_writer_called, ^stream_ref, _reply}
     assert {:ok, []} = TaskJournal.read(inst)
-    refute_dispatched(0)
+    refute_dispatched(writer)
     :ok = :sys.resume(Flezha.State.FsyncBatcher)
     :ok = WalWriter.fsync(writer)
 
@@ -278,7 +260,6 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   end
 
   test "a record the writer never gets fails the barrier, naming the Cell and the seq" do
-    on_exit(TestHelpers.override_env(:sdk_commit_ack_ms, 200))
     inst = "opc_missing_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("missing")
     own(inst, control_channel)
@@ -287,6 +268,10 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     seg = Wire.encode_cell_id(inst, "TaskA", "s0")
     payload = build_task_commit_payload(inst, 0, [{seg, 5, 5, ["out"]}], [], "ref-missing")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    # The SDK's ack deadline elapses.
+    assert "ref-missing" in waiting(control_channel)
+    send(commits(control_channel), {:records_overdue, "ref-missing"})
 
     assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
 
@@ -311,15 +296,17 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     for _copy <- 1..2,
         do: send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
-    refute_receive {:test_writer_called, ^stream_ref, _reply}, 200
+    assert "ref-join" in waiting(control_channel)
+    refute_received {:test_writer_called, ^stream_ref, _reply}
     :ok = :sys.resume(Flezha.State.FsyncBatcher)
     :ok = WalWriter.fsync(writer)
 
     assert_receive {:test_writer_called, ^stream_ref, _reply}, 2_000
-    refute_receive {:test_writer_called, ^stream_ref, _second}, 300
+    settle(control_channel, [writer, journal(inst)])
+    refute_received {:test_writer_called, ^stream_ref, _second}
     assert {:ok, [_one_entry]} = TaskJournal.read(inst)
     assert {"once", _meta, _} = next_output(1_000)
-    refute_dispatched(100)
+    refute_dispatched(writer)
   end
 
   describe "synchronous remote durability" do
@@ -450,7 +437,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
     assert error.code == "commit.oversized_handoff"
     # Nothing journaled ⇒ nothing released.
-    refute_dispatched(300)
+    settle(control_channel, [])
+    refute_dispatched(writer)
     assert {:ok, []} = TaskJournal.read(inst)
   end
 
@@ -522,7 +510,8 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:test_writer_called, ^stream_ref, _reply}, 1_000
-    refute_receive {:control_command, {:compact_cell, _}}, 300
+    settle(control_channel, [writer, journal(inst)])
+    refute_received {:control_command, {:compact_cell, _}}
   end
 
   test "IterPark journals the unread release, then hands the park record to the instance's Overwatch" do
@@ -722,6 +711,29 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   defp start_control_channel(suffix) do
     %{channel: channel, stream_ref: stream_ref} = start_runner(suffix)
     {channel, stream_ref}
+  end
+
+  defp commits(control_channel),
+    do: GenServer.whereis(Identificator.commits(:sys.get_state(control_channel).runner_id))
+
+  # The barriers the channel's commit worker holds open, waiting on records.
+  # Asking the channel first makes it hand over every frame it was sent.
+  defp waiting(control_channel),
+    do: control_channel |> commits() |> :sys.get_state() |> Map.fetch!(:waiting) |> Map.keys()
+
+  # Every frame sent so far has run its whole course: forwarded, its waits on
+  # `writers` answered, its ack written and its post-ack work done.
+  defp settle(control_channel, writers) do
+    commits = commits(control_channel)
+    _ = :sys.get_state(commits)
+    Enum.each(writers, &(:ok = WalWriter.fsync(&1)))
+    _ = :sys.get_state(commits)
+    _ = :sys.get_state(control_channel)
+  end
+
+  defp journal(inst) do
+    {:ok, pid} = Flezha.State.Supervisor.lookup(Paths.journal_id(inst))
+    pid
   end
 
   # Stand in as the bound relay, owned by the channel's own session.

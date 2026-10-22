@@ -80,9 +80,13 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
 
       # The hold is the point: with the frames merely refused the task would
       # finish at once, and with them dropped it would finish reporting :ok.
-      refute_receive {:sender_done, _}, 500
-      assert held(ctx.name) > 0, "the sender is recorded as held, not merely slow"
-      assert written(ctx.server) > 0, "and the driver is writing, not wedged"
+      await_hold(ctx.name)
+      counters = channel_counters(ctx.name)
+      assert counters.send_frame_calls > 0, "the channel is sending, not wedged"
+      assert counters.nil_drops == 0, "and holding is not dropping"
+      # The driver publishes its counters once per loop iteration.
+      assert NodeTestHelper.wait_until(fn -> written(ctx.server) > 0 end, 5_000),
+             "and the driver is writing, not wedged"
 
       assert dropped(ctx.server) == 0, "a held sender is a sender nothing is discarded for"
 
@@ -100,10 +104,7 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
     test "wakes the held sender with an error when the stream closes under it", ctx do
       spawn_sender(ctx.name)
 
-      # The window is the assertion: nothing signals "the sender reached its
-      # gate", so there is no earlier moment to settle on.
-      refute_receive {:sender_done, _}, 500
-      assert held(ctx.name) > 0
+      await_hold(ctx.name)
 
       # The stream goes while the sender is still holding on its gate. It must
       # be told, not left waiting out a hold on a binding that has gone.
@@ -116,26 +117,6 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
       # left: a sender that was not woken never reaches this send at all.
       assert Map.get(results, {:error, :no_stream}, 0) > 0,
              "a held sender whose stream closed is answered, never left: #{inspect(results)}"
-    end
-
-    test "the hold is reported as held while nothing reads as dropped", ctx do
-      spawn_sender(ctx.name)
-
-      # The window is the assertion: nothing signals "the sender reached its
-      # gate", so there is no earlier moment to settle on.
-      refute_receive {:sender_done, _}, 500
-
-      counters = channel_counters(ctx.name)
-
-      assert counters.send_gate_held > 0,
-             "a held sender is observable the way a credit-parked one is"
-
-      assert counters.nil_drops == 0, "and holding is not dropping"
-      assert counters.send_frame_calls > 0, "the channel is sending, not wedged"
-      assert dropped(ctx.server) == 0, "nor is the driver dropping behind it"
-
-      drain_peer(ctx.peer)
-      assert_receive {:sender_done, _}, 10_000
     end
   end
 
@@ -210,7 +191,14 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
     Enum.find(channels, fn c -> c.name == name end) || flunk("no counters for #{inspect(name)}")
   end
 
-  defp held(name), do: channel_counters(name).send_gate_held
+  # The sender is held on its gate, the counter a credit-parked sender is
+  # observed by. Its peer reads nothing, so nothing can release it.
+  defp await_hold(name) do
+    assert NodeTestHelper.wait_until(fn -> channel_counters(name).send_gate_held > 0 end, 5_000),
+           "the sender is recorded as held, not merely slow"
+
+    refute_received {:sender_done, _}
+  end
 
   defp written(server), do: driver_sum(server, :frames_written)
 

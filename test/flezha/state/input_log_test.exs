@@ -314,7 +314,8 @@ defmodule Flezha.State.InputLogTest do
       {:ok, 0} = InputLog.append(class, String.duplicate("x", 40), %{})
       reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
       reqids = InputLog.append_async(class, "m2", %{}, reqids, :m2)
-      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+      assert held(class).parked == 2
+      assert :timeout = :gen_server.wait_response(reqids, 0, true)
 
       InputLog.record_consumed(class, {class, "task", "a"}, 0)
       assert {{:reply, {:ok, 1}}, :m1, reqids} = :gen_server.wait_response(reqids, 2_000, true)
@@ -327,7 +328,8 @@ defmodule Flezha.State.InputLogTest do
       {:ok, log} = Supervisor.lookup({class, :input_log})
 
       reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :parked)
-      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+      assert held(class).parked == 1
+      assert :timeout = :gen_server.wait_response(reqids, 0, true)
 
       # The parked append dies with the log: the monitored request reports it
       # instead of leaving the caller owed forever.
@@ -392,7 +394,10 @@ defmodule Flezha.State.InputLogTest do
       parked =
         Task.async(fn -> InputLog.append(class, "m1", %{}) end)
 
-      refute Task.yield(parked, 150), "append must park at zero source credit"
+      assert wait_until(fn -> held(class).parked == 1 end, 2_000),
+             "append must park at zero source credit"
+
+      refute Task.yield(parked, 0)
 
       # The watermark advance past offset 0 drains its bytes and mints
       # credit (batched by the low watermark) — the parked append resumes.
@@ -406,7 +411,8 @@ defmodule Flezha.State.InputLogTest do
 
       {:ok, 0} = InputLog.append(class, "m0", %{})
       starved = Task.async(fn -> InputLog.append(class, "m1", %{}) end)
-      refute Task.yield(starved, 150)
+      assert wait_until(fn -> held(class).parked == 1 end, 2_000)
+      refute Task.yield(starved, 0)
 
       # The healthy relay's ledger is independent: appends keep flowing.
       {:ok, 0} = InputLog.append(healthy, "h0", %{})
@@ -587,7 +593,8 @@ defmodule Flezha.State.InputLogTest do
       :ok = :sys.suspend(batcher)
 
       reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
-      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+      assert held(class).owed == 1
+      assert :timeout = :gen_server.wait_response(reqids, 0, true)
 
       :ok = :sys.resume(batcher)
       assert {{:reply, {:ok, 1}}, :m1, _} = :gen_server.wait_response(reqids, 2_000, true)
@@ -599,7 +606,8 @@ defmodule Flezha.State.InputLogTest do
       :ok = :sys.suspend(batcher)
 
       reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
-      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+      assert held(class).owed == 1
+      assert :timeout = :gen_server.wait_response(reqids, 0, true)
 
       stop_log(class)
       assert {{:reply, {:ok, 1}}, :m1, _} = :gen_server.wait_response(reqids, 1_000, true)
@@ -658,6 +666,26 @@ defmodule Flezha.State.InputLogTest do
     assert wait_until(fn -> Supervisor.lookup({class, :input_log}) == :error end, 2_000)
   end
 
+  # `"m<i>"` for each `i`, all in flight at once: one sync answers the lot.
+  defp append_all(class, range) do
+    reqids =
+      Enum.reduce(range, :gen_server.reqids_new(), fn i, reqids ->
+        InputLog.append_async(class, "m#{i}", %{}, reqids, i)
+      end)
+
+    for _ <- range do
+      assert {{:reply, {:ok, i}}, i, _} = :gen_server.receive_response(reqids, 5_000, true)
+    end
+  end
+
+  # What the log holds back once it has handled every request sent so far:
+  # appends parked for credit, and answers owed to the next sync.
+  defp held(class) do
+    {:ok, log} = Supervisor.lookup({class, :input_log})
+    %{waiters: waiters, owed: owed} = :sys.get_state(log)
+    %{parked: :queue.len(waiters), owed: length(owed)}
+  end
+
   # Every record appended so far is older than a 1 ms hold window.
   defp aged_out() do
     appended_at = System.system_time(:millisecond)
@@ -666,7 +694,7 @@ defmodule Flezha.State.InputLogTest do
 
   describe "a truncation costs the tail, not the log" do
     test "a floor past the index samples keeps exactly the tail", %{class: class} do
-      for i <- 0..599, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      append_all(class, 0..599)
       InputLog.record_consumed(class, {class, "task", "a"}, 400)
       :ok = Sweep.run(class)
 
@@ -684,7 +712,7 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "a restarted log truncates the records it never indexed", %{class: class} do
-      for i <- 0..299, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      append_all(class, 0..299)
       {:ok, pid} = Flezha.State.Supervisor.lookup({class, :input_log})
       :ok = GenServer.stop(pid)
       # The registry drops the dead pid a moment after the exit; `append/3`
@@ -844,7 +872,8 @@ defmodule Flezha.State.InputLogTest do
 
       # 159 of 160 bytes outstanding: the next append parks.
       reqids = InputLog.append_async(class, body, %{}, :gen_server.reqids_new(), :parked)
-      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+      assert held(class).parked == 1
+      assert :timeout = :gen_server.wait_response(reqids, 0, true)
 
       # A stale reporter's offset of 1: the write is rejected, and the report
       # still reaches the log, which drains offsets 0..2 and releases the park.
@@ -1041,8 +1070,11 @@ defmodule Flezha.State.InputLogTest do
 
   # Every `:sync` the traced log sent to a pid that had already exited.
   defp dead_syncs() do
+    ref = :erlang.trace_delivered(:all)
+    assert_receive {:trace_delivered, :all, ^ref}, 1_000
+
     dead =
-      collect after: 200 do
+      collect after: 0 do
         {:trace, _pid, :send_to_non_existing_process, {:sync, _}, _to} -> true
         {:trace, _pid, _event, _message, _to} -> false
       end

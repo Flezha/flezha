@@ -1,6 +1,5 @@
 defmodule Flezha.Service.Controller.MemTopTest do
-  # async: false: the live controller and its fleet.
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Service.Controller.MemTop
 

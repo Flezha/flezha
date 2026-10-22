@@ -43,7 +43,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
     # The record is durable on this disk and its ship is mid-write: nothing is
     # acknowledged yet.
-    refute_dispatched(0)
+    refute_dispatched(pid)
     assert InputLog.watermark(ctx.rc) == nil
 
     Stub.release_manifest(shipper)
@@ -67,7 +67,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     # The close acknowledges the interval's inputs: it waits on one ship.
     append_effect(pid, 1, [output("k1", "b")], 1)
     shipper = held({:cell, ctx.cell_id})
-    refute_dispatched(0)
+    refute_dispatched(pid)
     Stub.release_manifest(shipper)
     assert {"b", _, _} = next_output(5_000)
 
@@ -125,6 +125,11 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
     ref = {:cell, ctx.cell_id}
 
+    Telemetry.capture([:flezha, :backoff, :wait],
+      as: :ship_cooling,
+      filter: &(&1.ladder == :durability_ship and &1.target == ctx.cell_id)
+    )
+
     while_rpo_breached(ref, fn ->
       Stub.set_down(true)
       remote = armed_writer(ctx.rc, ctx.cell_id)
@@ -140,11 +145,14 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       # answered: it holds the acknowledgement, and the RPO alarm names it.
       assert wait_until(fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
       assert wait_until(fn -> failures(ref) > 0 end, 5_000)
-      refute_dispatched(0)
+      refute_dispatched(remote)
       assert InputLog.watermark(ctx.rc) == nil
 
+      # The writer's gate is cooling off after its failed ship: end the wait.
       Stub.set_down(false)
-      assert {"remote", _, _} = next_output(10_000)
+      assert_receive {:ship_cooling, _, _}, 5_000
+      send(remote, :remote_retry)
+      assert {"remote", _, _} = next_output(5_000)
       assert wait_until(fn -> InputLog.watermark(ctx.rc) == 0 end, 5_000)
     end)
   end
@@ -319,7 +327,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
         |> Records.fence_once()
         |> Records.confirm_prefix(&Prefix.marker(&1, ctx.rc, 0))
 
-      refute_receive {:prefix_fenced, ^stream_ref}, 500
+      assert wait_until(fn -> fence_held?(pid) end, 5_000)
+      refute_received {:prefix_fenced, ^stream_ref}
 
       # A runner that does not own the class is fenced by the flush alone.
       other = make_ref()
@@ -340,7 +349,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
       stream_ref = make_ref()
       _ = Records.fence_once(new_stream(stream_ref, nil))
-      refute_receive {:prefix_fenced, ^stream_ref}, 500
+      assert wait_until(fn -> fence_held?(pid) end, 5_000)
+      refute_received {:prefix_fenced, ^stream_ref}
 
       log =
         capture_log(fn ->
@@ -420,6 +430,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     test "a fence retries a writer-less Cell's failed ship and waits for it", ctx do
       # fails when: the fence answers after a ship that failed, so a marker
       # confirms an input the backend does not hold.
+      on_exit(Flezha.State.TestHelpers.override_env(:durability_ship_retry_ms, 1))
       unshipped_tail(ctx)
       capture_commits(ctx.cell_id)
       Stub.fail_next_manifest()
@@ -490,7 +501,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     # Any caller of the outbox's dispatch, here its retry tick.
     send(pid, :outbox_retry)
     _ = WalWriter.last_persisted_seq(pid)
-    refute_dispatched(0)
+    refute_dispatched(pid)
     assert InputLog.watermark(ctx.rc) == nil
 
     Stub.release_manifest(first)
@@ -534,7 +545,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
 
       assert wait_until(fn -> match?(%{superseded_by: "peer"}, status(ref)) end, 5_000)
       assert wait_until(fn -> Enum.any?(DurabilityTier.breaches(), &(&1.ref == ref)) end, 5_000)
-      refute_dispatched(0)
+      refute_dispatched(pid)
 
       # Once nothing waits, a lineage another controller ships is not this
       # node's breach.
@@ -600,6 +611,16 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     key = Manifest.key(ref)
     assert_receive {:manifest_held, ^key, shipper}, 5_000
     shipper
+  end
+
+  # The fence's credit rides the batch held behind the ship, so the fence can
+  # answer only once that ship lands. Every other credit here is this process's.
+  defp fence_held?(pid) do
+    test = self()
+
+    :sys.get_state(pid).remote.held
+    |> :queue.to_list()
+    |> Enum.any?(fn {_seq, credit} -> Enum.any?(Map.keys(credit), &(elem(&1, 0) != test)) end)
   end
 
   defp failures(ref) do

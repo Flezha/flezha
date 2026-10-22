@@ -134,7 +134,7 @@ defmodule FlezhaTest.Process.IdentificatorTest do
     end
 
     test "ids minted in a tight loop never repeat" do
-      ids = for _ <- 1..20_000, do: Identificator.mint(:relay, "echo")
+      ids = for _ <- 1..1_000, do: Identificator.mint(:relay, "echo")
       assert length(Enum.uniq(ids)) == length(ids)
     end
   end

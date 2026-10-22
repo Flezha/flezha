@@ -19,6 +19,7 @@ defmodule Flezha.Transport.DriverParityTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Transport.Native
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.StreamPair
 
   # Every word `flz_nif`'s `CloseReason` renders. A reason outside this set is a
@@ -74,15 +75,7 @@ defmodule Flezha.Transport.DriverParityTest do
   # first millisecond is stamped `0` and says nothing. Wait for the clock to
   # leave zero before asking a case to prove a stamp.
   defp await_driver_clock(server) do
-    assert Enum.any?(1..200, fn _ ->
-             if Native.driver_stats(server).now_ms > 0,
-               do: true,
-               else:
-                 (
-                   Process.sleep(5)
-                   false
-                 )
-           end),
+    assert NodeTestHelper.wait_until(fn -> Native.driver_stats(server).now_ms > 0 end, 1_000),
            "the driver clock never advanced"
   end
 
@@ -95,28 +88,25 @@ defmodule Flezha.Transport.DriverParityTest do
   end
 
   defp await_stream_row(server, stream_id, want) do
-    Enum.find_value(1..200, fn _ ->
-      row =
-        server
-        |> Native.driver_stats()
-        |> Map.fetch!(:streams)
-        |> Enum.find(&(&1.stream_id == stream_id))
+    NodeTestHelper.wait_until(
+      fn ->
+        row =
+          server
+          |> Native.driver_stats()
+          |> Map.fetch!(:streams)
+          |> Enum.find(&(&1.stream_id == stream_id))
 
-      if want.(row),
-        do: row || :gone,
-        else:
-          (
-            Process.sleep(10)
-            nil
-          )
-    end)
+        if want.(row), do: row || :gone
+      end,
+      2_000
+    )
   end
 
   describe "notices" do
     # The suite's primary level is `:error`, which drops a warning before any
     # capture sees it.
     setup do
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      on_exit(NodeTestHelper.override_log_level(:warning))
     end
 
     test "a frame the driver refuses is said in the controller's log" do

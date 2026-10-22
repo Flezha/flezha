@@ -18,6 +18,7 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Process.DurableTasks
   alias Flezha.Relay.{ClassRegistry, Overwatch, Suspend}
   alias Flezha.Runner.{ControlChannel, ControlUnit, StreamChannel}
   alias Flezha.Runner.ControlChannel.Commits
@@ -160,10 +161,15 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
       {:iter_park, %RunnerCommands.IterPark{relay_id: foreign, iter: 3, wake_deadline_ms: 0}}
     )
 
-    parked = NodeTestHelper.wait_until(fn -> parked?(foreign) end, 1_000)
+    # The park runs in a durable task the channel started: wait for it to end.
+    _ = :sys.get_state(ctx.channel_b)
 
-    assert parked in [nil, false],
-           "a park was journaled at #{Paths.journal_path(foreign)}"
+    for task <- Task.Supervisor.children(DurableTasks) do
+      ref = Process.monitor(task)
+      assert_receive {:DOWN, ^ref, :process, ^task, _}, 1_000
+    end
+
+    refute parked?(foreign), "a park was journaled at #{Paths.journal_path(foreign)}"
   end
 
   # KB-632: during a hub merge's hand-over the hub still lists the source

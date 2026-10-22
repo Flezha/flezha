@@ -47,7 +47,7 @@ defmodule Flezha.State.WalWriterCreditTest do
 
   defp drain_credit_reports() do
     _ =
-      collect after: 200 do
+      collect after: 0 do
         {:credit_drained, _, _, _} -> :ok
       end
 
@@ -176,7 +176,8 @@ defmodule Flezha.State.WalWriterCreditTest do
     for seq <- 0..19, do: append!(pid2, seq, "x", opts(10))
     :ok = :sys.resume(pid2)
 
-    # Every debited byte comes back — released on shed or minted on fsync.
+    # Every debited byte comes back — released on shed or minted on fsync, both
+    # sent from the writer before its fsync answers.
     _ = sync(pid2)
     :ok = WalWriter.fsync(pid2)
 
@@ -185,7 +186,7 @@ defmodule Flezha.State.WalWriterCreditTest do
         receive do
           {:credit_drained, @session, n, _cell} -> n
         after
-          500 -> nil
+          0 -> nil
         end
       end)
       |> Enum.take_while(& &1)

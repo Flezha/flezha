@@ -36,7 +36,15 @@ defmodule Flezha.Runner.ControlChannelSendControlTest do
       ExUnit.CaptureLog.capture_log([level: :warning], fn ->
         sender = Task.async(fn -> ControlChannel.send_control("exec_gate", command) end)
         assert_receive :written
-        refute Task.yield(sender, 200), "the refused frame must be held, not answered"
+
+        # The sender waits on the gate in its own process until the drain wakes it.
+        assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+                 fn -> sender.pid in :sys.get_state(pid).waiters.send_gate end,
+                 1_000
+               ),
+               "the refused frame must be held, not answered"
+
+        refute Task.yield(sender, 0)
 
         send(pid, {:flz_send_gate, 7, false})
         assert {:ok, _ref} = Task.await(sender)

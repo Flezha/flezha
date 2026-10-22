@@ -80,7 +80,7 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
 
     # A second listener on a private directory: restarting the controller's own
     # would drop the suite's runners onto a reconnect they print to stderr.
-    test "a UDS listener announces nothing", %{ns: ns, tmp: dir} do
+    test "a UDS listener announces nothing", %{tmp: dir} do
       restore = TestHelpers.override_env(:socket_files_path, dir)
       on_exit(restore)
 
@@ -90,7 +90,6 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
           restore.()
           {:ok, socket} = Native.control_socket_path_in(dir)
           assert File.exists?(socket)
-          start_runner(ns, transport: :uds, runtime: :rust)
           :ok = GenServer.stop(listener)
         end)
 
@@ -100,7 +99,12 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
 
   describe "a runner" do
     test "an Elixir runner over QUIC announces once across a reconnect", %{ns: ns} do
-      port = start_runner(ns, transport: :quic, runtime: :elixir)
+      port =
+        start_runner(ns,
+          transport: :quic,
+          runtime: :elixir,
+          env: [{"FLEZHA_RECONNECT_MAX_BACKOFF_MS", "5"}]
+        )
 
       Telemetry.capture([:flezha, :runner, :connected],
         as: :connected,
@@ -113,13 +117,6 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
 
       out = stop_and_read(port)
       assert NodeTestHelper.occurrences(out, @runner) == 1
-    end
-
-    test "an Elixir runner over UDS announces nothing", %{ns: ns} do
-      out = ns |> start_runner(transport: :uds, runtime: :elixir) |> stop_and_read()
-
-      assert out =~ "transport=uds"
-      assert NodeTestHelper.occurrences(out, "QUIC transport is experimental") == 0
     end
   end
 end

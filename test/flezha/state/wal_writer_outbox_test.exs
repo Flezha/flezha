@@ -8,6 +8,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
   """
   use FlezhaTest.OutboxCase, async: false
 
+  alias Flezha.Process.Timer
+
   test "outputs are dispatched only after fsync, with durable identity", %{
     rc: rc,
     cell_id: cell_id
@@ -24,7 +26,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     # between append and fsync the outputs must not reach any plugin.
     :ok = :sys.suspend(FsyncBatcher)
     :ok = WalWriter.append(pid, 0, effect_header(), body)
-    refute_dispatched()
+    refute_dispatched(pid)
     :ok = :sys.resume(FsyncBatcher)
 
     :ok = WalWriter.fsync(pid)
@@ -126,7 +128,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     # No Overwatch bound: the record becomes durable but cannot dispatch.
     pid = start_writer(cell_id)
     append_effect(pid, 0, [output("k", "payload-x")], 7)
-    refute_dispatched()
+    refute_dispatched(pid)
     close_writer(pid, cell_id)
 
     assert Lineage.progress(cell_id).outbox_flushed_seq == -1
@@ -139,7 +141,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert {"payload-x", md, _} = next_output(2_000)
     assert md["flz.seq"] == "0.0"
     assert md["flz.epoch"] == "0"
-    refute_dispatched()
+    refute_dispatched(pid)
   end
 
   test "crash after flush but before cursor write: identical re-drive", %{
@@ -168,11 +170,13 @@ defmodule Flezha.State.WalWriterOutboxTest do
   } do
     pid = start_writer(cell_id)
     append_effect(pid, 0, [output("k", "late")], 2)
-    refute_dispatched()
+    refute_dispatched(pid)
+    assert Timer.armed?(:sys.get_state(pid).timers, :outbox_retry)
 
-    # Bind after the fact: the 1s retry timer picks it up.
+    # Bind after the fact: the retry tick picks it up.
     ClassRegistry.put_overwatch(rc, self(), nil)
-    assert {"late", _, _} = next_output(3_000)
+    send(pid, :outbox_retry)
+    assert {"late", _, _} = next_output()
   end
 
   test "reopen repopulates the cell's consumed-offset watermark", %{
@@ -539,7 +543,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
       assert WalWriter.last_persisted_seq(pid) == 0,
              "cut=#{cut}: torn effect record must be discarded entirely"
 
-      refute_dispatched(10)
+      refute_dispatched(pid)
       :ok = WalWriter.close(pid)
       # The writer truncated the torn tail; reset the fixture for the next cut.
       File.rm!(wal_path)

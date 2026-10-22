@@ -10,6 +10,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
   alias Flezha.Relay.Calls.Token
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Relay.{Builder, Lifecycle, Overwatch}
+  alias Flezha.Process.Timer
 
   test "stall_status reports the outbox cursors producing-liveness compares", %{
     rc: rc,
@@ -172,7 +173,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     append_effect(pid, 1, [output("k", "two")], 2)
 
     assert {"one", md_one, _} = next_output()
-    refute_dispatched(100)
+    refute_dispatched(pid)
 
     assert %{pending: 1} = WalWriter.outbox_status(pid)
 
@@ -189,8 +190,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     rc: rc,
     cell_id: cell_id
   } do
-    Application.put_env(:flezha, :outbox_resettle_ms, 50)
-    on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
 
     pid = armed_writer(rc, cell_id)
 
@@ -199,7 +199,9 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     # The Overwatch died mid-chain: the output was dispatched and nothing ever
     # settled it. The retry tick re-dispatches it with identical identity.
     assert {"lost", md, _} = next_output()
-    assert {"lost", md_again, _} = next_output(3_000)
+    assert Timer.armed?(:sys.get_state(pid).timers, :outbox_retry)
+    send(pid, :outbox_retry)
+    assert {"lost", md_again, _} = next_output()
     assert md_again["flz.seq"] == md["flz.seq"]
     assert md_again["flz.epoch"] == md["flz.epoch"]
 
@@ -301,7 +303,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     :ok = WalWriter.fsync(pid)
     assert {"call", again, _} = next_output()
     assert again["flz.seq"] == call_md["flz.seq"]
-    refute_dispatched(0)
+    refute_dispatched(pid)
 
     :ok = Outbox.hold_delivery(again)
     settle(again)
@@ -327,7 +329,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     # Its delivery worker retries it: the resettle sends no second copy.
     send(pid, :outbox_retry)
     :ok = WalWriter.fsync(pid)
-    refute_dispatched(0)
+    refute_dispatched(pid)
 
     # The router lost the worker that held it: the answer goes again.
     :ok = WalWriter.redrive_answers(pid, "gateway")
@@ -361,7 +363,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     send(pid, :outbox_retry)
     :ok = WalWriter.fsync(pid)
-    refute_dispatched(0)
+    refute_dispatched(pid)
 
     # The sink's confirmation is the last one the entry waits on.
     :ok = Outbox.confirm(md)
@@ -458,7 +460,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     send(pid, :outbox_retry)
     :ok = WalWriter.fsync(pid)
-    refute_dispatched(0)
+    refute_dispatched(pid)
   end
 
   test "asked for its held calls, a writer re-dispatches them at once and nothing else", %{
@@ -479,7 +481,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert WalWriter.redrive_calls(pid, started, Token.durable_id(call_md)) == 1
     assert {"call", again, _} = next_output()
     assert again["flz.seq"] == call_md["flz.seq"]
-    refute_dispatched(0)
+    refute_dispatched(pid)
   end
 
   # ---------- batched reports ----------
@@ -554,8 +556,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     rc: rc,
     cell_id: cell_id
   } do
-    Application.put_env(:flezha, :outbox_resettle_ms, 50)
-    on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
+    on_exit(TestHelpers.override_env(:outbox_resettle_ms, 0))
 
     pid = armed_writer(rc, cell_id)
 
@@ -588,7 +589,8 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     assert %{outbox_flushed_seq: -1, awaiting: 2} = WalWriter.outbox_status(pid)
 
     # The resettle re-dispatches both under identical identity, in seq order.
-    redriven = assert_batch(3_000)
+    send(pid, :outbox_retry)
+    redriven = assert_batch(1_000)
     assert [{"a", %{"flz.seq" => "0.0"}, _}, {"b", %{"flz.seq" => "1.0"}, _}] = redriven
 
     run_batch(redriven)
@@ -698,13 +700,13 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
     # The live Overwatch has not run this entry's chain yet: the call stays
     # owed to it, so an answer for it waits, and it does not go again.
     assert WalWriter.redrive_calls(pid, started, Token.durable_id(call_md)) == 1
-    refute_dispatched(0)
+    refute_dispatched(pid)
 
     # The one run reports: the live Overwatch holds the call, so nothing waits.
     :ok = Outbox.hold_delivery(call_md)
     settle(call_md)
     assert WalWriter.redrive_calls(pid, started, Token.durable_id(call_md)) == 0
-    refute_dispatched(0)
+    refute_dispatched(pid)
 
     # The caller answers it: the cursor passes the entry.
     :ok = Outbox.confirm_delivery(call_md)
@@ -723,7 +725,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
 
     # A stray answer (its call is over) must be absorbed, not retried.
     assert WalWriter.redrive_calls(pid, started, Token.durable_id(%{})) == 0
-    refute_dispatched(0)
+    refute_dispatched(pid)
   end
 
   test "a held answer goes again at most once while its caller stays away", %{
@@ -755,7 +757,7 @@ defmodule Flezha.State.WalWriterOutboxDeliveryTest do
               settle(again)
               count + 1
           after
-            100 -> count
+            0 -> count
           end
       end
 

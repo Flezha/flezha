@@ -909,6 +909,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
 
   alias Flezha.Cluster.GroupedHashing
   alias Flezha.Identificator
+  alias Flezha.Process.Timer
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
   alias FlezhaTest.Helper.FleetStateHelper
@@ -916,7 +917,8 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
 
   @moduletag :capture_log
 
-  @grace_ms 200
+  # Never elapses inside a test: a withdrawal is read off its armed timer.
+  @grace_ms 60_000
 
   setup do
     namespace = "served_groups_#{System.unique_integer([:positive])}"
@@ -952,6 +954,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     FleetStateHelper.seed(ns, %{"r2" => ["alpha", {"beta", 2}]})
     FleetStateHelper.sync(ns, "r2", ["alpha", {"beta", 2}])
 
+    grace_elapses(ns, "beta")
     assert declared(hub_id, ["alpha"])
   end
 
@@ -966,6 +969,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     # Still declared inside the grace: a runner back before it elapses moves
     # no relay at all.
     assert GroupedHashing.served_groups(hub_id) |> Enum.sort() == ["alpha", "beta"]
+    grace_elapses(ns, "beta")
     assert declared(hub_id, ["alpha"])
   end
 
@@ -975,10 +979,20 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     assert declared(hub_id, ["alpha", "beta"])
 
     FleetStateHelper.sync(ns, "r1", ["alpha"])
+    assert withdrawal_armed?(ns, "beta")
     FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
 
-    Process.sleep(@grace_ms * 3)
+    refute withdrawal_armed?(ns, "beta")
     assert GroupedHashing.served_groups(hub_id) |> Enum.sort() == ["alpha", "beta"]
+  end
+
+  defp withdrawal_armed?(ns, factory),
+    do: Timer.armed?(:sys.get_state(FleetManager).timers, {:withdraw_group, {ns, factory}})
+
+  # The withdrawal's own timer, delivered now rather than waited for.
+  defp grace_elapses(ns, factory) do
+    assert withdrawal_armed?(ns, factory)
+    send(FleetManager, {:withdraw_group, ns, factory})
   end
 
   test "a retiring runner's factories are withdrawn without the grace",

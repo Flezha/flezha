@@ -26,6 +26,7 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   import FlezhaTest.Helper.MimicGlobal
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, wait_until: 3]
 
+  alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Relay.Builder
   alias Flezha.Runner.ControlChannel
@@ -43,7 +44,6 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   @cells %{"big1" => 72, "big2" => 72, "s1" => 3, "s2" => 3, "s3" => 3, "s4" => 3}
   @keys Map.keys(@cells)
   @padding String.duplicate("x", 100_000)
-  @stall_ms 1_500
   @test_timeout 180_000
 
   setup :set_mimic_global_until_exit
@@ -108,8 +108,7 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   end
 
   # Every restore of the bind finds the runner stopped, and the runner resumes
-  # `@stall_ms` after the first one arrived: the restores are offered while the
-  # first is stuck in the send buffer.
+  # once a restore is held on the full send buffer the first one left.
   defp stall_runner_on_first_restore do
     # Slot 1: a restore claimed the stop. Slot 2: the runner is stopped.
     stall = :atomics.new(2, [])
@@ -119,12 +118,23 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
         os_pid = ControlChannel.peer_pid(runner_id)
         TierE2EHarness.signal(os_pid, "-STOP")
         :atomics.put(stall, 2, 1)
-        spawn(fn -> Process.sleep(@stall_ms) && TierE2EHarness.signal(os_pid, "-CONT") end)
+
+        spawn(fn ->
+          wait_until(fn -> held_on_send_gate?(runner_id) end, @test_timeout, 1)
+          TierE2EHarness.signal(os_pid, "-CONT")
+        end)
       end
 
       await_stopped(stall)
       call_original(Commands, :await_restore_init_state, [runner_id, cell_id])
     end)
+  end
+
+  defp held_on_send_gate?(runner_id) do
+    case GenServer.whereis(Identificator.control_channel(runner_id)) do
+      nil -> false
+      channel -> MapSet.size(:sys.get_state(channel).waiters.send_gate) > 0
+    end
   end
 
   # Bounded only by the test's own timeout, as the stop is a precondition.

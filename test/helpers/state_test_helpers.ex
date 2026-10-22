@@ -153,15 +153,23 @@ defmodule Flezha.State.TestHelpers do
     end
   end
 
-  @doc "No output reached the chain: nothing buffered and no batch arriving."
-  def refute_dispatched(timeout \\ 50) do
+  @doc """
+  No output reached the chain: nothing buffered and no batch in the mailbox.
+
+  Every dispatch is sent from inside `writer`, so a call into it first is the
+  barrier: whatever it was going to send for what it has already handled is
+  here by the time the call returns.
+  """
+  def refute_dispatched(writer) do
+    _ = WalWriter.last_persisted_seq(writer)
+
     case Process.get(@dispatched, []) do
       [] ->
         receive do
           {:"$gen_cast", {:io_out_batch, outputs}} ->
             ExUnit.Assertions.flunk("unexpected dispatch: #{inspect(outputs)}")
         after
-          timeout -> :ok
+          0 -> :ok
         end
 
       buffered ->

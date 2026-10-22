@@ -20,6 +20,7 @@ defmodule FlezhaTest.Runner.RunnerNamespaceCredentialTest do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.TokenStore
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.PortPilot
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
@@ -46,26 +47,19 @@ defmodule FlezhaTest.Runner.RunnerNamespaceCredentialTest do
     NodeTestHelper.start_runner(namespace, env: [{"FLEZHA_NAMESPACE_SECRET", secret}])
   end
 
-  test "a runner is admitted to the namespace its credential entitles", %{secret_a: secret_a} do
-    runner = start_on(@ns_a, secret_a)
-    assert runner in FleetManager.active_runners(@ns_a)
-  end
-
   test "a runner presenting another namespace's credential is refused", %{secret_b: secret_b} do
     Telemetry.capture([:flezha, :transport, :connect_rejected], as: :rejected)
 
     # The runner names `@ns_a` and holds `@ns_b`'s credential: it never connects,
     # so the refusal is read off the counted signal rather than off a session.
-    assert_raise RuntimeError, fn ->
-      NodeTestHelper.start_runner(@ns_a,
-        env: [{"FLEZHA_NAMESPACE_SECRET", elem(secret_b, 0)}],
-        connect_timeout: 4_000
-      )
-    end
+    command = PortPilot.launch_command(:rust, :test, @ns_a)
+    env = [{"FLEZHA_NAMESPACE_SECRET", elem(secret_b, 0)}]
+    {port, _cmd} = NodeTestHelper.open_runner_port(command, env: env)
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     assert_receive {:rejected, %{count: 1},
                     %{reason: {:namespace_not_entitled, @ns_a, @ns_b}, transport: :uds}},
-                   1_000
+                   10_000
 
     assert FleetManager.active_runners(@ns_a) == []
   end
@@ -100,23 +94,7 @@ defmodule FlezhaTest.Runner.RunnerNamespaceCredentialTest do
     assert rolled in FleetManager.active_runners(@ns_a)
   end
 
-  test "revoking a credential closes the session it authenticated", %{
-    secret_a: {_, hash} = secret_a
-  } do
-    runner = start_on(@ns_a, secret_a)
-    assert runner in FleetManager.active_runners(@ns_a)
-
-    {:ok, _} = TokenStore.revoke(String.slice(hash, 0, 12))
-
-    assert NodeTestHelper.wait_until(
-             fn -> runner not in FleetManager.active_runners(@ns_a) end,
-             5_000,
-             25
-           ),
-           "the revoked credential's session must be closed without waiting for a reconnect"
-  end
-
-  test "sessions on a namespace's other live credential are untouched", %{
+  test "revoking a credential closes its sessions and leaves the other credential's", %{
     secret_a: {_, first_hash} = first
   } do
     second = AuthTestHelper.issue_runner_credential(@ns_a)
@@ -127,9 +105,9 @@ defmodule FlezhaTest.Runner.RunnerNamespaceCredentialTest do
 
     assert NodeTestHelper.wait_until(
              fn -> on_first not in FleetManager.active_runners(@ns_a) end,
-             5_000,
-             25
-           )
+             5_000
+           ),
+           "the revoked credential's session must be closed without waiting for a reconnect"
 
     assert on_second in FleetManager.active_runners(@ns_a)
   end

@@ -78,7 +78,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     assert session2 in FleetManager.active_runners(@namespace)
 
     # The relay now belongs to the new session, and the old session is gone.
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session2, relay.id) end, 1_000, 25),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session2, relay.id) end, 1_000),
            "relay must follow the runner onto its new session token"
 
     # The Overwatch writes the tag itself, after it re-binds, so a tag naming the
@@ -114,13 +114,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     # Linked, so it is torn down with the test process.
     {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, relay})
 
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session, relay.id) end, 10_000, 25),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, relay.id) end, 10_000),
            "the registry tag still names the dead runner, so nothing can reconcile the binding"
 
     assert NodeTestHelper.wait_until(
              fn -> mapped?(session, relay.id, overwatch) end,
-             10_000,
-             25
+             10_000
            ),
            "the live runner's StreamChannels never learned the relay pid, so every output frame hits the `[] -> :ok` drop"
   end
@@ -150,13 +149,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     {:ok, overwatch} = Overwatch.start_link({@namespace, @stale_runner, relay})
     assert :sys.get_state(overwatch).runner_id == session
 
-    assert NodeTestHelper.wait_until(fn -> bound_to?(session, relay.id) end, 10_000, 25),
+    assert NodeTestHelper.wait_until(fn -> bound_to?(session, relay.id) end, 10_000),
            "the tag names the awaited runner, not the one the relay started on"
 
     assert NodeTestHelper.wait_until(
              fn -> mapped?(session, relay.id, overwatch) end,
-             10_000,
-             25
+             10_000
            ),
            "the route was seeded into the awaited runner's channels, not the live one's"
   end
@@ -518,7 +516,11 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
     # open, so the process never retries and is never refused.
     test "over a real runner's socket, is refused on its retry and admitted once readmitted",
          %{ns: ns, tmp: tmp} do
-      env = [{"FLEZHA_RUNNER_ID_PATH", Path.join(tmp, "dropped-runner-id")}]
+      env = [
+        {"FLEZHA_RUNNER_ID_PATH", Path.join(tmp, "dropped-runner-id")},
+        {"FLEZHA_RECONNECT_MAX_BACKOFF_MS", "5"}
+      ]
+
       session = NodeTestHelper.start_runner(ns, env: env)
 
       assert {:ok, %{pid: pid, stable_id: id} = mark} =
@@ -683,13 +685,12 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
 
   # A stand-in that answers its handshake, once the fleet lists it.
   defp active_stand_in(namespace, extra) do
-    {_sdk, session} = stand_in_runner(namespace, &accept/1, extra)
+    {{_sdk, session}, admitted} =
+      NodeTestHelper.runner_event(:connected, namespace, nil, 5_000, fn ->
+        stand_in_runner(namespace, &accept/1, extra)
+      end)
 
-    assert NodeTestHelper.wait_until(
-             fn -> session in FleetManager.active_runners(namespace) end,
-             5_000
-           )
-
+    assert admitted == session
     session
   end
 

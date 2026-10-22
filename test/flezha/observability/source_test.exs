@@ -1,7 +1,7 @@
 defmodule Flezha.Observability.SourceTest do
-  # async: false: the observability registry. The fixtures live here, not in
-  # test/helpers, so `Source.declared/0` never reads them.
-  use ExUnit.Case, async: false
+  # The fixtures live here, not in test/helpers, so `Source.declared/0` never
+  # reads them; their names are this module's own.
+  use ExUnit.Case, async: true
 
   alias Flezha.Observability.{Registry, Signal}
   alias Flezha.Observability.TestSinks.Counting

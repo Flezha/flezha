@@ -36,7 +36,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
     pid = stage_writer(rc, cell_id)
 
     append_effect(pid, 0, [output("k", "a-out", [{"trace", "t1"}])], nil)
-    refute_dispatched()
+    refute_dispatched(pid)
     assert status(pid) == %{pending: 0, held: 1, awaiting: 0}
 
     :ok = WalWriter.commit_records(pid, 0, 0)
@@ -66,7 +66,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
     :ok = WalWriter.commit_records(pid, 1, 1)
 
     assert {"kept", md, _} = next_output()
-    refute_dispatched()
+    refute_dispatched(pid)
     assert status(pid) == %{pending: 0, held: 0, awaiting: 1}
 
     # The cursor passes the dropped record with the one that was confirmed.
@@ -131,7 +131,7 @@ defmodule Flezha.State.WalWriterStageCommitTest do
     for {seq, payload} <- [{0, "interrupted"}, {1, "committed"}, {2, "in flight"}],
         do: append_effect(pid, seq, [output("k", payload)], nil)
 
-    refute_dispatched()
+    refute_dispatched(pid)
     close_writer(pid, cell_id)
 
     record = %{cell_id: Wire.encode_cell_id(rc, sh, pk), first_seq: 1, seq: 1, channels: ["out"]}
@@ -139,13 +139,13 @@ defmodule Flezha.State.WalWriterStageCommitTest do
 
     pid = start_writer(cell_id)
     assert {"committed", _md, _} = next_output()
-    refute_dispatched()
+    refute_dispatched(pid)
     # Above the last range: a stage that may still commit, so it stays held.
     assert status(pid) == %{pending: 0, held: 1, awaiting: 1}
 
     # The bind knows no such stage is running any more.
     :ok = WalWriter.seed_commits(pid, TaskJournal.committed_records(rc))
     assert status(pid) == %{pending: 0, held: 0, awaiting: 1}
-    refute_dispatched()
+    refute_dispatched(pid)
   end
 end

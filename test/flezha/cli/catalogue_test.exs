@@ -5,7 +5,7 @@ defmodule Flezha.Service.Cli.CatalogueTest do
   describe: every positional argument declared, every function described, and
   every row saying whether it may be reached over the network.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import FlezhaTest.Case, only: [refute_minted: 2]
 

@@ -42,7 +42,6 @@ defmodule FlezhaTest.OutboxCase do
           metadata_of: 1,
           next_output: 0,
           next_output: 1,
-          refute_dispatched: 0,
           refute_dispatched: 1,
           run_batch: 1,
           run_batch: 2

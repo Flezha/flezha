@@ -4,9 +4,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
   the read-side snapshot, and dead-owner pruning.
   """
 
-  # async: false: node-global tables.
-
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Transport.LivenessCounters
 

@@ -2,9 +2,7 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamPool
 
-  # async: false: registered runner channels.
-
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   describe "bind_stream_to_first_nil/2" do
     setup context do

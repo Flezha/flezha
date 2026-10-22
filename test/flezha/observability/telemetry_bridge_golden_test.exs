@@ -6,8 +6,8 @@ defmodule Flezha.Observability.TelemetryBridgeGoldenTest do
   lines it names.
   """
 
-  # async: false: the provider table, which a test installing a package changes.
-  use ExUnit.Case, async: false
+  # async: the provider table only changes under the sync modules that install packages.
+  use ExUnit.Case, async: true
 
   alias Flezha.Observability.TelemetryBridge
 

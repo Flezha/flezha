@@ -136,13 +136,14 @@ defmodule FlezhaTest.System.HttpPushE2ETest do
     assert_receive {:request, _, _, "j1=a"}, 30_000
     assert WebhookServer.connections(server) == 1
 
-    # An outage of two seconds: the guaranteed outputs wait and arrive in order.
+    # An outage the first output is retried through: the guaranteed outputs
+    # wait and arrive in order.
     WebhookServer.set(server, [503])
     send_inputs(first, namespace, ["k2:a", "k3:a", "k4:a"])
     assert_receive {:request, _, _, "k2=a"}, 30_000
-    Process.sleep(2_000)
+    assert_receive {:request, _, _, "k2=a"}, 30_000
     WebhookServer.set(server, [200])
-    assert Enum.dedup(bodies_until("k4=a")) == ["k2=a", "k3=a", "k4=a"]
+    assert Enum.dedup(["k2=a" | bodies_until("k4=a")]) == ["k2=a", "k3=a", "k4=a"]
     assert await_outbox_drained(first)
 
     # A refusal parks the output with its status.
