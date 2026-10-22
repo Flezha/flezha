@@ -221,14 +221,15 @@ mod tests {
         assert!(unknown.is_empty(), "{}", unknown.join("\n"));
     }
 
-    /// fails when: a verb row declares no positional and no option yet calls
-    /// an operation that requires an argument, which the verb could then only
-    /// read by hand.
+    /// fails when: a verb row declares no positional, no option and no
+    /// argument it sends, yet calls an operation that requires an argument.
     #[test]
     fn a_verb_that_declares_nothing_calls_nothing_that_needs_an_argument() {
         let undeclared: Vec<String> = leaf_rows()
             .into_iter()
-            .filter(|(_, verb)| verb.positionals.is_empty() && verb.options.is_empty())
+            .filter(|(_, verb)| {
+                verb.positionals.is_empty() && verb.options.is_empty() && verb.sends.is_empty()
+            })
             .flat_map(|(cmd, verb)| verb.calls.iter().map(move |call| (cmd, verb, call)))
             .filter(|(_, _, call)| {
                 operation(call)
