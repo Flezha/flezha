@@ -69,6 +69,10 @@ Notes on the area's variables:
 - `FLEZHA_K8S_CLUSTER_DOMAIN`: Default: the raw value of `FLEZHA_K8S_CLUSTER_NAME`, else `""`.
 - `FLEZHA_K8S_HOST_IDENTIFIER`: `ip`, `hostname` or `dns`.
 - `FLEZHA_K8S_IP_LOOKUP_MODE`: `pods` or `endpoints`.
+- `FLEZHA_SPLIT_BEHAVIOUR`: What every hub does in a network split: `divergence` keeps both sides running, `static`, `majority` and `dynamic` stop the side without quorum ([choosing a split behaviour](../topics/core/running_and_testing.md#choosing-a-split-behaviour)). A setting that cannot work stops the boot, naming the variable.
+- `FLEZHA_QUORUM_NODES`: `static`: the quorum, in controllers (required). `majority` and `dynamic`: how many controllers a controller that knows no cluster waits for before it runs relays.
+- `FLEZHA_QUORUM_PERCENT`: `dynamic`: the share of the cluster, 51 to 100, that must survive a sudden loss.
+- `FLEZHA_QUORUM_WINDOW_MS`: `dynamic`: how long a lost controller counts as a sudden loss; rounded up to whole seconds.
 
 ## State, WAL and durability
 
@@ -283,6 +287,9 @@ skipped as a block.
 | `FLEZHA_PROMETHEUS_PORT` | int | `9568` |
 | `FLEZHA_QUIC_CLIENT_CA` | path | `storage/app/certs/ca.pem` |
 | `FLEZHA_QUIC_LISTEN_ADDRESS` | address | `0.0.0.0:4433` |
+| `FLEZHA_QUORUM_NODES` | positive_int | unset |
+| `FLEZHA_QUORUM_PERCENT` | positive_int | `51` |
+| `FLEZHA_QUORUM_WINDOW_MS` | ms | `30000` |
 | `FLEZHA_RECONNECT_INTERVAL` | ms | `1000` |
 | `FLEZHA_RECONNECT_MAX_BACKOFF_MS` | ms | `30000` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | ms | `60000` |
@@ -294,6 +301,7 @@ skipped as a block.
 | `FLEZHA_SERVER_KEY_PATH` | path | `storage/app/certs/server.key` |
 | `FLEZHA_SOCKET_DIR_GROUP` | string | unset |
 | `FLEZHA_SOCKET_FILES_PATH` | path | derived per run |
+| `FLEZHA_SPLIT_BEHAVIOUR` | one of `divergence`, `static`, `majority`, `dynamic` | `divergence` |
 | `FLEZHA_STATE_DIR` | path | `storage/app/state` |
 | `FLEZHA_STEPS_ACK_TIMEOUT_MS` | ms | `30000` |
 | `FLEZHA_STEPS_RETENTION_HOURS` | int | `72` |

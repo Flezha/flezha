@@ -26,6 +26,7 @@ defmodule Flezha.Convergence.Loop do
   alias Flezha.Convergence.Verdict
 
   alias Flezha.Convergence.Loop.{Liveness, Progress, State, Summary}
+  alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
 
@@ -304,6 +305,7 @@ defmodule Flezha.Convergence.Loop do
 
     intent = Intent.declared()
     reality = Probe.snapshot()
+    state = %{state | no_quorum: no_quorum_namespaces()}
 
     # Facts the probe shows repaired leave the map and release their ladder
     # BEFORE the plan, so a rung never fires for a fault already gone.
@@ -342,10 +344,17 @@ defmodule Flezha.Convergence.Loop do
 
   # The divergence this tick will act on: diffed over the recovery-ready
   # relays only — a namespace mid-replay is skipped, so no heal runs
-  # against a half-restored registry — then misbound relays streak-gated.
+  # against a half-restored registry, and so is one whose hub has no quorum
+  # here, whose relays the other side of the split runs — then misbound
+  # relays streak-gated.
   defp plan_delta(%State{} = state, intent, reality) do
     ready = RecoveryGate.ready_namespaces(intent)
-    heal_relays = Enum.filter(intent.relays, &MapSet.member?(ready, &1.namespace))
+
+    heal_relays =
+      Enum.filter(
+        intent.relays,
+        &(MapSet.member?(ready, &1.namespace) and &1.namespace not in state.no_quorum)
+      )
 
     delta =
       Diff.compute(%Intent{relays: heal_relays}, reality, state.verdicts, state.facts)
@@ -389,6 +398,13 @@ defmodule Flezha.Convergence.Loop do
     # intended count, not just the recovery-ready subset. Returns state with
     # the refreshed unmet-intent deadline.
     Summary.publish(intent, reality, state)
+  end
+
+  defp no_quorum_namespaces() do
+    Enum.filter(
+      HubManager.get_running_namespaces(),
+      &(HubManager.quorum(Identificator.hub(&1)) != :ok)
+    )
   end
 
   defp tick_failed_telemetry() do

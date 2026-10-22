@@ -57,15 +57,16 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   processes may hold at once rather than about two controllers.
   `start_peer_node/2` is this plus a controller. `index` ends the node name;
   minted once per peer, it is what `start_peer_node/2` scopes resources by.
+  `extra_args` are further emulator arguments, one list item each.
   """
-  def start_bare_peer(name, index \\ System.unique_integer([:positive])) do
+  def start_bare_peer(name, index \\ System.unique_integer([:positive]), extra_args \\ []) do
     args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
     {:ok, peer_pid, node_name} =
       :peer.start_link(%{
         host: ~c"127.0.0.1",
         name: peer_name(name, index),
-        args: [args]
+        args: [args | extra_args]
       })
 
     :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
@@ -87,9 +88,82 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     if Process.alive?(peer_pid), do: tolerate(fn -> :peer.stop(peer_pid) end)
   end
 
+  @doc """
+  The emulator arguments that keep `global` from closing a connection a split
+  leaves standing. Without them, the node watching both sides of a split made
+  by `split/2` is cut off from one of them as well.
+  """
+  def split_tolerant_args, do: [~c"-kernel", ~c"prevent_overlapping_partitions", ~c"false"]
+
+  @doc """
+  Cuts every connection between `side_a` and `side_b` and keeps it cut until
+  `heal/3`: each node is handed a cookie for the other side that the other side
+  does not share, so a reconnect attempt fails. Peers on either side must be
+  started with `split_tolerant_args/0`. Every call goes through `via`, which
+  must reach both sides; when this node is on one side, `via` is a node that
+  watches both.
+  """
+  def split(side_a, side_b, via \\ node()) do
+    pairs = for a <- side_a, b <- side_b, do: {a, b}
+
+    Enum.each(pairs, fn {a, b} ->
+      on_via(via, a, :erlang, :set_cookie, [b, :"split_from_#{a}"])
+      on_via(via, b, :erlang, :set_cookie, [a, :"split_from_#{b}"])
+    end)
+
+    Enum.each(pairs, fn {a, b} -> on_via(via, a, :erlang, :disconnect_node, [b]) end)
+  end
+
+  @doc "Restores the connections `split/3` cut; a node that is gone is skipped."
+  def heal(side_a, side_b, via \\ node()) do
+    cookie = :erlang.get_cookie()
+
+    alive =
+      Enum.filter(side_a ++ side_b, &(&1 == via or on_via(via, &1, :erlang, :node, []) == &1))
+
+    pairs = for a <- side_a, b <- side_b, a in alive and b in alive, do: {a, b}
+
+    Enum.each(pairs, fn {a, b} ->
+      on_via(via, a, :erlang, :set_cookie, [b, cookie])
+      on_via(via, b, :erlang, :set_cookie, [a, cookie])
+    end)
+
+    # A connection cut a moment ago can refuse the first attempt.
+    Enum.each(pairs, fn {a, b} ->
+      true = wait_until(fn -> on_via(via, a, Node, :connect, [b]) == true end, 10_000)
+    end)
+  end
+
+  defp on_via(via, at, m, f, a) do
+    :erpc.call(via, :erpc, :call, [at, m, f, a])
+  catch
+    :error, reason -> {:error, reason}
+  end
+
+  @doc """
+  Reports every call of `module.function/arity` made on this node to
+  `report_to`, as `{:called, module, function, args}`, for as long as the node
+  runs. Called on a peer through `:erpc`, it shows a test on another node what
+  the peer's own processes call.
+  """
+  def report_calls(module, function, arity, report_to) do
+    forwarder = spawn(fn -> forward_calls(report_to) end)
+    :erlang.trace(:all, true, [:call, {:tracer, forwarder}])
+    :erlang.trace_pattern({module, function, arity}, true, [:global])
+    :ok
+  end
+
+  defp forward_calls(report_to) do
+    receive do
+      {:trace, _pid, :call, {m, f, args}} -> send(report_to, {:called, m, f, args})
+    end
+
+    forward_calls(report_to)
+  end
+
   def start_peer_node(name, opts \\ []) do
     index = System.unique_integer([:positive])
-    {peer_pid, node_name} = start_bare_peer(name, index)
+    {peer_pid, node_name} = start_bare_peer(name, index, Keyword.get(opts, :args, []))
 
     # Adjust the environment for the peer node.
     :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])

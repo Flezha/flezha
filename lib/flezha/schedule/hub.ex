@@ -59,8 +59,17 @@ defmodule Flezha.Schedule.Hub do
   @doc "Assert every schedule this node holds."
   @spec assert_all() :: :ok
   def assert_all() do
-    Enum.each(Store.list(), &assert/1)
+    # Without quorum here, the other side of the split runs every schedule.
+    if quorum() == :ok, do: Enum.each(Store.list(), &assert/1)
+    :ok
   end
+
+  @doc """
+  `{:error, :no_quorum}` when the schedule hub has no quorum on this node, so
+  a schedule added or removed here could not reach the jobs; `:ok` otherwise.
+  """
+  @spec quorum() :: :ok | {:error, :no_quorum}
+  def quorum(), do: HubManager.quorum(HubManager.schedule_hub_id())
 
   @doc """
   Stop `name`'s job cluster-wide. Waits, unlike `assert/1`: `flz schedule

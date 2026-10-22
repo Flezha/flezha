@@ -244,7 +244,7 @@ defmodule Flezha.Convergence.Verdict do
     do: state not in [:unbound, :failed, :unknown] and phase != :suspended
 
   @doc "The HTTP code an endpoint word carries. `503` is the restart signal and nothing else is."
-  @spec http_status(:healthy | :degraded | :recovering | :unhealthy) :: 200 | 503
+  @spec http_status(:healthy | :degraded | :recovering | :no_quorum | :unhealthy) :: 200 | 503
   def http_status(:unhealthy), do: 503
   def http_status(_status), do: 200
 
@@ -268,17 +268,19 @@ defmodule Flezha.Convergence.Verdict do
   the body that explains it.
 
   The second argument carries the rows that are not judgements about a subject
-  — recovery states, tick age, pending restore, RPO breaches, intent mismatch,
-  stale sensors and the fabric streak — because six of the nine rows below are
-  about the node, not about a subject.
+  — recovery states, tick age, the namespaces without quorum, pending restore,
+  RPO breaches, intent mismatch, stale sensors and the fabric streak — because
+  seven of the ten rows below are about the node, not about a subject.
 
   The order is the ranking: an authoritative dead loop and a wedged controller
-  fabric outrank every degraded case, a planned recovery outranks a fault, and
-  nothing below the first two rows can reach `503`. `:unknown` degrades
-  nothing — an uncertain probe never escalates — and is reported as a count.
+  fabric outrank every other case, a node on the minority side of a split
+  (`no_quorum`, which a restart does not cure) outranks the recovering and
+  degraded ones, a planned recovery outranks a fault, and nothing below the
+  first rows can reach `503`. `:unknown` degrades nothing — an uncertain probe
+  never escalates — and is reported as a count.
   """
   @spec fold(%{term() => t()}, map()) ::
-          {:healthy | :degraded | :recovering | :unhealthy, map()}
+          {:healthy | :degraded | :recovering | :no_quorum | :unhealthy, map()}
   def fold(records, facts) do
     c = counts(records)
     reasons = degraded_reasons(records, facts)
@@ -293,6 +295,9 @@ defmodule Flezha.Convergence.Verdict do
 
       match?({:fabric, _layer, _polls}, facts[:data_plane]) ->
         fabric_body(facts)
+
+      Map.get(facts, :no_quorum, []) != [] ->
+        {:no_quorum, %{status: "no_quorum", reason: "minority_side", namespaces: facts.no_quorum}}
 
       Map.get(facts, :tick_gapped?, false) ->
         {:recovering,

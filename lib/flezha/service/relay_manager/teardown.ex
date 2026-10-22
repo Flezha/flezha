@@ -276,6 +276,13 @@ defmodule Flezha.Service.RelayManager.Teardown do
   @doc "`RelayManager.stop_relay/3` on the hosting node: the `:relay` walk."
   @spec stop_relay(binary(), binary(), keyword()) :: :ok | {:error, term()}
   def stop_relay(namespace, relay_id, opts) do
+    # A hub without quorum here stopped its relays already; the stop belongs
+    # to the side of the split that runs them.
+    with :ok <- HubManager.quorum(Identificator.hub(namespace)),
+         do: stop_hosted(namespace, relay_id, opts)
+  end
+
+  defp stop_hosted(namespace, relay_id, opts) do
     cause = Keyword.get(opts, :cause, :stop)
 
     with {:ok, relay_pid} <- stop_pid(namespace, relay_id, cause, Keyword.get(opts, :overwatch)) do

@@ -51,6 +51,10 @@ defmodule Flezha.Convergence.Loop.State do
             # one health answer every surface reads, and what lets a state that
             # holds keep its `since_ms` instead of being re-stamped every tick.
             verdicts: %{},
+            # Namespaces whose hub has no quorum on this node this tick: the
+            # other side of the split runs their relays, so the loop heals none
+            # of them and /healthz reports `no_quorum`.
+            no_quorum: [],
             # relay_id => %{detail:, cell:} producing-liveness STUCK
             # verdicts (fed but progress markers flat past grace). Report-only:
             # healing stays on the output-stall ladder.

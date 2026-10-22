@@ -143,6 +143,17 @@ defmodule Flezha.Config.Keys do
     {:static_nodes, {:list, :atom}, [], key: true},
     {:concurrent_channel_count, :positive_int, {:late, {System, :schedulers_online, []}},
      key: true, env: "FLEZHA_CONCURRENT_CHANNEL_COUNT"},
+    # What every hub does in a network split: `divergence` keeps both sides
+    # running; `static`, `majority` and `dynamic` stop the side without quorum.
+    # Not "partition": a partitioned relay is one sharded by key.
+    {:split_behaviour, {:enum, [:divergence, :static, :majority, :dynamic]}, :divergence,
+     key: true, env: "FLEZHA_SPLIT_BEHAVIOUR"},
+    # `static`: the quorum, in nodes (required). `majority` and `dynamic`: how
+    # many nodes a node that knows no cluster waits for before it runs relays.
+    {:quorum_nodes, :positive_int, nil, key: true, env: "FLEZHA_QUORUM_NODES"},
+    # `dynamic`: the share of the cluster, 51 to 100, that must survive a
+    # sudden loss.
+    {:quorum_percent, :positive_int, 51, key: true, env: "FLEZHA_QUORUM_PERCENT"},
 
     # ---- Kubernetes ---------------------------------------------------------
     {:k8s_service_account_path, :path, "/var/run/secrets/kubernetes.io/serviceaccount",

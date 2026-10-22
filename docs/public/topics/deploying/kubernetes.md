@@ -126,6 +126,11 @@ Full file: [`k8s/agentdesk.yaml`](https://github.com/flezha/flezha_java_sdk/blob
   the controller makes its socket folder.
 - **A StatefulSet** gives the pod the volume `app-data`, which a new pod of the same name
   mounts again: the sessions outlive the pod.
+  With `FLEZHA_SPLIT_BEHAVIOUR=majority` the volume also keeps each hub's member list
+  (`registry.members`, beside `registry.dets`), so a pod that restarts alone does not run as a
+  cluster of one. The list holds node names, so `majority` also needs
+  `FLEZHA_K8S_HOST_IDENTIFIER=hostname`, a name the pod keeps across restarts
+  ([choosing a split behaviour](../core/running_and_testing.md#choosing-a-split-behaviour)).
 - **`imagePullPolicy: Never`**: the images are built locally and imported into the cluster,
   not pulled from a registry. A cluster with a registry of its own pushes them there instead,
   and drops `imagePullPolicy: Never`.

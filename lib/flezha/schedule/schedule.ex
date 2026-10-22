@@ -77,7 +77,8 @@ defmodule Flezha.Service.Schedule do
         plugins: Map.get(fields, :plugins) || ""
       })
 
-    with :ok <- steps_only(namespace, fields[:factory_id]),
+    with :ok <- Hub.quorum(),
+         :ok <- steps_only(namespace, fields[:factory_id]),
          :ok <- plugins_decode(fields.plugins, namespace, fields[:name]),
          {:ok, entry} <- Store.add(fields) do
       _ = Hub.assert(entry)
@@ -96,7 +97,8 @@ defmodule Flezha.Service.Schedule do
   verb remove(name, caller_context), verb: :schedule_remove, args: [name: @schedule_name] do
     # Store first: retracting first would let the periodic re-assert sweep
     # resurrect the job before the row is gone.
-    with :ok <- Store.remove(name) do
+    with :ok <- Hub.quorum(),
+         :ok <- Store.remove(name) do
       _ = Hub.retract(name)
       :ok
     end

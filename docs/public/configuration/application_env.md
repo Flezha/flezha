@@ -275,6 +275,9 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:quic_addresses` | string | `127.0.0.1:4433` |
 | `:quic_client_ca_path` | path | `storage/app/certs/ca.pem` |
 | `:quic_listen_address` | address | `0.0.0.0:4433` |
+| `:quorum_nodes` | positive_int | unset |
+| `:quorum_percent` | positive_int | `51` |
+| `:quorum_window_ms` | ms | `30000` |
 | `:reconnect_interval` | ms | `1000` |
 | `:reconnect_max_backoff_ms` | ms | `30000` |
 | `:record_log_cut_after_bytes` | int | `65536` |
@@ -292,6 +295,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:socket_dir_group` | string | unset |
 | `:socket_files_path` | path | derived per run |
 | `:source_credit_window_bytes` | int | derived |
+| `:split_behaviour` | one of `divergence`, `static`, `majority`, `dynamic` | `divergence` |
 | `:state_resync_fun` | term | unset |
 | `:state_root` | path | `storage/app/state` |
 | `:static_nodes` | list of atom | `""` |

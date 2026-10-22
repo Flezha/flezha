@@ -29,9 +29,10 @@ factory can run as many relays as you need.
    4. [What you run is what you deploy](#what-you-run-is-what-you-deploy)
 9. [Check a tasklet on its own](#check-a-tasklet-on-its-own)
 10. [After a controller restart](#after-a-controller-restart)
-11. [Start from a clean slate: `flz reset`](#start-from-a-clean-slate-flz-reset)
-12. [Limits and gotchas](#limits-and-gotchas)
-13. [See also](#see-also)
+11. [Choosing a split behaviour](#choosing-a-split-behaviour)
+12. [Start from a clean slate: `flz reset`](#start-from-a-clean-slate-flz-reset)
+13. [Limits and gotchas](#limits-and-gotchas)
+14. [See also](#see-also)
 
 ## Start a relay
 
@@ -624,7 +625,7 @@ permanent. A clean state root holds one `_system` hub after the first boot.
 | a runner restarts with a new identity | not needed | the controller never went down; the new runner gets the same cells restored |
 | a relay moves while its old runner is alive | not needed | its state travels with it |
 | a relay moves after its old runner died | yes | the new place pulls the cell files and replays them, once |
-| a network partition during boot | yes, with care | a short window where one relay may start twice, settled when the network heals; set `FLEZHA_AUTO_RESTORE_ENABLED=false` in fragile environments |
+| a network split | depends on `FLEZHA_SPLIT_BEHAVIOUR` | with the default `divergence` both sides keep running, so a relay may run on each side until the network heals; with a quorum behaviour the smaller side stops its relays ([choosing a split behaviour](#choosing-a-split-behaviour)) |
 | three nodes, two die | only what is missing | returning nodes start only what nothing in the cluster holds |
 | the cluster goes down and only some nodes return | yes | **the one tolerated loss**: relays recorded only on the nodes that did not return are gone, unless the remote tier is on |
 | the registry file is damaged | empty | the file is renamed `registry.dets.corrupt-<n>`, and the boot continues empty |
@@ -683,6 +684,77 @@ bus under the `:flezha_boot` source. `:reconcile_duplicate` is an alarm, not a
 metric: the duplicate is already resolved, keeping one. It is expected only
 while recovering from a partition between nodes; at any other time a start
 bypassed the id claim, and it logs at `error`.
+
+## Choosing a split behaviour
+
+When the network between controllers breaks, each side sees the other side's
+controllers go away. `FLEZHA_SPLIT_BEHAVIOUR` decides what the two sides do,
+for the relays of every namespace and for the schedules:
+
+| Behaviour | Which side keeps running | Settings |
+| --- | --- | --- |
+| `divergence` (the default) | both: a relay can run on each side until the network heals, and write its state and outputs twice | none |
+| `static` | a side with at least `FLEZHA_QUORUM_NODES` controllers | `FLEZHA_QUORUM_NODES`, required |
+| `majority` | a side with more than half of the controllers the cluster counts as members | `FLEZHA_QUORUM_NODES`, optional |
+| `dynamic` | a side that kept `FLEZHA_QUORUM_PERCENT` of the controllers it lost within `FLEZHA_QUORUM_WINDOW_MS` | `FLEZHA_QUORUM_PERCENT`, `FLEZHA_QUORUM_WINDOW_MS` |
+
+A controller on the side that stops:
+
+- stops its relays before it takes over any relay of the controllers it lost.
+  Its runners drop them and their writers flush, as on any stop;
+- answers `/healthz` with `200` and `"status":"no_quorum"`, naming the
+  namespaces. It is not a restart signal: a restart does not bring the other
+  side back;
+- refuses `flz relay start`, `flz relay stop` and schedule changes with
+  `controller.no_quorum`, and the convergence loop leaves its relays alone;
+- runs again once the network heals. It first learns where the other side
+  runs each relay, starts again only the relays it held that nobody runs, and
+  the ones that belong here move back. A relay stopped on the other side
+  during the split is one nobody runs, so it starts again here; the next
+  recovery round stops it, since its declared entry is gone.
+
+How each one treats a planned scale-down and a restart:
+
+- **`majority`** keeps a list of member controllers, by node name. A
+  controller that shuts down gracefully drains and leaves the list, and a
+  leave never stops the others, so the cluster can be scaled down one or
+  several controllers at a time. A controller that crashes or is cut off stays
+  on the list and counts as missing. Node names must therefore survive a
+  restart: on Kubernetes the boot refuses `majority` unless
+  `FLEZHA_K8S_HOST_IDENTIFIER=hostname`, since a pod named after its address
+  would come back as a new member each time.
+- With `FLEZHA_AUTO_RESTORE_ENABLED` on, its default, the list is kept beside
+  the registry (`storage/app/process_hub/<hub_id>/registry.members`), so on
+  Kubernetes it lives on the StatefulSet volume. A controller that restarts
+  alone reads it and stays stopped instead of running as a cluster of one.
+  With auto-restore off, the list is kept in memory only. A controller with no
+  list waits for `FLEZHA_QUORUM_NODES` controllers when that is set, and runs
+  alone when it is not. A controller that leaves a namespace's hub because it
+  holds nothing there forgets that hub's list and joins it again as a new
+  member.
+- A controller that died for good and will not come back stays a member until
+  it is removed with
+  `ProcessHub.Strategy.PartitionTolerance.MajorityQuorum.forget_node/2`, called
+  for each hub from a controller's remote console while the rest of the
+  cluster is together. A forget reaches the controllers that are connected;
+  after a split heals, forget it again if the other side's list brought it
+  back.
+- **`static`** counts the controllers that are present, whatever the reason
+  the others are gone. `FLEZHA_QUORUM_NODES` must be below the cluster size by
+  at least the number of controllers a rolling restart takes down at once,
+  or every rolling restart stops the cluster. A controller also waits for that
+  many controllers when it starts.
+- **`dynamic`** counts a graceful shutdown as a leave, so any number of
+  controllers can be scaled down at once; only a sudden loss counts. A split
+  that builds up more slowly than the window, one controller at a time, is not
+  seen as a split; use `majority` when that matters. A controller waits for
+  `FLEZHA_QUORUM_NODES` controllers when it starts, if that is set.
+
+Each side judges by what it sees. When the network shows a split one
+connection at a time, a controller can take over a few relays of the
+controllers it lost first, before the last loss stops it. A controller that
+pauses and wakes after its relays moved can still write once before it
+notices; this release does not fence such a write.
 
 ## Start from a clean slate: `flz reset`
 

@@ -31,6 +31,8 @@ defmodule Flezha.Config.DurationRows do
     {:cluster_formation_wait_ms, :ms, nil,
      derived: {:headroom, :cluster_formation_timeout_ms, 5_000}},
     {:cluster_ready_poll_ms, :ms, 50, []},
+    # `dynamic` split behaviour: how long a lost node counts as a sudden loss.
+    {:quorum_window_ms, :ms, 30_000, key: true, env: "FLEZHA_QUORUM_WINDOW_MS"},
     {:k8s_discovery_request_ms, :ms, 15_000, []},
     # One authorization write or snapshot exchanged with another controller.
     {:authz_replica_call_ms, :ms, 5_000, []},

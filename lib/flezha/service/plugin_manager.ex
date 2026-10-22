@@ -165,6 +165,9 @@ defmodule Flezha.Service.PluginManager do
         _ = reconverge(namespace, name, &Overwatch.plugin_subscribe(&1, &2, &3, entry))
         {:ok, :enabled}
 
+      {:error, :no_quorum} = refused ->
+        refused
+
       # Two enables of one name raced and the other one won.
       _not_started ->
         case HubManager.plugin_entry(namespace, name) do

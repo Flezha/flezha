@@ -1087,6 +1087,30 @@ results SHALL be unchanged.
 - **THEN** it SHALL answer the same Cell ids as before the change
 - **AND** it SHALL list each namespace directory once and SHALL make no cwd call to the file server
 
+### Requirement: The convergence loop SHALL leave a hub without quorum alone
+
+When a namespace hub on this node has no quorum, the loop SHALL NOT start, restart or rebind any relay of that hub, and SHALL NOT heal an intent mismatch for it. The skip SHALL be recorded as a verdict reason, not as a failed heal. When quorum returns, the loop SHALL resume on its next tick.
+
+#### Scenario: Durable relays on a locked hub
+- **WHEN** a hub's registry declares relays that are not running because the hub has no quorum
+- **THEN** the loop attempts no start for them, and no heal failure is counted
+
+#### Scenario: Quorum returns
+- **WHEN** the hub regains quorum
+- **THEN** the next tick treats the hub like any other
+
+### Requirement: /healthz SHALL report a node without quorum as `no_quorum`
+
+When any namespace hub on this node has no quorum, `/healthz` SHALL answer `200 OK` with `"status":"no_quorum"` and the affected namespaces. The status SHALL rank above `degraded` and below `unhealthy`, and SHALL NOT be a restart signal, because a restart does not restore quorum.
+
+#### Scenario: Minority node
+- **WHEN** a controller's namespace hubs are locked for lack of quorum
+- **THEN** `/healthz` answers 200 with `no_quorum` and lists those namespaces
+
+#### Scenario: A wedge still wins
+- **WHEN** a controller has no quorum and its convergence loop is wedged
+- **THEN** `/healthz` answers 503 `unhealthy`
+
 ## Removed Requirements
 
 ### Requirement: `Backoff.schedule_ms/0` is part of the public API

@@ -319,11 +319,22 @@ defmodule Flezha.Service.RelayManager.Init do
   `:no_response` row of the backoff table, so a transient partition during
   startup doesn't surface as a hard failure. A steady-state `:no_response`
   still propagates once the row gives up.
+
+  A hub without quorum on this node answers `{:error, :no_quorum}` at once:
+  its relays stopped on purpose, and only the other side of the split can
+  start one.
   """
   @spec start_declared(binary(), map(), map(), term(), non_neg_integer()) :: term()
   def start_declared(namespace, child_spec, metadata, label, attempt \\ 0) do
+    hub_id = Identificator.hub(namespace)
+
+    with :ok <- HubManager.quorum(hub_id),
+         do: start_on_hub(hub_id, namespace, child_spec, metadata, label, attempt)
+  end
+
+  defp start_on_hub(hub_id, namespace, child_spec, metadata, label, attempt) do
     result =
-      Identificator.hub(namespace)
+      hub_id
       |> ProcessHub.start_child(child_spec,
         awaitable: true,
         # We will get the errors from the start result.
@@ -466,9 +477,11 @@ defmodule Flezha.Service.RelayManager.Init do
       else: {:error, start_failure(relay.id, reason)}
   end
 
-  # A failure the runner already answered with its own error is that error;
-  # anything else is the cause the start stopped at, kept for the details.
+  # A failure the runner already answered with its own error is that error, as
+  # is a hub without quorum; anything else is the cause the start stopped at,
+  # kept for the details.
   defp start_failure(_relay_id, %Flezha.Error{} = error), do: error
+  defp start_failure(_relay_id, :no_quorum), do: :no_quorum
   defp start_failure(relay_id, reason), do: {:start_failed, relay_id, reason}
 
   # The registry refused the id: a live instance already holds it. Taking the

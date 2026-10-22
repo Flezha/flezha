@@ -435,6 +435,50 @@ defmodule Flezha.Healthz.ServerTest do
     assert decoded["status"] == "recovering"
   end
 
+  describe "a namespace hub without quorum" do
+    defp publish_no_quorum(extra \\ %{}) do
+      Snapshot.publish(
+        Map.merge(
+          %{
+            last_tick_at: System.monotonic_time(:millisecond),
+            relay_health: relay_records([], 0),
+            no_quorum: ["orders", "payments"]
+          },
+          extra
+        )
+      )
+    end
+
+    test "answers 200 no_quorum naming the namespaces, not a restart signal", %{port: port} do
+      publish_no_quorum()
+
+      {status, _headers, body} = get(port, "/healthz")
+      decoded = Jason.decode!(body)
+
+      assert status == 200
+      assert decoded["status"] == "no_quorum"
+      assert decoded["reason"] == "minority_side"
+      assert decoded["namespaces"] == ["orders", "payments"]
+    end
+
+    test "outranks a degraded fleet", %{port: port} do
+      publish_no_quorum(%{relay_health: relay_records(["stalled"], 1)})
+
+      assert {200, _headers, body} = get(port, "/healthz")
+      assert Jason.decode!(body)["status"] == "no_quorum"
+    end
+
+    test "a wedged loop still answers 503 unhealthy", %{port: port} do
+      Application.put_env(:flezha, :convergence_tick_ms, 10)
+      publish_no_quorum(%{last_tick_at: System.monotonic_time(:millisecond) - 1_000})
+
+      {status, _headers, body} = get(port, "/healthz")
+
+      assert status == 503
+      assert Jason.decode!(body)["reason"] == "tick_stale"
+    end
+  end
+
   describe "controller-fabric wedge → 503 (D4)" do
     setup do
       Application.put_env(:flezha, :convergence_fabric_503_polls, 3)

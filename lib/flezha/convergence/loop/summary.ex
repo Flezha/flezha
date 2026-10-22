@@ -50,6 +50,7 @@ defmodule Flezha.Convergence.Loop.Summary do
       pending_restore: pending_restore,
       unmet_intent_ms: unmet_intent_since && now - unmet_intent_since,
       relay_health: state.verdicts,
+      no_quorum: state.no_quorum,
       data_plane_layer: StallClassifier.layer(state.stall_verdict),
       data_plane_streak: state.stall_streak
     })

@@ -28,6 +28,12 @@ defmodule Flezha.Healthz.Server do
       - `200 OK` `{"status":"recovering", ...}` when any hub is still in the
         recovery state machine (kubelet must NOT restart during a planned
         recovery).
+      - `200 OK` `{"status":"no_quorum", "namespaces": [...]}` when a
+        namespace hub on this node has no quorum: a split behaviour other
+        than `divergence` is set and this controller is on the minority side
+        of a network split, so those namespaces' relays stopped here and the
+        loop leaves them alone. Ranked above `recovering` and `degraded`.
+        Not a restart signal: a restart does not bring quorum back.
       - `503 Service Unavailable` `{"status":"unhealthy", ...}` ONLY when
         the convergence Loop itself is wedged (`reason` ∈
         `tick_stale | recovery_failed`) or the controller's own data-plane
@@ -142,6 +148,7 @@ defmodule Flezha.Healthz.Server do
       tick_stale?: loop_hard_wedged?(last_tick_at),
       tick_gapped?: loop_tick_gapped?(last_tick_at),
       tick_age_ms: tick_age(last_tick_at),
+      no_quorum: Map.get(current, :no_quorum, []),
       stuck: Map.get(current, :stuck_relays, %{}),
       intent_mismatch: Map.get(current, :intent_mismatch, []),
       pending_restore: Map.get(current, :pending_restore, false),

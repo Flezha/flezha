@@ -251,6 +251,51 @@ defmodule Flezha.Convergence.LoopTest do
     end
   end
 
+  describe "a namespace hub without quorum" do
+    alias Flezha.Convergence.{Facts, Heal, Loop, Probe, RecoveryGate}
+    alias Flezha.Convergence.Snapshot
+    alias Flezha.Runner.FleetManager
+    alias Flezha.Service.HubManager
+
+    setup :set_mimic_global_until_exit
+
+    setup do
+      intent = %Intent{
+        relays: [%{namespace: :ns, relay_id: "op", factory_id: "f", plugins: []}]
+      }
+
+      stub(Intent, :declared, fn -> intent end)
+      stub(RecoveryGate, :ready_namespaces, fn _ -> MapSet.new([:ns]) end)
+      stub(HubManager, :durable_registry_pending?, fn -> false end)
+      stub(HubManager, :get_running_namespaces, fn -> [:ns] end)
+      stub(Probe, :snapshot, fn -> reality() end)
+      stub(FleetManager, :factories_for_runner, fn _ns, _runner -> MapSet.new(["f"]) end)
+      observe_heals(:error)
+
+      start_supervised!({Loop, tick_ms: 3_600_000})
+      :ok
+    end
+
+    # fails when: the loop restarts or rebinds the relays of a hub that stopped
+    # them for lack of quorum, which the other side of the split now runs.
+    test "is left alone, and healed again on the tick after quorum returns" do
+      stub(HubManager, :quorum, fn _hub_id -> {:error, :no_quorum} end)
+      Facts.declare({:runner_disconnected, {:ns, @dead}, %{}})
+
+      :ok = Loop.tick_now()
+
+      refute_received {:healed, _primitive}
+      assert attempt(@misbound_key) == 0, "a skipped hub was charged a heal attempt"
+      assert Snapshot.current().no_quorum == [:ns]
+
+      stub(HubManager, :quorum, fn _hub_id -> :ok end)
+      :ok = Loop.tick_now()
+
+      assert_receive {:healed, :rebind_relay}, 1_000
+      assert Snapshot.current().no_quorum == []
+    end
+  end
+
   describe "Planner.waiting_keys/1 — what a runner connecting releases" do
     alias Flezha.Config.Backoff
     alias Flezha.Convergence.{Facts, Planner}

@@ -46,6 +46,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate local_children(arg1, arg2), to: Rows
   @doc false
   defdelegate migration_strategy(), to: Lifecycle
+  defdelegate quorum(hub_id), to: Lifecycle
   defdelegate relay_bindings(arg1), to: Rows
   defdelegate declared_bindings(arg1), to: Rows
   defdelegate relay_bindings(arg1, arg2), to: Rows
@@ -134,14 +135,15 @@ defmodule Flezha.Service.HubManager do
 
   @doc """
   Stop this node's member of `namespace`'s hub and keep its registry directory:
-  a later `start_hub/1` reads it, as after a restart.
+  a later `start_hub/1` reads it, as after a restart. Its member list goes: the
+  node left that hub's cluster, and joins it again as a new member.
   """
   @spec leave_hub(binary()) :: :ok
   def leave_hub(namespace) do
     hub_id = Identificator.hub(namespace)
     Supervisor.terminate_child(__MODULE__, hub_id)
     Supervisor.delete_child(__MODULE__, hub_id)
-    :ok
+    Lifecycle.drop_member_list(hub_id)
   end
 
   @doc "Hub id of the cron-schedule hub."
@@ -280,7 +282,7 @@ defmodule Flezha.Service.HubManager do
       hub_id: hub_id,
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
-      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
+      partition_tolerance_strategy: Lifecycle.partition_tolerance_strategy(hub_id),
       # A relay's group is its factory id, and a controller serves the
       # factories its fleet can run, so a relay is only ever assigned to a
       # controller that can run it. A relay with no factory has no group
@@ -338,7 +340,9 @@ defmodule Flezha.Service.HubManager do
       hub_id: @schedule_hub_id,
       synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
-      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
+      # Follows the split behaviour too: a split must not arm one cron
+      # schedule on both sides.
+      partition_tolerance_strategy: Lifecycle.partition_tolerance_strategy(@schedule_hub_id),
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{},
       registry_backend: :ets,

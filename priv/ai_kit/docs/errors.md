@@ -206,6 +206,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
+| `controller.no_quorum` | unavailable | 7 | this controller is on the minority side of a network split, so it starts and stops nothing until the split heals | `send the request to a controller on the other side, which keeps running` |
 | `controller.peer_unreachable` | unavailable | 7 | a peer controller node did not answer the call routed to it |  |
 | `controller.process_gone` | unavailable | 7 | the process serving this request is gone; try again |  |
 | `controller.shutting_down` | unavailable | 7 | the controller is shutting down |  |
