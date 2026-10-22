@@ -37,12 +37,8 @@ Flezha.Service.Controller.boot_status/1
 Flezha.Service.Controller.cluster_status/2
 Flezha.Service.Controller.durability_breaches/1
 Flezha.Service.Controller.durability_status/1
-Flezha.Service.Controller.hub_id/2
 Flezha.Service.Controller.liveness_counters/1
 Flezha.Service.Controller.mem_top/1
-Flezha.Service.Controller.recovery_per_node/3
-Flezha.Service.Controller.recovery_state/2
-Flezha.Service.Controller.shutdown_status/1
 Flezha.Service.Controller.status/1
 Flezha.Service.Controller.stop/2
 Flezha.Service.Dlq.drop/2

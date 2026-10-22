@@ -31,10 +31,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
   @published %{
     Controller => [
-      {:hub_id, ["default"]},
-      {:recovery_state, [:flezha_hub_default]},
-      {:recovery_per_node, ["default", []]},
-      {:shutdown_status, []},
       {:durability_breaches, []},
       {:durability_status, []},
       {:liveness_counters, []},
@@ -229,9 +225,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert is_list(kinds) and kinds != []
 
       assert {:ok, []} = Relay.partition_groups([], context)
-
-      assert {:ok, hub} = Controller.hub_id("default", context)
-      assert is_atom(hub)
 
       assert {:ok, counters} = Controller.liveness_counters(context)
       assert is_map(counters) or is_list(counters)

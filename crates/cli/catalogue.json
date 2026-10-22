@@ -127,21 +127,6 @@
       "args": []
     },
     {
-      "name": "Controller.hub_id",
-      "doc": "The hub id for `namespace`, as this controller composes it.",
-      "action": "controller.status",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
       "name": "Controller.liveness_counters",
       "doc": "Every data-plane liveness counter this node holds.",
       "action": "controller.status",
@@ -152,50 +137,6 @@
     {
       "name": "Controller.mem_top",
       "doc": "One snapshot of the controller's memory hot spots.",
-      "action": "controller.status",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
-      "name": "Controller.recovery_per_node",
-      "doc": "Each node's recovery state for `namespace`, keyed by node.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        },
-        {
-          "name": "nodes",
-          "type": "list",
-          "required": true,
-          "doc": "The nodes to ask."
-        }
-      ]
-    },
-    {
-      "name": "Controller.recovery_state",
-      "doc": "One hub's recovery state, by hub id.",
-      "action": "controller.status",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "hub_id",
-          "type": "atom",
-          "required": true,
-          "doc": "The hub's id."
-        }
-      ]
-    },
-    {
-      "name": "Controller.shutdown_status",
-      "doc": "Where the graceful shutdown sequence has reached.",
       "action": "controller.status",
       "remote": true,
       "stream": false,

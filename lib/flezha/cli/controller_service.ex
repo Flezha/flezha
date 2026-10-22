@@ -1,14 +1,14 @@
 defmodule Flezha.Service.Controller do
   @moduledoc """
-  Published service-API surface for the controller itself: its readiness, its
-  identity, its shutdown state and the stop, its durability posture, its memory
-  snapshot, its per-node recovery state and the cluster view of a namespace.
+  Published service-API surface for the controller itself: its readiness, the
+  stop, its durability posture, its memory snapshot and the cluster view of a
+  namespace, each node's recovery state in it.
 
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
   `local_recovery_snapshot/1` is the exception and is not on the published
-  surface: it is the remote half of `recovery_per_node/3`'s fan-out, which every
-  peer calls by name. `stop_progress/4` is the telemetry handler a stop attaches.
+  surface: it is the remote half of `cluster_status/2`'s recovery fan-out, which
+  every peer calls by name. `stop_progress/4` is the telemetry handler a stop attaches.
 
   `stop/2` reports its progress as it goes, to the `:emit` the caller's context
   carries (a function, or a pid that receives `{:flezha_emit, event}`), from
@@ -23,8 +23,6 @@ defmodule Flezha.Service.Controller do
   """
 
   use Flezha.AuthZ.Verb
-
-  @namespace [type: :string, doc: "The namespace."]
 
   alias Flezha.AuthZ.Namespace
   alias Flezha.Boot.Readiness
@@ -157,46 +155,6 @@ defmodule Flezha.Service.Controller do
      }}
   end
 
-  @doc "The hub id for `namespace`, as this controller composes it."
-  @spec hub_id(String.t(), caller_context()) :: {:ok, atom()} | {:error, term()}
-  verb hub_id(namespace, caller_context) when is_binary(namespace),
-    verb: :controller_hub_id,
-    args: [namespace: @namespace] do
-    {:ok, Identificator.hub(namespace)}
-  end
-
-  @doc "One hub's recovery state, by hub id."
-  @spec recovery_state(atom(), caller_context()) :: {:ok, atom()} | {:error, term()}
-  verb recovery_state(hub_id, caller_context) when is_atom(hub_id),
-    verb: :controller_hub_recovery,
-    row: &hub_namespace/1,
-    args: [hub_id: [type: :atom, doc: "The hub's id."]] do
-    HubManager.recovery_state(hub_id)
-  end
-
-  @doc """
-  Each node's recovery state for `namespace`, keyed by node.
-
-  Asks every node in the list, including this one. A node that cannot be reached
-  answers `:unreachable` rather than failing the whole read, so one unreachable
-  peer does not blank the panel. A node named as text is asked only when it is
-  this node or a connected one; any other name answers `:unreachable`.
-  """
-  @spec recovery_per_node(String.t(), [node() | String.t()], caller_context()) ::
-          {:ok, map()} | {:error, term()}
-  verb recovery_per_node(namespace, nodes, caller_context)
-       when is_binary(namespace) and is_list(nodes),
-       verb: :controller_recovery,
-       args: [namespace: @namespace, nodes: [type: :list, doc: "The nodes to ask."]] do
-    {:ok, recovery_map(Namespace.or_default(namespace), nodes)}
-  end
-
-  @doc "Where the graceful shutdown sequence has reached."
-  @spec shutdown_status(caller_context()) :: {:ok, term()} | {:error, term()}
-  verb shutdown_status(caller_context), verb: :controller_status do
-    {:ok, Coordinator.status()}
-  end
-
   @doc "The durability breaches recorded since the controller started."
   @spec durability_breaches(caller_context()) :: {:ok, term()} | {:error, term()}
   verb durability_breaches(caller_context), verb: :controller_status do
@@ -260,8 +218,8 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc false
-  # The remote half of `recovery_per_node/3`. Public because the fan-out calls it
-  # by name on every peer.
+  # The remote half of `cluster_status/2`'s recovery fan-out. Public because the
+  # fan-out calls it by name on every peer.
   @spec local_recovery_snapshot(atom()) :: atom()
   def local_recovery_snapshot(hub_id) when is_atom(hub_id) do
     case HubManager.recovery_state(hub_id) do
@@ -270,24 +228,9 @@ defmodule Flezha.Service.Controller do
     end
   end
 
-  defp hub_namespace([hub_id]) do
-    if Identificator.hub_id?(hub_id),
-      do: {:ok, %{namespace: Identificator.namespace_from_hub(hub_id)}},
-      else: {:error, :invalid_scope}
-  end
-
   defp recovery_map(namespace, nodes) do
     hub_id = Identificator.hub(namespace)
     Map.new(nodes, &{&1, node_recovery(&1, hub_id)})
-  end
-
-  # A name arriving as text is asked only when it is a connected node: comparing
-  # as strings mints no atom from caller input.
-  defp node_recovery(peer, hub_id) when is_binary(peer) do
-    case Enum.find([node() | Node.list()], &(Atom.to_string(&1) == peer)) do
-      nil -> :unreachable
-      known -> node_recovery(known, hub_id)
-    end
   end
 
   defp node_recovery(peer, hub_id) when peer == node(), do: local_recovery_snapshot(hub_id)

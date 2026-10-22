@@ -320,7 +320,11 @@ defmodule Flezha.Service.Cli.ClusterTest do
         ]
       end)
 
-      stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
+      stub(HubManager, :recovery_state, fn hub_id ->
+        if hub_id == Flezha.Identificator.hub("shop"),
+          do: {:ok, :recovering},
+          else: {:error, :unknown_hub}
+      end)
 
       out =
         capture_io(fn ->
@@ -328,6 +332,8 @@ defmodule Flezha.Service.Cli.ClusterTest do
         end)
 
       assert {:ok, d} = Jason.decode(out)
+      # Each node reports the recovery state of the namespace's own hub.
+      assert [%{"recovery_state" => "recovering"}] = d["nodes"]
       assert d["leader"] == to_string(node())
       assert d["is_leader"] == true
       assert d["unplaced_relays"] == 1
