@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{door_request, Shim, ECHOING};
+use common::{door_request, Shim, DOOR, ECHOING};
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
@@ -150,7 +150,14 @@ fn an_option_reads_the_same_wherever_it_is_written() {
         let out = shim.run(argv);
         let got = String::from_utf8_lossy(&out.stdout);
 
-        if door_request(&got).as_deref() != Some(*want) {
+        // A verb that reaches no controller still writes its call whole on
+        // the command line; only a door call reads its arguments from stdin.
+        let reached = if want.starts_with(DOOR) {
+            door_request(&got).as_deref() == Some(*want)
+        } else {
+            got.lines().any(|line| line == *want)
+        };
+        if !reached {
             wrong.push(format!(
                 "flz {}\n     got  {}\n     want {}",
                 argv.join(" "),
