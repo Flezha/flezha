@@ -261,15 +261,16 @@ defmodule Flezha.AuthZ.Verbs do
       audit_name: :tail,
       target: [:source]
     ],
+    # A source's switch: one status row for the whole controller.
     observability_enable: [
       action: :"observability.enable_source",
-      scope: :caller,
+      scope: :system,
       audit: {:before, :observability_service},
       target: [:source]
     ],
     observability_disable: [
       action: :"observability.disable_source",
-      scope: :caller,
+      scope: :system,
       audit: {:before, :observability_service},
       target: [:source]
     ],

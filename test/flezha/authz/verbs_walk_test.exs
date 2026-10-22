@@ -141,7 +141,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
     assert capture_io(fn ->
              Cli.call("Observability.enable_source", Jason.encode!(["walk_source"]),
-               token: ctx.op_default
+               token: ctx.op_sys
              )
            end) =~
              "source walk_source enabled"
@@ -178,7 +178,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
     assert [enable] = records(ctx.audit_dir, "observability_service", "enable_source")
     assert enable["metadata"]["source"] == "walk_source"
-    assert enable["namespace"] == "default"
+    assert enable["namespace"] == "_system"
 
     assert [stop] = records(ctx.audit_dir, "relay_service", "stop")
     assert stop["metadata"]["outcome"] == "error"

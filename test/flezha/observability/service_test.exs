@@ -190,6 +190,40 @@ defmodule Flezha.Service.ObservabilityTest do
     end
   end
 
+  # Fails when: the switch is judged in the caller's own namespace, so a
+  # namespace's ops role flips the one status row the whole controller reads.
+  describe "switching a source is a controller-wide act" do
+    @shop_ops %{source: :cli, principal: "op@shop", role: :ops, namespace: "shop"}
+    @system_ops %{source: :cli, principal: "op@_system", role: :ops, namespace: "_system"}
+
+    setup do
+      AuthTestHelper.setup_auth_stores(
+        prefix: "flz_obs_switch",
+        claim: true,
+        register_source: true
+      )
+
+      on_exit(fn -> Registry.enable_source(:platform_authz) end)
+      :ok
+    end
+
+    test "an ops caller of one namespace cannot silence the audit trail" do
+      for switch <- [&Observability.disable_source/2, &Observability.enable_source/2] do
+        assert {:error, %Flezha.Error{code: "authz.namespace_mismatch"}} =
+                 switch.(:platform_authz, @shop_ops)
+      end
+
+      assert {:ok, %{status: :active}} = Registry.lookup_source(:platform_authz)
+    end
+
+    test "an ops caller bound to _system still switches a source", %{src: src} do
+      assert :ok = Observability.disable_source(src, @system_ops)
+      assert {:ok, %{status: :disabled}} = Registry.lookup_source(src)
+      assert :ok = Observability.enable_source(src, @system_ops)
+      assert {:ok, %{status: :active}} = Registry.lookup_source(src)
+    end
+  end
+
   describe "master disable" do
     test "every public function returns {:error, :observability_disabled} when flag is false" do
       prev = Application.get_env(:flezha, :observability, [])

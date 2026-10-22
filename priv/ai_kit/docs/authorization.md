@@ -293,7 +293,7 @@ roles outside that line), and the namespace it is judged in:
 | `flz plugin disable`, `unbind` | `plugin.disable` | app | the plugin's namespace |
 | `flz observe sources`, `sinks` | `observability.query` | viewer | the caller's namespace |
 | `flz observe tail` | `observability.subscribe` | viewer | the caller's namespace |
-| `flz observe enable`, `disable` | `observability.enable_source`, `disable_source` | ops | the caller's namespace |
+| `flz observe enable`, `disable` | `observability.enable_source`, `disable_source` | ops | `_system` |
 | `flz dlq list`, `show` | `dlq.list`, `dlq.show` | ops | the entry's namespace |
 | `flz dlq drop`, `replay` | `dlq.drop`, `dlq.replay` | ops | the entry's namespace |
 | `flz schedule list` | `schedule.list` | viewer | `_system` |
