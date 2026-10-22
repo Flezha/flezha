@@ -17,25 +17,21 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
   import ExUnit.CaptureIO
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
-  import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1]
+  import FlezhaTest.Helper.TierE2EHarness, only: [runner_namespace: 2, unique: 1]
   import FlezhaTest.Helper.ListenerHarness
 
   alias Flezha.Relay.Builder
-  alias Flezha.Runner.FleetManager
   alias Flezha.Service.{Cli, Listener, RelayManager}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Fixtures.RelayFixture
-  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
 
   @fixtures [part_echo: :flow, part_echo_steps: :steps]
 
   setup do
-    namespace = unique("parts")
-    on_exit(fn -> FleetManager.stop_namespace(namespace) end)
-    NodeTestHelper.start_runner(namespace)
-    {:ok, namespace: namespace}
+    # A short data heartbeat, so the counts it carries arrive within a test.
+    {:ok, namespace: runner_namespace("parts", env: [{"FLEZHA_DATA_HEARTBEAT_MS", "200"}])}
   end
 
   for {factory, kind} <- @fixtures do
@@ -192,10 +188,12 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
     assert wait_until(fn -> listeners(ns, id) != [] end, 30_000)
     before.()
     assert wait_until(fn -> Enum.any?(printed(device), done?) end, 60_000)
-    Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    text = printed(device)
+    # `flz` going away ends the listen, which detaches as it returns.
+    Process.exit(device, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 30_000
     assert wait_until(fn -> listeners(ns, id) == [] end, 30_000)
-    printed(device)
+    text
   end
 
   defp printed(device),

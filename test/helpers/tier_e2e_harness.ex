@@ -271,6 +271,19 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
+  A namespace of its own with one runner of the selected runtime in it, its
+  fleet stopped when the calling test, or from `setup_all` the module, ends.
+  `opts` are `NodeTestHelper.start_runner/2`'s.
+  """
+  @spec runner_namespace(binary(), keyword()) :: binary()
+  def runner_namespace(prefix, opts \\ []) do
+    namespace = unique(prefix)
+    on_exit(fn -> FleetManager.stop_namespace(namespace) end)
+    NodeTestHelper.start_runner(namespace, opts)
+    namespace
+  end
+
+  @doc """
   A prefixed id under the relay-id cap. The prefix gives, never the counter:
   three call sites compute their prefix, so no rule about call sites can hold
   the bound, and a reserved digit count would only move the cliff. Truncation

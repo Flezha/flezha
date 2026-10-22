@@ -26,6 +26,7 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Relay.KeyGroup
   alias Flezha.Service.{Cli, HubManager, Listener, RelayManager, PluginManager}
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.{FleetStateHelper, NodeTestHelper, TierE2EHarness}
 
@@ -36,6 +37,10 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   # The convergence loop the drills prove quiet runs on every node, ticked on
   # demand; the test config leaves it off.
   @loop_env [convergence_health_enabled: true, convergence_tick_ms: 600_000]
+
+  # The drills across controllers run in the `:multi_node` tier, not in every
+  # `--include system` pass.
+  @multi_node_skip FlezhaTest.Tiers.skip_unless_included(:multi_node)
 
   setup ctx do
     start_supervised!({Flezha.Convergence.Loop, tick_ms: 600_000})
@@ -135,6 +140,8 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   @tag capability: :steps, skip: FlezhaTest.SystemCase.deferral(:steps)
   test "a listener on a once steps relay ends when the relay completes",
        %{namespace: ns} do
+    # The end is read from the registry, twice, this far apart.
+    on_exit(TestHelpers.override_env(:listener_release_check_ms, 200))
     id = start!(ns, "echo_steps", :steps)
     %{task: task} = listen(ns, id)
     send!(ns, id, "hi")
@@ -151,12 +158,16 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
   describe "across controllers" do
     @describetag :multi_node
-    @describetag capability: :parts, skip: FlezhaTest.SystemCase.deferral(:parts)
+    @describetag capability: :parts,
+                 skip: @multi_node_skip || FlezhaTest.SystemCase.deferral(:parts)
 
     # This node (A) and a peer (B), a runner on each. A relay of
     # `part_echo` placed on A moves to B once A's runner stops advertising it,
     # with both controllers up.
     setup %{namespace: ns, runner: local_runner} do
+      # A runner that stops serving a factory keeps it placeable this long;
+      # every move here waits it out.
+      on_exit(TestHelpers.override_env(:group_withdraw_grace_ms, 500))
       {peer_pid, peer} = NodeTestHelper.start_peer_node(:listener_drill_b, app_env: @loop_env)
       on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
       NodeTestHelper.start_runner_remote(peer, ns)
@@ -189,7 +200,8 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       assert listeners(ns, id) == []
     end
 
-    @tag capability: :partitioned, skip: FlezhaTest.SystemCase.deferral(:partitioned)
+    @tag capability: :partitioned,
+         skip: @multi_node_skip || FlezhaTest.SystemCase.deferral(:partitioned)
     test "a group listener across a rescale over two controllers leaves no member a row",
          %{namespace: ns} do
       rescale_drill(ns)

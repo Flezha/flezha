@@ -31,22 +31,18 @@ defmodule FlezhaTest.System.ShorthandE2ETest do
   use FlezhaTest.SystemCase, capability: :shorthand
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
-  import FlezhaTest.Helper.TierE2EHarness, only: [send_inputs: 4, unique: 1]
+  import FlezhaTest.Helper.TierE2EHarness, only: [runner_namespace: 1, send_inputs: 4, unique: 1]
 
   alias Flezha.Relay.Builder
   alias Flezha.Payloader
-  alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Fixtures.RelayFixture
-  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
 
-  setup do
-    namespace = unique("shorthand")
-    on_exit(fn -> FleetManager.stop_namespace(namespace) end)
-    NodeTestHelper.start_runner(namespace)
-    {:ok, namespace: namespace}
+  # One runner for the module: every test starts relays of its own.
+  setup_all do
+    {:ok, namespace: runner_namespace("shorthand")}
   end
 
   test "a short form with no entry name is reached on `input`", ctx do

@@ -60,6 +60,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   @tick_ms 1_000
   @grace_ms 30_000
+  @stall_grace_ms 1_000
   @heartbeat_ms 300
 
   # A provider that declares a worker: the table starts it at activation and
@@ -312,6 +313,10 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     assert wait_until(fn -> attempt({:compaction_gave_up, cell}) == 0 end, 30_000)
 
     # --- the persisted seq stops advancing under input -----------------------
+    # Its evidence is a quiet Watchdog past the grace, so a loop with a short
+    # one judges it; the two faults above closed on their counter-facts.
+    stop_supervised!(Loop)
+    start_loop(@stall_grace_ms)
     on_exit(TestHelpers.override_env(:default_output_stall_timeout_ms, 200))
     TestHelpers.age_writer(writer, 1_000)
 
@@ -330,7 +335,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
     assert wait_until(fn -> attempt({:output_stall, id}) >= 1 end, 10_000)
     # The Watchdog going quiet past the grace is the evidence.
-    assert wait_until(fn -> attempt({:output_stall, id}) == 0 end, @grace_ms + 10_000)
+    assert wait_until(fn -> attempt({:output_stall, id}) == 0 end, @stall_grace_ms + 10_000)
     assert quiet_tick()
   end
 
@@ -454,8 +459,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   # ---------- helpers ----------
 
-  defp start_loop() do
-    start_supervised!({Loop, tick_ms: @tick_ms, output_stall_grace_ms: @grace_ms})
+  defp start_loop(grace_ms \\ @grace_ms) do
+    start_supervised!({Loop, tick_ms: @tick_ms, output_stall_grace_ms: grace_ms})
     assert_receive {:tick, _}, 10_000
   end
 

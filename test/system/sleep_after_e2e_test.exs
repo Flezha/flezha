@@ -78,9 +78,11 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
              "the woken stream did not fold the send onto its total: " <>
                inspect(collected(collector))
 
-      # Once: nothing the sleep held is delivered twice.
-      Process.sleep(1_500)
-      assert collected(collector) == ["a=2", "a=5"]
+      # Once: nothing the sleep held is delivered twice. A held input folded
+      # or delivered again lands ahead of a later send's output.
+      send_input(namespace, id, "a:1")
+      assert NodeTestHelper.wait_until(fn -> length(collected(collector)) >= 3 end, 30_000)
+      assert collected(collector) == ["a=2", "a=5", "a=6"]
     end
 
     # A controller restart while the stream is awake loses every in-memory
@@ -118,9 +120,10 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       force_fresh_rebind(namespace, id)
       send_input(namespace, id, "a:10")
 
-      assert NodeTestHelper.wait_until(fn -> length(collected(collector)) >= 4 end, 30_000)
-      Process.sleep(1_000)
-      assert collected(collector) == ["a=100", "a=101", "a=103", "a=113"]
+      # A re-forwarded input folded again lands ahead of a later send's output.
+      send_input(namespace, id, "a:1")
+      assert NodeTestHelper.wait_until(fn -> length(collected(collector)) >= 5 end, 30_000)
+      assert collected(collector) == ["a=100", "a=101", "a=103", "a=113", "a=114"]
     end
 
     test "a stop removes a sleeping stream and its directory", ctx do
@@ -200,8 +203,17 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       forget_floor_rows(id)
       kill_overwatch(namespace, id)
 
-      assert NodeTestHelper.wait_until(fn -> registered?(namespace, id) end, 30_000)
-      Process.sleep(2_000)
+      # Running: the replacement's bind has re-forwarded what the log owes.
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 match?(
+                   {:ok, %{phase: :running}},
+                   RelayManager.get_overwatch_state(namespace, id)
+                 )
+               end,
+               30_000
+             )
+
       assert InputLog.undelivered(id) == [], "the dead-lettered message is owed again"
       assert [%{"generation" => 1}] = DlqStore.list(id)
     end

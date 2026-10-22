@@ -283,32 +283,31 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
     end
 
     defp assert_fired_once_after_crash(ctx, opts) do
-      {collector, id, at} = crash_timer_pass(ctx, "timer", &(timer_commits(&1) == []), opts)
-
-      assert NodeTestHelper.wait_until(
-               fn -> collected(collector) == ["tock:armed:#{at}", "tock:fired:#{at}"] end,
-               60_000
-             ),
-             "the restored timer did not fire into a fresh pass: #{inspect(collected(collector))}"
-
-      Process.sleep(1_500)
-      assert collected(collector) == ["tock:armed:#{at}", "tock:fired:#{at}"]
-      assert timer_commits(id) == [at]
+      ctx
+      |> crash_timer_pass("timer", &(timer_commits(&1) == []), opts)
+      |> assert_fired_once("the restored timer did not fire into a fresh pass")
     end
 
     test "a crash after the firing's root committed does not fire it again", ctx do
-      {collector, id, at} = crash_timer_pass(ctx, "tock", &(timer_commits(&1) != []))
-
-      assert NodeTestHelper.wait_until(
-               fn -> collected(collector) == ["tock:armed:#{at}", "tock:fired:#{at}"] end,
-               60_000
-             ),
-             "`tock` did not resume from `tick`'s commit: #{inspect(collected(collector))}"
-
-      Process.sleep(1_500)
-      assert collected(collector) == ["tock:armed:#{at}", "tock:fired:#{at}"]
-      assert timer_commits(id) == [at], "the committed firing did not run again"
+      ctx
+      |> crash_timer_pass("tock", &(timer_commits(&1) != []))
+      |> assert_fired_once("`tock` did not resume from `tick`'s commit")
     end
+  end
+
+  # The firing reached the sink once and committed once. A turn sent after it
+  # runs behind any firing still to come, so its output is where a second one
+  # would already show.
+  defp assert_fired_once({collector, namespace, id, at}, failure) do
+    fired = ["tock:armed:#{at}", "tock:fired:#{at}"]
+
+    assert NodeTestHelper.wait_until(fn -> collected(collector) == fired end, 60_000),
+           "#{failure}: #{inspect(collected(collector))}"
+
+    send_turn(namespace, id, "later")
+    assert NodeTestHelper.wait_until(fn -> length(collected(collector)) > 2 end, 30_000)
+    assert collected(collector) == fired ++ ["tock:later"]
+    assert timer_commits(id) == [at], "the firing committed more than once"
   end
 
   describe "a crashed runner's instance reaches its replacement (uds)" do
@@ -402,7 +401,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
              15_000
            )
 
-    {collector, id, at}
+    {collector, namespace, id, at}
   end
 
   # The scheduled timestamps the journal's roots of timer-fed passes name.

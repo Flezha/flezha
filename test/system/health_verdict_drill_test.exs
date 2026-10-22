@@ -36,6 +36,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
   alias Flezha.Relay.Suspend
   alias Flezha.Plugin
   alias Flezha.Service.{Cli, RelayManager, PluginManager}
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.Telemetry
 
@@ -215,8 +216,16 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
     id = start_relay(ctx, "unknown")
     {:ok, pid} = RelayManager.get_relay_pid(ctx.namespace, id)
     :sys.suspend(pid)
-    on_exit(fn -> if Process.alive?(pid), do: :sys.resume(pid) end)
-    assert_surfaces(ctx, id, :unknown, "healthy")
+    # `relay info` and `relay list` wait this long on it before they answer.
+    restore = TestHelpers.override_env(:overwatch_call_timeout_ms, 500)
+
+    # Resumed at once: every later row's reads would wait on it too.
+    try do
+      assert_surfaces(ctx, id, :unknown, "healthy")
+    after
+      restore.()
+      :sys.resume(pid)
+    end
   end
 
   # The runner's OS process is killed: every relay bound to it is `failed`

@@ -19,13 +19,11 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
 
   use FlezhaTest.SystemCase, capability: :call_response
 
-  import FlezhaTest.Helper.TierE2EHarness, only: [unique: 1]
+  import FlezhaTest.Helper.TierE2EHarness, only: [runner_namespace: 1, unique: 1]
 
   alias Flezha.Relay.Builder
-  alias Flezha.Runner.FleetManager
   alias Flezha.Service.{Listener, Relay, RelayManager}
   alias Flezha.State.TaskJournal
-  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   @moduletag timeout: 300_000
@@ -33,11 +31,9 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
   @context %{source: :ui, principal: "e2e@_system"}
   @deadline_ms 30_000
 
-  setup do
-    namespace = unique("call_response")
-    on_exit(fn -> FleetManager.stop_namespace(namespace) end)
-    NodeTestHelper.start_runner(namespace)
-    {:ok, namespace: namespace}
+  # One runner for the module: every test starts relays of its own.
+  setup_all do
+    {:ok, namespace: runner_namespace("call_response")}
   end
 
   test "a flow relay and a steps turn both answer the call", ctx do

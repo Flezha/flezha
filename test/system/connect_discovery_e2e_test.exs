@@ -63,9 +63,15 @@ defmodule FlezhaTest.System.ConnectDiscoveryE2ETest do
       # planted.
       decoys = Enum.map(repository_rungs(ctx.cwd), &listen_at/1)
 
+      # The runner refuses on every attempt until its start wait runs out and
+      # it exits; a short wait ends that sooner.
       output =
         run_until(ctx.namespace, 15_000,
-          env: [{"FLEZHA_SOCKET_FILES_PATH", ""}, {"XDG_RUNTIME_DIR", runtime_dir}],
+          env: [
+            {"FLEZHA_SOCKET_FILES_PATH", ""},
+            {"XDG_RUNTIME_DIR", runtime_dir},
+            {"FLEZHA_RUNNER_START_WAIT_MS", "2000"}
+          ],
           cwd: ctx.cwd
         )
 

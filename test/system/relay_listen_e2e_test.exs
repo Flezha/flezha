@@ -49,7 +49,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       deliver!(ns, id, "hello")
 
       assert printed_line(listener, &(&1 == "echo\thello"))
-      end_by_exit(ns, listener, [id])
+      end_by_caller(ns, listener, [id])
     end
 
     @tag capability: :state_persistence,
@@ -61,7 +61,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       deliver!(ns, id, "k1:v1")
 
       assert printed_line(listener, &(&1 =~ ~r/^sink\tk1=v1\tcell=\S+ seq=\S+ key=k1$/))
-      end_by_exit(ns, listener, [id])
+      end_by_caller(ns, listener, [id])
     end
 
     @tag capability: :state_persistence,
@@ -80,7 +80,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       assert %{"channel" => "sink", "flz.key" => "k2", "flz.cell" => _, "flz.seq" => _} =
                metadata
 
-      end_by_exit(ns, listener, [id])
+      end_by_caller(ns, listener, [id])
     end
 
     test "with --input it prints what the relay ingests", %{namespace: ns} do
@@ -90,7 +90,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       deliver!(ns, id, "again")
 
       assert printed_line(listener, &(&1 == "-\tagain"))
-      end_by_exit(ns, listener, [id])
+      end_by_caller(ns, listener, [id])
     end
 
     @tag capability: :partitioned, skip: FlezhaTest.SystemCase.deferral(:partitioned)
@@ -111,9 +111,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
         assert printed_line(listener, &String.starts_with?(&1, "input\t#{key}:listened\tcell="))
       end
 
-      # Each member holds a heartbeat of its own, so releasing one stops nothing
-      # the next one still watches.
-      refute capture_log(fn -> end_by_exit(ns, listener, members) end) =~ "crashed"
+      end_by_caller(ns, listener, members)
     end
 
     @tag capability: :partitioned, skip: FlezhaTest.SystemCase.deferral(:partitioned)
@@ -123,20 +121,22 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
       Process.exit(pid, :kill)
 
-      for member <- members do
-        assert wait_until(fn -> listeners(ns, member) == [] end, 30_000),
-               "the heartbeat left a listener on #{member}"
-      end
+      # Each member holds a heartbeat of its own, so releasing one stops nothing
+      # the next one still watches.
+      log =
+        capture_log(fn ->
+          for member <- members do
+            assert wait_until(fn -> listeners(ns, member) == [] end, 30_000),
+                   "the heartbeat left a listener on #{member}"
+          end
+        end)
+
+      refute log =~ "crashed"
     end
 
     test "the caller going away ends the loop and detaches", %{namespace: ns} do
       id = start!(ns, "bench_echo")
-      %{pid: pid, ref: ref, device: device} = listen(ns, id)
-
-      Process.exit(device, :kill)
-
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 30_000
-      assert wait_until(fn -> listeners(ns, id) == [] end, 30_000)
+      end_by_caller(ns, listen(ns, id), [id])
     end
 
     test "the window closes, and nothing is left behind", %{namespace: ns} do
@@ -158,7 +158,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       for n <- 1..3, do: deliver!(ns, id, "t#{n}")
 
       assert printed_line(listener, &(&1 =~ ~r/^echo=3 \(/))
-      end_by_exit(ns, listener, [id])
+      end_by_caller(ns, listener, [id])
     end
 
     @tag capability: :partitioned, skip: FlezhaTest.SystemCase.deferral(:partitioned)
@@ -173,7 +173,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       for {key, member} <- owners, do: deliver!(ns, member, "#{key}:tallied")
 
       assert printed_line(listener, &(&1 =~ ~r/(^|\t)[^=\t]+=2 \(/))
-      end_by_exit(ns, listener, members)
+      end_by_caller(ns, listener, members)
     end
 
     test "an Overwatch restart counts again from zero under a new epoch", %{namespace: ns} do
@@ -219,7 +219,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       namespace: ns
     } do
       id = start!(ns, "bench_echo")
-      watcher = watch_calls(ns, id)
+      console = watch_calls(ns, id)
 
       capture_io(fn ->
         Cli.call(
@@ -259,7 +259,8 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
         assert_paired(message, Atom.to_string(source))
       end
 
-      Process.exit(watcher, :kill)
+      # The console going away ends the listen, which detaches as it returns.
+      Process.exit(console, :kill)
       assert wait_until(fn -> listeners(ns, id) == [] end, 30_000)
     end
 
@@ -276,7 +277,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       [_, _, "call=" <> rest] = String.split(call, "\t")
       [call_id, "source=ui"] = String.split(rest, " ")
       assert printed_line(listener, &(&1 =~ ~r/^echo\tprinted\tcall=#{call_id} answered ms=\d+$/))
-      end_by_exit(ns, listener, [id])
+      end_by_caller(ns, listener, [id])
     end
   end
 
@@ -367,20 +368,29 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
   end
 
   # A calls listener the way the console holds one: `Relay.listen/5` with a
-  # pid as `:emit`, here the test's own.
+  # pid as `:emit`, here a stand-in for the console that hands every event on
+  # to the test. Answers the stand-in, whose exit ends the listen.
   defp watch_calls(ns, id) do
     test = self()
+    console = spawn(fn -> hand_on(test) end)
 
-    watcher =
-      spawn(fn ->
-        Flezha.Service.Relay.listen(ns, id, :calls, [window_ms: 120_000], %{
-          source: :internal,
-          emit: test
-        })
-      end)
+    spawn(fn ->
+      Flezha.Service.Relay.listen(ns, id, :calls, [window_ms: 120_000], %{
+        source: :internal,
+        emit: console
+      })
+    end)
 
     assert_receive {:flezha_emit, :attached}, 30_000
-    watcher
+    console
+  end
+
+  defp hand_on(test) do
+    receive do
+      message -> send(test, message)
+    end
+
+    hand_on(test)
   end
 
   defp assert_paired(message, source) do
@@ -394,10 +404,11 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     assert is_integer(ms)
   end
 
-  # The third route out: an exit signal to the loop's own process.
-  defp end_by_exit(ns, %{pid: pid, ref: ref}, targets) do
-    Process.exit(pid, :shutdown)
-    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 30_000
+  # The way `flz` ends a listen: its node, the loop's group leader, goes away,
+  # and the loop detaches as it returns.
+  defp end_by_caller(ns, %{pid: pid, ref: ref, device: device}, targets) do
+    Process.exit(device, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 30_000
 
     for target <- targets do
       assert wait_until(fn -> listeners(ns, target) == [] end, 30_000),

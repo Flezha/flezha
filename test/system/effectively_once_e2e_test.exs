@@ -19,6 +19,7 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
+  import FlezhaTest.Helper.StepsResumeHarness, only: [outboxes_settled?: 1]
 
   alias Flezha.Relay.Builder
   alias Flezha.Relay.ClassRegistry
@@ -183,7 +184,11 @@ defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
            "the tally never took the value the pass had committed: " <>
              inspect(changelog(peek_outputs()))
 
-    Process.sleep(1_500)
-    assert changelog(peek_outputs()) == %{"k" => "k=2"}
+    # A later input is tallied behind anything the crash left to deliver, so
+    # once it is consumed and its count delivered, a value tallied twice shows.
+    send_inputs(relay_id, namespace, ["k:a"])
+    assert wait_until(fn -> InputLog.watermark(relay_id) == 2 end, 30_000)
+    assert outboxes_settled?(relay_id), "a Cell writer still owes output"
+    assert changelog(peek_outputs()) == %{"k" => "k=3"}
   end
 end

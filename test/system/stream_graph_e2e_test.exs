@@ -20,21 +20,17 @@ defmodule FlezhaTest.System.StreamGraphE2ETest do
 
   use FlezhaTest.SystemCase, capability: :graph_builder
 
-  import FlezhaTest.Helper.TierE2EHarness, only: [send_inputs: 4, unique: 1]
+  import FlezhaTest.Helper.TierE2EHarness, only: [runner_namespace: 1, send_inputs: 4, unique: 1]
 
   alias Flezha.Relay.Builder
-  alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Fixtures.RelayFixture
-  alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 300_000
 
-  setup do
-    namespace = unique("stream_graph")
-    on_exit(fn -> FleetManager.stop_namespace(namespace) end)
-    NodeTestHelper.start_runner(namespace)
-    {:ok, namespace: namespace}
+  # One runner for the module: every test starts relays of its own.
+  setup_all do
+    {:ok, namespace: runner_namespace("stream_graph")}
   end
 
   test "a frame on each merged entry reaches the tasklet under its own mapping", ctx do

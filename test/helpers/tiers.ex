@@ -105,7 +105,7 @@ defmodule FlezhaTest.Tiers do
       needs: "a peer BEAM this tier boots and stops mid-suite",
       transports: [:uds],
       doc: "The test tiers",
-      self_skip: false
+      self_skip: true
     },
     %{
       tag: :testnet,

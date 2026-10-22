@@ -242,7 +242,8 @@ A tier is selected by name, and only by name: an ExUnit **include beats an
 exclude**, so `--include system` runs an excluded tier however it is excluded.
 A tier that must not ride another one's include declares `self_skip` and its
 modules call `FlezhaTest.Tiers.skip_unless_included/1`, because a skip is
-honoured whatever the filters say. `:interop` is the one tier that needs it.
+honoured whatever the filters say. `:interop` needs it, and `:multi_node`,
+whose drills sit in `:system` modules.
 
 A scenario is NOT selected by a tag of its own. The axis a `test/system` module
 declares is its `capability:`, which the manifests read; a second tag naming the
