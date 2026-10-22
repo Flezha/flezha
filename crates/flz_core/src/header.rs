@@ -56,7 +56,8 @@ pub const SDK_LANG_NODE: u8 = 4;
 pub const SDK_LANG_RUBY: u8 = 5;
 pub const SDK_LANG_PHP: u8 = 6;
 pub const SDK_LANG_PYTHON: u8 = 7;
-pub const SDK_LANG_NEXT_FREE: u8 = 8;
+pub const SDK_LANG_GO: u8 = 8;
+pub const SDK_LANG_NEXT_FREE: u8 = 9;
 pub const SDK_LANG_RESERVED: u8 = 255;
 
 /// Every allocated value, in allocation order.
@@ -68,6 +69,7 @@ pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
     (SDK_LANG_RUBY, "ruby"),
     (SDK_LANG_PHP, "php"),
     (SDK_LANG_PYTHON, "python"),
+    (SDK_LANG_GO, "go"),
 ];
 
 pub fn sdk_lang_allocated(lang: u8) -> bool {
@@ -95,7 +97,8 @@ pub const FORMAT_ID_KRYO: u8 = 4;
 /// cross-language gate.
 pub const FORMAT_ID_MSGPACK: u8 = 5;
 
-/// PHP's JSON codec.
+/// JSON, shared by every SDK whose codec it is; `sdk_lang` is the
+/// cross-language gate.
 pub const FORMAT_ID_JSON: u8 = 6;
 
 /// Erlang External Term Format, the Elixir SDK's codec.
@@ -325,11 +328,13 @@ mod tests {
         assert_eq!(SDK_LANG_RUBY, 5);
         assert_eq!(SDK_LANG_PHP, 6);
         assert_eq!(SDK_LANG_PYTHON, 7);
+        assert_eq!(SDK_LANG_GO, 8);
         assert_eq!(sdk_lang_name(SDK_LANG_JAVA), "java");
         assert_eq!(sdk_lang_name(SDK_LANG_NODE), "node");
         assert_eq!(sdk_lang_name(SDK_LANG_RUBY), "ruby");
         assert_eq!(sdk_lang_name(SDK_LANG_PHP), "php");
         assert_eq!(sdk_lang_name(SDK_LANG_PYTHON), "python");
+        assert_eq!(sdk_lang_name(SDK_LANG_GO), "go");
         assert_eq!(sdk_lang_name(SDK_LANG_NEXT_FREE), "unallocated");
     }
 
@@ -476,7 +481,7 @@ mod tests {
         let format_of = |lang: u8| match lang {
             SDK_LANG_JAVA => FORMAT_ID_KRYO,
             SDK_LANG_NODE | SDK_LANG_RUBY | SDK_LANG_PYTHON => FORMAT_ID_MSGPACK,
-            SDK_LANG_PHP => FORMAT_ID_JSON,
+            SDK_LANG_PHP | SDK_LANG_GO => FORMAT_ID_JSON,
             _ => FORMAT_ID_POSTCARD,
         };
         let template = |lang: u8| HeaderTemplate {

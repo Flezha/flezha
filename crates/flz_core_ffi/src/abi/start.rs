@@ -3,7 +3,9 @@
 use std::ffi::{c_char, CStr};
 use std::time::Duration;
 
-use crate::{Error, FlzContext};
+use flz_core::Code;
+
+use crate::{set_init_error, Error, FlzContext, FLZ_ERR, FLZ_OK};
 
 /// Connect to the controller and start the runner loop. Transport
 /// configuration (socket path, `FLEZHA_TRANSPORT`) rides the same
@@ -125,6 +127,40 @@ pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
         flz_transport::notice!(Error, "no shutdown thread: stopping without shipping state");
         flz_core::poll_core::global().shutdown();
     }
+}
+
+/// The host installs the SIGTERM and SIGINT handlers itself, so a start installs
+/// none and the host hands a signal over through [`flz_core_terminate`]. Call it
+/// before the first [`flz_core_start`]: once the core has installed its own it
+/// answers [`FLZ_ERR`], `runtime.runner_already_running` in
+/// [`flz_core_init_error`], and the core's handler stays. Idempotent.
+///
+/// [`flz_core_init_error`]: crate::flz_core_init_error
+#[no_mangle]
+pub extern "C" fn flz_core_host_owns_signals() -> i32 {
+    match flz_core::shutdown::host_owns_signals() {
+        Ok(()) => FLZ_OK,
+        Err(_) => {
+            set_init_error(Error::Refused(Code::RunnerAlreadyRunning.with([])));
+            FLZ_ERR
+        }
+    }
+}
+
+/// End the runner as the core's own termination-signal handler does: ship every
+/// relay's state, drain within the same grace, and exit the process with 0. It
+/// does not return. `reason` names the signal in the notice it writes.
+///
+/// # Safety
+/// `reason` must be NULL or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_terminate(reason: *const c_char) -> ! {
+    let reason = if reason.is_null() {
+        std::borrow::Cow::Borrowed("signal")
+    } else {
+        CStr::from_ptr(reason).to_string_lossy()
+    };
+    flz_core::shutdown::terminate(&reason)
 }
 
 /// Watch standard input and end the process when it reaches end of file, on a

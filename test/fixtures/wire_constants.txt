@@ -23,7 +23,8 @@ sdk_lang|node|4
 sdk_lang|ruby|5
 sdk_lang|php|6
 sdk_lang|python|7
-sdk_lang|next_free|8
+sdk_lang|go|8
+sdk_lang|next_free|9
 sdk_lang|reserved|255
 
 format_id|postcard|1

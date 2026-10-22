@@ -520,6 +520,7 @@ dependencies = [
  "flz_core_ffi",
  "flz_transport",
  "jni",
+ "libc",
  "magnus",
  "napi",
  "napi-build",

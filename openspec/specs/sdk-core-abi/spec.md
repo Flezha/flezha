@@ -718,3 +718,29 @@ judges timer ops at settle, so no host reads the pending set.
 - **WHEN** a host calls `flz_core_pool_open` a second time on the same context
 - **THEN** the call SHALL be refused with `runtime.runner_already_running`, and the open pool SHALL keep its slots
 
+### Requirement: A host that owns its termination signals hands them to the core
+The C ABI SHALL export `flz_core_host_owns_signals()` and `flz_core_terminate(reason)`. A host that calls `flz_core_host_owns_signals` before starting the core SHALL get a core that installs no SIGTERM or SIGINT handler; the shutdown bridge SHALL still be registered. `flz_core_terminate` SHALL run the same graceful end the core's own handler runs, with the same grace, and SHALL NOT return. Calling `flz_core_host_owns_signals` after the core has started SHALL fail with the error document and change nothing. A host that calls neither SHALL keep the current behaviour: the core installs its handler at start. Both entries SHALL be rows of `veneer::SURFACE` and of `test/fixtures/abi_surface.txt`.
+
+#### Scenario: The core installs no handler for a host that owns signals
+- **WHEN** a host calls `flz_core_host_owns_signals` and then starts the core
+- **THEN** the SIGTERM and SIGINT dispositions SHALL be the ones the host installed
+
+#### Scenario: Terminate drains like the signal does
+- **WHEN** a started host with activations in flight calls `flz_core_terminate("SIGTERM")`
+- **THEN** the core SHALL drain within its SIGTERM grace and exit the process exactly as on a SIGTERM it caught itself
+
+#### Scenario: Owning signals after start is refused
+- **WHEN** `flz_core_host_owns_signals` is called on a started core
+- **THEN** it SHALL return `FLZ_ERR` with the error document, and the core's handler SHALL stay installed
+
+#### Scenario: Other hosts are unchanged
+- **WHEN** a host starts the core without calling `flz_core_host_owns_signals`
+- **THEN** the core SHALL install its handler at start, as before this requirement
+
+### Requirement: A failure's error document is the failing thread's
+`flz_core_last_error` SHALL answer the error document of the last failure the CALLING thread recorded on that context, borrowed until that thread's next failing call, so a host whose threads fail on one context at once reads each failure's own document. A host SHALL read it on the thread that made the failing call; a context on which this thread recorded no failure SHALL answer NULL.
+
+#### Scenario: Threads failing on one context at once each read their own
+- **WHEN** several threads each make failing calls on one context concurrently and read `flz_core_last_error` after each
+- **THEN** every read SHALL be the document of that thread's own failure
+

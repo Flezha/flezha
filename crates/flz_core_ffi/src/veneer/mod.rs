@@ -112,6 +112,10 @@ pub const SURFACE: &[Entry] = surface![
     (abandon, false, Every),
     (shutdown, false, Every),
     (watch_stdin_eof, false, Every),
+    // A host that installs its own termination-signal handlers, and hands the
+    // signal over: `terminate` drains within the grace and never returns.
+    (host_owns_signals, false, CAbi),
+    (terminate, true, CAbi),
     (spawn_request, false, Every),
     // With a nonzero timeout. A read with a timeout of 0 never waits, so a
     // host may make that one on any thread.

@@ -254,7 +254,62 @@ fn active_bridge() -> &'static Mutex<Option<Arc<ShutdownBridge>>> {
 
 pub fn register_bridge(bridge: Arc<ShutdownBridge>) {
     *active_bridge().lock().unwrap() = Some(bridge);
-    install_sigterm_handler();
+    if claim_signals(SignalOwner::Core) == SignalOwner::Core {
+        install_sigterm_handler();
+    }
+}
+
+/// Who installs the termination-signal handlers: decided once per process, by
+/// the first of a host's [`host_owns_signals`] and the core's own start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum SignalOwner {
+    Undecided = 0,
+    Core = 1,
+    Host = 2,
+}
+
+static SIGNAL_OWNER: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Claim the signals for `owner` unless someone already has; answers who owns
+/// them now.
+fn claim_signals(owner: SignalOwner) -> SignalOwner {
+    match SIGNAL_OWNER.compare_exchange(
+        SignalOwner::Undecided as u8,
+        owner as u8,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    ) {
+        Ok(_) => owner,
+        Err(held) if held == SignalOwner::Host as u8 => SignalOwner::Host,
+        Err(_) => SignalOwner::Core,
+    }
+}
+
+/// The host installs the SIGTERM and SIGINT handlers, so the core's start
+/// installs none and the host hands a signal over through [`terminate`]. A
+/// runtime that owns its signal handling needs this: Go's crashes on a foreign
+/// handler installed without `SA_ONSTACK`, which `signal-hook` cannot set.
+/// `Err` once the core has installed its own; a second call is a no-op.
+pub fn host_owns_signals() -> Result<(), SignalsAlreadyInstalled> {
+    match claim_signals(SignalOwner::Host) {
+        SignalOwner::Host => Ok(()),
+        _ => Err(SignalsAlreadyInstalled),
+    }
+}
+
+/// The core installed its termination-signal handler before the host asked to
+/// own the signals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignalsAlreadyInstalled;
+
+/// End the runner as the core's own termination-signal handler does: drain
+/// within the same grace, then exit 0. For a host that owns the signals.
+pub fn terminate(reason: &str) -> ! {
+    exit(Exit::drained(&format!(
+        "termination signal received ({reason})"
+    )));
+    end_process(0)
 }
 
 /// Record a terminal disconnect the controller ordered; the exit waits for

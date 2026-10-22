@@ -14,7 +14,8 @@
 //! Every failing entry answers its failing status ([`FLZ_ERR`], or NULL from
 //! [`flz_core_context_new`]) and leaves the JSON error document
 //! `{"error":{"code","class","message","details","hint"}}` in
-//! [`flz_core_last_error`], or [`flz_core_init_error`] for a context-free one;
+//! [`flz_core_last_error`], or [`flz_core_init_error`] for a context-free one,
+//! each kept per thread: read it on the thread that made the failing call;
 //! never in a buffer. A caller branches on `code` and `class`, never `message`.
 //!
 //! # Notices: the host's own log
@@ -135,7 +136,6 @@ struct Outstanding {
 /// Opaque context handle.
 pub struct FlzContext {
     outstanding: DashMap<u64, Outstanding>,
-    last_error: Mutex<Option<CString>>,
     session: flz_core::session::Session,
     /// The local run this context drives and the channel its sinks release
     /// onto, when it has one. A started context dials a controller and never
@@ -164,6 +164,8 @@ struct LocalSession {
 
 thread_local! {
     static INIT_ERROR: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
+    /// The last failure this thread recorded, and the context it was recorded on.
+    static LAST_ERROR: std::cell::RefCell<Option<(usize, CString)>> = const { std::cell::RefCell::new(None) };
     static RENDERED: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -212,7 +214,8 @@ impl FlzContext {
     /// Record `error` as the context's last error; the status every failing
     /// entry point returns. The one place an [`Error`] becomes a C string.
     fn fail(&self, error: Error) -> i32 {
-        *self.last_error.lock().unwrap_or_else(|p| p.into_inner()) = Some(error_document(&error));
+        let context = self as *const Self as usize;
+        LAST_ERROR.with(|slot| *slot.borrow_mut() = Some((context, error_document(&error))));
         FLZ_ERR
     }
 

@@ -573,6 +573,7 @@ SDK raises or returns its one error type carrying them.
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
 | `runtime.argument_not_utf8` | invalid | 2 | {argument} is not valid UTF-8 |  |
+| `runtime.change_not_registered` | invalid | 2 | tasklet '{tasklet}' recorded a change of type {type}, which its Changes() does not list; list it under a name so its records can be restored |  |
 | `runtime.change_without_apply_change` | invalid | 2 | tasklet '{tasklet}' recorded a change but declares no applyChange, so the change cannot rebuild the state it describes |  |
 | `runtime.channel_not_produced` | invalid | 2 | tasklet '{tasklet}' emits on channel '{channel}', which it does not produce on |  |
 | `runtime.channel_undeclared` | not_found | 5 | relay '{relay}' has no {kind} channel '{channel}'; it declares {channels} |  |

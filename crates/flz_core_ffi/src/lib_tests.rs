@@ -108,3 +108,45 @@ fn a_refused_connect_fails_the_start_with_the_controllers_error() {
         .into_owned();
     assert_eq!(FlezhaError::from_document(&document), Some(refusal));
 }
+
+/// Threads failing on one context at once each read their own refusal: the
+/// last error is kept per thread, and only for the context it was recorded on.
+#[test]
+fn threads_failing_on_one_context_each_read_their_own_error() {
+    let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION) as usize;
+    let threads: Vec<_> = (0..8)
+        .map(|t| {
+            std::thread::spawn(move || {
+                for i in 0..300 {
+                    let id = CString::new(format!("factory-{t}-{i}")).unwrap();
+                    let ctx = ctx as *mut FlzContext;
+                    assert_eq!(
+                        unsafe { flz_core_undeclare_class(ctx, id.as_ptr()) },
+                        FLZ_ERR
+                    );
+                    let document = unsafe { CStr::from_ptr(flz_core_last_error(ctx)) }
+                        .to_string_lossy()
+                        .into_owned();
+                    assert!(
+                        document.contains(&format!("'factory-{t}-{i}'")),
+                        "thread {t} read another refusal: {document}"
+                    );
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread
+            .join()
+            .expect("a thread read its own refusal every time");
+    }
+    let other = flz_core_context_new(flz_core::SCHEMA_VERSION);
+    assert!(
+        unsafe { flz_core_last_error(other) }.is_null(),
+        "a refusal is read back only on the context it was recorded on"
+    );
+    unsafe {
+        flz_core_context_free(other);
+        flz_core_context_free(ctx as *mut FlzContext);
+    }
+}

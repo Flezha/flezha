@@ -29,7 +29,8 @@ defmodule Flezha.State.Frame do
     4 => "node",
     5 => "ruby",
     6 => "php",
-    7 => "python"
+    7 => "python",
+    8 => "go"
   }
 
   @format_ids %{

@@ -6,7 +6,9 @@ use std::sync::Mutex;
 
 use dashmap::DashMap;
 
-use crate::{hand_out, set_init_error, Error, FlzContext, FLZ_OK, INIT_ERROR, RENDERED};
+use crate::{
+    hand_out, set_init_error, Error, FlzContext, FLZ_OK, INIT_ERROR, LAST_ERROR, RENDERED,
+};
 
 /// The schema version this core speaks; a shim compares before connecting.
 #[no_mangle]
@@ -29,7 +31,6 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
     }
     Box::into_raw(Box::new(FlzContext {
         outstanding: DashMap::new(),
-        last_error: Mutex::new(None),
         session: Default::default(),
         local: Mutex::new(None),
         local_outputs: Mutex::new(None),
@@ -52,21 +53,21 @@ pub extern "C" fn flz_core_init_error() -> *const c_char {
     })
 }
 
-/// The JSON error document of the last failure recorded on `ctx`, or NULL.
-/// Borrowed until the next failing call on the same context.
+/// The JSON error document of the last failure THIS thread recorded on `ctx`,
+/// or NULL. Borrowed until this thread's next failing call. Per thread, so a
+/// host whose threads fail on one context at once each reads its own: read it
+/// on the thread that made the failing call.
 ///
 /// # Safety
 /// `ctx` must be a live pointer from [`flz_core_context_new`].
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_last_error(ctx: *const FlzContext) -> *const c_char {
-    let Some(ctx) = ctx.as_ref() else {
-        return std::ptr::null();
-    };
-    let guard = ctx.last_error.lock().unwrap_or_else(|p| p.into_inner());
-    guard
-        .as_ref()
-        .map(|s| s.as_ptr())
-        .unwrap_or(std::ptr::null())
+    LAST_ERROR.with(|slot| match slot.borrow().as_ref() {
+        Some((recorded_on, document)) if !ctx.is_null() && *recorded_on == ctx as usize => {
+            document.as_ptr()
+        }
+        _ => std::ptr::null(),
+    })
 }
 
 /// The JSON error document the catalogue renders for `code` with its details
