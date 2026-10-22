@@ -66,6 +66,13 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
   @tag :multi_node
   @tag timeout: 240_000
   test "a move whose new bind this controller sends keeps the window" do
+    # An awake steps relay refuses consent, so its move off the peer is the
+    # forced one at `max_defer_ms`. The hub reads it at its start, so the peer
+    # takes it from this node's env as it boots.
+    on_exit(
+      TestHelpers.override_env(:migration_consent, max_defer_ms: 1_000, retry_interval_ms: 250)
+    )
+
     {peer_pid, peer} = NodeTestHelper.start_healing_peer(:window_move)
     :erpc.call(peer, Application, :put_env, [:flezha, :group_withdraw_grace_ms, 500])
     _local_runner = NodeTestHelper.start_runner(@ns)

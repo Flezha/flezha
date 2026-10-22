@@ -25,8 +25,9 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
   @namespace "default"
   @factory "store_input"
 
-  setup do
-    TestHelpers.reset_all_cells()
+  # The peers serve every test: no test stops one it did not start, and each
+  # leaves the namespace without a plugin or a relay.
+  setup_all do
     {pid1, p1} = NodeTestHelper.start_peer_node(:hooks_p1)
     {pid2, p2} = NodeTestHelper.start_peer_node(:hooks_p2)
 
@@ -39,7 +40,13 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
              "#{peer} never joined the hub cluster"
     end
 
-    %{p1: p1, p2: p2, server: WebhookServer.start([200])}
+    %{p1: p1, p2: p2}
+  end
+
+  setup do
+    TestHelpers.reset_all_cells()
+    on_exit(fn -> NodeTestHelper.stop_namespace(@namespace) end)
+    %{server: WebhookServer.start([200])}
   end
 
   defp hub_nodes, do: HubManager.get_hub_nodes(@namespace, false)

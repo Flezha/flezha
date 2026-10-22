@@ -284,8 +284,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   end
 
   @doc """
-  A teardown: stop `peers` (`[{peer_pid, node}]`), then disable every plugin
-  and stop every relay in `namespace`. A peer is linked to the test process,
+  A teardown: stop `peers` (`[{peer_pid, node}]`), then `stop_namespace/1`. A peer is linked to the test process,
   so it is already going down when a teardown runs, and the hub places its
   children here only after dropping it from the cluster. The stop waits until
   every child the hub registers runs on this node: a relay stopped earlier is
@@ -305,6 +304,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       30_000
     )
 
+    stop_namespace(namespace)
+  end
+
+  @doc "Disable every plugin and stop every relay in `namespace`, on every hub node."
+  def stop_namespace(namespace) do
     for %{name: name} <- PluginRecords.plugins(namespace),
         do: {:ok, _} = PluginManager.disable_plugin(namespace, name)
 

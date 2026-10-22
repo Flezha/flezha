@@ -268,13 +268,23 @@ def _e2e(runtime):
     return rows
 
 
-HANDOVER = "test/flezha_handover_test.exs"
+# The `:multi_node` files a row runs apart from the rest, balanced by their
+# recorded timings; every other tagged file runs in the last row.
+MULTI_NODE_ROWS = (
+    ("test/flezha_handover_test.exs",),
+    ("test/system/listener_survival_drill_test.exs",
+     "test/flezha_runner_loss_handover_test.exs"),
+    ("test/flezha/plugin/shared_multinode_test.exs",
+     "test/flezha/authz/cluster_replication_test.exs",
+     "test/flezha/cluster/grouped_placement_test.exs"),
+)
 MULTI_NODE_TAG = re.compile(r"@(?:module|describe)?tag\b[^\n#]*:multi_node\b")
 
 
 def _multi_node():
-    """The `:multi_node` tier in two rows, the handover suite apart: in one VM the
-    tier outgrew the 600 s a row may take. `e2e-multi-node` stands for both."""
+    """The `:multi_node` tier in parallel rows, `MULTI_NODE_ROWS` and the rest. Each
+    row's peers take their names and resources from its own run token, so rows
+    cannot meet. `e2e-multi-node` stands for them all."""
     tagged = []
     # test/apps is pruned: its runner links lead into whole SDK trees.
     for base, dirs, names in os.walk(f"{ROOT}/test"):
@@ -284,9 +294,10 @@ def _multi_node():
                    if name.endswith("_test.exs")
                    and MULTI_NODE_TAG.search(open(os.path.join(base, name)).read())]
     tagged.sort()
-    rest = [path for path in tagged if path != HANDOVER]
-    return [_mix_test("e2e-multi-node-1", "e2e-multi-node", "--only", "multi_node", HANDOVER),
-            _mix_test("e2e-multi-node-2", "e2e-multi-node", "--only", "multi_node", *rest),
+    apart = {path for row in MULTI_NODE_ROWS for path in row}
+    rows = [*MULTI_NODE_ROWS, [path for path in tagged if path not in apart]]
+    return [*(_mix_test(f"e2e-multi-node-{at}", "e2e-multi-node", "--only", "multi_node", *paths)
+              for at, paths in enumerate(rows, 1)),
             {"id": "e2e-multi-node", "group": "e2e", "groups": "@e2e-multi-node"}]
 
 

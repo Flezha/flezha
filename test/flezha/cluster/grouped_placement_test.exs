@@ -24,6 +24,7 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -39,6 +40,9 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   @kept @factory_do_nothing
 
   @relays 20
+
+  @local_grace_ms 100
+  @no_runner_wait_ms 500
 
   setup do
     peers = start_supervised_peers()
@@ -107,9 +111,17 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
     wait_for_hub_members([node(), peer_node])
 
     # This controller keeps its runner, and with it the namespace's hub, but
-    # stops advertising the factory under test.
-    FleetStateHelper.sync(@ns, local_runner, [@kept])
-    wait_for_sole_server(peer_node)
+    # stops advertising the factory under test. Its withdrawal grace is read
+    # here, as the cut-down arms it, and only this node withdraws on it; the
+    # joining controller boots after the restore and keeps the full grace.
+    restore_grace = TestHelpers.override_env(:group_withdraw_grace_ms, @local_grace_ms)
+
+    try do
+      FleetStateHelper.sync(@ns, local_runner, [@kept])
+      wait_for_sole_server(peer_node)
+    after
+      restore_grace.()
+    end
 
     %{peer_pid: peer_pid, peer_node: peer_node, local_runner: local_runner}
   end
@@ -131,8 +143,13 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
   # A peer BEAM with a runner in the namespace. `serves?: false` cuts that
   # runner down to `@kept`, so the peer holds the namespace's hub without being
   # able to run `@served`.
+  #
+  # A relay handed to such a peer holds its process in the wait for a runner
+  # that can run it, deaf to the consent and handover the move back needs, for
+  # as long as `overwatch_runner_wait_ms`; no runner for it ever comes there.
   defp start_controller(name, serves?: serves?) do
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(name)
+    app_env = if serves?, do: [], else: [overwatch_runner_wait_ms: @no_runner_wait_ms]
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(name, app_env: app_env)
     runner_id = NodeTestHelper.start_runner_remote(peer_node, @ns)
 
     unless serves? do

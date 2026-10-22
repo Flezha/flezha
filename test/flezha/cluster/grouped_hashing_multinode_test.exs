@@ -23,9 +23,21 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
 
-  setup context do
-    hub_id = :"grouped_hashing_#{System.unique_integer([:positive])}"
+  # One peer for the module: every test runs its own hub, under its own id, on
+  # both nodes and stops it on both, and none touches the peer outside it.
+  setup_all do
     {peer_pid, peer} = NodeTestHelper.start_peer_node(:groupedhashing2)
+    on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
+    {:ok, peer: peer}
+  end
+
+  setup %{peer: peer} = context do
+    hub_id = :"grouped_hashing_#{System.unique_integer([:positive])}"
+
+    on_exit(fn ->
+      Helper.stop_hub(hub_id)
+      on(peer, :stop_hub, [hub_id])
+    end)
 
     reconcile =
       [reconcile: context[:reconcile] == true] ++
@@ -45,12 +57,7 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
     assert wait(fn -> on(peer, :hub_nodes, [hub_id]) == both end),
            "the peer's hub never held both nodes: #{inspect(on(peer, :hub_nodes, [hub_id]))}"
 
-    on_exit(fn ->
-      Helper.stop_hub(hub_id)
-      NodeTestHelper.stop_peer_node(peer_pid, peer)
-    end)
-
-    {:ok, hub_id: hub_id, peer: peer}
+    {:ok, hub_id: hub_id}
   end
 
   test "a grouped child starts on the only node that serves its group, wherever it is asked for",

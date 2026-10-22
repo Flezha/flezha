@@ -24,19 +24,30 @@ defmodule Flezha.Service.HubVacancyMultinodeTest do
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.DeclaredChildren
 
-  setup %{tmp: tmp} do
+  # No reconcile round opens, so a declared relay stays running nowhere: the
+  # settle is the hub's ceiling, longer than any test here.
+  @hub_env [
+    auto_restore_enabled: true,
+    process_hub_cluster_settle_ms: 60_000,
+    process_hub_reconcile_grace_ms: 600_000
+  ]
+
+  # One peer for the module, on its own registry root: each test runs its own
+  # namespace's hub on both nodes and stops it on both.
+  setup_all do
+    {pid, peer} = NodeTestHelper.start_peer_node(:vacancy_p1, app_env: @hub_env)
+    on_exit(fn -> NodeTestHelper.stop_peer_node(pid, peer) end)
+    {:ok, peer: peer}
+  end
+
+  setup %{tmp: tmp, peer: peer} do
     Application.put_env(:flezha, :process_hub_registry_root, Path.join(tmp, "process_hub"))
-    Application.put_env(:flezha, :auto_restore_enabled, true)
-    # No reconcile round opens, so a declared relay stays running nowhere: the
-    # settle is the hub's ceiling, longer than any test here.
-    Application.put_env(:flezha, :process_hub_cluster_settle_ms, 60_000)
-    Application.put_env(:flezha, :process_hub_reconcile_grace_ms, 600_000)
+    for {key, value} <- @hub_env, do: Application.put_env(:flezha, key, value)
 
     namespace = "vacancy-#{System.unique_integer([:positive])}"
-    {pid, peer} = NodeTestHelper.start_peer_node(:vacancy_p1)
 
     on_exit(fn ->
-      NodeTestHelper.stop_peer_node(pid, peer)
+      on(peer, HubManager, :stop_hub, [namespace])
       HubManager.stop_hub(namespace)
     end)
 

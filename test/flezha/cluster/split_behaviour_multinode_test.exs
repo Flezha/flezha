@@ -51,7 +51,10 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
         peer
       end
 
-    for peer <- peers, do: NodeTestHelper.start_runner_remote(peer, namespace)
+    # Each runner is owned by a process on its own peer, not by the caller.
+    peers
+    |> Enum.map(&Task.async(fn -> NodeTestHelper.start_runner_remote(&1, namespace) end))
+    |> Task.await_many(60_000)
 
     assert wait(fn -> Enum.all?(peers, &(group(&1, namespace) == Enum.sort(peers))) end, 30_000),
            "the three controllers never served #{@factory} together"
