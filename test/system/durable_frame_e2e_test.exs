@@ -37,7 +37,6 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   alias Flezha.State.RecordFrame
   alias Flezha.State.Restore
   alias Flezha.State.TestHelpers
-  alias FlezhaTest.Helper.CompactionAssertions, as: CA
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
@@ -167,7 +166,8 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
   end
 
   # Boot a runner, register a changeful relay, push `n` inputs and wait for
-  # its WAL to hold bytes. Answers the Cell and its WAL path.
+  # its WAL to hold all `n` records, so no reader races the writer's appends.
+  # Answers the Cell and its WAL path.
   defp drive_a_wal(n) do
     {port, ce_id} = NodeTestHelper.start_runner_port(@namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
@@ -190,8 +190,14 @@ defmodule FlezhaTest.System.DurableFrameE2ETest do
       })
     end
 
-    assert CA.wait_for_wal_bytes(cell_id, 10_000) > 0
+    path = Paths.wal_path(cell_id)
 
-    {cell_id, Paths.wal_path(cell_id)}
+    assert NodeTestHelper.wait_until(
+             fn -> match?({:ok, seqs} when length(seqs) == n, TestHelpers.record_seqs(path)) end,
+             10_000
+           ),
+           "the WAL never held all #{n} records"
+
+    {cell_id, path}
   end
 end
