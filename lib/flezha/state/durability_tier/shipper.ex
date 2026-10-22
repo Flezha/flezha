@@ -416,7 +416,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
       ship_seq_addressed(state, ref)
     end
   rescue
-    e in RuntimeError -> {:error, {:unreadable, Exception.message(e)}}
+    e in RuntimeError -> {:error, {:raised, Exception.message(e)}}
   end
 
   # Whole-payload artifact (the registry cspec, a parked-failure set, a

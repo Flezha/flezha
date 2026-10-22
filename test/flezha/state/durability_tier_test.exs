@@ -603,7 +603,7 @@ defmodule Flezha.State.DurabilityTierTest do
       :ok = TestHelpers.corrupt_record_body(path, Enum.at(TestHelpers.record_offsets(path), 1))
       shipper = Process.whereis(Shipper)
 
-      assert {:error, {:unreadable, reason}} = Shipper.ship_now(ref)
+      assert {:error, {:raised, reason}} = Shipper.ship_now(ref)
       assert reason =~ "crc_mismatch"
       assert %{failures: 1, pending_since_ms: pending} = status_of(ref)
       assert is_integer(pending)
