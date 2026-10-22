@@ -59,8 +59,9 @@ def noisy(row, out, err):
 # green run is still a finding when its output is noisy, `noisy` above) and
 # `stderr_ok` (under `quiet`, stderr is not judged) and `builds` (it builds
 # what other lanes run, so `--jobs` runs it, and its lane's rows before it,
-# before any lane starts). A row declaring `groups` instead of `argv` stands
-# for the rows that spec selects.
+# before any lane starts) and `apart` (it shares nothing with its lane's other
+# rows, so a lane left with only such rows runs each beside the others). A row
+# declaring `groups` instead of `argv` stands for the rows that spec selects.
 GATES = (
     {"id": "overflow-naming", "group": "naming",
      "argv": ["scripts/check-overflow-naming.sh"]},
@@ -162,14 +163,16 @@ GATES = (
 # ---------------------------------------------------------------------------
 # The bar: what the clean run selects (`@clean`), and the groups each workflow selects.
 # Generated where the tree decides the list: one core suite per large test
-# directory, `:system` shards of six per runtime manifest, one block per plugin.
+# directory, `:system` shards of six per runtime manifest (the bar takes elixir's), one
+# block per plugin.
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNTIMES = sorted(os.path.basename(os.path.dirname(path))[:-len("_runner")]
                   for path in glob.glob(f"{ROOT}/test/apps/*_runner/conformance.json"))
 FAKE = f"{ROOT}/_build/.target/debug/flz-fake-controller"
-# The runtimes the bar runs the `:system` tier under: the nightly's schedule and elixir.
-E2E_RUNTIMES = ("elixir", "rust", "java")
+# The bar runs the `:system` tier under the reference runtime only: what is runner-specific
+# is what each SDK's rows prove. `@e2e-runtimes` runs it under these too, for a release check.
+E2E_RUNTIMES = ("rust", "java")
 
 
 def _files(pattern):
@@ -184,12 +187,13 @@ def _bar(row_id, group, *argv, **opts):
 
 
 def _mix_test(row_id, group, *args, env=None, **opts):
-    """A core `mix test` row, recording per-test timings beside the usual output."""
+    """A core `mix test` row, recording per-test timings beside the usual output. It
+    derives its own state root, sockets, ports and node name from its run token."""
     timing = os.path.join(tempfile.gettempdir(), f"flezha_timing_{row_id}.tsv")
     return _bar(row_id, group, "mix", "test", "--warnings-as-errors",
                 "--formatter", "ExUnit.CLIFormatter",
                 "--formatter", "FlezhaTest.Helper.TimingFormatter", *args,
-                env={**(env or {}), "TIMING_OUT": timing}, **opts)
+                env={**(env or {}), "TIMING_OUT": timing}, apart=True, **opts)
 
 
 def _deps_compile(name, group, cwd, *envs):
@@ -517,7 +521,9 @@ IMAGE_SIZE = r"""
 GATES += (
     *_core(),
     *(row for runtime in RUNTIMES for row in _e2e(runtime)),
-    {"id": "e2e", "group": "e2e", "groups": ",".join(f"@e2e-{rt}" for rt in E2E_RUNTIMES)},
+    {"id": "e2e", "group": "e2e", "groups": "@e2e-elixir,e2e-interop,e2e-plugin-package-release"},
+    {"id": "e2e-runtimes", "group": "e2e-runtimes",
+     "groups": ",".join(f"@e2e-{rt}" for rt in E2E_RUNTIMES)},
     _mix_test("e2e-admin", "e2e", "--include", "system", "test/system/sdk_admin_e2e_test.exs"),
     *_multi_node(),
     # The one scenario that places two runtimes in a run (rust and java).
