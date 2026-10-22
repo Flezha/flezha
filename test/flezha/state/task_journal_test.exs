@@ -8,7 +8,6 @@ defmodule FlezhaTest.State.TaskJournalTest do
   # async: false: writes Application env; a shared on-disk root.
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
-
   alias Flezha.Relay.ClassRegistry
   alias Flezha.State.Wire
   alias Flezha.Service.Cli

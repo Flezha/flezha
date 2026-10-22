@@ -38,7 +38,12 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
         {:manifest, &put_in(&1.built_with.otp, "0")}
       ])
 
-    PluginPackage.load!(root, [PluginPackage.example!(), refused])
+    # The refusal the boot logs is the case under test, and `:capture_log`
+    # does not reach `setup_all`.
+    ExUnit.CaptureLog.capture_log(fn ->
+      PluginPackage.load!(root, [PluginPackage.example!(), refused])
+    end)
+
     :ok
   end
 

@@ -595,6 +595,8 @@ defmodule Flezha.State.DurabilityTierTest do
       assert %{failures: 0, pending_since_ms: nil, retry_in_ms: nil} = status_of(ref)
     end
 
+    # The refusal is logged by the WAL reader; it is the case under test.
+    @tag :capture_log
     test "a refused record fails its own reference and every other one still ships", ctx do
       ref = {:cell, ctx.cell_id}
       other = {ctx.class, "task", "k2"}
