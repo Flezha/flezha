@@ -172,8 +172,8 @@ The shared core SHALL mint the identity stamps for every SDK, on the output list
 
 #### Scenario: Every hosted SDK's stamps are byte-identical
 
-- **WHEN** the same keyed class emits the same outputs from the same input on each of the six hosted SDKs
-- **THEN** every output's `flz.cell`, `flz.seq` and `flz.key` are equal across the six runners, and no SDK's source writes those keys
+- **WHEN** the same keyed class emits the same outputs from the same input on each SDK hosted on `flz_core`
+- **THEN** every output's `flz.cell`, `flz.seq` and `flz.key` are equal across the runners, and no SDK's source writes those keys
 
 #### Scenario: The typed Rust SDK reads the sequence after the emit's changes
 

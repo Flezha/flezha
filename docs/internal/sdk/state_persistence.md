@@ -86,7 +86,7 @@ deletes its files.
 
 ### Compaction (`CompactCell`)
 
-Compaction is controller-driven and real on all three SDKs. On `CompactCell { cell_id }` the
+Compaction is controller-driven and real on every SDK. On `CompactCell { cell_id }` the
 core, under the Cell's exclusivity gate, drains the pending flush buffer first
 (`flush_one`) so in-memory state equals the shipped WAL, then reads
 `snapshot_seq = change_seq - 1` — the highest seq the snapshot already folds. The controller

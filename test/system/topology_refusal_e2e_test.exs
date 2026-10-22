@@ -256,7 +256,7 @@ defmodule FlezhaTest.System.TopologyRefusalE2ETest do
   # `dup_key_by` is refused by the core's check. `dup_node` is refused by the
   # four veneer builders themselves, and a Node graph built at module scope
   # raises it while the module loads. `shorthand_duplicate_id` is a runtime
-  # refusal in all seven, so that row boots for real everywhere too.
+  # refusal in every SDK, so that row boots for real everywhere too.
   describe "the boot drill" do
     for runtime <- PortPilot.runtimes(),
         topology <- ~w(dup_key_by dup_node shorthand_duplicate_id) do

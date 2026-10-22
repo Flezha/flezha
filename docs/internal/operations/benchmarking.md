@@ -267,7 +267,7 @@ pre-building the standalone app; small runs are setup-dominated.
 Measures the paths a flow relay never takes: instance lifecycle (spawn → chain →
 completion), the durable task barrier, the chat turn (iteration commit),
 suspension and the wake paths. Runs in the scratch namespace `bench_steps`
-against any of the seven runtimes (`--runtime`, default `rust`).
+against any SDK runtime (`--runtime`, default `rust`).
 `local_dev/bench/acceptance/run.sh` runs it over fixed case sets, one chain case per SDK
 among them, and compares the medians with a baseline per case and runtime
 (`local_dev/bench/acceptance/README.md`).

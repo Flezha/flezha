@@ -103,7 +103,7 @@ relay declares no ENTRY channel of that name. A name the relay declares as a cha
 another kind — a output plugin, an inter-tasklet channel — is not an entry channel and SHALL be
 parked the same way, because channel names are one namespace across every kind. The frame SHALL NOT
 be discarded, and it SHALL NOT be delivered to a different channel. Every SDK SHALL answer the same
-way: all seven are hosted on `flz_core` and answer through the core's one resolution.
+way: every SDK is hosted on `flz_core` and answer through the core's one resolution.
 
 The park SHALL record the requested name in the entry's channel field and nowhere else. A name off
 the wire SHALL NOT reach the identity the dead-letter store keys its row by, because the store makes

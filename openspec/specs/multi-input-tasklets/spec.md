@@ -38,7 +38,7 @@ Every SDK (Rust, Java, Node, Python, Ruby, PHP and Elixir) SHALL provide a merge
 
 #### Scenario: SDK parity
 
-- **WHEN** the `merged_input` fixture is started on any of the seven runtimes and one frame is injected on each of its two entry channels
+- **WHEN** the `merged_input` fixture is started on any runtime and one frame is injected on each of its two entry channels
 - **THEN** the merged tasklet SHALL emit one line per source on the `merged` output, each tagged by that source's mapping, and every SDK's own suite SHALL carry the mirrored merge tests: two typed sources into one tasklet, an entry channel as a source on both kinds, per-source FIFO under interleaving, the key evaluated on the mapped value, and the definition-time refusals
 
 ### Requirement: Merged delivery SHALL preserve per-source FIFO order and replay determinism

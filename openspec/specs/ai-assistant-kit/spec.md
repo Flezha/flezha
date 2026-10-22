@@ -135,7 +135,7 @@ SDK function or class, so that it has nothing to go stale.
 
 ### Requirement: Every factual part of the knowledge SHALL be generated and held to its source
 
-`mix flezha.ai_kit` SHALL write `priv/ai_kit/sdk/<language>.md` for each of the seven SDKs
+`mix flezha.ai_kit` SHALL write `priv/ai_kit/sdk/<language>.md` for each SDK
 from that SDK's `examples/echo` tracked sources, and `priv/ai_kit/llms.txt` with the guide
 pages it links. The suite SHALL fail when an SDK file or a page differs from its source, or
 when the map links a page that is missing or a page is there that the map does not link.

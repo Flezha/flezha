@@ -37,7 +37,7 @@ Python, Ruby and PHP SDKs in tier 2.
 
 - **WHEN** the record is read at the change that introduces it
 - **THEN** its experimental table SHALL hold one entry naming the QUIC transport, and its
-  tier table SHALL hold seven rows, with Rust, Java and Elixir in tier 1 and Node, Python,
+  tier table SHALL hold one row per SDK, with Rust, Java and Elixir in tier 1 and Node, Python,
   Ruby and PHP in tier 2
 
 #### Scenario: The record cites only the published tree
@@ -222,7 +222,7 @@ calls an unlisted feature experimental. It SHALL pass once each is repaired.
 #### Scenario: The gate is green at introduction
 
 - **WHEN** the gate runs on the commit that introduces the record
-- **THEN** it SHALL exit zero and report one experimental entry and seven tier rows
+- **THEN** it SHALL exit zero and report one experimental entry and a tier row per SDK
 
 #### Scenario: A listed surface without its marker fails
 

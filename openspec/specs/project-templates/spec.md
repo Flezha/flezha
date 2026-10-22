@@ -8,7 +8,7 @@ to an AI assistant by `flezha_new_project`.
 ## Requirements
 ### Requirement: Every SDK SHALL carry a tested `starter` example
 
-Each of the seven SDK repositories SHALL hold `examples/starter`: a runnable project in the SDK's
+Each SDK repository SHALL hold `examples/starter`: a runnable project in the SDK's
 current recommended form with one relay `starter` whose described entry channel `hit` takes
 `{"page": string}`, is keyed by `page`, feeds the tasklet `count` and ends in the output `counts`; the
 tasklet SHALL keep `total` in state, change it through a declared change, and emit
@@ -52,7 +52,7 @@ release's manifest, without reaching a controller, and with `--json` as data.
 #### Scenario: No controller needed
 
 - **WHEN** `flz template list` runs on a machine where no controller runs
-- **THEN** it prints the seven languages with `starter` and exits 0
+- **THEN** it prints every SDK language with `starter` and exits 0
 
 ### Requirement: `flz template create` SHALL write a working project
 

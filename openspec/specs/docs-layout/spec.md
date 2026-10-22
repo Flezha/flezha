@@ -84,7 +84,7 @@ published pages, `docs/internal/README.md` for internal ones).
 
 ### Requirement: Every SDK SHALL carry a README that is its package page
 
-Each of the seven SDK repositories SHALL carry a `README.md` that states how to install the
+Each SDK repository SHALL carry a `README.md` that states how to install the
 SDK, the language versions it supports, how the native library reaches the host, and links to
 the public pages for local mode, testing and the relay API. The SDK guides under
 `docs/internal/sdk/` SHALL NOT repeat the install, supported-versions, local-mode or testing

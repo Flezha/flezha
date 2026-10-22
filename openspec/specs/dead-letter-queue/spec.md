@@ -185,7 +185,7 @@ before this change.
 
 #### Scenario: The stream suite is untouched
 
-- **WHEN** `test/system/dlq_e2e_test.exs` runs under each of the seven runtimes after this
+- **WHEN** `test/system/dlq_e2e_test.exs` runs under each runtime after this
   change
 - **THEN** it SHALL pass unmodified
 

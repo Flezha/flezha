@@ -610,4 +610,4 @@ and the per-SDK matrix live in
 - [`protocol_spec.md`](protocol_spec.md) — the wire protocol the transport tier carries
 - [`state_persistence.md`](state_persistence.md) — WAL layout and restore the flusher feeds
 - [`rust_relay_architecture.md`](rust_relay_architecture.md) — the Rust typed layer in detail
-- [`../../public/architecture/runner.md`](../../public/architecture/runner.md) — the runner drawn, all three hosts
+- [`../../public/architecture/runner.md`](../../public/architecture/runner.md) — the runner drawn, every host

@@ -959,7 +959,7 @@ The Rust SDK's `Tasklet` trait SHALL declare `fn init_state(cell_key: Option<&st
 
 ### Requirement: Every SDK SHALL declare compact_after_bytes on the tasklet
 
-`compact_after_bytes` SHALL be a tasklet setting in all seven SDKs (`compact_after_bytes` in Python,
+`compact_after_bytes` SHALL be a tasklet setting in every SDK (`compact_after_bytes` in Python,
 Ruby, Elixir and Rust, `compactAfterBytes` in PHP, Node and Java), carried in that tasklet's class
 declaration; no relay builder SHALL offer it.
 

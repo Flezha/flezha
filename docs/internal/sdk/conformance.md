@@ -399,7 +399,7 @@ gate fails naming that manifest and the required set, and the same change remove
 the capability from the required set. Both halves land in one reviewed diff. It does not arise
 today: every SDK connects through `flz_transport`, and
 `test/apps/elixir_runner/conformance.json` declares `transports: ["uds", "quic"]`,
-so the conformance app runs the standalone binary protocol like the other six.
+so the conformance app runs the standalone binary protocol like the other SDKs.
 
 ## The short form
 

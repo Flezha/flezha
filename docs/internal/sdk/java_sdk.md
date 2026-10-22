@@ -165,7 +165,7 @@ ceiling (latched), reach this SDK's logger through the supervisor.
 
 `FLEZHA_LOG_LEVEL` (`debug` | `info` | `warn` | `error`, default `warn`) selects
 what the default logger writes to standard error, prefixed `[flezha]`. Unset,
-blank and unrecognised all mean `warn`, as in the other five SDKs. There is no
+blank and unrecognised all mean `warn`, as in the other SDKs. There is no
 logging dependency: the SDK owns a four-level `Logger` interface and a
 stderr-writing default, so a fresh application gets the failure paths with
 nothing to add and no missing-provider warning at startup.

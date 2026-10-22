@@ -3,13 +3,13 @@
 To the controller, a runner is one box: a process that dials in, accepts
 relays, and sends back state changes and outputs. This page opens that
 box. It is for contributors working on an SDK or on the shared kernel, and
-for anyone who wants to know why the eight SDKs behave the same.
+for anyone who wants to know why every SDK behaves the same.
 
 A runner has **two layers**. Transport, ordering, durability, retries,
 timers, credit, routing and a steps relay's progress live in one Rust
 kernel, `flz_core`. The SDK for each language brings the surface you write
 your code against and the threads that run it. Between them sits one poll
-loop. All eight SDKs share `flz_core`. What the
+loop. Every SDK shares `flz_core`. What the
 [kernel](kernel.md), [flow](flow_profile.md) and [steps](steps_profile.md)
 pages describe works the same in every SDK because it sits below that loop.
 
@@ -61,7 +61,7 @@ its log callback, Elixir through a process it registers and Rust through
 `tracing`. A C host may register `flz_core_set_log_callback`, which is called
 on whichever thread wrote the notice.
 
-The Rust SDK uses the kernel as a crate. The other five reach it through the
+The Rust SDK uses the kernel as a crate. The other SDKs reach it through the
 C ABI in `flz_core_ffi`. A capability the crate reaches but the C ABI does not
 counts as a defect, which keeps the boundary from wearing away.
 
@@ -374,7 +374,7 @@ points (`flz_core_local_start`, `flz_core_local_on_sink`,
 
 ## One change, every SDK
 
-The kernel has eight hosts today. The Rust SDK uses it as a crate. Java, Node,
+Every SDK hosts the kernel. The Rust SDK uses it as a crate. Java, Node,
 Ruby, Python and Elixir load `flz_core_ffi` built with a thin binding layer of
 its own for each (JNI, N-API, magnus, PyO3, Rustler), each a one-to-one layer
 over the C entry points. The PHP SDK calls the C ABI directly through `ext-ffi`, with no
@@ -394,7 +394,7 @@ The rules every SDK follows:
   author declared to `flz_core::host::register::check`
   (`crates/flz_core/src/host/register.rs`), which holds the refusals and the
   derivation rules. A new refusal is one variant and one fixture row, not an
-  edit to eight builders.
+  edit to every SDK's builder.
 - **A host that brings its own workers replaces them.** A worker that leaves
   for any reason other than shutdown is replaced without user action: the
   governor answers the next supervisor wait with a replacement. Every

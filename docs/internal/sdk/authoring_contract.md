@@ -77,7 +77,7 @@ after a restart, and nothing reports the difference until the restart.
 | Python | Runtime rejection. A class declared `@flezha.state` refuses direct attribute assignment, naming the field and the change-based path; the runtime's own path — applying a change and folding a restore — is the one exception, opened per call on the calling thread. Mutation *through* a container a state field holds is not covered, exactly as Rust's interior mutability is not. |
 | Go | A copy. `ctx.State()` returns a copy of the state, so assigning a field of it changes nothing durable, and `ctx.Change` is the one recorded path. Maps, slices and pointers inside the state are shared with the live state and not guarded; `TaskletTestHarness.ReplayEquals` is what catches a write through them. |
 
-`replay_equals` / `replayEquals()` / `ReplayEquals` is the gate for all eight: it folds the
+`replay_equals` / `replayEquals()` / `ReplayEquals` is the gate in every SDK: it folds the
 recorded change log against a freshly constructed initial state and requires
 the result to equal the live one.
 
@@ -744,7 +744,7 @@ under any other parent is refused at registration as `topology.unknown_field`,
 naming the setting and its parent; a value outside its choice is
 `topology.invalid_setting`, naming the setting and the value. Rust and Java
 make a misplaced setting a compile error, because the type under the wrong
-parent has no such member; the five host SDKs pass the tree as written and the
+parent has no such member; the other SDKs pass the tree as written and the
 shared core judges it.
 Timers belong to a tasklet and work in either run; `compact_after_bytes`
 belongs to a tasklet and is accepted on either run.

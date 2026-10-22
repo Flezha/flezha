@@ -2,7 +2,7 @@
 # line, `section.key` for the nested declarations. `class.run` and
 # `class.durable` carry the settings tree as its JSON (`flz_core`'s
 # `relay::settings`), which the core reads and refuses by the member's
-# name. Seven readers pin it: a `flz_core` test serialises a fully populated declaration and asserts its key
+# name. Its readers pin it: a `flz_core` test serialises a fully populated declaration and asserts its key
 # set is exactly this; `HostClassDeclarationTest` asserts the Java builder emits
 # every key here; `sdk/node/test/decl-keys.test.mjs` asserts the same of the
 # Node builder; `sdk/ruby/test/decl_keys_test.rb` of the Ruby builder;

@@ -65,7 +65,7 @@ a handle whose channel already carries a plugin output.
 
 #### Scenario: The transform chain is proven on every runtime
 
-- **WHEN** the `transform_chain` fixture is started on any of the seven runtimes and the frames `a:1,b:2` and `drop` are injected on `trades`
+- **WHEN** the `transform_chain` fixture is started on any runtime and the frames `a:1,b:2` and `drop` are injected on `trades`
 - **THEN** exactly `A:1` and `B:2` SHALL reach the `transformed` output, on the keys `A` and `B` (the key is read after the upper-casing `map`), and nothing SHALL reach it for `drop`
 
 ### Requirement: Cell keying SHALL be declared on the edge, not on the Tasklet

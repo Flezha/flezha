@@ -41,7 +41,7 @@ core's, and the core applies the cancellation when the item settles.
 
 #### Scenario: One cancellation serves both kinds
 
-- **WHEN** a Tasklet in any of the seven SDKs registers an event-time timer at 5000 and a processing-time timer at 5000, then cancels the event-time kind at 5000
+- **WHEN** a Tasklet in any SDK registers an event-time timer at 5000 and a processing-time timer at 5000, then cancels the event-time kind at 5000
 - **THEN** only the processing-time timer SHALL stay pending, and no SDK SHALL expose `cancel_event_time_timer`, `cancel_processing_time_timer` or a spelling of either
 
 ### Requirement: A fired timer SHALL invoke `on_timer` with the scheduled timestamp
@@ -212,7 +212,7 @@ In the Elixir SDK the firing's ops — its removal as op 0 — ride the record's
 ### Requirement: Pending timers per Cell SHALL be bounded
 
 Each Tasklet SHALL carry a `max_timers_per_cell` bound, declared in every SDK (default 10 000) and
-carried in the class declaration the core receives. For the six hosted SDKs the core SHALL judge
+carried in the class declaration the core receives. For the SDKs hosted on `flz_core` the core SHALL judge
 an item's timer ops once, when the item settles and before its verdict is acted on, through its
 one timer session, against the Cell's pending set without copying it: registrations that would
 leave more than the bound pending SHALL make the item a non-retryable item failure with
@@ -228,12 +228,12 @@ every committed firing, in every SDK.
 
 #### Scenario: Registration past the cap is refused
 
-- **WHEN** a Cell holding `max_timers_per_cell` pending timers registers one more, in any of the six hosted SDKs
+- **WHEN** a Cell holding `max_timers_per_cell` pending timers registers one more, in any SDK hosted on `flz_core`
 - **THEN** the item SHALL fail with `runtime.timer_cap_exceeded` naming the Tasklet and the bound, none of its outputs SHALL ship, and the pending set SHALL be unchanged
 
 #### Scenario: A refused item leaves the host and the record in agreement
 
-- **WHEN** an item that records a state change and then registers a timer past the cap is refused, in any of the six hosted SDKs
+- **WHEN** an item that records a state change and then registers a timer past the cap is refused, in any SDK hosted on `flz_core`
 - **THEN** the Cell's live state read SHALL equal the state a restore from the Cell's records folds
 
 #### Scenario: Rust refuses at the call
@@ -258,11 +258,11 @@ every committed firing, in every SDK.
 
 ### Requirement: A Cell timer belongs to a tasklet of either kind
 
-Every requirement of this capability SHALL hold for a tasklet of a steps relay as it holds for a tasklet of a flow relay, in all seven SDKs: `timer_after` / `timerAfter` and, where the tasklet declares an event-time clock, `timer_at_event_time` / `timerAtEventTime` SHALL register a per-Cell timer and answer the absolute timestamp that is its cancel handle; pending timers SHALL be a set per Cell, folded from the Cell's own records, re-stated by compaction above the snapshot seq and re-armed on restore; a firing SHALL run the tasklet's `on_timer` hook on that Cell with `fired_at` equal to `ctx.now()`; processing-time firings SHALL ride the poll core's deferred-wake list (the BEAM's timer service in the Elixir SDK) and event-time firings SHALL be generated ahead of the input that advanced the Cell's high-water. No SDK's context SHALL refuse a timer call because the tasklet runs inside a steps relay, and the shared core SHALL commit a steps cell's timer ops as it commits a flow cell's. The `compensate` hook SHALL keep no timer session in either kind. A `wake_after` / `wakeAfter` class setting SHALL NOT exist in any SDK.
+Every requirement of this capability SHALL hold for a tasklet of a steps relay as it holds for a tasklet of a flow relay, in every SDK: `timer_after` / `timerAfter` and, where the tasklet declares an event-time clock, `timer_at_event_time` / `timerAtEventTime` SHALL register a per-Cell timer and answer the absolute timestamp that is its cancel handle; pending timers SHALL be a set per Cell, folded from the Cell's own records, re-stated by compaction above the snapshot seq and re-armed on restore; a firing SHALL run the tasklet's `on_timer` hook on that Cell with `fired_at` equal to `ctx.now()`; processing-time firings SHALL ride the poll core's deferred-wake list (the BEAM's timer service in the Elixir SDK) and event-time firings SHALL be generated ahead of the input that advanced the Cell's high-water. No SDK's context SHALL refuse a timer call because the tasklet runs inside a steps relay, and the shared core SHALL commit a steps cell's timer ops as it commits a flow cell's. The `compensate` hook SHALL keep no timer session in either kind. A `wake_after` / `wakeAfter` class setting SHALL NOT exist in any SDK.
 
 #### Scenario: A steps tasklet arms a processing-time timer and its firing reaches on_timer
 
-- **WHEN** a tasklet of a `per_input` steps relay calls `timer_after(300 ms)` while handling a message, in any of the seven SDKs
+- **WHEN** a tasklet of a `per_input` steps relay calls `timer_after(300 ms)` while handling a message, in any SDK
 - **THEN** the call SHALL answer the absolute timestamp, no further message SHALL be needed, and about 300 ms later `on_timer` SHALL run on that Cell with `fired_at` equal to that timestamp and with the state the message left
 
 #### Scenario: A steps tasklet with an event-time clock arms an event-time timer
@@ -336,8 +336,8 @@ For a steps class that journals, the removal of a fired timer from its Cell's pe
 ### Requirement: An event-time timer SHALL be refused in a class without an event-time clock, in every SDK
 
 A registration of an event-time timer by a Tasklet whose clock is not event time SHALL be refused
-with `runtime.event_time_timer_without_event_time_clock` in all seven SDKs: judged by the core at
-settle like the bound in the six hosted SDKs, the item failing non-retryably, and at the call in
+with `runtime.event_time_timer_without_event_time_clock` in every SDK: judged by the core at
+settle like the bound in the SDKs hosted on `flz_core`, the item failing non-retryably, and at the call in
 the Rust SDK. Such a timer would never fire: the event-time
 trigger runs only for event-time classes, and a pending timer keeps a sleeping flow relay awake.
 

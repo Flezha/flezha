@@ -87,7 +87,7 @@ not started. A flow relay's eviction rules are unchanged.
 
 #### Scenario: Every SDK accepts the edge
 
-- **WHEN** a steps class in any of the seven SDKs declares `input(...).into(Split).key_by(f)
+- **WHEN** a steps class in any SDK declares `input(...).into(Split).key_by(f)
   .into(Keyed)` with `Keyed` declaring no static keys
 - **THEN** registration succeeds, the declaration reaching the controller carries `Keyed` in
   dynamic mode, and no SDK reports the tasklet as refused for its mode

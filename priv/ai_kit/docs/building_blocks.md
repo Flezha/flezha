@@ -7,7 +7,7 @@ data through its tasklets. It declares the graph that moves data between them,
 and is the unit the controller starts, places and restarts. Flezha runs
 thousands of relays in parallel. A **runner** is a process you run,
 which connects to the controller and runs the relays the controller hands
-it. The pieces mean the same thing in all eight SDKs.
+it. The pieces mean the same thing in every SDK.
 
 None of the three names the others. A runner registers the relay factories
 it can run; the controller learns them; you ask for a relay by its factory
@@ -150,10 +150,10 @@ A runner belongs to one namespace, the tenant it serves
 its own. How it reaches the controller and how to run it as a service is
 [`connecting_a_runner.md`](../deploying/connecting_a_runner.md).
 
-## Eight SDKs, one engine
+## One engine under every SDK
 
-The SDKs share one engine rather than reimplementing it eight times. All eight
-sit on one kernel written in Rust, `flz_core`: Rust uses it directly, Java
+The SDKs share one engine rather than each reimplementing it. Every SDK
+sits on one kernel written in Rust, `flz_core`: Rust uses it directly, Java
 through JNI, Elixir through a Rustler NIF, and Node, Python, Ruby, PHP and Go
 through a C ABI.
 

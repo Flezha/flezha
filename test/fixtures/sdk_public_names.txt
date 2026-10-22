@@ -1,4 +1,4 @@
-# One public spelling per concept, in eight SDKs.
+# One public spelling per concept, in every SDK.
 #
 # `concept|python|ruby|php|node|elixir|java|rust|go`, one row per concept. A cell
 # holds the public names that carry the concept in that SDK, separated by

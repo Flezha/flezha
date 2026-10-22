@@ -597,7 +597,7 @@ to the controller's own standard error.
 
 #### Scenario: A host test captures a core notice
 
-- **WHEN** a test in any of the seven SDKs, or in the controller, provokes a core retry notice
+- **WHEN** a test in any SDK, or in the controller, provokes a core retry notice
 - **THEN** the test SHALL capture the notice through that host's own log capture, and nothing SHALL reach file descriptor 2 of the process
 
 #### Scenario: The Elixir local banner does not panic the scheduler

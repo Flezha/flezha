@@ -41,7 +41,7 @@ retired setting, a retired builder call or a retired environment variable.
 #### Scenario: The workflow example declares steps in every tab
 
 - **WHEN** the "As a workflow" section of `docs/public/configuration/relay_settings.md` and the Part 2 tutorial page that places orders are read
-- **THEN** each of their seven language tabs SHALL declare the order executor's run as steps, with its loop shape and failure mode, in that SDK's settled form, and none SHALL name a retired class or flag
+- **THEN** each of their language tabs SHALL declare the order executor's run as steps, with its loop shape and failure mode, in that SDK's settled form, and none SHALL name a retired class or flag
 
 #### Scenario: The durability page shows the ladder once
 
@@ -92,8 +92,8 @@ journal, undo, rewind, the loop shapes).
 ### Requirement: Each part's example SHALL run from its pages in every language the part is written for
 
 Following a part's tutorial pages in order SHALL produce, with the commands and the code the
-cloned example carries, the working example the part's opening page promises, in each of the
-seven SDK languages for Parts 1 and 2, and in Java and Elixir for Part 3, whose other five
+cloned example carries, the working example the part's opening page promises, in each
+SDK language for Parts 1 and 2, and in Java and Elixir for Part 3, whose other
 language tabs say the page is not yet written for them.
 
 #### Scenario: Part 1 runs

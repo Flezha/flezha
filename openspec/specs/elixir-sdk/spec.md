@@ -532,7 +532,7 @@ The SDK SHALL read its connection settings through `Flezha.SDK.Knob`, which read
 
 ### Requirement: The Elixir SDK SHALL ship a tasklet test harness
 
-The SDK SHALL ship `Flezha.SDK.TaskletTestHarness`, at parity with the harnesses of the other six
+The SDK SHALL ship `Flezha.SDK.TaskletTestHarness`, at parity with the harnesses of the other SDKs
 SDKs: `new/2` (`new(module, opts \\ [])`) builds a harness over a tasklet module on one Cell, with
 the options `cell_key:` (default `nil`, a Single Cell) and `state:` (default `init_state/1` of the
 key); `feed/3` drives one input (options `now:` and `replay:`) and answers `{outcome, harness}`, the

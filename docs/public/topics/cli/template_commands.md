@@ -1,7 +1,7 @@
 # Template commands
 
 `flz template create` writes a new Flezha project from a template the release
-carries: a small, complete project in one of the seven languages, with a
+carries: a small, complete project in any SDK language, with a
 relay, a tasklet that keeps state, a test and a README with the commands to
 build and run it. It needs no controller, and an AI assistant gets the same
 files through MCP.

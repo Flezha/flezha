@@ -781,7 +781,7 @@ The refusal table SHALL carry one row per short-form refusal with the step `shor
 
 #### Scenario: A retired surface is gone from every manifest
 
-- **WHEN** the seven manifests are read
+- **WHEN** every SDK's manifest are read
 - **THEN** none lists `shorthand_omittable_sink`, and the `needs` vocabulary does not name it
 
 #### Scenario: A short-form row's name is checked against the contract, not the core
@@ -808,7 +808,7 @@ compensation-done markers.
 
 #### Scenario: N keys run N Cells on every runtime
 
-- **WHEN** `keyed_block_steps` is started under any of the seven runtimes without the
+- **WHEN** `keyed_block_steps` is started under any runtime without the
   release and sent `a,b,c`, and its keyed stage has committed
 - **THEN** while the third tasklet blocks, the controller holds a durable Cell of the keyed
   tasklet for each of `a`, `b` and `c` and no other, and the journal's `task_committed` entry
@@ -870,7 +870,7 @@ the coverage report.
 
 #### Scenario: Messages by key reach their member and each member commits its own passes
 
-- **WHEN** `keyed_loop_steps` is started with `--partitions 2` under any of the seven runtimes
+- **WHEN** `keyed_loop_steps` is started with `--partitions 2` under any runtime
   and five messages for three keys are sent, each to the member owning its key
 - **THEN** each key's Cell exists under its owner and nowhere else, each member's journal holds
   one committed iteration per message it received, the output carries `<symbol>:<count>` per
@@ -917,7 +917,7 @@ runner and assert, on every host runtime, that the record precedes the entry nam
 
 #### Scenario: A steps output carries its identity on every runtime
 
-- **WHEN** `outbox_block_steps` is started under any of the seven runtimes with the release set and sent one message
+- **WHEN** `outbox_block_steps` is started under any runtime with the release set and sent one message
 - **THEN** the output receives exactly one frame carrying `flz.key`, the metadata pair and `channel`, its `flz.seq` equals the first tasklet's record seq with ordinal `0`, and `flz state journal` shows the stage naming that seq and channel and no `outbox` or `flushes` line
 
 #### Scenario: A crash before the flush re-drives with identical stamps
@@ -983,7 +983,7 @@ and with a file output attached beside the listener.
 
 #### Scenario: The same parts on every runtime
 
-- **WHEN** `part_stream_e2e_test.exs` runs under each of the seven runtimes with input `3`
+- **WHEN** `part_stream_e2e_test.exs` runs under each runtime with input `3`
 - **THEN** each run SHALL see the parts `1`, `2`, `3` with `flz.part` `0`, `1`, `2`, then
   `done:3`, and the file output SHALL hold `done:3` alone
 
@@ -1044,7 +1044,7 @@ SHALL be removed from the set.
 
 #### Scenario: Every runtime proves every row
 
-- **WHEN** the conformance run executes the refusal set on each of the seven runtimes
+- **WHEN** the conformance run executes the refusal set on each runtime
 - **THEN** each row SHALL be proven on each runtime by its compile-fail fixture or its registration refusal, and the report SHALL name the code per row
 
 ### Requirement: Every SDK carries both runs on one base
@@ -1057,7 +1057,7 @@ renamed with the settled words.
 
 #### Scenario: The manifests agree
 
-- **WHEN** the static drift gate reads the seven manifests
+- **WHEN** the static drift gate reads every SDK's manifest
 - **THEN** each SHALL declare the same fixture ids for the flow class and the three steps loop shapes, and no manifest SHALL carry a kind field or a retired fixture name
 
 ### Requirement: Shared wire constants SHALL be one fixture every runtime asserts
@@ -1066,7 +1066,7 @@ renamed with the settled words.
 `sdk_lang` allocation, the `format_id` allocation, the activation `SCHEMA_VERSION`, every payload
 id and every reserved `flz.` metadata key the Rust production code reads or writes. It SHALL be a
 member of the contract set. A core test SHALL hold every row equal to the Rust constant or key it
-names and fail on a Rust constant or key the file lacks. Each of the seven runtimes (the controller included for the tables it uses) SHALL assert
+names and fail on a Rust constant or key the file lacks. Each runtime (the controller included for the tables it uses) SHALL assert
 the literals it compiles in against the fixture in its own test suite. The fixture SHALL be
 written by hand and never derived at test time.
 

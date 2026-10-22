@@ -8,7 +8,7 @@ or a move reads the result instead of calling out again.
 ## Requirements
 ### Requirement: Every SDK SHALL offer `ctx.effect(name, fn)`
 
-Each of the seven SDKs (Rust, Java, Node, Python, Ruby, PHP, Elixir) SHALL offer an `effect`
+Each SDK (Rust, Java, Node, Python, Ruby, PHP, Elixir) SHALL offer an `effect`
 call on the tasklet context that takes a name and a function, runs the function at most once
 per invocation identity while its result is kept, and returns the function's result. The name
 SHALL be a non-empty string of at most 255 bytes, refused otherwise with a non-retryable
@@ -37,7 +37,7 @@ that returns an awaitable SHALL make `effect` awaitable.
 
 #### Scenario: Same behaviour in every SDK
 
-- **WHEN** the e2e crash scenario above is run with a test tasklet in each of the seven SDKs
+- **WHEN** the e2e crash scenario above is run with a test tasklet in each SDK
 - **THEN** each one calls its function exactly once across the crash
 
 ### Requirement: An effect result SHALL be named by where it came from

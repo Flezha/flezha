@@ -149,7 +149,7 @@ A relay declaration carrying both a tasklet body and a topology body SHALL be re
 
 #### Scenario: A steps short form declares its loop mode
 
-- **WHEN** a steps short form in any of the seven SDKs declares the `per_input` loop mode in that SDK's spelling, is registered, and two messages reach its entry channel
+- **WHEN** a steps short form in any SDK declares the `per_input` loop mode in that SDK's spelling, is registered, and two messages reach its entry channel
 - **THEN** the generated relay SHALL declare `each` `per_input`, the tasklet SHALL run once per message, and the instance SHALL not complete after the first
 
 #### Scenario: An unknown loop mode is refused at declaration
@@ -189,7 +189,7 @@ A relay declaration carrying both a tasklet body and a topology body SHALL be re
 
 #### Scenario: The author registers what the author wrote
 
-- **WHEN** a short form is registered in any of the seven SDKs
+- **WHEN** a short form is registered in any SDK
 - **THEN** the argument SHALL be the declaration the author wrote, and no SDK SHALL require the author to name a type, class or module the SDK generated
 
 #### Scenario: A tasklet body beside a topology body is refused
@@ -551,7 +551,7 @@ The three short-form refusals SHALL be named `topology.short_form_with_topology`
 
 #### Scenario: A refusal is recognisable across languages
 
-- **WHEN** an author writes a tasklet body beside a topology body in any of the seven SDKs
+- **WHEN** an author writes a tasklet body beside a topology body in any SDK
 - **THEN** the error they see contains `topology.short_form_with_topology`, whatever else that SDK's error carries
 
 #### Scenario: The duplicate-id error is named, not only described
@@ -561,7 +561,7 @@ The three short-form refusals SHALL be named `topology.short_form_with_topology`
 
 #### Scenario: A retired refusal name is gone from every SDK
 
-- **WHEN** the seven SDK repositories are searched for `SinkWithoutId`, `SinkWithoutKind` or `ShorthandKeyWithoutSink`
+- **WHEN** every SDK repository is searched for `SinkWithoutId`, `SinkWithoutKind` or `ShorthandKeyWithoutSink`
 - **THEN** no source, test, fixture or document names any of the three
 
 ### Requirement: The timer contract holds in flow and in steps and no class-level wake exists
@@ -585,7 +585,7 @@ graph, and SHALL offer the short form on that same base. The short form SHALL ta
 class settings the full form takes. No SDK SHALL offer a second base, a kind-specific
 factory function or a kind-specific registry.
 
-#### Scenario: The seven bases
+#### Scenario: One base in every SDK
 
 - **WHEN** each SDK's public surface is listed (`public-api.txt`, the Java API module, the Node type declarations, the Python, Ruby and PHP packages, the Elixir `use` macros)
 - **THEN** each SHALL name one relay base and no retired class, and the conformance surface snapshot SHALL match
@@ -599,7 +599,7 @@ registration otherwise. No SDK SHALL accept and ignore a misplaced setting.
 
 #### Scenario: A misplaced setting in each SDK
 
-- **WHEN** the reference fixture writes `each: per_input` under `run: flow` in each of the seven SDKs
+- **WHEN** the reference fixture writes `each: per_input` under `run: flow` in each SDK
 - **THEN** Rust and Java SHALL fail to compile, and Elixir, Node, Python, Ruby and PHP SHALL refuse registration with `topology.unknown_field` naming `each` and `flow`
 
 ### Requirement: The class declares its run and its durability and the runner announces the run
@@ -616,7 +616,7 @@ registration; a start SHALL not be able to change either.
 ### Requirement: Every SDK SHALL spell each public concept one way, checked against one fixture
 
 `test/fixtures/sdk_public_names.txt` SHALL list every public concept of the authoring, runner,
-context and harness surfaces with its spelling in each of the seven SDKs (casing per language; a
+context and harness surfaces with its spelling in each SDK (casing per language; a
 family of methods only where the language has no keyword arguments; `-` only for a concept a
 language does not carry, with its reason on the row). Each SDK's own suite SHALL read its column and
 fail naming every listed spelling its public surface lacks, by the language's reflection (Python,
@@ -627,7 +627,7 @@ leave an alias.
 #### Scenario: A missing member fails its SDK's suite
 
 - **WHEN** a row is added to the fixture naming a context member one SDK does not have
-- **THEN** that SDK's surface test SHALL fail naming the row, and the six others SHALL pass
+- **THEN** that SDK's surface test SHALL fail naming the row, and every other SDK's SHALL pass
 
 #### Scenario: Deleting a public method is caught
 

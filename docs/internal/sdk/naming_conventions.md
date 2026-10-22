@@ -1,7 +1,7 @@
 # SDK Naming Conventions
 
 For SDK implementers adding or reviewing public surface. These twelve rules
-name every public SDK method, error and callback in all eight SDKs (Python,
+name every public SDK method, error and callback in every SDK (Python,
 Ruby, PHP, Node, Elixir, Java, Rust, Go), each in its own casing, so a new name is
 decided by one standard rather than per change. Code comments cite the rules by
 number; the numbering is stable.
@@ -40,7 +40,7 @@ declaration.
 
 ### 3. The lifecycle verb set is `start()` / `run()` / `awaitTermination()` / `close()`
 
-Identical names in all eight SDKs, each in its own casing (`await_termination`
+Identical names in every SDK, each in its own casing (`await_termination`
 in Python, Ruby, Elixir and Rust, `AwaitTermination` in Go); Rust's `close()` is `Drop`. A shutdown has
 one verb: no SDK keeps a `stop` or `drain` beside `close`. gRPC's `Server.start()` / `Server.awaitTermination()` is
 the direct precedent. `run()` is pure sugar (`start()` then
@@ -89,7 +89,7 @@ told apart by the error's `code`, the same string in every SDK:
 
 What Java throws at `registerFactory(...)`, Rust returns as `Err` from
 `register_factory(R)`, with the same code. The three short-form refusals
-(`docs/internal/sdk/authoring_contract.md` §5.2) carry the same code in all eight SDKs,
+(`docs/internal/sdk/authoring_contract.md` §5.2) carry the same code in every SDK,
 and the code appears verbatim in the error an author reads.
 
 ### 7. `create*` constructs an object the caller mutates; `new*` is not used

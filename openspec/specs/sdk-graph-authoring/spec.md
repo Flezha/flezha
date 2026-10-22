@@ -224,7 +224,7 @@ Every SDK's graph builder SHALL offer the latest-document router — `route_late
 
 #### Scenario: Every SDK packages the same router
 
-- **WHEN** the block is declared in any of the seven SDKs and its tasklet test harness (or, for Elixir, its unit test) feeds one document, then traffic items for keys `A`, `B` and `A`, then the same document again, then an item for `A`
+- **WHEN** the block is declared in any SDK and its tasklet test harness (or, for Elixir, its unit test) feeds one document, then traffic items for keys `A`, `B` and `A`, then the same document again, then an item for `A`
 - **THEN** the router SHALL emit `(A, document)` and `(B, document)` exactly once each and nothing on the fifth item, its node identity SHALL be `route_latest`, and its journaled state SHALL be the reference's `{document, version, delivered}` with `version` at 1
 
 ### Requirement: Named payload codecs in the SDKs whose channels carry no type
@@ -316,7 +316,7 @@ The Java, Rust and Elixir SDKs carry the same formats without a codec argument: 
 A channel SHALL end in at most one of `output` and `call(...)`. A channel declaring `output` and a
 call end, or two call ends, SHALL fail registration as `ChannelEndsTwice`, code
 `topology.channel_ends_twice`, naming the channel, judged by `flz_core::host::register::check` for
-the six SDKs that share `flz_core` and by the Elixir SDK's re-expression of it. Two `output` ends on
+the SDKs that share `flz_core` and by the Elixir SDK's re-expression of it. Two `output` ends on
 one channel SHALL stay `DuplicatePluginOutput`. `UnkeyedChannelUnderEffectivelyOnce` SHALL apply to
 every channel ending in `output`, whether or not its outputs answer calls.
 `test/fixtures/reference_topologies.txt` SHALL carry a `ChannelEndsTwice` row for `output` beside a
@@ -356,7 +356,7 @@ channel, the answer channel, `create` and the Response channel's name.
 
 #### Scenario: The same gateway in every SDK
 
-- **WHEN** a gateway that keys a turn by its session, calls the factory `agent` and wires the Response channel back into its accounting tasklet is declared in each of the seven SDKs
+- **WHEN** a gateway that keys a turn by its session, calls the factory `agent` and wires the Response channel back into its accounting tasklet is declared in each SDK
 - **THEN** each declaration SHALL register with the same derived channels, and each SDK's runner SHALL deliver the same `Response` for the same answer
 
 #### Scenario: The Response channel is an entry channel
@@ -372,7 +372,7 @@ channel, the answer channel, `create` and the Response channel's name.
 ### Requirement: A call end SHALL be refused where it cannot work
 
 Registration SHALL refuse, in `flz_core::host::register::check` and its steps spec check for the
-six SDKs sharing `flz_core` and in the Elixir SDK's re-expression:
+SDKs sharing `flz_core` and in the Elixir SDK's re-expression:
 
 - a `:once` or `:chained` steps class declaring a call end, as `CallOutsidePerInputLoop`
   (`topology.call_outside_per_input_loop`), because such a class never reads the later message a

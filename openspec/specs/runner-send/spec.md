@@ -178,7 +178,7 @@ the controller's code. The control surface SHALL not offer this call.
 
 #### Scenario: Same in every SDK
 
-- **WHEN** a test in each of the seven SDKs calls a JSON channel of a test relay through its
+- **WHEN** a test in each SDK calls a JSON channel of a test relay through its
   runner object
 - **THEN** each receives the same decoded answer
 

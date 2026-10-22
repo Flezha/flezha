@@ -67,7 +67,7 @@ a flow relay on every item the input becomes and on every value an inter-tasklet
 derives from it, and for a steps relay on the pass the input opens. A timer firing, a
 chained loop's carry and an input without a token SHALL carry none. An inter-tasklet value a
 restore delivers again SHALL be given the token of the input-log record its origin offset names.
-The core SHALL do this for the six SDKs that share `flz_core`, and the Elixir SDK SHALL do the
+The core SHALL do this for the SDKs that share `flz_core`, and the Elixir SDK SHALL do the
 same in its re-expression; no SDK's tasklet surface SHALL see the token.
 
 #### Scenario: A downstream tasklet answers

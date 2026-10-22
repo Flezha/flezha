@@ -785,8 +785,8 @@ terminal included, SHALL release nothing. No SDK SHALL re-derive the rule from i
 spec, and the core's hold SHALL keep nothing for a plugin-bound channel.
 
 #### Scenario: A call-end terminal releases nothing in every SDK
-- **WHEN** the last tasklet of a `per_input` steps class emits on a channel whose only chain ends in a call, on each of the seven SDKs
-- **THEN** no runner hands the core an edge output for that emit, and the iteration's journaled handoff is the same on all seven
+- **WHEN** the last tasklet of a `per_input` steps class emits on a channel whose only chain ends in a call, on each SDK
+- **THEN** no runner hands the core an edge output for that emit, and the iteration's journaled handoff is the same on every SDK
 
 ### Requirement: An activation SHALL carry its Cell's identity bytes
 
@@ -805,7 +805,7 @@ SDK, and the cross-language vector SHALL be asserted by every SDK's tests.
 - **WHEN** a Cell's first activation is abandoned because the worker it was handed to is gone
 - **THEN** the identity bytes SHALL ride the re-handed activation
 
-#### Scenario: stable_id is equal across the seven SDKs
-- **WHEN** a Cell of relay `r`, tasklet `t` and key `k` calls `stable_id` twice at change seq 7 on each of the seven SDKs
-- **THEN** the two answers are equal across the seven, and each SDK's test pins the shared vector
+#### Scenario: stable_id is equal across the SDKs
+- **WHEN** a Cell of relay `r`, tasklet `t` and key `k` calls `stable_id` twice at change seq 7 on each SDK
+- **THEN** the two answers are equal across every SDK, and each SDK's test pins the shared vector
 

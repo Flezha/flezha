@@ -1,6 +1,6 @@
 # Working with Flezha
 
-Flezha runs relays: small graphs of tasklets, written with one of seven SDKs
+Flezha runs relays: small graphs of tasklets, written with one of the SDKs
 (Elixir, Java, Node, PHP, Python, Ruby, Rust) and served by a runner process
 that connects to a controller. These rules hold for every task.
 

@@ -34,7 +34,7 @@ The same building blocks carry many shapes of data processing:
 
 - **The controller** coordinates everything: it decides where work runs, keeps
   its state on disk, and starts it again elsewhere when something fails.
-- **A runner** is your own program, written with one of the eight SDKs. It
+- **A runner** is your own program, written with one of the Flezha SDKs. It
   connects to the controller and runs the code you registered.
 - **A relay** is one running copy of that code. A relay is a processing unit
   that works like a worker: it keeps its own state and carries data through its
@@ -92,7 +92,7 @@ The same echo exists in every SDK, under `sdk/<language>/examples/echo`.
 ## Get started
 
 To start a project of your own, `flz template create <language> <dir>` writes a small,
-tested one in any of the seven languages ([Template commands](docs/public/topics/cli/template_commands.md)).
+tested one in any SDK language ([Template commands](docs/public/topics/cli/template_commands.md)).
 [Up and running](docs/public/getting_started/up_and_running.md) builds the echo by hand, and the
 [tutorials](docs/public/tutorials/tutorials.md) then build two larger example applications step by step.
 
