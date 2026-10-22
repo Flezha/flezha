@@ -293,7 +293,7 @@ The mapping SHALL also name, in the other direction, every mapped event nothing 
 
 ### Requirement: Service-API surface
 
-The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `tail/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `tail`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `ops`. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
+The foundation SHALL provide a service-API module `Flezha.Service.Observability` callable from both the CLI (via `Flezha.Service.CliManager`) and the future Phoenix UI directly, without routing through `CliManager`. The module SHALL expose at minimum `tail/2`, `query/2`, `list_sources/0`, `list_sinks/0`, `enable_source/1`, `disable_source/1`. Every public function SHALL accept a `caller_context` argument as its first or last positional argument AND SHALL be authorized through `Flezha.AuthZ.authorize/3` when `:authn_authz, :enabled` is `true`. Read tasklets (`list_sources`, `list_sinks`, `query`, `tail`) SHALL require at least the `viewer` role on the caller's bound namespace; mutate tasklets (`enable_source`, `disable_source`) SHALL require at least `ops` bound to `_system`, because a source's status is one switch for the whole controller and a namespace's role SHALL NOT reach signals of other namespaces. Read tasklets SHALL filter results to the caller's bound namespace; results for other namespaces SHALL NOT be returned.
 
 #### Scenario: CLI calls service API through CliManager
 - **WHEN** the CLI invokes a `list_sources` request that reaches `Flezha.Service.CliManager`
@@ -314,6 +314,14 @@ The foundation SHALL provide a service-API module `Flezha.Service.Observability`
 #### Scenario: Cross-namespace query is filtered
 - **WHEN** `:authn_authz, :enabled` is `true` AND a caller bound to namespace `team-orders` invokes `query/2` against a source carrying signals from both `team-orders` and `team-payments`
 - **THEN** the returned signal list SHALL contain only signals whose `metadata.namespace` is `team-orders`
+
+#### Scenario: A namespace's ops role cannot switch a source
+- **WHEN** `:authn_authz, :enabled` is `true` AND a caller with role `ops` bound to namespace `shop` invokes `disable_source/2` or `enable_source/2`
+- **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.namespace_mismatch"}}` AND the source's status SHALL be unchanged
+
+#### Scenario: Ops bound to _system switches a source
+- **WHEN** `:authn_authz, :enabled` is `true` AND a caller with role `ops` bound to `_system` invokes `disable_source/2`
+- **THEN** the source SHALL be disabled for the whole controller
 
 ### Requirement: Authorization seam
 

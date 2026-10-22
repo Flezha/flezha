@@ -71,10 +71,15 @@ it readable only by its owner, and reuse it on later boots; such a value SHALL b
 unique to the node that minted it, SHALL NOT appear in the source tree, and SHALL
 leave the node unable to cluster with any node that did not receive it explicitly.
 Only a release command that starts a node SHALL mint and persist that value. Every
-other release command, including the one behind each CLI verb, SHALL only read it;
+other release command, including the one behind each CLI verb, SHALL only read it and
+SHALL NOT mint or change it;
 with nothing to read it SHALL persist nothing, and its call SHALL reach no node and
 report the node unreachable. A node start that can neither be given nor mint a cookie
-SHALL refuse to start distribution rather than proceed without one, and SHALL say so.
+SHALL refuse to start distribution rather than proceed without one, and SHALL say so. The cookie SHALL NOT appear on the command line of any process the release
+starts, the node itself or the one behind a CLI verb, because any local user can read a
+command line; each VM SHALL be given it through an owner-only cookie file of its own, written from
+`RELEASE_COOKIE` or the minted value, which the runtime reads before distribution starts,
+while the processes the node spawns see the user's own home directory.
 
 #### Scenario: Missing cookie refuses to cluster
 
@@ -90,7 +95,8 @@ SHALL refuse to start distribution rather than proceed without one, and SHALL sa
 #### Scenario: A provisioned cookie is never overridden
 
 - **WHEN** a controller boots with `RELEASE_COOKIE` set
-- **THEN** that value SHALL be used, and no cookie SHALL be minted or read from a file
+- **THEN** that value SHALL be used, no cookie SHALL be minted, and the minted cookie file
+  SHALL NOT be read
 
 #### Scenario: A minted cookie survives a restart
 
@@ -113,6 +119,11 @@ SHALL refuse to start distribution rather than proceed without one, and SHALL sa
 - **WHEN** a CLI verb has found no cookie file and a node's first start writes one before the verb finishes
 - **THEN** the file SHALL hold the value the node started with, and a later verb SHALL read that value
 
+#### Scenario: No command line carries the cookie
+
+- **WHEN** a controller is running and a CLI verb's `flzvm` child is connected to it
+- **THEN** neither `/proc/<pid>/cmdline` of the controller nor that of the child SHALL hold the cookie, and the verb SHALL still reach the controller
+
 ### Requirement: CLI callers present a verifiable identity
 
 The `flz` CLI SHALL accept a token (`--token` flag or `FLEZHA_TOKEN` environment
@@ -120,8 +131,10 @@ variable) and pass it through to the controller in one place: the trailing optio
 list every verb's request ends with, appended once by the one function that issues
 every RPC. That entry SHALL read the token from the child's stdin, where `child` in
 `crates/cli/src/rpc.rs` writes it with the request that reads it, so the token never appears
-on a child's command line, which any local user can read. A child `flz mcp` starts
-SHALL get that stdin and no other, empty when there is no token, so it never reads a
+on a child's command line, which any local user can read. The request's arguments SHALL travel the same
+way, written to the child's stdin ahead of the token, so no argument a verb was given, and no
+protocol line `flz mcp` answers, reaches a child's command line. A child `flz mcp` starts
+SHALL get that stdin and no other, so it never reads a
 protocol line. No verb SHALL carry the credential another way, and no verb that issues
 a request SHALL omit it, so that a verb cannot be gated on the controller and
 token-less on the wire. The verbs that run in a VM of their own and reach no
@@ -130,7 +143,8 @@ request and carry no token; write access to the plugin root is their gate. The
 controller SHALL resolve the token via the token registry into the `caller_context`
 principal at one place. While authorization is enforced, a gated verb invoked without
 a resolvable principal SHALL be refused with a message naming the token requirement;
-`flz auth bootstrap` SHALL remain callable without a prior token.
+`flz auth bootstrap` SHALL remain callable without a prior token, and SHALL read the one-time
+bootstrap token from its own standard input, never from an argument.
 
 #### Scenario: Token resolves to the CLI principal
 
@@ -157,8 +171,9 @@ a resolvable principal SHALL be refused with a message naming the token requirem
 
 - **WHEN** a gated verb, or `flz mcp` answering a line, runs with `FLEZHA_TOKEN` set
   against a shim that records its arguments and its stdin
-- **THEN** the token SHALL NOT appear in the shim's arguments and SHALL be the whole of
-  its stdin
+- **THEN** neither the token nor the request's arguments (the verb's arguments, or the
+  protocol line `flz mcp` answers) SHALL appear in the shim's arguments; the arguments
+  SHALL be the first line of its stdin and the token the rest
 
 #### Scenario: A child of `flz mcp` cannot read a protocol line
 
@@ -179,6 +194,11 @@ a resolvable principal SHALL be refused with a message naming the token requirem
   every `flzvm` invocation
 - **THEN** the shim SHALL see one `eval` and no `rpc`, and the token SHALL appear in
   neither
+
+#### Scenario: The bootstrap token is read from stdin
+
+- **WHEN** `flz auth bootstrap < bootstrap.token` runs against a controller with an unclaimed bootstrap
+- **THEN** the claim succeeds, and neither `flz`'s command line nor its `flzvm` child's holds the token
 
 ### Requirement: Secure default posture
 
