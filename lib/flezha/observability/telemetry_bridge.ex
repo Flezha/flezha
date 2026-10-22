@@ -298,7 +298,8 @@ defmodule Flezha.Observability.TelemetryBridge do
   the total, so an event can leave this list and none may join.
   """
   @spec unexported() :: [[atom()]]
-  def unexported(), do: Enum.concat(Map.values(@unexported))
+  # Sorted by reason: a small map's atom keys iterate in atom-creation order.
+  def unexported(), do: @unexported |> Enum.sort() |> Enum.flat_map(&elem(&1, 1))
 
   @doc "Why `event` reaches no exporter, or `nil` when it does."
   @spec unexported_reason([atom()]) :: atom() | nil

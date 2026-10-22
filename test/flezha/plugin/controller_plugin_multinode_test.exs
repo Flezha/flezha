@@ -167,6 +167,14 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
     assert received() == {"on_relay_failed", to_string(node())}
 
     # The stop is told only where it was made; here the failure is forgotten.
+    # p1 learns of the relay through the registry sync, which may still be on its way.
+    assert NodeTestHelper.wait_until(
+             fn ->
+               match?({:ok, _}, :erpc.call(p1, RelayManager, :get_relay_pid, [@namespace, op]))
+             end,
+             5_000
+           )
+
     assert :ok = :erpc.call(p1, RelayManager, :stop_relay, [@namespace, op])
     assert received() == {"on_relay_stopped", to_string(p1)}
     assert NodeTestHelper.wait_until(fn -> id not in :sys.get_state(HookSink).failed end, 5_000)
