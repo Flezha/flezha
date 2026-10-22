@@ -16,6 +16,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Service.HubManager.Lifecycle
   alias Flezha.Service.HubManager.Placement
   alias Flezha.Service.HubManager.Rows
+  alias Flezha.Service.HubManager.Starter
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.HookManager
@@ -350,9 +351,10 @@ defmodule Flezha.Service.HubManager do
   True when auto-restore is enabled and the durable registry holds relays
   this (re)started controller has not loaded back into live, bound
   processes yet — closing the post-restart "vacuously healthy" hole.
-  Covers both an on-disk `registry.dets` for a hub that has not started
-  (`unstarted_hub_has_registry?/0`) and a running hub whose replayed DETS
-  rows outnumber the live-bound relays (`running_hub_relays_unbound?/0`).
+  Covers both an on-disk `registry.dets` for a hub the boot-time starter has
+  not brought up yet (`unstarted_hub_has_registry?/0`) and a running hub
+  whose replayed DETS rows outnumber the live-bound relays
+  (`running_hub_relays_unbound?/0`).
   Used by `/healthz` to report `recovering` instead of `healthy` until the
   registry is fully reloaded and bound.
   """
@@ -412,11 +414,17 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  # On-disk registry for a hub that has not started yet.
+  # On-disk registry for a hub the boot-time starter still owes. Once the
+  # starter has brought a hub up, a directory with no running hub is one a
+  # vacant leave kept on purpose (`stop_hub_if_vacant/1`), which owes nothing.
   defp unstarted_hub_has_registry?() do
     running = MapSet.new(list_running_hub_ids(), &Atom.to_string/1)
+    owed = Starter.pending()
 
-    Enum.any?(registry_hub_dirs(), &(not MapSet.member?(running, &1)))
+    Enum.any?(registry_hub_dirs(), fn dir ->
+      not MapSet.member?(running, dir) and
+        (owed == :unstarted or Identificator.namespace_from_hub(dir) in owed)
+    end)
   end
 
   # Every hub directory under the process-hub root that holds a registry file.

@@ -214,6 +214,20 @@ defmodule Flezha.Service.HubManagerStarterTest do
       refute namespace in HubManager.get_running_namespaces()
     end
 
+    test "a reclaimed hub's kept registry does not hold readiness" do
+      namespace = unique("left-hub")
+      {:ok, _} = ensure_hub(namespace)
+      Snapshot.observe_recovery(Identificator.hub(namespace), :normal)
+      run_starter()
+      assert Readiness.registry_loaded?()
+
+      HubManager.stop_hub_if_vacant(namespace)
+
+      refute namespace in HubManager.get_running_namespaces()
+      assert File.regular?(registry_file(namespace))
+      assert Readiness.registry_loaded?()
+    end
+
     test "keeps a lone hub whose only local child is a plugin home", %{tmp: tmp} do
       # The suite's setting, so the declared set is empty and only the local
       # children decide.
