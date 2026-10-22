@@ -22,6 +22,7 @@ defmodule Flezha.Service.Cli.ListenTest do
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Service.{Cli, HubManager, RelayManager, PluginManager}
   alias FlezhaTest.Helper.CliCapture
+  alias FlezhaTest.Helper.NodeTestHelper
 
   setup :set_mimic_global_until_exit
 
@@ -69,7 +70,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           })
 
           forward("again", %{"input_type" => "2"})
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
         end)
 
       assert out ==
@@ -84,7 +85,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
           forward("hello", %{"channel" => "answer"})
           notice("in")
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]), [])
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
         end)
 
       assert [part, output, notice] = String.split(out, "\n", trim: true)
@@ -103,7 +104,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           forward("hello", %{"channel" => "answer"})
           notice("in")
 
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]),
             output: "json"
           )
         end)
@@ -124,7 +125,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           forward("hello", %{"channel" => "echo", "flz.key" => "k"})
           forward(<<255, 0>>, %{"flz.key" => <<255>>})
 
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 50}]),
+          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]),
             output: "json"
           )
         end)
@@ -194,12 +195,26 @@ defmodule Flezha.Service.Cli.ListenTest do
         {"op", 2, %{"a" => 1, "b" => 0, "" => 0}}
       ]
 
-      stub(PluginManager, :enable_plugin, fn _id, plugin ->
+      # Once every report is handed on, the relay reads as ended, which closes
+      # the listen after the lines it holds.
+      ended = :atomics.new(1, [])
+
+      stub(HubManager, :relay_bindings, fn ns, op ->
+        if :atomics.get(ended, 1) == 1, do: {:error, {:relay_not_found, ns, op}}, else: {:ok, []}
+      end)
+
+      stub(PluginManager, :enable_plugin, fn id, plugin ->
+        receiver = plugin.opts.recv_pid
+
         spawn(fn ->
           for {member, epoch, totals} <- reports do
-            send(plugin.opts.recv_pid, {:tally_report, member, epoch, totals})
-            Process.sleep(150)
+            send(receiver, {:tally_report, member, epoch, totals})
+            assert NodeTestHelper.wait_until(fn -> handed_on?(receiver) end, 2_000, 1)
           end
+
+          :atomics.put(ended, 1, 1)
+          send(receiver, {:listener_released, id})
+          for _ <- 1..2, do: send(receiver, :release_check)
         end)
 
         {:ok, "plugin enabled"}
@@ -210,7 +225,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           "ns",
           "op",
           "tally",
-          %{window_ms: 700, tally_ms: 100, channels: ["a", "b"]}
+          %{window_ms: 60_000, tally_ms: 10, channels: ["a", "b"]}
         ])
 
       out = in_caller(fn -> Cli.call("Relay.listen", args, []) end)
@@ -223,6 +238,7 @@ defmodule Flezha.Service.Cli.ListenTest do
       assert b =~ ~r"^b=5 \(\d+\.\d/s\)$"
       assert restarted == "a=1 (-)\tb=0 (-)", "a new epoch starts the rates again"
 
+      :atomics.put(ended, 1, 0)
       json = in_caller(fn -> Cli.call("Relay.listen", args, output: "json") end)
       assert [line | _] = json |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
 
@@ -344,7 +360,7 @@ defmodule Flezha.Service.Cli.ListenTest do
 
       out =
         in_caller(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 50)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 10)
         end)
 
       assert out == "Delivered to 'op'.\necho\thello\n"
@@ -354,7 +370,7 @@ defmodule Flezha.Service.Cli.ListenTest do
     test "with nothing emitted it prints the verdict alone" do
       out =
         in_caller(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 20)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 10)
         end)
 
       assert out == "Delivered to 'op'.\n"
@@ -370,7 +386,7 @@ defmodule Flezha.Service.Cli.ListenTest do
 
       {reason, err} =
         refused(fn ->
-          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 50)
+          Cli.call("Relay.send", Jason.encode!(["ns", "op", "hello", nil, %{}]), await_ms: 10)
         end)
 
       assert reason == {:shutdown, 5}
@@ -389,6 +405,10 @@ defmodule Flezha.Service.Cli.ListenTest do
       assert [{:deliver, nil}] = calls()
     end
   end
+
+  # The receiver has taken the report sent before this read and handed on its
+  # interval's tally.
+  defp handed_on?(receiver), do: not Map.has_key?(:sys.get_state(receiver).timers, :tally)
 
   # The verb reads its own mailbox, so it runs in a process of its own and the
   # test's mailbox is left to the stubs.
@@ -448,7 +468,7 @@ defmodule Flezha.Service.Cli.ListenTest do
       "flz.call_duration_ms" => 0
     })
 
-    Cli.call("Relay.listen", Jason.encode!(["ns", "op", "calls", %{window_ms: 50}]), opts)
+    Cli.call("Relay.listen", Jason.encode!(["ns", "op", "calls", %{window_ms: 10}]), opts)
   end
 
   defp timeout_error, do: Flezha.Error.new("call.timeout", relay: "op", deadline_ms: 100)

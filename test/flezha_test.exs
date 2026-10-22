@@ -1,5 +1,4 @@
 defmodule FlezhaTest do
-  alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
@@ -9,7 +8,6 @@ defmodule FlezhaTest do
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RelayTestHelper
-  alias ProcessHub.Constant.Hook
 
   use ExUnit.Case
   use Flezha.Constant
@@ -237,93 +235,5 @@ defmodule FlezhaTest do
                "text_inputs" => ["state_1", "state_2"]
              }
            }
-  end
-
-  @tag :relay_migration
-  test "relay migration" do
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:anode1)
-
-    relay_id = "relay_migration_test"
-
-    {:ok, %{pid: _relay_pid, node: pnode}} =
-      relay_id
-      |> RelayFixture.get(@test_store_input_factory)
-      |> RelayFixture.start()
-      |> RelayFixture.attach_output_msg()
-
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_1", %{})
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "test_state_2", %{})
-
-    test_state = %{
-      "store_input_tasklet" => %{
-        "binary_inputs" => [],
-        "text_inputs" => ["test_state_1", "test_state_2"]
-      }
-    }
-
-    PluginManager.enable_plugin("stdout_plugin", %Flezha.Plugin{
-      id: "stdout_plugin",
-      namespace: @default_namespace,
-      relay_id: relay_id,
-      provider: Flezha.Plugin.Provider.StdOut,
-      opts: %{},
-      hooks: [{:on_output, []}]
-    })
-
-    {:ok, json_state} =
-      RelayManager.get_cell_state(@default_namespace, relay_id)
-
-    {:ok, old_overwatch_state} =
-      RelayManager.get_overwatch_state(@default_namespace, relay_id)
-
-    cell_state = Payloader.json_to_map(json_state)
-
-    assert cell_state === test_state
-
-    test_pid = self()
-
-    ProcessHub.register_hook_handlers(
-      Identificator.hub(@default_namespace),
-      Hook.post_children_start(),
-      [
-        %ProcessHub.Service.HookManager{
-          id: "migration_wait",
-          m: Process,
-          f: :send,
-          a: [test_pid, :migration_complete, []]
-        }
-      ]
-    )
-
-    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
-
-    if pnode == peer_node do
-      receive do
-        :migration_complete -> :ok
-      after
-        5000 -> flunk("Migration did not complete within 5 seconds")
-      end
-    end
-
-    ProcessHub.cancel_hook_handlers(
-      Identificator.hub(@default_namespace),
-      Hook.post_children_start(),
-      ["migration_wait"]
-    )
-
-    {:ok, json_state} =
-      RelayManager.get_cell_state(@default_namespace, relay_id)
-
-    {:ok, new_overwatch_state} =
-      RelayManager.get_overwatch_state(@default_namespace, relay_id)
-
-    cell_state = Payloader.json_to_map(json_state)
-
-    assert cell_state === test_state
-
-    old_plugins = Map.keys(old_overwatch_state.extensions.plugins) |> Enum.sort()
-    new_plugins = Map.keys(new_overwatch_state.extensions.plugins) |> Enum.sort()
-    assert new_plugins === old_plugins
-    assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 end

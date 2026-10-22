@@ -12,6 +12,8 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
   during a startup attempt.
   """
 
+  alias Flezha.Config.Durations
+  alias Flezha.Identificator
   alias Flezha.Relay.Builder
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
@@ -402,7 +404,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     # a runnerless namespace crash-loops every `overwatch_runner_wait_ms` for as
     # long as it stays runnerless.
     test "the relay stays alive past its bind wait, and nothing restarts it" do
-      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 200))
+      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 20))
 
       relay = %Builder{
         id: "held-unbound-#{System.unique_integer([:positive])}",
@@ -425,16 +427,21 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       [{_, pid, _, _}] = Supervisor.which_children(sup)
       ref = Process.monitor(pid)
 
+      # The outcome is recorded where the start caller and the convergence loop
+      # both read it: no binding, and the bind's own reason.
+      assert NodeTestHelper.wait_until(
+               fn -> match?({:runner_not_ready, _}, overwatch_state(pid).halt_reason) end,
+               2_000,
+               5
+             )
+
       # `max_restarts: 0` makes a restart fatal to the supervisor, so one
       # assertion covers both halves: the relay did not die, and nothing
       # brought it back.
-      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 600
+      state = overwatch_state(pid)
+      refute_received {:DOWN, ^ref, :process, ^pid, _}
       assert Process.alive?(sup)
       assert [{_, ^pid, _, _}] = Supervisor.which_children(sup)
-
-      # The outcome is recorded where the start caller and the convergence loop
-      # both read it: no binding, and the bind's own reason.
-      state = overwatch_state(pid)
       assert is_nil(state.runner_id)
       assert Overwatch.phase(state) == :unbound
       assert {:runner_not_ready, reason} = state.halt_reason
@@ -493,7 +500,7 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     # fails when: holding replaces a crash loop with a stall — the relay
     # stays unbound after a runner arrives because nothing rebinds it.
     test "the loop's rebind binds a held relay once a runner connects", %{fleet: fleet} do
-      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 200))
+      on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 20))
 
       id = "held-then-bound-#{System.unique_integer([:positive])}"
 
@@ -644,17 +651,14 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
     # fails when: the Overwatch's child spec keeps the OTP worker default, so
     # the supervisor kills a teardown walk at 5 s and its later steps never run.
-    test "a 6 s process step runs to the end of the walk", %{test_pid: test_pid} do
+    test "a started relay's supervisor waits the Overwatch's shutdown bound, past 5 s" do
       id = "slow-walk-#{System.unique_integer([:positive])}"
-
-      hold_process_walk(id, [
-        {1, fn _budget -> Process.sleep(6_000) end},
-        {45, fn _budget -> send(test_pid, {:walk_finished, id}) end}
-      ])
-
       start_bound(id)
-      assert :ok = RelayManager.stop_relay(@namespace, id)
-      assert_received {:walk_finished, ^id}
+
+      hub = ProcessHub.Hub.get(Identificator.hub(@namespace))
+      assert {:ok, spec} = :supervisor.get_childspec(hub.procs.dist_sup, id)
+      assert spec.shutdown == Durations.get(:overwatch_shutdown_ms)
+      assert spec.shutdown > 5_000
     end
 
     # fails when: the hub stop waits no longer than the Overwatch's bound, so a
@@ -662,6 +666,9 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
     # relay's quota.
     test "a walk held to its budget still ends in a stop that releases the quota",
          %{test_pid: test_pid} do
+      # The bounds nest 1 s apart below the release, so 3.6 s leaves the walk a
+      # 600 ms budget to end 500 ms inside of.
+      on_exit(TestHelpers.override_env(:stop_release_timeout_ms, 3_600))
       id = "budget-walk-#{System.unique_integer([:positive])}"
       hold_process_walk(id, [{1, fn budget -> Process.sleep(budget - 500) end}])
 

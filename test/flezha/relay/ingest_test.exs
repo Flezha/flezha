@@ -345,13 +345,15 @@ defmodule FlezhaTest.Relay.IngestTest do
       def init(reply), do: {:ok, %{reply: reply, seen: [], max_queued: 0}}
 
       def handle_call({:ingest, message, _md}, _from, state) do
-        # An overlapping caller has the next request queued here before this
-        # one is answered; a caller that waits for each answer never does.
-        NodeTestHelper.wait_until(
-          fn -> Process.info(self(), :message_queue_len) > {:message_queue_len, 0} end,
-          50,
-          1
-        )
+        # An overlapping caller has the next request queued here before the
+        # first is answered; a caller that waits for each answer never does.
+        if state.seen == [] do
+          NodeTestHelper.wait_until(
+            fn -> Process.info(self(), :message_queue_len) > {:message_queue_len, 0} end,
+            2_000,
+            1
+          )
+        end
 
         {:message_queue_len, queued} = Process.info(self(), :message_queue_len)
 
@@ -417,7 +419,7 @@ defmodule FlezhaTest.Relay.IngestTest do
                  "target",
                  "default",
                  [{"a", %{}}, {"b", %{}}],
-                 50,
+                 1,
                  1
                )
     end
@@ -432,11 +434,12 @@ defmodule FlezhaTest.Relay.IngestTest do
                {:ok, :absorbed},
                {:error, {:unreachable, :timeout}},
                {:error, {:unreachable, :timeout}}
-             ] = PluginHost.inject_many(stub, records, :verdict, 100)
+             ] = PluginHost.inject_many(stub, records, :verdict, 20)
 
-      # The two held replies are sent now; the abandoned requests drop them.
+      # The two held replies are sent now, ahead of the release's own; the
+      # abandoned requests drop them.
       assert :ok = GenServer.call(stub, :release)
-      refute_receive _, 100
+      refute_received _
     end
 
     test "a batch keeps at most the ingest window in flight" do
@@ -508,7 +511,8 @@ defmodule FlezhaTest.Relay.IngestTest do
                PluginHost.inject_many(host, [{"x", twice}, {"x", twice}], :verdict, 5_000)
 
       assert_receive {:channel_got, ^inst, {"x", _metadata}}
-      refute_receive {:channel_got, _, _}, 100
+      :sys.get_state(host)
+      refute_received {:channel_got, _, _}
     end
   end
 
@@ -521,6 +525,17 @@ defmodule FlezhaTest.Relay.IngestTest do
       end
 
     Enum.count(syncs, & &1)
+  end
+
+  # `count` appends wait in the input log for credit.
+  defp await_parked(inst, count) do
+    {:ok, log} = Supervisor.find_or_start({inst, :input_log})
+
+    assert NodeTestHelper.wait_until(
+             fn -> :queue.len(:sys.get_state(log).waiters) == count end,
+             2_000,
+             1
+           )
   end
 
   describe "the effectively-once journal" do
@@ -549,7 +564,8 @@ defmodule FlezhaTest.Relay.IngestTest do
 
     test "zero credit parks the caller's call and nothing else", %{inst: inst, host: host} do
       parked = Task.async(fn -> GenServer.call(host, {:ingest, "b", %{}}) end)
-      refute Task.yield(parked, 150), "the caller must park at zero source credit"
+      await_parked(inst, 1)
+      refute Task.yield(parked, 0), "the caller must park at zero source credit"
 
       # The host runs on: a control call is answered and an `{:io_out}` chain is
       # run while the caller waits — a cast and then a call from one process are
@@ -571,7 +587,8 @@ defmodule FlezhaTest.Relay.IngestTest do
       reqids = :gen_server.reqids_new()
       reqids = :gen_server.send_request(host, {:ingest, "b", %{}}, :b, reqids)
       reqids = :gen_server.send_request(host, {:ingest, "c", %{}}, :c, reqids)
-      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+      await_parked(inst, 2)
+      assert :timeout = :gen_server.wait_response(reqids, 0, true)
 
       InputLog.record_consumed(inst, cell(inst), 0)
       assert {{:reply, :ok}, :b, reqids} = :gen_server.wait_response(reqids, 2_000, true)

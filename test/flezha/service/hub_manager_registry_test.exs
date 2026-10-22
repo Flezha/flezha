@@ -215,13 +215,9 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
       # Empty root so the unstarted-hub on-disk branch can never fire from
       # residue left by other suites — these assertions isolate the
-      # running-hub `dump`-vs-`get_all_relays` discriminator.
-      Application.put_env(:flezha, :process_hub_registry_root, root)
-      Application.put_env(:flezha, :auto_restore_enabled, true)
-
-      on_exit(fn -> HubManager.stop_hub(@pending_ns) end)
-
-      :ok
+      # running-hub `dump`-vs-`get_all_relays` discriminator. The retired hubs
+      # come back with auto-restore still on, so their first round opens at once.
+      recovering_hub(@pending_ns, root, 50)
     end
 
     test "false when every durable relay is bound to a live pid" do

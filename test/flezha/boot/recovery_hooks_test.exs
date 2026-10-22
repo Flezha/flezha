@@ -10,8 +10,9 @@ defmodule Flezha.Boot.RecoveryHooksTest do
     # The key row defaults this to `false` under `:test`, so auto-restore left
     # ON boots later hubs into `:recovering`, where they hold until their first
     # reconcile round and stall `RecoveryGate` and any convergence assertion
-    # behind it.
+    # behind it. A short grace opens that round at once.
     Application.put_env(:flezha, :auto_restore_enabled, true)
+    Application.put_env(:flezha, :process_hub_reconcile_grace_ms, 50)
 
     :ok
   end

@@ -13,7 +13,6 @@ defmodule Flezha.Service.ListenerTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
-  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   alias Flezha.Cluster.Directory
   alias Flezha.Relay.PartitionGroup
@@ -159,14 +158,19 @@ defmodule Flezha.Service.ListenerTest do
     end
 
     test "a group's member reports are summed, each with the epoch it counts in" do
-      %{pid: pid, receiver: receiver} = listening(direction: :tally, tally_ms: 100)
+      %{pid: pid, receiver: receiver} = listening(direction: :tally, tally_ms: 3_600_000)
       send(receiver, {:tally_report, "op#p0", 1, %{"prices" => 2, "" => 0}})
       assert_receive {:event, ^pid, {:tally, %{"prices" => 2}, %{epochs: %{"op#p0" => 1}}}}
 
       # Within the interval: held back, then handed on once with both members.
       send(receiver, {:tally_report, "op#p1", 7, %{"prices" => 3, "" => 1}})
       send(receiver, {:tally_report, "op#p0", 1, %{"prices" => 4, "" => 0}})
+      :sys.get_state(receiver)
+      refute_received {:event, ^pid, _}
+
+      send(receiver, :tally_due)
       assert_receive {:event, ^pid, {:tally, totals, %{epochs: epochs, read_at_ms: at}}}, 2_000
+      :sys.get_state(receiver)
       refute_received {:event, ^pid, _}
       assert totals == %{"prices" => 7, "" => 1}
       assert epochs == %{"op#p0" => 1, "op#p1" => 7}
@@ -317,22 +321,15 @@ defmodule Flezha.Service.ListenerTest do
     end
 
     test "a slow reader loses parts, not outputs, and goes on" do
-      test = self()
-
-      slow = fn event ->
-        send(test, {:event, self(), event})
-        Process.sleep(20)
-        :continue
-      end
-
-      %{pid: pid, receiver: receiver} = listening([], slow)
+      %{pid: pid, receiver: receiver} = listening([], held_reader(self()))
       for n <- 0..99, do: part(receiver, "p#{n}", n)
       output(receiver, "answer")
+      assert :sys.get_state(receiver).backlog.frames <= 8
 
+      send(pid, :go)
       numbers = parts_until_output(pid, [])
       assert length(numbers) < 100
       assert numbers == Enum.sort(numbers)
-      assert :sys.get_state(receiver).backlog.frames <= 8
       refute_received {:outcome, _}
       Process.exit(pid, :kill)
     end
@@ -364,53 +361,57 @@ defmodule Flezha.Service.ListenerTest do
     end
 
     test "a reader that falls behind on call events is ended with listener.overrun" do
-      slow = fn _event ->
-        Process.sleep(200)
-        :continue
-      end
+      %{pid: pid, receiver: receiver, id: id} =
+        listening([direction: :calls], held_reader(self()))
 
-      %{receiver: receiver, id: id} = listening([direction: :calls], slow)
       for n <- 1..100, do: call_frame(receiver, "c#{n}", "call", %{})
+      assert :sys.get_state(receiver).ended
 
-      assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.overrun"}}}, 5_000
+      send(pid, :go)
+      assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.overrun"}}}, 2_000
       assert_receive {:detached, "ns", "op", ^id}
     end
 
     test "a reader that falls behind on outputs is ended with listener.overrun" do
-      slow = fn _event ->
-        Process.sleep(200)
-        :continue
-      end
-
-      %{receiver: receiver, id: id} = listening([], slow)
+      %{pid: pid, receiver: receiver, id: id} = listening([], held_reader(self()))
       for n <- 1..100, do: output(receiver, "o#{n}")
+      assert :sys.get_state(receiver).ended
 
-      assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.overrun"} = error}}, 5_000
+      send(pid, :go)
+      assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.overrun"} = error}}, 2_000
       assert error.details["frames"] == 8
       assert_receive {:detached, "ns", "op", ^id}
     end
   end
 
   describe "a released plugin" do
-    setup do
-      Application.put_env(:flezha, :listener_release_check_ms, 20)
+    # Each check is fired by hand; the release has to arm the next one.
+    defp release(receiver, id) do
+      send(receiver, {:listener_released, id})
+      assert Map.has_key?(:sys.get_state(receiver).timers, :release_check)
+      for _ <- 1..2, do: send(receiver, :release_check)
     end
 
     test "a row still carrying it is a move: the listener goes on" do
-      %{pid: pid, receiver: receiver, id: id} = listening(window_ms: 300)
+      %{pid: pid, receiver: receiver, id: id} = listening([])
       stub(HubManager, :relay_bindings, fn "ns", "op" -> {:ok, [{id, nil}]} end)
 
-      send(receiver, {:listener_released, id})
+      release(receiver, id)
+      output(receiver, "after the move")
+      assert_receive {:event, ^pid, {:output, "after the move", _}}, 2_000
+      assert Map.has_key?(:sys.get_state(receiver).timers, :release_check)
+
       send(receiver, {:heartbeat_keepalive, self()})
       assert_receive {:heartbeat_keepalive, :ok}, 2_000
-      assert_receive {:outcome, {:ok, :window_closed}}, 2_000
-      refute Process.alive?(pid)
+      refute :sys.get_state(receiver).released
+      refute_received {:outcome, _}
+      Process.exit(pid, :kill)
     end
 
     test "a registered relay without the row was disabled by someone else" do
       stub(HubManager, :relay_bindings, fn "ns", "op" -> {:ok, []} end)
       %{receiver: receiver, id: id} = listening([])
-      send(receiver, {:listener_released, id})
+      release(receiver, id)
 
       assert_receive {:outcome, {:error, %Flezha.Error{code: "listener.detached"}}}, 2_000
       assert_receive {:detached, "ns", "op", ^id}
@@ -424,7 +425,7 @@ defmodule Flezha.Service.ListenerTest do
       end)
 
       output(receiver, "last")
-      send(receiver, {:listener_released, id})
+      release(receiver, id)
 
       assert_receive {:event, ^pid, {:output, "last", _}}, 2_000
       assert_receive {:outcome, {:ok, :relay_ended}}, 2_000
@@ -436,39 +437,44 @@ defmodule Flezha.Service.ListenerTest do
       test = self()
 
       counting = fn
-        :idle -> send(test, :idle) && :continue
-        _event -> :continue
+        :idle -> send(test, {:idle, now()}) && :continue
+        {:output, "still attached", _} -> :done
       end
 
-      listening([idle_ms: 200, window_ms: 1_000], counting)
-      assert_receive {:outcome, {:ok, :window_closed}}, 2_000
-      idles = length(collect(do: (:idle -> :idle)))
-      assert idles in 3..5
-    end
+      %{receiver: receiver, id: id} = listening([idle_ms: 10, window_ms: 3_600_000], counting)
+      assert_receive {:idle, first}, 2_000
+      assert_receive {:idle, second}, 2_000
+      assert second - first >= 10
+      refute_received {:detached, _, _, _}
 
-    test "an idle answer of :done ends the listener and detaches" do
-      %{id: id} = listening([idle_ms: 50], fn :idle -> :done end)
+      output(receiver, "still attached")
       assert_receive {:outcome, {:ok, :done}}, 2_000
       assert_receive {:detached, "ns", "op", ^id}
     end
 
+    test "an idle answer of :done ends the listener and detaches" do
+      %{id: id} = listening([idle_ms: 1], fn :idle -> :done end)
+      assert_receive {:outcome, {:ok, :done}}, 2_000
+      assert_receive {:detached, "ns", "op", ^id}
+    end
+
+    # Parts handed over for several intervals back to back: an idle timed from
+    # anything but the last event comes less than an interval after one.
     test "events reset the interval" do
       test = self()
+      tick = fn kind -> send(test, {:tick, kind, now()}) && :continue end
 
       handler = fn
-        :idle -> send(test, :idle) && :continue
-        event -> send(test, {:event, self(), event}) && :continue
+        :idle -> tick.(:idle)
+        {:part, _, _} -> tick.(:part)
       end
 
-      %{pid: pid, receiver: receiver} = listening([idle_ms: 500], handler)
+      %{pid: pid, receiver: receiver} = listening([idle_ms: 10], handler)
+      ticks = feed_parts(receiver, now() + 40, 0, [])
 
-      for n <- 0..19 do
-        part(receiver, "p", n)
-        Process.sleep(100)
-      end
+      for [{:tick, _, before}, {:tick, :idle, at}] <- Enum.chunk_every(ticks, 2, 1, :discard),
+          do: assert(at - before >= 10)
 
-      refute_received :idle
-      assert drain_events(pid) == 20
       Process.exit(pid, :kill)
     end
 
@@ -499,5 +505,30 @@ defmodule Flezha.Service.ListenerTest do
     forward_to(test)
   end
 
-  defp drain_events(pid), do: length(collect(do: ({:event, ^pid, _} -> pid)))
+  # Hands over one part at a time until `until`, returning every tick in order.
+  defp feed_parts(receiver, until, n, ticks) do
+    part(receiver, "p", n)
+    ticks = await_part(ticks)
+    if now() < until, do: feed_parts(receiver, until, n + 1, ticks), else: Enum.reverse(ticks)
+  end
+
+  defp await_part(ticks) do
+    receive do
+      {:tick, :part, _at} = tick -> [tick | ticks]
+      {:tick, :idle, _at} = tick -> await_part([tick | ticks])
+    after
+      2_000 -> flunk("a part was never handled")
+    end
+  end
+
+  # A reader that takes its first event and then nothing until it is sent `:go`.
+  defp held_reader(test) do
+    fn event ->
+      send(test, {:event, self(), event})
+      unless Process.get(:let_go), do: receive(do: (:go -> Process.put(:let_go, true)))
+      :continue
+    end
+  end
+
+  defp now, do: System.monotonic_time(:millisecond)
 end

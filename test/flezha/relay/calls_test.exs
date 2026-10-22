@@ -18,6 +18,7 @@ defmodule FlezhaTest.Relay.CallsTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{Completion, InputLog, TestHelpers, WriterRegistry}
+  alias FlezhaTest.Helper.CallHarness
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
   alias FlezhaTest.Helper.Telemetry
@@ -344,8 +345,8 @@ defmodule FlezhaTest.Relay.CallsTest do
       end)
 
       GenServer.cast(host, {:io_out, "hello", %{"flz.reply_to" => token, "channel" => "out"}})
-      assert [_held] = :sys.get_state(host).held_outputs
-      refute Task.yield(caller, 50)
+      assert %{held_outputs: [_held], calls: %{rows: %{^token => _}}} = :sys.get_state(host)
+      refute Task.yield(caller, 0)
 
       ExUnit.CaptureLog.capture_log(fn -> send(host, {:EXIT, self(), :bind_failed}) end)
 
@@ -401,12 +402,11 @@ defmodule FlezhaTest.Relay.CallsTest do
     test "a call with no answer by its deadline is told call.timeout; the input stays accepted",
          %{inst: inst} do
       {:ok, host} = start_supervised({Host, state(inst)})
-      started = System.monotonic_time(:millisecond)
-      caller = call(host, "slow", %{}, 100)
+      caller = call(host, "slow", %{}, 5_000)
       token = called_token(inst)
 
+      assert CallHarness.fire_call_timer(host, {:call_deadline, token}) in 1..5_000
       assert {:error, %Error{code: "call.timeout"}} = Task.await(caller)
-      assert (System.monotonic_time(:millisecond) - started) in 90..900
       assert :sys.get_state(host).calls.rows == %{}
 
       GenServer.cast(host, {:io_out, "late", %{"flz.reply_to" => token}})
@@ -510,7 +510,8 @@ defmodule FlezhaTest.Relay.CallsTest do
 
       assert NodeTestHelper.wait_until(fn -> InputLog.undelivered(inst) != [] end, 2_000)
       assert [{0, "turn", %{"flz.reply_to" => "w:" <> _ = token}}] = InputLog.undelivered(inst)
-      refute Task.yield(caller, 50), "an accepted call waits for its answer"
+      assert Map.has_key?(:sys.get_state(host).calls.rows, token)
+      refute Task.yield(caller, 0), "an accepted call waits for its answer"
 
       GenServer.cast(host, {:io_out, "answer", %{"flz.reply_to" => token}})
       assert {:ok, "answer", _} = Task.await(caller)
@@ -555,14 +556,13 @@ defmodule FlezhaTest.Relay.CallsTest do
       assert Task.await(worker) == {:ok, "answer", %{"channel" => "accepted"}}
     end
 
-    test "times out with the Overwatch's call.timeout, never its own wait", %{host: host} do
-      on_exit(TestHelpers.override_env(:call_grace_ms, 1_000))
-      started = System.monotonic_time(:millisecond)
+    test "times out with the Overwatch's call.timeout, never its own wait",
+         %{inst: inst, host: host} do
+      worker = worker_call(host, %{"channel" => "http"}, 5_000)
+      token = called_token(inst)
 
-      assert {:error, %Error{code: "call.timeout"}} =
-               Task.await(worker_call(host, %{"channel" => "http"}, 100))
-
-      assert System.monotonic_time(:millisecond) - started < 1_000
+      assert CallHarness.fire_call_timer(host, {:call_deadline, token}) in 1..5_000
+      assert {:error, %Error{code: "call.timeout"}} = Task.await(worker)
     end
 
     test "a host that is gone answers call.unavailable", %{host: host} do
@@ -592,7 +592,7 @@ defmodule FlezhaTest.Relay.CallsTest do
          %{inst: inst} do
       {:ok, source} = start_supervised({Host, bare(inst)}, id: :source)
       caller = Task.async(fn -> Inbound.call(source, "hello", %{}, 5_000, inst, "cli") end)
-      short = Task.async(fn -> Inbound.call(source, "slow", %{}, 300, inst, "cli") end)
+      short = Task.async(fn -> Inbound.call(source, "slow", %{}, 4_000, inst, "cli") end)
 
       assert NodeTestHelper.wait_until(
                fn -> map_size(:sys.get_state(source).calls.rows) == 2 end,
@@ -607,18 +607,27 @@ defmodule FlezhaTest.Relay.CallsTest do
 
       {:ok, target} = start_supervised({Host, {:absorb, bare(inst), handover}}, id: :target)
 
-      [{token, _row}] =
-        Enum.filter(elem(handover, 0).calls, fn {_t, row} -> row.deadline_ms == 5_000 end)
+      [{token, _row}, {short_token, short_row}] =
+        Enum.sort_by(elem(handover, 0).calls, fn {_t, row} -> -row.deadline_ms end)
 
-      # The departing process stopping is no crash of the call's Overwatch.
+      # The departing process stopping is no crash of the call's Overwatch: a
+      # caller told of the move watches it no longer.
+      assert NodeTestHelper.wait_until(
+               fn -> {:process, source} not in elem(Process.info(caller.pid, :monitors), 1) end,
+               2_000,
+               1
+             )
+
       :ok = stop_supervised(:source)
-      refute Task.yield(caller, 50)
+      refute Task.yield(caller, 0)
 
       GenServer.cast(target, {:io_out, "moved", %{"flz.reply_to" => token}})
       assert {:ok, "moved", _} = Task.await(caller)
 
       # The other row keeps its original deadline on the new node.
-      assert {:error, %Error{code: "call.timeout"}} = Task.await(short, 2_000)
+      assert :sys.get_state(target).calls.rows[short_token].deadline_at == short_row.deadline_at
+      assert CallHarness.fire_call_timer(target, {:call_deadline, short_token}) in 1..4_000
+      assert {:error, %Error{code: "call.timeout"}} = Task.await(short)
     end
 
     test "a failed steps run answers both waiting callers call.callee_ended", %{inst: inst} do
@@ -757,21 +766,28 @@ defmodule FlezhaTest.Relay.CallsTest do
 
       assert_receive {:output_listener, {"hi", %{"channel" => "out"}}}, 2_000
       assert_receive {:message_forward, "hi"}, 2_000
-      refute_receive {:output_listener, _}, 100
+
+      # An output after the answer reaches the output listener behind anything
+      # the answer sent it.
+      GenServer.cast(host, {:io_out, "drained", %{"channel" => "out"}})
+      assert_receive {:output_listener, {"drained", _}}, 2_000
+      refute_received {:output_listener, _}
       refute_received {:message_forward, {_, %{"flz.call_event" => _}}}
     end
 
     test "a call past its deadline: timed_out with call.timeout, and no answer", %{inst: inst} do
       host = start_supervised!({Host, watched(state(inst))})
-      caller = call(host, "slow", %{}, 100)
-      _token = called_token(inst)
+      started = System.monotonic_time(:millisecond)
+      caller = call(host, "slow", %{}, 5_000)
+      token = called_token(inst)
 
       {"slow", %{"flz.call_id" => id}} = event("call")
+      CallHarness.fire_call_timer(host, {:call_deadline, token})
       assert {:error, %Error{code: "call.timeout"}} = Task.await(caller)
       {document, timed_out} = event("timed_out")
       assert error_code(document) == "call.timeout"
       assert %{"flz.call_id" => ^id, "flz.call_duration_ms" => ms} = timed_out
-      assert ms >= 90
+      assert ms in 0..(System.monotonic_time(:millisecond) - started)
       refute_received {:message_forward, {_, %{"flz.call_event" => "answered"}}}
     end
 
@@ -890,7 +906,7 @@ defmodule FlezhaTest.Relay.CallsTest do
 
       # Sent again while its row waits: the same row, not announced again.
       GenServer.call(host, {:call, "turn", %{"channel" => "in"}, call})
-      refute_receive {:message_forward, {_, %{"flz.call_event" => "call"}}}, 100
+      refute_received {:message_forward, {_, %{"flz.call_event" => "call"}}}
 
       unbound = start_supervised!({Host, watched(state(inst, channel: nil))}, id: :untaken)
       assert {:error, :not_ready} = GenServer.call(unbound, {:call, "x", %{}, relay_call(%{})})
@@ -898,9 +914,10 @@ defmodule FlezhaTest.Relay.CallsTest do
       {document, %{"flz.call_id" => ^id}} = event("refused")
       assert error_code(document) == "call.unavailable"
 
-      soon = relay_call(%{call: "c2", deadline_at: System.system_time(:millisecond) + 150})
+      soon = relay_call(%{call: "c2"})
       assert :ok = GenServer.call(host, {:call, "late", %{}, soon})
       {"late", %{"flz.call_id" => id}} = event("call")
+      CallHarness.fire_call_timer(host, {:call_deadline, Token.relay_token(soon)})
       {document, %{"flz.call_id" => ^id}} = event("timed_out")
       assert error_code(document) == "call.timeout"
     end
@@ -953,8 +970,9 @@ defmodule FlezhaTest.Relay.CallsTest do
       assert is_function(activity, 2)
 
       host = start_supervised!({Host, state(inst)})
-      caller = call(host, "hello", %{}, 100)
-      _token = called_token(inst)
+      caller = call(host, "hello", %{}, 5_000)
+      token = called_token(inst)
+      CallHarness.fire_call_timer(host, {:call_deadline, token})
       assert {:error, %Error{code: "call.timeout"}} = Task.await(caller)
       refute_received {:message_forward, _}
     end

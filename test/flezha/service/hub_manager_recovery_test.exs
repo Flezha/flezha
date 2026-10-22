@@ -368,7 +368,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # the Overwatch with an unmatched `{:error, :unavailable}`, so the user
   # sees a CaseClauseError rather than the reason the relay did not come up.
   test "Overwatch holds unbound when FleetManager never answers the bind lookup" do
-    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
+    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 60))
     :sys.suspend(FleetManager)
     on_exit(fn -> :sys.resume(FleetManager) end)
 
@@ -399,7 +399,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
                    )
                  end,
                  5_000,
-                 50
+                 5
                )
 
         refute_received {:EXIT, ^pid, _}
@@ -417,7 +417,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # dist_sup's restart intensity and loses its whole supervision tree.
   @tag timeout: 120_000
   test "a runnerless namespace holding more relays than the restart intensity keeps them all" do
-    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
+    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 20))
 
     hub_id = Identificator.hub(@namespace)
     ids = for i <- 1..101, do: "held_burst_#{i}"
@@ -455,9 +455,22 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
         pid
       end)
 
-    # Past every bind wait, with margin: under the old shape the burst of stops
-    # lands inside one `dsup_max_seconds` window.
-    refute_receive {:DOWN, _, :process, _, _}, 1_000
+    # Alive AND held, not alive-and-still-waiting. Every bind has answered, so
+    # every stop one could cause has happened, inside one `dsup_max_seconds` window.
+    assert NodeTestHelper.wait_until(
+             fn ->
+               Enum.all?(pids, fn pid ->
+                 match?(
+                   {:runner_not_ready, _},
+                   GenServer.call(pid, :get_overwatch_state).halt_reason
+                 )
+               end)
+             end,
+             10_000,
+             5
+           )
+
+    refute_received {:DOWN, _, :process, _, _}
 
     assert Enum.all?(pids, &Process.alive?/1),
            "the namespace lost relays its dist_sup gave up restarting"
@@ -466,11 +479,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     # distributed supervisor is gone, which is how the intensity is exhausted.
     assert ProcessHub.is_alive?(hub_id)
     refute ProcessHub.is_partitioned?(hub_id)
-
-    # Alive AND held, not alive-and-still-waiting.
-    for pid <- pids do
-      assert {:runner_not_ready, _} = GenServer.call(pid, :get_overwatch_state).halt_reason
-    end
   end
 
   describe "declared intent" do

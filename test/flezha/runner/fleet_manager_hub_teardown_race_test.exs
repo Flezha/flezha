@@ -20,6 +20,7 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
   alias Flezha.Identificator
   alias Flezha.Service.HubManager
   alias Flezha.Service.HubManager.Lifecycle
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
@@ -33,9 +34,8 @@ defmodule FlezhaTest.Runner.FleetManagerHubTeardownRaceTest do
     # Armed only now: `config/test.exs` holds auto-restore off, and a hub started
     # with it on boots into `:recovering` and holds there. Hook registration is
     # a no-op while it is off, so the call under test needs it on.
-    previous = Application.get_env(:flezha, :auto_restore_enabled)
-    Application.put_env(:flezha, :auto_restore_enabled, true)
-    on_exit(fn -> Application.put_env(:flezha, :auto_restore_enabled, previous) end)
+    on_exit(TestHelpers.override_env(:auto_restore_enabled, true))
+    on_exit(TestHelpers.override_env(:process_hub_reconcile_grace_ms, 50))
 
     hub_pid = Process.whereis(hub_id)
     assert is_pid(hub_pid)

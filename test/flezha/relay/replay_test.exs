@@ -456,12 +456,13 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   # a global telemetry handler.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
-  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Rebind
   alias Flezha.Relay.Replay
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.State.InputLog
   alias Flezha.State.TaskJournal
@@ -510,7 +511,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
 
       # ... and nothing reached a stream, because there was no stream.
       bind_stream(ctx)
-      assert drain_frames() == []
+      assert drain_frames(ctx) == []
 
       # The bind is what owes the delivery.
       fold_bound(state)
@@ -542,7 +543,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
 
       bind_stream(ctx)
-      assert drain_frames() == []
+      assert drain_frames(ctx) == []
 
       fold_bound(state)
 
@@ -562,7 +563,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       fold_bound(state)
 
       assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
-      assert drain_frames() == []
+      assert drain_frames(ctx) == []
     end
   end
 
@@ -578,7 +579,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
 
       assert_receive {:flz_data, _, _, "m2", %{"flz.offset" => "2"}}
       assert_receive {:flz_data, _, _, "m3", %{"flz.offset" => "3"}}
-      assert drain_frames() == []
+      assert drain_frames(ctx) == []
     end
 
     test "loses the turn parked above its floor before the tail is re-forwarded", ctx do
@@ -623,7 +624,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
           assert %Overwatch{} = Replay.reforward_undelivered_tail(state)
           bind_stream(ctx)
           fold_bound(state)
-          frames = drain_frames()
+          frames = drain_frames(ctx)
           unbind_stream(ctx)
           frames
         end)
@@ -657,7 +658,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       # The task's re-forward found nothing; the input comes after it.
       assert %Overwatch{} = Replay.reforward_undelivered_tail(bound_copy(state, ctx))
       state = ingest_cast(state, "m0")
-      assert drain_frames() == ["m0"]
+      assert drain_frames(state) == ["m0"]
 
       bind_stream(ctx)
       adopt(state, ctx)
@@ -678,7 +679,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
         assert %Overwatch{} = Replay.reforward_undelivered_tail(bound_copy(state, ctx))
         bind_stream(ctx)
         state = fold_bound(state)
-        assert drain_frames() == []
+        assert drain_frames(ctx) == []
 
         adopt(state, ctx)
 
@@ -803,9 +804,14 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
     :ok
   end
 
-  # Every frame the stream carried, in order — `[]` when it carried none.
-  defp drain_frames() do
-    collect after: 100 do
+  # Every frame `channel`'s stream carried, in order — `[]` when it carried
+  # none. A frame written last on the same stream arrives after all of them.
+  defp drain_frames(%{channel: channel}) do
+    sentinel = "drained-#{System.unique_integer([:positive])}"
+    :ok = StreamChannel.io_in(channel, "drain", {sentinel, %{}})
+    assert_receive {:flz_data, _, _, ^sentinel, _}, 2_000
+
+    collect do
       {:flz_data, _, _, message, _} -> message
     end
   end

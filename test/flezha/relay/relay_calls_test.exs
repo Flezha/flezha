@@ -16,6 +16,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
     only: [
       dispatch: 3,
       durable_caller: 1,
+      fire_call_timer: 2,
       now: 0,
       ok_outcome: 1,
       ok_outcome: 2,
@@ -30,7 +31,6 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.State.{InputLog, Outbox, TestHelpers}
   alias FlezhaTest.Helper.CallHarness
-  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
 
   setup :set_mimic_global_until_exit
@@ -79,7 +79,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
       assert {:ok, :absorbed} = GenServer.call(host, {:call_answer, id, ok_outcome("late")})
       assert_receive {:call_event, :answer_dropped, %{reason: "unclaimed"}}
-      refute_receive {:channel_got, _, _}, 100
+      :sys.get_state(host)
+      refute_received {:channel_got, _, _}
     end
 
     test "a durable call's id is its output's identity; any other call's is new each time" do
@@ -97,8 +98,9 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
     test "the deadline answers call.timeout once; a late answer adds nothing", %{inst: inst} do
       host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
-      GenServer.cast(host, {:io_out, "o1", request_metadata(now() + 150, false)})
+      GenServer.cast(host, {:io_out, "o1", request_metadata(now() + 30_000, false)})
       assert_receive {:delivery_request, _, ^inst, %{id: id}}
+      fire_call_timer(host, {:call_timeout, id})
 
       {fields, _stamps} = response(inst)
       assert %{"call" => ^id, "error" => %{"code" => "call.timeout"}} = fields
@@ -106,17 +108,22 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       assert_received {:call_event, :timeout, %{relay_id: ^inst, target: "anna-42"}}
 
       assert {:ok, :absorbed} = GenServer.call(host, {:call_answer, id, ok_outcome("late")})
-      refute_receive {:channel_got, _, _}, 200
+      :sys.get_state(host)
+      refute_received {:channel_got, _, _}
     end
 
     test "the first outcome wins over a racing timer", %{inst: inst} do
       host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
-      GenServer.cast(host, {:io_out, "o1", request_metadata(now() + 150, false)})
+      GenServer.cast(host, {:io_out, "o1", request_metadata(now() + 30_000, false)})
       assert_receive {:delivery_request, _, ^inst, %{id: id}}
       assert :ok = GenServer.call(host, {:call_answer, id, ok_outcome("first")})
       {%{"value" => value}, _} = response(inst)
       assert Base.decode64!(value) == "first"
-      refute_receive {:channel_got, _, _}, 400
+
+      # The timer's message already in the mailbox when the answer won.
+      send(host, {:call_timeout, id})
+      :sys.get_state(host)
+      refute_received {:channel_got, _, _}
       refute_received {:call_event, :timeout, _}
     end
 
@@ -132,8 +139,9 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       end
 
       caller = Task.async(fn -> Inbound.call(host, "outside", %{}, 5_000, inst, "cli") end)
-      assert_receive {:channel_got, ^inst, {"outside", %{"flz.reply_to" => "w:" <> _}}}
-      refute Task.yield(caller, 50)
+      assert_receive {:channel_got, ^inst, {"outside", %{"flz.reply_to" => "w:" <> _ = token}}}
+      assert %{from: {_, _}} = :sys.get_state(host).calls.rows[token]
+      refute Task.yield(caller, 0)
       Task.shutdown(caller)
     end
 
@@ -192,7 +200,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
 
       # A second output of the same call is an ordinary output.
       GenServer.cast(host, {:io_out, "again", %{"flz.reply_to" => token}})
-      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      :sys.get_state(host)
+      refute_received {:delivery_answer, _, _, _, _, _}
       refute_received {:call_event, :answer_dropped, _}
     end
 
@@ -219,7 +228,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       assert {:error, %Error{code: "call.busy"}} =
                GenServer.call(host, {:call, "t2", %{}, relay_call(%{call: "c2"})})
 
-      refute_receive {:channel_got, _, _}, 100
+      refute_received {:channel_got, _, _}
     end
 
     test "a factory call reaching another factory's instance ingests nothing", %{inst: inst} do
@@ -229,7 +238,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
                GenServer.call(host, {:call, "t1", %{}, relay_call(%{factory: "agent"})})
 
       assert details["factory"] == "agent" and details["actual"] == "chat"
-      refute_receive {:channel_got, _, _}, 100
+      refute_received {:channel_got, _, _}
     end
 
     # A start over an instance whose input log already holds entries leaves its
@@ -243,7 +252,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       assert_receive {:channel_got, ^inst, {"turn", %{"flz.msg_id" => "c1"}}}
 
       assert {:ok, "ex_1"} = GenServer.call(host, {:registry_runner_set, false})
-      refute_receive {:channel_got, _, _}, 100
+      refute_received {:channel_got, _, _}
     end
 
     test "a held call the instance refuses fails the start with that refusal", %{inst: inst} do
@@ -253,7 +262,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       assert {:error, %Error{code: "relay.factory_mismatch"}} =
                GenServer.call(host, {:registry_runner_set, false})
 
-      refute_receive {:channel_got, _, _}, 100
+      refute_received {:channel_got, _, _}
     end
 
     test "a dead-lettered call answers its relay caller call.failed, row or not", %{
@@ -295,7 +304,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
         Task.shutdown(task, :brutal_kill)
       end
 
-      refute_receive {:delivery_answer, _, _, _, _, _}, 200
+      :sys.get_state(host)
+      refute_received {:delivery_answer, _, _, _, _, _}
     end
 
     test "an ended callee answers the calls it took and never ran call.callee_ended" do
@@ -319,7 +329,7 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
                         %{result: {:error, %Error{code: "call.callee_ended"}}}, _}
       end
 
-      refute_receive {:delivery_answer, _, _, _, _, _}, 50
+      refute_received {:delivery_answer, _, _, _, _, _}
     end
 
     test "a re-dispatch of its held answer is handed on again; another answer is not", %{
@@ -338,7 +348,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       end
 
       GenServer.cast(host, {:io_out, "other", %{held | "flz.seq" => "8.0"}})
-      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      :sys.get_state(host)
+      refute_received {:delivery_answer, _, _, _, _, _}
       refute_received {:call_event, :answer_dropped, _}
     end
 
@@ -355,7 +366,8 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
       for rows <- [:kept, :lost] do
         if rows == :lost, do: :sys.replace_state(host, &%{&1 | calls: %Inbound{}})
         GenServer.cast(host, {:io_out, "seen", %{"flz.reply_to" => token, "channel" => "audit"}})
-        refute_receive {:delivery_answer, _, _, _, _, _}, 100
+        :sys.get_state(host)
+        refute_received {:delivery_answer, _, _, _, _, _}
 
         GenServer.cast(host, {:io_out, "1.08", %{"flz.reply_to" => token, "channel" => "quotes"}})
 
@@ -368,21 +380,24 @@ defmodule FlezhaTest.Relay.RelayCallsTest do
          %{inst: inst} do
       # A callee restarted since it took the calls: no row for either token.
       host = start_supervised!({Host, Host.state(inst, channel: :fake_channel)})
-      live = "o:gateway:c1:0:#{now() + 300}:"
+      live = "o:gateway:c1:0:#{now() + 30_000}:"
       past = "o:gateway:c2:0:#{now() - 1}:"
 
       for message <- ["first", "second"],
           do: GenServer.cast(host, {:io_out, message, %{"flz.reply_to" => live}})
 
       assert_receive {:delivery_answer, _, ^inst, %{call: "c1"}, %{result: {:ok, "first"}}, _}
-      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      :sys.get_state(host)
+      refute_received {:delivery_answer, _, _, _, _, _}
 
       GenServer.cast(host, {:io_out, "late", %{"flz.reply_to" => past}})
-      refute_receive {:delivery_answer, _, _, _, _, _}, 100
+      :sys.get_state(host)
+      refute_received {:delivery_answer, _, _, _, _, _}
       refute_received {:call_event, :answer_dropped, _}
 
       # The row the first answer left is retired at the call's deadline.
-      assert NodeTestHelper.wait_until(fn -> :sys.get_state(host).calls.rows == %{} end, 2_000)
+      fire_call_timer(host, {:call_deadline, live})
+      assert :sys.get_state(host).calls.rows == %{}
     end
 
     test "a durable relay caller's answer and its sink write each take a hold", %{inst: inst} do

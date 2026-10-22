@@ -300,7 +300,7 @@ defmodule FlezhaTest.Handover do
     # exists, so this namespace's own hub seeds itself `:normal` and the gate
     # does not exclude it.
     ConvergenceSnapshot.reset_recovery_states()
-    {:ok, _} = start_supervised({Loop, tick_ms: 1_000})
+    {:ok, _} = start_supervised({Loop, tick_ms: 3_600_000})
 
     # Start 2 runners under the same namespace.
     runner_id_1 = NodeTestHelper.start_runner(namespace)
@@ -332,9 +332,12 @@ defmodule FlezhaTest.Handover do
 
     # Make sure all the relays are migrated to the other runner. The loop
     # plans `rebind_relay` from the declared disconnect and commits only on
-    # a confirmed migrate, so the tags land asynchronously.
+    # a confirmed migrate, so the tags land asynchronously; each poll runs
+    # one tick.
     assert NodeTestHelper.wait_until(
              fn ->
+               Loop.tick_now()
+
                RelayManager.relay_registry(namespace)
                |> Enum.all?(fn {_relay_id, {_cspec, _cnodes, metadata}} ->
                  metadata[:tag] === active_runner
@@ -374,11 +377,8 @@ defmodule FlezhaTest.Handover do
     # forever. Reset it so the gate only weighs this test's hubs.
     ConvergenceSnapshot.reset_recovery_states()
 
-    # Short periodic tick so the reseat reconciles within the assertion
-    # budget even if the single `:runner_connected` fact is missed under
-    # in-suite contention.
-    {:ok, _} =
-      start_supervised({Flezha.Convergence.Loop, tick_ms: 1_000})
+    # Every tick is driven by `tick_now/0` below.
+    {:ok, _} = start_supervised({Loop, tick_ms: 3_600_000})
 
     runner_id_1 = NodeTestHelper.start_runner(namespace)
     runner_id_2 = NodeTestHelper.start_runner(namespace)
@@ -727,7 +727,7 @@ defmodule FlezhaTest.Handover do
                limit: :infinity
              )
 
-    Process.sleep(1_500)
+    assert TierE2EHarness.await_outbox_drained(op), "the moved loop's outbox never drained"
 
     # An output the source's flush cursor had not passed is delivered again
     # under the same identity, which a sink absorbs; no iteration ran twice.

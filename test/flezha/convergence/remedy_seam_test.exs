@@ -38,7 +38,9 @@ defmodule Flezha.Convergence.RemedySeamTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.HubRegistryTestHelper
+  alias FlezhaTest.Helper.SourceWalk
   alias ProcessHub.Service.ProcessRegistry
 
   setup :set_mimic_global_until_exit
@@ -310,7 +312,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
   test "clause 4: no source outside lib/flezha/convergence/ calls a remedy entry point" do
     bypasses =
-      for {file, calls} <- remote_calls("lib/**/*.ex"),
+      for {file, calls} <- remote_calls("lib"),
           not String.starts_with?(file, "lib/flezha/convergence/"),
           {module, fun, line, args} <- calls,
           {entry_mod, entry_fun, allowed} <- @entry_points,
@@ -329,7 +331,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   # through its one seam, is the only migration call left in the tree.
   test "clause 4: no source in lib/ moves a child between nodes itself" do
     movers =
-      for {file, calls} <- remote_calls("lib/**/*.ex"),
+      for {file, calls} <- remote_calls("lib"),
           {ProcessHub.Service.Migration, :migrate_child, line, _args} <- calls,
           do: "#{file}:#{line}"
 
@@ -376,7 +378,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
   ]
 
   test "clause 5: every walk's entry point reaches Shutdown.run/3" do
-    calls = remote_calls("lib/**/*.ex") |> Map.new()
+    calls = remote_calls("lib") |> Map.new()
 
     for {file, scope} <- @stop_entry_points do
       walks =
@@ -419,7 +421,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
   test "clause 5: a teardown outside the steps fails naming the module, function and arity" do
     offenders =
-      for {file, calls} <- remote_calls("lib/flezha/**/*.ex"),
+      for {file, calls} <- remote_calls("lib/flezha"),
           {module, fun, line, args} <- calls,
           {{entry_mod, entry_fun}, allowed} <- @teardown_allowed,
           module == entry_mod and fun == entry_fun,
@@ -458,7 +460,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
       def handle_call({:rebind, _target}, _from, {_ow, :refuse} = state),
         do: {:reply, {:error, :busy}, state}
 
-      # Never replies: the caller's bounded call must time out (~2 s).
+      # Never replies: the caller's bounded call must time out.
       def handle_call({:rebind, _target}, _from, {_ow, :hang} = state),
         do: {:noreply, state}
     end
@@ -485,6 +487,8 @@ defmodule Flezha.Convergence.RemedySeamTest do
     end
 
     test "a timed-out, refused or unplaceable migrate leaves the registry binding unchanged" do
+      on_exit(TestHelpers.override_env(:migrate_timeout_ms, 50))
+
       # The last two rows differ in their outcome and not in their effect: a
       # refusal while the previous bind still runs, and no runner advertising
       # that factory, are not repairs that failed, so each answers the unmet
@@ -543,12 +547,12 @@ defmodule Flezha.Convergence.RemedySeamTest do
 
   # ---------- the source walk ----------
 
-  # Every remote call in every file under `glob`, as `{file, [{module, fun,
-  # line, args}]}`, with the file's aliases resolved: `alias A.B`, `alias
+  # Every remote call in every `.ex` file under `root`, as `{file, [{module,
+  # fun, line, args}]}`, with the file's aliases resolved: `alias A.B`, `alias
   # A.{B, C}` and `alias A.B, as: C` — the three spellings the tree uses.
-  defp remote_calls(glob) do
-    for file <- Path.wildcard(glob), into: %{} do
-      {:ok, ast} = Code.string_to_quoted(File.read!(file), file: file, columns: false)
+  defp remote_calls(root) do
+    for file <- SourceWalk.files([root], [".ex"]), into: %{} do
+      ast = SourceWalk.ast(file)
       aliases = aliases_of(ast)
 
       {_, calls} =

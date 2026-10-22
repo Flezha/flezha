@@ -250,16 +250,13 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
     test "a drain exceeding the budget times out to {:partial, still_local}" do
       stub_local_relays()
-
-      # A drain that never returns inside the budget.
-      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
-        NodeTestHelper.park()
-        {:ok, %{migrated: 1, forced: 0}}
-      end)
+      stub_parked_drain()
+      {task, _walk} = start_parked_shutdown()
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
+          send(Coordinator, :phase_timeout)
+          assert {:partial, ["op-1"]} = Task.await(task)
         end)
 
       # The user's only signal that the budget was blown is this line.
@@ -280,11 +277,13 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       end)
 
       stub_finalise_rows()
-      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> NodeTestHelper.park() end)
+      stub_parked_drain()
 
       log =
         ExUnit.CaptureLog.capture_log([level: :info], fn ->
-          assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
+          {task, _walk} = start_parked_shutdown()
+          send(Coordinator, :phase_timeout)
+          assert {:partial, ["op-1"]} = Task.await(task)
         end)
 
       assert log =~ "locally_hosted=1"
@@ -295,10 +294,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       test_pid = self()
       stub_local_relays()
 
-      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
-        send(test_pid, {:walk, hd(Process.get(:"$callers"))})
-        NodeTestHelper.park()
-      end)
+      stub_parked_drain()
 
       stub_finalise_rows(%{
         hubs: fn _target, budget ->
@@ -351,14 +347,10 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
 
     test "the drain walk ends with its shutdown, and an old walk's report is never read" do
-      test_pid = self()
       stub_local_relays()
       expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
 
-      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
-        send(test_pid, {:walk, hd(Process.get(:"$callers"))})
-        NodeTestHelper.park()
-      end)
+      stub_parked_drain()
 
       # The phase timeout is fired by hand, so the walk is known to be inside
       # its drain when the budget runs out.
@@ -496,6 +488,16 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   defp reset_coordinator!() do
     Coordinator.__reset_for_tests__()
+  end
+
+  # A drain that never returns, reporting the walk it parks.
+  defp stub_parked_drain() do
+    test_pid = self()
+
+    stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+      send(test_pid, {:walk, hd(Process.get(:"$callers"))})
+      NodeTestHelper.park()
+    end)
   end
 
   # A shutdown in flight with its walk parked inside the drain; the walk is monitored.

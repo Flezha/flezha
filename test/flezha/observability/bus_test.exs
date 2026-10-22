@@ -2,7 +2,7 @@ defmodule Flezha.Observability.BusTest do
   # async: false: the observability registry.
   use ExUnit.Case, async: false
 
-  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 2]
+  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
   alias Flezha.Observability.{Bus, Registry, Signal}
   alias Flezha.Observability.TestSinks.{Blocking, Counting, Slow}
 
@@ -65,8 +65,9 @@ defmodule Flezha.Observability.BusTest do
 
     assert :ok = Bus.emit_named(Signal.new(%{kind: :event, source: src, name: :n}))
 
-    assert_receive {:signal, %Signal{source: ^src}}, 500
-    refute_receive {:signal, _}, 200
+    # Dispatch to a sink that is a pid is a send from the emitter itself.
+    assert_received {:signal, %Signal{source: ^src}}
+    refute_received {:signal, _}
   end
 
   test "emit reaches a catch-all sink for every source", %{src: src} do
@@ -246,25 +247,18 @@ defmodule Flezha.Observability.BusTest do
 
     on_exit(fn -> Registry.unregister_sink(sink_name) end)
 
-    marker_signal = Signal.new(%{kind: :event, source: marker, name: :marker})
     violating_signal = Signal.new(%{kind: :log, source: src, name: :uh_oh})
 
     # Enabled: the violation event is delivered — the positive control that
     # makes the refutation below load-bearing.
     Bus.emit(violating_signal)
-    Bus.emit(marker_signal)
-
-    assert Enum.any?(drain_counted(500), &(&1.name == :source_kind_violation))
+    assert Enum.any?(drain_counted(marker), &(&1.name == :source_kind_violation))
 
     :ok = Registry.disable_source(:observability_registry)
     on_exit(fn -> Registry.enable_source(:observability_registry) end)
 
     Bus.emit(violating_signal)
-    Bus.emit(marker_signal)
-
-    seen = drain_counted(500)
-    assert Enum.any?(seen, &(&1.name == :marker))
-    refute Enum.any?(seen, &(&1.name == :source_kind_violation))
+    refute Enum.any?(drain_counted(marker), &(&1.name == :source_kind_violation))
   end
 
   test "kind violation: source emits a kind it did not declare" do
@@ -281,6 +275,7 @@ defmodule Flezha.Observability.BusTest do
 
     sink_name = :"obs_bus_kv_sink_#{:erlang.unique_integer([:positive])}"
     parent = self()
+    marker = :"obs_bus_kv_marker_#{:erlang.unique_integer([:positive])}"
 
     {:ok, _pid} =
       Registry.register_sink(%{
@@ -289,7 +284,7 @@ defmodule Flezha.Observability.BusTest do
         config: %{
           counter_ref: :counters.new(1, [:atomics]),
           parent: parent,
-          sources: [src]
+          sources: [src, marker]
         }
       })
 
@@ -304,7 +299,7 @@ defmodule Flezha.Observability.BusTest do
     # the violation event on :observability_registry is filtered out
     # — we should receive nothing if the bus correctly dropped the
     # :log emit.
-    received = drain_counted(150)
+    received = drain_counted(marker)
     refute Enum.any?(received, &(&1.kind == :log))
   end
 
@@ -321,6 +316,7 @@ defmodule Flezha.Observability.BusTest do
     on_exit(fn -> Registry.unregister_source(src) end)
 
     sink_name = :"obs_bus_disabled_sink_#{:erlang.unique_integer([:positive])}"
+    marker = :"obs_bus_disabled_marker_#{:erlang.unique_integer([:positive])}"
 
     {:ok, _pid} =
       Registry.register_sink(%{
@@ -329,7 +325,7 @@ defmodule Flezha.Observability.BusTest do
         config: %{
           counter_ref: :counters.new(1, [:atomics]),
           parent: self(),
-          sources: [src]
+          sources: [src, marker]
         }
       })
 
@@ -338,12 +334,16 @@ defmodule Flezha.Observability.BusTest do
     :ok = Registry.disable_source(src)
     Bus.emit(Signal.new(%{kind: :metric, source: src, name: :n}))
 
-    received = drain_counted(100)
-    assert received == []
+    assert drain_counted(marker) == []
   end
 
-  defp drain_counted(timeout_ms) do
-    collect after: timeout_ms do
+  # Every signal a sink counted before a `marker` signal emitted now, which it
+  # counts after them.
+  defp drain_counted(marker) do
+    Bus.emit(Signal.new(%{kind: :event, source: marker, name: :drained}))
+    assert_receive {:counted, %Signal{source: ^marker, name: :drained}}, 2_000
+
+    collect do
       {:counted, sig} -> sig
     end
   end

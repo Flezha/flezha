@@ -98,6 +98,15 @@ defmodule FlezhaTest.Helper.CallHarness do
   def ok_outcome(value, created \\ false),
     do: %{result: {:ok, value}, target: "anna-42", created: created}
 
+  @doc """
+  Fire the call timer `message` names on `host` now instead of at its deadline,
+  once it is armed; answers the milliseconds it still had to run.
+  """
+  def fire_call_timer(host, {_kind, key} = message) do
+    assert {_ref, ^message} = :sys.get_state(host).timers[{:call, key}]
+    FlezhaTest.Helper.MessageTestHelper.fire_timer(host, {:call, key})
+  end
+
   @doc "The Response the caller's Response channel received, decoded, with its metadata."
   def response(inst) do
     assert_receive {:channel_got, ^inst, {envelope, %{"channel" => "ask.response"} = metadata}},
