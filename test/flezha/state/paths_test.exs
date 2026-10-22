@@ -162,6 +162,20 @@ defmodule Flezha.State.PathsTest do
       # Released: another namespace may now claim the name.
       assert :ok = Paths.claim_namespace("gone-op", "team-b")
     end
+
+    # A stopped relay's late frame is judged by this: a kept claim would let it
+    # re-create the state the stop deleted.
+    test "deleting the class releases the claim", %{tmp: base} do
+      assert :ok = Paths.claim_namespace("stopped-op", "team-a")
+      wal = Paths.wal_path({"stopped-op", "task-0", "k1"})
+      File.mkdir_p!(Path.dirname(wal))
+      File.write!(wal, "bytes")
+
+      :ok = Paths.delete_class_dir("stopped-op")
+
+      refute File.dir?(Path.join([base, "team-a", "stopped-op"]))
+      assert Paths.namespace_of_class("stopped-op") == "_system"
+    end
   end
 
   describe "the state walk" do

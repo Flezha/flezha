@@ -756,6 +756,12 @@ defmodule Flezha.State.WalWriterTest do
                1_000
              ),
              "a crashed writer is restarted"
+
+      # The restart runs under the application's supervisor and opens its files
+      # after it registers, so it is closed here: left running, it writes into
+      # the state root while the teardown removes it.
+      {:ok, restarted} = Supervisor.lookup(id)
+      TestHelpers.close_and_await(restarted, id)
     end
 
     defp collect(reqids) do

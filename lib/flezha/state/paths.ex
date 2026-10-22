@@ -192,25 +192,20 @@ defmodule Flezha.State.Paths do
   passes: a tasklet directory holding a file under any in-progress suffix
   `Flezha.State.Durable` declares has a write in flight, and truncating it
   would corrupt the rename ceremony, so it is skipped (with WARN) and the class
-  directory stays until it is empty.
+  directory, with its namespace claim, stays until it is empty.
   """
   @spec delete_class_dir(binary()) :: :ok
   def delete_class_dir(relay_class) when is_binary(relay_class) do
     class_dir = class_dir(relay_class)
 
-    case File.ls(class_dir) do
-      {:ok, names} ->
-        Enum.each(names, fn name ->
-          path = Path.join(class_dir, name)
-          if File.dir?(path), do: maybe_delete_tasklet(path), else: File.rm(path)
-        end)
-
-        _ = File.rmdir(class_dir)
-        :ok
-
-      {:error, _reason} ->
-        :ok
+    with {:ok, names} <- File.ls(class_dir) do
+      Enum.each(names, fn name ->
+        path = Path.join(class_dir, name)
+        if File.dir?(path), do: maybe_delete_tasklet(path), else: File.rm(path)
+      end)
     end
+
+    prune_class_dir(relay_class)
   end
 
   defp maybe_delete_tasklet(tasklet_dir) do
