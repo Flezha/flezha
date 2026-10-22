@@ -88,7 +88,7 @@ A value that a bench ships as a **number** SHALL stay a number. The JSON report'
 
 ### Requirement: The headline throughput names the window it measures
 
-A bench SHALL report the **end-to-end** rate — total messages over the window from the first input dispatched to the last response received — as its headline throughput, and SHALL report the receive-window rate beside it. Each row SHALL name its window in the row label, because the two differ by the send window and are not interchangeable.
+A bench SHALL report the **end-to-end** rate — total messages over the window from the first input dispatched to the last response received — as its headline throughput, and SHALL report the receive-window rate beside it; under a paced send, whose drain is only the tail after its last input, it SHALL report the rate the sender held there instead. Each row SHALL name its window in the row label, because the two differ by the send window and are not interchangeable.
 
 The metric `Average time per relay` SHALL be removed. It divides total elapsed time across four unrelated phases by a count of concurrently-running relays and does not measure a per-relay cost.
 

@@ -157,12 +157,19 @@ defmodule Mix.Tasks.Bench.Inputs do
   end
 
   @doc """
-  Send at `inputs.rate` inputs/s in total, round-robin over the relays: input
-  `i` goes to relay `rem(i, n)` as seq `base + i`.
+  Send the run's measured inputs: paced when it has a `--rate`, else as one
+  burst.
   """
-  @spec send_paced(t(), [{String.t(), map()}], atom(), non_neg_integer(), non_neg_integer()) ::
-          :ok
-  def send_paced(inputs, relay_infos, shape, messages_per_relay, base) do
+  @spec send(t(), [{String.t(), map()}], atom(), non_neg_integer(), non_neg_integer()) :: :ok
+  def send(%{rate: nil} = inputs, relay_infos, shape, messages_per_relay, base),
+    do: send_burst(inputs, relay_infos, shape, messages_per_relay, base)
+
+  def send(inputs, relay_infos, shape, messages_per_relay, base),
+    do: send_paced(inputs, relay_infos, shape, messages_per_relay, base)
+
+  # Send at `inputs.rate` inputs/s in total, round-robin over the relays: input
+  # `i` goes to relay `rem(i, n)` as seq `base + i`.
+  defp send_paced(inputs, relay_infos, shape, messages_per_relay, base) do
     relays = List.to_tuple(relay_infos)
     total = tuple_size(relays) * messages_per_relay
     paced_loop(relays, shape, inputs, total, base, System.monotonic_time(:nanosecond), 0)
@@ -184,6 +191,31 @@ defmodule Mix.Tasks.Bench.Inputs do
     end
 
     paced_loop(relays, shape, inputs, total, base, t0, issued + due)
+  end
+
+  # One sender sleep tick plus the last output's own flight.
+  @pace_slack_us 5_000
+
+  @doc """
+  Warn when a paced run of `total` inputs ended past its schedule: its sender
+  or its drain fell behind, so its outputs queued and its latency is that of
+  saturation. A burst has no schedule to keep.
+  """
+  @spec check_pace(t(), non_neg_integer(), pos_integer()) :: :ok
+  def check_pace(%{rate: nil}, _total, _end_to_end_us), do: :ok
+
+  def check_pace(%{rate: rate}, total, end_to_end_us) do
+    schedule_us = div(total * 1_000_000, rate)
+
+    if end_to_end_us > schedule_us + max(div(schedule_us, 20), @pace_slack_us) do
+      Report.warn(
+        "the run reached #{Report.rate(Report.per_sec(total, end_to_end_us))}/s end to end of " <>
+          "the #{Report.rate(rate)}/s asked; its latency includes queueing at saturation, " <>
+          "not latency at the asked rate"
+      )
+    end
+
+    :ok
   end
 
   # A stamped input pads after a `,`, which the stamp parser reads as a third field.

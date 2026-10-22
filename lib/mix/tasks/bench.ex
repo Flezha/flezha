@@ -69,7 +69,9 @@ defmodule Mix.Tasks.Bench do
     * `--rate` - Send at this many inputs per second in total, round-robin over
       the relays, instead of one burst. Latency under a burst includes queueing
       behind every input sent before it; at a fixed rate below saturation it is
-      the figure other systems publish. Needs `--via cast`; not for `cell`.
+      the figure other systems publish. A run that ends past its schedule is
+      warned about, since its latency is then queueing. Needs `--via cast`;
+      not for `cell`.
     * `--payload-bytes` - Pad every input to exactly this many bytes. Every run
       reports its input size, with or without it. Not for `sleeping`.
     * `--strict` - Refuse to measure when a box or build warning holds
@@ -96,7 +98,7 @@ defmodule Mix.Tasks.Bench do
   machine, and the artifact it launched, followed by any preflight warning that
   qualifies the number. Results are tables; the headline throughput is the
   **end-to-end** window (first input to last response) and the receive-only
-  window is reported beside it.
+  window is reported beside it, or under `--rate` the rate the sender held.
 
   Every run also writes `local_dev/bench/reports/bench-<runtime>-<shape>-<run_id>.json`,
   which carries every header, warning and metric field. That report is the
@@ -531,18 +533,16 @@ defmodule Mix.Tasks.Bench do
   # their own while this one takes the outputs: timed here behind a send loop
   # still running, an output's latency would be the bench's own. The windows
   # keep their meaning: send ends when the sender is done, end-to-end at the
-  # last response. Persistence is read around the same window.
+  # last response. Persistence is read around the same window, and the latency
+  # counts cover it alone.
   defp measured_pass(relay_infos, relay_ids, shape, messages_per_relay, base, tally) do
     inputs = Process.get(:bench_inputs)
     total = length(relay_infos) * messages_per_relay
     expected = expected_responses(shape, total)
     persisted_before = Tally.persisted(relay_ids)
+    tally = tally && %{tally | foreign: 0, duplicates: 0}
 
-    send_all = fn ->
-      if inputs.rate,
-        do: Inputs.send_paced(inputs, relay_infos, shape, messages_per_relay, base),
-        else: Inputs.send_burst(inputs, relay_infos, shape, messages_per_relay, base)
-    end
+    send_all = fn -> Inputs.send(inputs, relay_infos, shape, messages_per_relay, base) end
 
     started = System.monotonic_time(:microsecond)
 
@@ -572,21 +572,8 @@ defmodule Mix.Tasks.Bench do
         end
       end
 
-    check_rate(inputs.rate, total, sent - started)
+    Inputs.check_pace(inputs, total, done - started)
     {sent - started, done - sent, Tally.persisted(relay_ids, persisted_before), tally}
-  end
-
-  defp check_rate(nil, _total, _send_us), do: :ok
-
-  defp check_rate(rate, total, send_us) do
-    achieved = total * 1_000_000 / max(send_us, 1)
-
-    if achieved < 0.95 * rate do
-      Report.warn(
-        "the paced sender reached #{Report.rate(achieved)}/s of the #{Report.rate(rate)}/s " <>
-          "asked; the latency was taken at saturation, not at the asked rate"
-      )
-    end
   end
 
   # The send and receive windows run back to back, so their sum is
@@ -607,18 +594,20 @@ defmodule Mix.Tasks.Bench do
       send_ms: rounded_ms(w.send_us),
       receive_ms: rounded_ms(w.receive_us),
       end_to_end_ms: rounded_ms(end_to_end_us),
-      throughput_msg_per_sec: round(w.total_messages * 1_000_000 / end_to_end_us),
-      receive_window_msg_per_sec: round(w.total_messages * 1_000_000 / max(w.receive_us, 1)),
+      throughput_msg_per_sec: Report.per_sec(w.total_messages, end_to_end_us),
       payload_bytes: %{min: payload_min, max: payload_max},
       persisted: w.persisted
     }
     |> Map.merge(if w.tally, do: %{latency_ms: latency_metrics(w.tally)}, else: %{})
-    |> Map.merge(
-      if w.inputs.rate,
-        do: %{send_rate_msg_per_sec: round(w.total_messages * 1_000_000 / max(w.send_us, 1))},
-        else: %{}
-    )
+    |> Map.merge(window_rate(w))
   end
+
+  # A paced send's drain is only the tail after its last input, so its rate
+  # says nothing; the paced run reports the rate its sender held instead.
+  defp window_rate(%{inputs: %{rate: nil}} = w),
+    do: %{receive_window_msg_per_sec: Report.per_sec(w.total_messages, w.receive_us)}
+
+  defp window_rate(w), do: %{send_rate_msg_per_sec: Report.per_sec(w.total_messages, w.send_us)}
 
   defp latency_metrics(tally) do
     Map.merge(Tally.latency_ms(tally), %{
@@ -655,12 +644,8 @@ defmodule Mix.Tasks.Bench do
             "end-to-end (first input → last response)",
             "#{m.end_to_end_ms} ms",
             Report.rate(m.throughput_msg_per_sec)
-          ],
-          [
-            "receive only (send loop returned → last response)",
-            "#{m.receive_ms} ms",
-            Report.rate(m.receive_window_msg_per_sec)
           ]
+          | second_window(m)
         ],
         [:left, :right, :right]
       )
@@ -668,6 +653,15 @@ defmodule Mix.Tasks.Bench do
 
     latency_section(m[:latency_ms], inputs)
     persisted_section(m.persisted)
+  end
+
+  defp second_window(m) do
+    {label, ms, rate} =
+      if rate = m[:receive_window_msg_per_sec],
+        do: {"receive only (send loop returned → last response)", m.receive_ms, rate},
+        else: {"paced send (first input → last input)", m.send_ms, m.send_rate_msg_per_sec}
+
+    [[label, "#{ms} ms", Report.rate(rate)]]
   end
 
   defp latency_section(nil, _inputs), do: :ok

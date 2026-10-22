@@ -55,11 +55,11 @@ environment and forwards them.
 | `-w` / `--warmup`                  | int (default 10, `0` disables)              | Untimed messages per relay drained before the measured phase, so runner cold start (class loading, JIT, lazy codec init) stays out of the numbers.                                                                                                                      |
 | `--via`                            | `cast` (default), `host_inject`             | How each input reaches its relay: an `{:io_in, ...}` cast, or `Flezha.Plugin.Host.inject/5` in `:verdict` mode with a `flz.msg_id`, the path a plugin source takes (one caller per relay). |
 | `--latency`                        | flag                                        | Stamps each input with its seq and send time and reports p50 / p95 / p99 / p99.9 / max over the outputs that carry the stamp back. The inputs then go out from a sender process of their own. See [Latency](#latency). |
-| `--rate`                           | int, inputs/s in total                      | Paces the send round-robin over the relays instead of one burst. Needs `--via cast`; not for `cell`. A sender that falls below 95 % of the rate is a warning. |
+| `--rate`                           | int, inputs/s in total                      | Paces the send round-robin over the relays instead of one burst. Needs `--via cast`; not for `cell`. A run whose end-to-end window ends more than 5 % (and 5 ms) past the schedule is a warning: its sender or its drain fell behind, so its latency is queueing. |
 | `--payload-bytes`                  | int                                         | Pads every input to exactly N bytes, key prefix and stamp included. Below the unpadded input it is refused with the minimum; not for `sleeping`. |
 | `--durability` (script only)       | `none` (default), `local_path`, `postgres`, `s3` | Sets `FLEZHA_DURABILITY_BACKEND`. `local_path` with no `FLEZHA_DURABILITY_PATH` uses `storage/app/bench/durability`, a store the bench owns (`FLEZHA_BENCH_DURABILITY_OWNED=1`) and clears before each run. `postgres` and `s3` read their `FLEZHA_DURABILITY_*` settings and are never cleared. |
 | `--strict`                         | flag                                        | Refuses to measure when a box or build warning holds. See [Preflight warnings](#preflight-warnings). |
-| `--governor` (script only)         | a governor the CPU offers                   | Switches every CPU to it for the run with `sudo -n cpupower` and restores each CPU's governor on exit, Ctrl-C included. Needs `cpupower` and a cached credential (`sudo -v`). |
+| `--governor` (script only)         | a governor the CPU offers                   | Switches every CPU to it for the run with `sudo -n cpupower` and restores each CPU's governor on exit, Ctrl-C included, refreshing the credential meanwhile. Needs `cpupower` and a cached credential (`sudo -v`). |
 
 Runner placement: the Rust runtime reuses runners already connected in the
 `default` namespace, otherwise (and always for every other runtime) two runners
@@ -124,7 +124,9 @@ by the send window and are **not** interchangeable:
 - **receive only (send loop returned → last response)** — the drain rate. It
   credits work the send window paid for, so it reads several times higher; it
   is the window closest to *SDK dispatch*, because the send window it excludes
-  is the controller's own cast overhead.
+  is the controller's own cast overhead. A paced run's drain is only the tail
+  after its last input, so `--rate` replaces this row with **paced send (first
+  input → last input)**, the rate the sender held (`send_rate_msg_per_sec`).
 
 There is no `Average time per relay`: it divided total elapsed time across
 four unrelated phases by a count of concurrently-running relays and
@@ -136,15 +138,16 @@ With `--latency` every input body starts with `<seq>,<send_ns>`, and the bench
 times each output that carries it back. Every fixture passes its input through
 except `sleeping_counter`, which reports `n=0` and its unstamped count;
 `cell_stress` emits eight outputs per input and the first one is timed.
-Warm-up inputs are stamped too but never enter the percentiles. The histogram
-resolves to 0.01 ms.
+Warm-up inputs are stamped too but never enter the percentiles or the
+unstamped and duplicate counts. Percentiles take the nearest rank, and the
+histogram resolves to 0.01 ms.
 
 The section names its send mode. Under a burst, an output's latency includes
 queueing behind every input sent before it, so p50 grows with `-m`. Latency at
-a fixed `--rate` below saturation is the figure other systems publish. Parsing
-the stamps costs the bench's own receive loop, so quote throughput from a run
-without `--latency`, and never put the two figures from different runs side by
-side as one result.
+a fixed `--rate` below saturation is the figure other systems publish. Taking
+the stamps still costs the bench's receive loop a little, so quote throughput
+from a run without `--latency`, and never put the two figures from different
+runs side by side as one result.
 
 ### Payload and persistence
 
@@ -154,10 +157,10 @@ grow with the relay and message numbers.
 
 The **persisted** section reports the changes, bytes and fsyncs written over
 the measured window, read from the state layer's per-Cell counters before the
-send and after the drain and summed over the run's relays. Only a shape whose
-outputs wait on their writes (`tier`, `sleeping`) persists inside that window
-in full; `dynamic` and `timer` keep state but write it on their own schedule,
-so part or all of it lands after the window and is not counted. The default
+send and after the drain and summed over the run's relays. Only `tier`, whose
+outputs wait on their writes, persists inside that window in full; `dynamic`,
+`sleeping` and `timer` keep state but write it on their own schedule, so part
+or all of it lands after the window and is not counted. The default
 `regression` relay keeps no state, so it reads `nothing persisted` whatever the
 durability backend; a durability figure needs a shape that keeps state, such
 as `tier`.
@@ -169,7 +172,7 @@ as `tier`.
   --shape tier --latency --rate 20000 --payload-bytes 256 -n 100 -m 1000
 ```
 
-Lower the rate until no shortfall warning is printed, and state the rate,
+Lower the rate until no saturation warning is printed, and state the rate,
 payload, shape and durability with every figure taken from it.
 
 ### The structured report

@@ -124,6 +124,10 @@ defmodule Mix.Tasks.Bench.Report do
     |> String.reverse()
   end
 
+  @doc "`count` events over `us` microseconds, as a rounded rate per second."
+  @spec per_sec(non_neg_integer(), non_neg_integer()) :: non_neg_integer()
+  def per_sec(count, us), do: round(count * 1_000_000 / max(us, 1))
+
   @doc """
   The spread of a set of measurements as `max/min`, or `nil` when there is
   nothing to compare. A scaling sweep's headline.

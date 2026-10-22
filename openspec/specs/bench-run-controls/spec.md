@@ -17,7 +17,7 @@ With `--latency`, every input body SHALL begin with its sequence number and its 
 
 Stamping, timing and parsing SHALL happen in the bench only. No product module SHALL gain work per message for latency to be measured.
 
-A shape whose outputs do not carry their input's stamp SHALL report zero measured outputs and its unstamped count, not an error and not a figure from another source. Under `--latency` the inputs SHALL be sent by a process other than the one receiving the outputs, so that an output's latency does not include time spent waiting behind the bench's own send loop.
+The unstamped and duplicate counts SHALL cover the measured pass only, like `n`. A shape whose outputs do not carry their input's stamp SHALL report zero measured outputs and its unstamped count, not an error and not a figure from another source. Under `--latency` the inputs SHALL be sent by a process other than the one receiving the outputs, so that an output's latency does not include time spent waiting behind the bench's own send loop.
 
 The latency section SHALL name its send mode: paced at a stated rate, or burst, whose latency includes queueing behind every input sent before it.
 
@@ -39,7 +39,7 @@ The latency section SHALL name its send mode: paced at a stated rate, or burst, 
 
 ### Requirement: The send loop can be paced to a fixed total rate
 
-With `--rate <R>`, R a positive integer, the bench SHALL send inputs round-robin over its relays at R inputs per second in total, from a sender process separate from the receiving one. The rule that decides how many inputs are due SHALL be the one function the `bench.steps` pacers also use. If the achieved send rate ends below 95 % of R, the run SHALL warn that the sender fell behind and that the latency was taken at saturation. `--rate` SHALL be refused with `--via host_inject` and with `--shape cell`, naming the reason.
+With `--rate <R>`, R a positive integer, the bench SHALL send inputs round-robin over its relays at R inputs per second in total, from a sender process separate from the receiving one. The rule that decides how many inputs are due SHALL be the one function the `bench.steps` pacers also use. If the run's end-to-end window ends later than the schedule's own length plus 5 % of it, and at least 5 ms, the run SHALL warn that it fell behind the rate, in its sender or in the drain, and that its latency includes queueing at saturation. The bench's own receive loop SHALL take a stamp at a cost small enough that a box which keeps up with a rate without `--latency` also keeps up with it with `--latency`. `--rate` SHALL be refused with `--via host_inject` and with `--shape cell`, naming the reason.
 
 #### Scenario: A paced run holds its rate
 - **WHEN** `./scripts/bench.sh --rate 20000 -n 10 -m 2000` is run on a box that sustains it
@@ -47,7 +47,11 @@ With `--rate <R>`, R a positive integer, the bench SHALL send inputs round-robin
 
 #### Scenario: A rate the box cannot reach is reported, not hidden
 - **WHEN** `--rate` is set above what the send loop achieves
-- **THEN** the run completes, and a warning naming the requested and achieved rates is printed and carried in the report
+- **THEN** the run completes, and a warning naming the requested and the achieved end-to-end rates is printed and carried in the report
+
+#### Scenario: A sender that holds the rate while the drain falls behind
+- **WHEN** a paced run's sender holds `--rate` but its outputs drain slower
+- **THEN** the same warning is printed, since the latency then measures queueing
 
 #### Scenario: An unsupported combination is refused up front
 - **WHEN** `./scripts/bench.sh --rate 1000 --via host_inject` is run
@@ -85,7 +89,7 @@ Every `mix bench` run SHALL report a persisted section: the growth over the meas
 
 ### Requirement: The CPU governor can be set for the run and is restored afterwards
 
-`scripts/bench.sh --governor <name>` SHALL validate the name against the governors the CPU offers, record every CPU's current governor, switch all CPUs to the named one with a non-interactive `sudo`, and restore each CPU's recorded governor when the script exits, whether the bench succeeded, failed or was interrupted. The script SHALL exit with the bench's own status. If `sudo` would prompt, or `cpupower` or the governor files are missing, the script SHALL stop before the bench starts, naming what is missing and how to provide it. Before the run, the script SHALL print the governor it changed from and the command that restores it by hand.
+`scripts/bench.sh --governor <name>` SHALL validate the name against the governors the CPU offers, record every CPU's current governor, switch all CPUs to the named one with a non-interactive `sudo`, and restore each CPU's recorded governor when the script exits, whether the bench succeeded, failed or was interrupted. The script SHALL keep the `sudo` credential fresh until that restore, so a build and a run longer than sudo's cache still restore. The script SHALL exit with the bench's own status. If `sudo` would prompt, or `cpupower` or the governor files are missing, the script SHALL stop before the bench starts, naming what is missing and how to provide it. Before the run, the script SHALL print the governor it changed from and the commands that restore each CPU's own governor by hand.
 
 #### Scenario: A powersave laptop runs at performance and goes back
 - **WHEN** `./scripts/bench.sh --governor performance` is run on a `powersave` box with a cached `sudo` credential

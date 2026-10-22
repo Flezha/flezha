@@ -202,7 +202,9 @@ else
     export FLEZHA_DURABILITY_BACKEND="${FLEZHA_DURABILITY_BACKEND:-none}"
 fi
 # A `local_path` store with no root gets one the bench owns, which the run
-# clears before it boots. A root the user set is never cleared.
+# clears before it boots. A root the user set is never cleared, so an
+# ownership mark inherited from the environment is dropped first.
+unset FLEZHA_BENCH_DURABILITY_OWNED
 if [[ "$FLEZHA_DURABILITY_BACKEND" == "local_path" && -z "${FLEZHA_DURABILITY_PATH:-}" ]]; then
     export FLEZHA_DURABILITY_PATH="storage/app/bench/durability"
     export FLEZHA_BENCH_DURABILITY_OWNED=1
@@ -217,16 +219,20 @@ export FLEZHA_PLUGIN_ROOT="${FLEZHA_PLUGIN_ROOT:-storage/app/bench/plugins}"
 # Each CPU's governor is recorded and put back on every exit, a failed or
 # interrupted run included. Nothing is changed until every check has passed.
 GOVERNOR_FILES=(/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor)
-SAVED_GOVERNORS=()
+# Each saved governor maps to the CPUs that had it, as a `cpupower -c` list.
+declare -A SAVED_GOVERNORS=()
+SUDO_KEEPALIVE=""
 
 # shellcheck disable=SC2329 # run by the EXIT trap
 restore_governors() {
-    local i cpu
-    for i in "${!SAVED_GOVERNORS[@]}"; do
-        cpu="${GOVERNOR_FILES[$i]#/sys/devices/system/cpu/cpu}"
-        cpu="${cpu%%/*}"
-        sudo -n cpupower -c "$cpu" frequency-set -g "${SAVED_GOVERNORS[$i]}" >/dev/null ||
-            echo "Warning: could not restore cpu$cpu to ${SAVED_GOVERNORS[$i]}" >&2
+    local governor
+    if [[ -n "$SUDO_KEEPALIVE" ]]; then
+        pkill -P "$SUDO_KEEPALIVE" sleep 2>/dev/null || true
+        kill "$SUDO_KEEPALIVE" 2>/dev/null || true
+    fi
+    for governor in "${!SAVED_GOVERNORS[@]}"; do
+        sudo -n cpupower -c "${SAVED_GOVERNORS[$governor]}" frequency-set -g "$governor" >/dev/null ||
+            echo "Warning: could not restore cpus ${SAVED_GOVERNORS[$governor]} to $governor" >&2
     done
 }
 
@@ -246,15 +252,24 @@ if [[ -n "$GOVERNOR" ]]; then
     fi
 
     for file in "${GOVERNOR_FILES[@]}"; do
-        SAVED_GOVERNORS+=("$(cat "$file")")
+        governor="$(cat "$file")"
+        cpu="${file#/sys/devices/system/cpu/cpu}"
+        SAVED_GOVERNORS[$governor]+="${SAVED_GOVERNORS[$governor]:+,}${cpu%%/*}"
     done
     trap restore_governors EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
+    # A build and a long run can outlast sudo's credential cache; the restore
+    # on exit needs it still valid.
+    while sleep 60; do sudo -n -v || break; done 2>/dev/null &
+    SUDO_KEEPALIVE=$!
+
     sudo -n cpupower frequency-set -g "$GOVERNOR" >/dev/null
-    echo "CPU governor: ${SAVED_GOVERNORS[0]} -> $GOVERNOR for this run."
-    echo "  restored on exit; by hand: sudo cpupower frequency-set -g ${SAVED_GOVERNORS[0]}"
+    echo "CPU governor: ${!SAVED_GOVERNORS[*]} -> $GOVERNOR for this run, restored on exit. By hand:"
+    for governor in "${!SAVED_GOVERNORS[@]}"; do
+        echo "  sudo cpupower -c ${SAVED_GOVERNORS[$governor]} frequency-set -g $governor"
+    done
 fi
 
 # Not `exec`: the governor trap has to run after mix exits.

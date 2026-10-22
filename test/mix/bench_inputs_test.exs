@@ -74,4 +74,27 @@ defmodule Mix.Tasks.Bench.InputsTest do
              ]
     end
   end
+
+  describe "check_pace/3" do
+    import ExUnit.CaptureIO
+
+    defp late_warnings(rate, end_to_end_us) do
+      Process.delete(:bench_report)
+      inputs = %{parse([]) | rate: rate}
+      capture_io(fn -> assert Inputs.check_pace(inputs, 10_000, end_to_end_us) == :ok end)
+      (Process.get(:bench_report) || %{}) |> get_in([:header, :warnings]) |> List.wrap()
+    end
+
+    test "a burst, and a run on its schedule, are not warned about" do
+      assert late_warnings(nil, 10_000_000) == []
+      assert late_warnings(10_000, 1_040_000) == []
+      # A short schedule still gets the 5 ms slack.
+      assert late_warnings(1_000_000, 14_000) == []
+    end
+
+    test "a run past its schedule is warned about with its end-to-end rate" do
+      assert [text] = late_warnings(10_000, 2_000_000)
+      assert text =~ "reached 5,000/s end to end of the 10,000/s asked"
+    end
+  end
 end

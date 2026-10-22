@@ -30,6 +30,15 @@ defmodule Mix.Tasks.Bench.TallyTest do
       assert Tally.parse_stamp("") == :error
     end
 
+    test "a negative monotonic send time parses" do
+      assert Tally.parse_stamp("k1:3,-576460751234,xx") == {3, -576_460_751_234}
+    end
+
+    test "a key is only looked for in the first 64 bytes" do
+      assert Tally.parse_stamp(String.duplicate("a", 63) <> ":1,2") == {1, 2}
+      assert Tally.parse_stamp(String.duplicate("a", 64) <> ":1,2") == :error
+    end
+
     test "the steps reply body still parses" do
       assert Tally.parse_stamp("7,1700000000000") == {7, 1_700_000_000_000}
     end
@@ -57,6 +66,16 @@ defmodule Mix.Tasks.Bench.TallyTest do
       tally = Tally.record({0, 461_000}, Tally.new(1))
       assert Tally.percentiles(tally, [0.999])[0.999] == 461_000
       assert %{p99_9: 0.46, max: 0.46} = Tally.latency_ms(tally)
+    end
+
+    test "take the nearest rank" do
+      ms = fn n ->
+        Enum.reduce(1..n, Tally.new(n), &Tally.record({&1 - 1, &1 * 1_000_000}, &2))
+      end
+
+      # 0.95 * 12 = 11.4: rank 12, the largest sample, not rank 11.
+      assert Tally.percentiles(ms.(12), [0.95])[0.95] == 12_000_000
+      assert Tally.percentiles(ms.(100), [0.95])[0.95] == 95_005_000
     end
   end
 

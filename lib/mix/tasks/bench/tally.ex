@@ -76,22 +76,32 @@ defmodule Mix.Tasks.Bench.Tally do
   """
   @spec parse_stamp(binary()) :: {integer(), integer()} | :error
   def parse_stamp(body) when is_binary(body) do
-    with [seq, ts | _] <- body |> strip_key() |> String.split(",", parts: 3),
-         {seq, ""} <- Integer.parse(seq),
-         {ts, ""} <- Integer.parse(ts) do
+    with {seq, "," <> rest} <- digits(strip_key(body)),
+         {ts, tail} when tail == "" or binary_part(tail, 0, 1) == "," <- signed(rest) do
       {seq, ts}
     else
       _ -> :error
     end
   end
 
+  # Read by hand: the bench's receive loop parses every output, and a stamp
+  # read there is time the next output spends queued. Monotonic time can be
+  # negative, the seq never is.
+  defp signed("-" <> rest), do: with({n, tail} <- digits(rest), do: {-n, tail})
+  defp signed(rest), do: digits(rest)
+
+  defp digits(<<d, _::binary>> = bin) when d in ?0..?9, do: digits(bin, 0)
+  defp digits(_), do: :error
+
+  defp digits(<<d, rest::binary>>, acc) when d in ?0..?9, do: digits(rest, acc * 10 + d - ?0)
+  defp digits(rest, acc), do: {acc, rest}
+
   # Only the head is searched: a key is short, and a padded body can be long.
-  defp strip_key(body) do
-    case :binary.match(body, [":", "="], scope: {0, min(byte_size(body), 64)}) do
-      {pos, 1} -> binary_part(body, pos + 1, byte_size(body) - pos - 1)
-      :nomatch -> body
-    end
-  end
+  defp strip_key(body), do: strip_key(body, body, 0)
+
+  defp strip_key(_body, <<c, rest::binary>>, _i) when c in [?:, ?=], do: rest
+  defp strip_key(body, <<_, rest::binary>>, i) when i < 63, do: strip_key(body, rest, i + 1)
+  defp strip_key(body, _head, _i), do: body
 
   @doc """
   How many sends are due by now on a `rate`/s schedule started at `t0_ns`,
@@ -120,7 +130,9 @@ defmodule Mix.Tasks.Bench.Tally do
 
   def percentiles(tally, qs) do
     targets =
-      qs |> Enum.map(&{&1, max(round(tally.received * &1), 1)}) |> Enum.sort_by(&elem(&1, 1))
+      qs
+      |> Enum.map(&{&1, nearest_rank(tally.received, &1)})
+      |> Enum.sort_by(&elem(&1, 1))
 
     # A bucket's midpoint can sit above the largest sample in it.
     tally.hist
@@ -139,6 +151,10 @@ defmodule Mix.Tasks.Bench.Tally do
     acc = Enum.reduce(done, acc, fn {q, _}, a -> Map.put(a, q, bucket_ns(bucket)) end)
     scan(hist, bucket + 1, cum, pending, acc)
   end
+
+  # The smallest rank covering a share `q` of `n`; rounding first keeps a
+  # product like 100 * 0.95 from reading as 95.000000001.
+  defp nearest_rank(n, q), do: max(ceil(Float.round(n * q, 6)), 1)
 
   defp bucket_ns(bucket), do: round((bucket - 0.5) * @hist_step_ns)
 
