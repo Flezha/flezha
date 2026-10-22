@@ -197,8 +197,11 @@ defmodule FlezhaTest.Plugin.SharedTest do
     trades(server)
     :ok = PluginManager.bind_plugin(@namespace, "trades", a)
     assert_receive {:ws_open, _}, 5_000
+    # The copy closes its connection before it exits and leaves the directory.
+    {ref, [copy]} = Directory.monitor_plugin(@namespace, "trades")
     :ok = PluginManager.unbind_plugin(@namespace, "trades", a)
     assert_receive {:ws_closed, _}, 2_000
+    assert_receive {^ref, :leave, _group, [^copy]}, 2_000
     assert copies() == []
 
     b = relay("idle_b")

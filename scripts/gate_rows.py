@@ -188,12 +188,18 @@ def _bar(row_id, group, *argv, **opts):
 
 def _mix_test(row_id, group, *args, env=None, **opts):
     """A core `mix test` row, recording per-test timings beside the usual output. It
-    derives its own state root, sockets, ports and node name from its run token."""
+    derives its own state root, sockets, ports and node name from its run token.
+    It compiles first without checking the dependencies, which are the `@deps`
+    rows' to build: Mix checking the path ones deletes and rewrites the
+    consolidated protocols the rows running beside it read. `test`'s alias
+    passes no arguments to its own compile, so the flag goes on a `compile` of
+    its own."""
     timing = os.path.join(tempfile.gettempdir(), f"flezha_timing_{row_id}.tsv")
-    return _bar(row_id, group, "mix", "test", "--warnings-as-errors",
+    return _bar(row_id, group, "mix", "do", "compile", "--no-deps-check", "+",
+                "test", "--warnings-as-errors",
                 "--formatter", "ExUnit.CLIFormatter",
                 "--formatter", "FlezhaTest.Helper.TimingFormatter", *args,
-                env={**(env or {}), "TIMING_OUT": timing}, apart=True, **opts)
+                env={**(env or {}), "MIX_ENV": "test", "TIMING_OUT": timing}, apart=True, **opts)
 
 
 def _deps_compile(name, group, cwd, *envs):
