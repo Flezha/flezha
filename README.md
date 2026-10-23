@@ -1,6 +1,6 @@
 # Flezha
 
-A durable, distributed runtime for stateless and stateful data processing.
+A durable runtime for streams, workflows and agents.
 
 > Flezha is pre-1.0 alpha software: interfaces may still change between releases.
 

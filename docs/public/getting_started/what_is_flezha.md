@@ -1,6 +1,6 @@
 # What is Flezha
 
-Flezha is a durable, distributed runtime for stateless and stateful data processing.
+Flezha is a durable runtime for streams, workflows and agents.
 
 It runs many small, independent pieces of work in parallel, on one machine or
 across many. Each piece is a **relay**, running code you write. A relay is a

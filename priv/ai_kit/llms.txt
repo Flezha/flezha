@@ -14,7 +14,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 
 ## Getting started
 
-- [What is Flezha](what_is_flezha.md): Flezha is a durable, distributed runtime for stateless and stateful data processing.
+- [What is Flezha](what_is_flezha.md): Flezha is a durable runtime for streams, workflows and agents.
 - [Up and running](up_and_running.md): This page and the next two build the smallest complete Flezha deployment by hand: a controller, a runner of your own that serves an `echo` relay, and a file on each side of it.
 - [Connect a plugin](connect_a_plugin.md): On this page you attach a file to each side of `my_echo`: lines added to one file go in, and their echoes land in another.
 - [Stop and clean up](stop_and_clean_up.md): On this page you stop what the last two pages started, in reverse order: the plugins, the relay, the runner, then the controller.
