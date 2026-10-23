@@ -26,3 +26,9 @@ path = [
 ]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "Apache-2.0"
+
+# The code of conduct is the Contributor Covenant 2.1, used under its own licence.
+[[annotations]]
+path = ".github/CODE_OF_CONDUCT.md"
+SPDX-FileCopyrightText = "Contributor Covenant contributors <https://www.contributor-covenant.org>"
+SPDX-License-Identifier = "CC-BY-4.0"
