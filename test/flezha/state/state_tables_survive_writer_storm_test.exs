@@ -24,12 +24,23 @@ defmodule Flezha.State.StateTablesSurviveWriterStormTest do
     {:ok, first} = Supervisor.find_or_start(cell_id)
     # A writer failing on every write (a full disk) is restarted at once; past
     # the intensity its supervisor gives up.
-    storm(cell_id, first, sup, 0)
+    NodeTestHelper.with_only_logged(
+      [
+        {NodeTestHelper.crash_report(cell_id), :always},
+        # A kill that lands while the restarted writer is still in init.
+        {report(cell_id, "failed to start", "killed"), :maybe},
+        {report(cell_id, "caused shutdown", ":reached_max_restart_intensity"), :always},
+        {NodeTestHelper.crash_report(Supervisor, "shutdown"), :always}
+      ],
+      fn ->
+        storm(cell_id, first, sup, 0)
 
-    assert NodeTestHelper.wait_until(
-             fn -> Process.whereis(Supervisor) not in [nil, sup] end,
-             5_000
-           )
+        assert NodeTestHelper.wait_until(
+                 fn -> Process.whereis(Supervisor) not in [nil, sup] end,
+                 5_000
+               )
+      end
+    )
 
     {:ok, writer} = Supervisor.find_or_start(cell_id)
     on_exit(fn -> TestHelpers.close_and_await(writer, cell_id) end)
@@ -65,6 +76,9 @@ defmodule Flezha.State.StateTablesSurviveWriterStormTest do
       :ok
     end
   end
+
+  defp report(child, event, reason),
+    do: ~r/ #{event}\n\*\* \(exit\) #{reason}\n(?s:.*)#{Regex.escape(inspect(child))}/
 
   defp restarted?(cell_id, pid), do: match?({:ok, p} when p != pid, Supervisor.lookup(cell_id))
 end
