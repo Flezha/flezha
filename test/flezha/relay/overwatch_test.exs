@@ -93,6 +93,13 @@ defmodule FlezhaTest.Relay.OverwatchInitStateTest do
                "text_inputs" => ["seeded_by_plugin"]
              }
            }
+
+    # A read of the relay's facts is not sent the init values the chain resolved.
+    assert {:ok, %{init_values: %{"store_input_tasklet" => _}}} =
+             RelayManager.get_overwatch_state(@namespace, relay_id)
+
+    assert {:ok, %{init_values: nil, factory_id: @factory}} =
+             RelayManager.get_overwatch_state(@namespace, relay_id, :facts)
   end
 
   test "a seeded first message is ingested first, on the entry channel its metadata names" do
