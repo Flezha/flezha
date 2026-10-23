@@ -67,15 +67,6 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz help` | Show this help message, or with --json every operation as data. |
 <!-- flz-reference:end -->
 
-## [`flz template`](template_commands.md)
-
-<!-- flz-reference:begin flz template -->
-| Command | What it does |
-| --- | --- |
-| `flz template list` | Print each language and example the release carries. |
-| `flz template create <language> <dir> [--example <name>] [--tar]` | Write a template's files into a new folder <dir>. |
-<!-- flz-reference:end -->
-
 ## [`flz relay`](relay_commands.md#flz-relay)
 
 <!-- flz-reference:begin flz relay -->

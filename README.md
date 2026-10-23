@@ -91,8 +91,8 @@ The same echo exists in every SDK, under `sdk/<language>/examples/echo`.
 
 ## Get started
 
-To start a project of your own, `flz template create <language> <dir>` writes a small,
-tested one in any SDK language ([Template commands](docs/public/topics/cli/template_commands.md)).
+To start a project of your own, download a small, tested starter in any SDK language from the
+release page ([Starter projects](docs/public/topics/core/starter_projects.md)).
 [Up and running](docs/public/getting_started/up_and_running.md) builds the echo by hand, and the
 [tutorials](docs/public/tutorials/tutorials.md) then build two larger example applications step by step.
 

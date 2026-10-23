@@ -69,7 +69,7 @@ always match the version you run:
 | `flezha_sdk_example` | The echo example for one language: the current SDK form |
 | `flezha_error` | What an error code means, and the hint for the next step |
 | `flezha_docs` | One guide page, by the name the map gives it |
-| `flezha_new_project` | The files of a new project in one language, and the commands that build, test and run it ([Template commands](../cli/template_commands.md)) |
+| `flezha_new_project` | The files of a new project in one language, and the commands that build, test and run it ([Starter projects](starter_projects.md)) |
 
 The rules also go in the server's instructions, which most clients show the
 model before it does anything: start a new project from `flezha_new_project`,

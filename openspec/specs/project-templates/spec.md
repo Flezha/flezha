@@ -1,10 +1,9 @@
 # project-templates Specification
 
 ## Purpose
-A new project starts from a template the installed release carries: each SDK's tested
-`examples/starter`, written into a folder or a tar stream by `flz template create`, and served
-to an AI assistant by `flezha_new_project`.
-
+A new project starts from a template: each SDK's tested `examples/starter`, published with
+every release as one download per language and served to an AI assistant by
+`flezha_new_project`.
 ## Requirements
 ### Requirement: Every SDK SHALL carry a tested `starter` example
 
@@ -30,9 +29,9 @@ It SHALL reference the SDK by package name and version only.
 
 `mix flezha.ai_kit` SHALL copy every tracked file of each SDK's `examples/starter` but `.gitignore`
 into `priv/ai_kit/templates/<language>/starter/` and write a manifest listing each example's
-files, their executable bits, its `.gitignore` text, a one-line summary and the commands of its
-README's "Run it" section. A file git does not track SHALL NOT be carried. `--check` SHALL fail naming
-each copy that differs from its source, and each copy no source has.
+files, their executable bits, its `.gitignore` text and the commands of its README's "Run it"
+section. A file git does not track SHALL NOT be carried. `--check` SHALL fail naming each copy
+that differs from its source, and each copy no source has.
 
 #### Scenario: A changed starter without regeneration fails
 
@@ -44,46 +43,38 @@ each copy that differs from its source, and each copy no source has.
 - **WHEN** a file git does not track lies in `sdk/python/examples/starter`
 - **THEN** `mix flezha.ai_kit --check` passes and no template holds it
 
-### Requirement: `flz template list` SHALL list what the release carries
+### Requirement: A release SHALL publish each starter as a download
 
-`flz template list` SHALL print each language with its examples and summaries from the installed
-release's manifest, without reaching a controller, and with `--json` as data.
+`scripts/build-dist.sh --stage-release <dir>` SHALL write, for every template
+`priv/ai_kit/templates/manifest.json` lists with the example `starter`, one archive
+`flezha-<language>-starter.tar.gz` into `<dir>`, and SHALL list each in the release's SHA-256
+manifest. An archive SHALL hold exactly the files the manifest lists for that template, plus
+a `.gitignore` holding the manifest's text when it has one, all under the one folder
+`flezha-<language>-starter/`, each file with mode `0755` when the manifest marks it executable
+and `0644` otherwise. Its members SHALL be taken from the manifest, never from a listing of
+the folder, and a file the manifest lists that the folder lacks SHALL refuse the staging,
+naming it. The archives depend on no built asset, so they SHALL be written even when the
+staging refuses for a missing one.
 
-#### Scenario: No controller needed
+#### Scenario: One command gives a working project
 
-- **WHEN** `flz template list` runs on a machine where no controller runs
-- **THEN** it prints every SDK language with `starter` and exits 0
+- **WHEN** `flezha-java-starter.tar.gz` from a staged release is unpacked with `tar xz`
+- **THEN** `flezha-java-starter/` holds every file and the `.gitignore` that `flezha_new_project`
+  answers for `java`, with the same contents and the same executable bits
 
-### Requirement: `flz template create` SHALL write a working project
+#### Scenario: Every language is staged
 
-`flz template create <language> <dir> [--example <name>] [--tar]` SHALL write the example's files
-and its `.gitignore` into `<dir>` with the user's umask and the manifest's executable bits, then
-print the README's run commands; it SHALL create `<dir>` and refuse one that exists with files
-(`template.dir_not_empty`), refuse an unknown language or example (`template.unknown`, hint
-`flz template list`), and never reach a controller. With `--tar` it SHALL write the same files as a
-POSIX tar stream to stdout, touch no folder, and refuse when stdout is a terminal
-(`usage.tar_to_terminal`, whose hint names the `| tar x` redirect).
+- **WHEN** `--stage-release` runs
+- **THEN** the staging folder holds one starter archive per language the manifest lists, and
+  the checksum manifest, when written, covers each of them
 
-#### Scenario: A created project builds and passes its test outside the repository
+#### Scenario: A file the folder lacks refuses the staging
 
-- **WHEN** `flz template create java my-app` runs in a scratch folder and the SDK is installed as
-  the README says
-- **THEN** `my-app` builds and its test passes, and running it against a local controller answers
-  a `hit` with `{"page": ..., "total": 1}`
+- **WHEN** the manifest lists a file that `priv/ai_kit/templates/python/starter/` does not hold
+- **THEN** `--stage-release` fails naming that file, and writes no checksum manifest
 
-#### Scenario: Files from a container reach the host
+#### Scenario: A stray file is not packed
 
-- **WHEN** `docker exec <container> flz template create python my-app --tar | tar x` runs on the
-  host
-- **THEN** `my-app/` exists on the host owned by the host user, with the same files
-
-#### Scenario: A non-empty folder is refused
-
-- **WHEN** `flz template create java my-app` runs where `my-app/` holds a file
-- **THEN** it exits by the error's class with `template.dir_not_empty` and writes nothing
-
-#### Scenario: An unknown language
-
-- **WHEN** `flz template create cobol my-app` runs
-- **THEN** it answers `template.unknown` whose hint is `flz template list`
+- **WHEN** `priv/ai_kit/templates/go/starter/` holds a file the manifest does not list
+- **THEN** `flezha-go-starter.tar.gz` does not hold it
 

@@ -354,17 +354,6 @@ pub(crate) const STATE: Help = r#"EXAMPLES:
     flz state journal etl-job-42
     flz state inbox chat-session-7"#;
 
-pub(crate) const TEMPLATE: Help = r#"<dir> must not exist or must be empty, and names the folder only: nothing in
-the files is renamed. With no controller needed, the files come from this
-release, and --tar hands them out of a container to the host.
-
-EXAMPLES:
-    flz template list
-    flz template create java my-app
-    docker exec flezha-controller /flezha/bin/flz template create python my-app --tar | tar x -k
-
-With -k, tar keeps any file already there rather than overwriting it."#;
-
 pub(crate) const TOKEN: Help = r#"A `runner` token is the credential a runner connection proves its namespace
 with. It never expires and `--ttl` is refused for it: the holder is an
 unattended process, and a credential that lapses fails it at a restart. A

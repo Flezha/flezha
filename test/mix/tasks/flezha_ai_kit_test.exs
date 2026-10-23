@@ -46,14 +46,6 @@ defmodule Mix.Tasks.Flezha.AiKitTest do
            ]
   end
 
-  test "a template's summary is its README's title after the colon, or a refusal naming it" do
-    assert AiKit.summary("# Starter: a relay that counts\n\nMore.", "x/") == "A relay that counts"
-
-    assert_raise Mix.Error, ~s(x/README.md's title has no ": " before its summary), fn ->
-      AiKit.summary("# Starter\n", "x/")
-    end
-  end
-
   test "the map leaves out what the knowledge tools do not serve" do
     llms = """
     ## Start here

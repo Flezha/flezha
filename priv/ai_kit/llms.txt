@@ -35,6 +35,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Effectively once](effectively_once.md): A message that is lost is a question nobody answers.
 - [Partitioning](partitioning.md): A relay started the usual way is one instance: all of its keys and all of their cells run on one runner, and that runner's machine is the limit.
 - [MCP server](mcp_server.md): An AI coding assistant such as Claude Code, Cursor or Codex can build on Flezha with `flz mcp`, an MCP server that ships in every release.
+- [Starter projects](starter_projects.md): A starter is a small, complete Flezha project in one SDK language, to grow into your own: one relay, a tasklet that keeps state, a test, and a README with the commands to build and run it.
 
 ## The CLI
 
@@ -43,7 +44,6 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Relay commands](relay_commands.md): The groups that work with relays: starting and stopping them, sending them input, reading their state, the inputs they gave up on, and the workflows started on a schedule.
 - [Plugin commands](plugin_commands.md): `flz plugin` installs plugin packages, enables plugins and connects relays to them.
 - [Access commands](access_commands.md): The groups that decide who may do what: namespaces and their quotas, the first admin, tokens, roles, and the audit trail that records each action.
-- [Template commands](template_commands.md): `flz template create` writes a new Flezha project from a template the release carries: a small, complete project in any SDK language, with a relay, a tasklet that keeps state, a test and a README with the commands to build and run it.
 - [Command reference](command_reference.md): Every `flz` verb with its usage line and what it does, by group.
 
 ## Configuration

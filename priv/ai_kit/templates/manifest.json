@@ -39,7 +39,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "/_build/\n/deps/\n"
     },
@@ -77,7 +76,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "/starter\n/go.work\n/go.work.sum\n"
     },
@@ -115,7 +113,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "/target/\n"
     },
@@ -154,7 +151,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "node_modules/\n"
     },
@@ -193,7 +189,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "/vendor/\n"
     },
@@ -233,7 +228,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": ".venv/\n__pycache__/\n"
     },
@@ -272,7 +266,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "/vendor/\n/.bundle/\n"
     },
@@ -306,7 +299,6 @@
           "executable": false
         }
       ],
-      "summary": "A relay that counts visits per page",
       "example": "starter",
       "gitignore": "/target/\n/.cargo/\n"
     }

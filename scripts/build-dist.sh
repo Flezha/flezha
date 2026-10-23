@@ -12,6 +12,9 @@
 #      carries -> _build/.dist/elixir-nifs/
 #   1b. The contract set (test/fixtures/contract.txt) as one archive, staged
 #      by --stage-release only: it is files already in the tree, not a build.
+#   1g. Each SDK language's starter project (priv/ai_kit/templates/) as
+#      flezha-<language>-starter.tar.gz, staged by --stage-release only, for
+#      the same reason.
 #   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
 #      package's own table declares -> _build/.dist/node-addons/<suffix>/, packed into
 #      the per-platform packages at _build/.dist/node-packages/
@@ -137,6 +140,7 @@ fi
 # ---------------------------------------------------------------------------
 # The contract set an SDK vendors: the list, and the archive staged from it.
 CONTRACT_MANIFEST="test/fixtures/contract.txt"
+STARTER_MANIFEST="priv/ai_kit/templates/manifest.json"
 NATIVE_OUT="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
 # The PHP package loads the same libraries through ext-ffi, from directories
 # named the same way. Not committed: they are build output the release job
@@ -240,6 +244,7 @@ node_platforms() {
 # ---------------------------------------------------------------------------
 if [[ "${MODE}" == "stage-release" ]]; then
   require_cmd sha256sum "install coreutils"
+  require_cmd python3 "install python3"
   [[ -n "${STAGE_RELEASE_DIR}" ]] || { red "--stage-release needs a directory"; exit 1; }
 
   mkdir -p "${STAGE_RELEASE_DIR}"
@@ -319,6 +324,56 @@ if [[ "${MODE}" == "stage-release" ]]; then
     echo "  -> ${archive} (${#members[@]} members)"
   }
 
+  # One starter project per language, packed from the copy `flezha_new_project`
+  # answers from, so the download and the assistant's answer cannot differ.
+  # Like the contract set, its members come from the manifest, never a glob.
+  # The `.gitignore` exists only as manifest text and each mode comes from the
+  # manifest, which is why `tarfile` packs it rather than `tar`. Written even
+  # when other assets are missing: it depends on nothing that is built.
+  stage_starter_archives() {
+    local packed kind value
+    # Captured before it is read, so a failure ends the script under `set -e`
+    # rather than staging a release without its starters.
+    packed="$(python3 -I - "${REPO_ROOT}" "${STARTER_MANIFEST}" "${STAGE_RELEASE_DIR}" <<'PY'
+import io, json, os, sys, tarfile, time
+
+repo, manifest, out = sys.argv[1:]
+now = int(time.time())
+
+for t in json.load(open(os.path.join(repo, manifest)))["templates"]:
+    if t["example"] != "starter":
+        continue
+    folder = f"flezha-{t['language']}-starter"
+    src = os.path.join(os.path.dirname(manifest), t["language"], "starter")
+    files = [(".gitignore", t["gitignore"].encode(), False)] if t.get("gitignore") else []
+    complete = True
+    for f in t["files"]:
+        path = os.path.normpath(f["path"])
+        full = os.path.join(repo, src, path)
+        if os.path.isabs(path) or path.split(os.sep)[0] == ".." or not os.path.isfile(full):
+            print(f"missing\t{os.path.join(src, f['path'])}")
+            complete = False
+        elif complete:
+            files.append((path, open(full, "rb").read(), f["executable"]))
+    if not complete:
+        continue
+    with tarfile.open(os.path.join(out, folder + ".tar.gz"), "w:gz") as tar:
+        for path, data, executable in files:
+            info = tarfile.TarInfo(f"{folder}/{path}")
+            info.size, info.mtime = len(data), now
+            info.mode = 0o755 if executable else 0o644
+            tar.addfile(info, io.BytesIO(data))
+    print(f"asset\t{folder}.tar.gz")
+PY
+)"
+    while IFS=$'\t' read -r kind value; do
+      case "${kind}" in
+        asset)   assets+=("${value}"); echo "  -> ${value}" ;;
+        missing) missing+=("${value} (named by ${STARTER_MANIFEST})") ;;
+      esac
+    done <<< "${packed}"
+  }
+
   for t in "${ALL_TRIPLES[@]}"; do
     dir="${TRIPLE_TO_DIR[${t}]}"
     ext="${TRIPLE_TO_EXT[${t}]}"
@@ -338,6 +393,7 @@ if [[ "${MODE}" == "stage-release" ]]; then
     stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
   fi
   stage_fixture_archive
+  stage_starter_archives
   stage_node_packages
   stage_wheels
 

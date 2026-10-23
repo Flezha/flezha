@@ -123,24 +123,21 @@ defmodule Flezha.Mcp.Knowledge do
       else: {:error, Error.new("mcp.unknown_page", page: shown(page))}
   end
 
-  @doc """
-  The templates the release carries, as `mix flezha.ai_kit` listed them: each
-  with its language, example, summary, files and run commands.
-  """
-  @spec templates() :: [map()]
-  def templates, do: Jason.decode!(read!("templates/manifest.json"))["templates"]
-
-  @doc """
-  The files of one template, its `.gitignore` among them, each with its path,
-  content and executable bit, and the commands of its README's "Run it".
-  """
+  # The files of one template, its `.gitignore` among them, each with its path,
+  # content and executable bit, and the commands of its README's "Run it".
   @spec template(term(), term()) :: {:ok, map()} | {:error, Error.t()}
-  def template(language, example) do
+  defp template(language, example) do
+    templates = Jason.decode!(read!("templates/manifest.json"))["templates"]
+
     # Matched against the manifest, never joined into a path unseen.
-    case Enum.find(templates(), &(&1["language"] == language and &1["example"] == example)) do
+    case Enum.find(templates, &(&1["language"] == language and &1["example"] == example)) do
       nil ->
         {:error,
-         Error.new("template.unknown", language: shown(language), example: shown(example))}
+         Error.new("template.unknown",
+           language: shown(language),
+           example: shown(example),
+           templates: Enum.map_join(templates, ", ", &"#{&1["language"]}/#{&1["example"]}")
+         )}
 
       found ->
         dir = Path.join(["templates", language, example])

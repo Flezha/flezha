@@ -261,7 +261,6 @@ defmodule Flezha.MixProject do
         "docs/public/topics/cli/relay_commands.md",
         "docs/public/topics/cli/plugin_commands.md",
         "docs/public/topics/cli/access_commands.md",
-        "docs/public/topics/cli/template_commands.md",
         "docs/public/topics/cli/command_reference.md",
         "docs/public/topics/core/building_blocks.md",
         "docs/public/topics/core/namespaces.md",
@@ -277,6 +276,7 @@ defmodule Flezha.MixProject do
         "docs/public/topics/core/effectively_once.md",
         "docs/public/topics/core/partitioning.md",
         "docs/public/topics/core/mcp_server.md",
+        "docs/public/topics/core/starter_projects.md",
         "docs/public/errors.md",
         "docs/public/configuration.md",
         "docs/public/configuration/environment_variables.md",
@@ -345,7 +345,6 @@ defmodule Flezha.MixProject do
           "docs/public/topics/cli/relay_commands.md",
           "docs/public/topics/cli/plugin_commands.md",
           "docs/public/topics/cli/access_commands.md",
-          "docs/public/topics/cli/template_commands.md",
           "docs/public/topics/cli/command_reference.md"
         ],
         Configuration: [

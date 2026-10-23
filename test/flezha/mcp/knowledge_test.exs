@@ -81,10 +81,12 @@ defmodule Flezha.Mcp.KnowledgeTest do
     assert ".venv/bin/python runner.py" in run
   end
 
-  test "an unknown language or example is refused naming flz template list" do
+  test "an unknown language or example is refused listing the templates" do
     for args <- [["cobol", nil], ["java", "nope"]] do
-      assert {:error, %{code: "template.unknown", hint: "flz template list"}} =
+      assert {:error, %{code: "template.unknown", hint: "use one of: " <> templates}} =
                Knowledge.call("Flezha.new_project", args)
+
+      assert "java/starter" in String.split(templates, ", ")
     end
   end
 

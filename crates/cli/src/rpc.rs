@@ -124,26 +124,12 @@ pub(crate) fn request(
 /// it carries no token. The child prints its own answer and exits with its
 /// class's code, which `flz` passes through.
 pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
-    settle(child(
-        "eval",
-        &eval_request(module, fun, positional, read),
-        Out::Inherit,
-        None,
-    ));
-}
-
-/// The request `eval` runs, for a verb that reads the child's stdout itself.
-pub(crate) fn eval_request(
-    module: &str,
-    fun: &str,
-    positional: &[String],
-    read: &Reading,
-) -> Request {
-    request(None, &[], None, read.output_format() == "json", |list| {
+    let request = request(None, &[], None, read.output_format() == "json", |list| {
         let mut parts = positional.to_vec();
         parts.push(list.to_string());
         format!("{}.{}({})", module, fun, parts.join(", "))
-    })
+    });
+    settle(child("eval", &request, Out::Inherit, None));
 }
 
 /// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the

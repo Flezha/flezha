@@ -707,8 +707,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `template.dir_not_empty` | conflict | 6 | the folder {dir} already holds files | `name a new or empty folder` |
-| `template.unknown` | not_found | 5 | the release carries no {example} template for {language} | `flz template list` |
+| `template.unknown` | not_found | 5 | the release carries no {example} template for {language} | `use one of: {templates}` |
 
 ### topology
 
@@ -821,7 +820,6 @@ SDK raises or returns its one error type carrying them.
 | `usage.option_requires_value` | invalid | 2 | {option} requires a value |  |
 | `usage.option_takes_no_value` | invalid | 2 | {option} takes no value |  |
 | `usage.options_conflict` | invalid | 2 | {option} and {other} cannot be given together |  |
-| `usage.tar_to_terminal` | invalid | 2 | --tar writes a tar stream, which a terminal cannot show | `redirect it: flz template create <language> <dir> --tar \| tar x` |
 | `usage.text_only` | invalid | 2 | {what} is rendered as text only | `{alternative}` |
 | `usage.unexpected_argument` | invalid | 2 | unexpected argument '{argument}' | `{usage}` |
 | `usage.unknown_command` | invalid | 2 | '{word}' is not a {command} command; use one of {allowed} | `{command} help` |

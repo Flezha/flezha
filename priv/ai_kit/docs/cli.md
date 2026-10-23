@@ -52,11 +52,9 @@ reads the same cookie file: with the same `FLEZHA_STATE_DIR` and
 `FLEZHA_COOKIE_FILE` as the controller, or neither, it needs nothing more. A
 controller started with `RELEASE_COOKIE` set needs the same value exported
 where `flz` runs. A verb that cannot reach the controller reports it
-unreachable (exit 3). `flz runner check` and `flz template` are the exceptions,
-needing neither a controller nor a cookie: the first tests the runner socket
-([`connecting_a_runner.md`](../deploying/connecting_a_runner.md)), the second
-reads the templates the release carries
-([`template_commands.md`](template_commands.md)).
+unreachable (exit 3). `flz runner check` is the exception, needing neither a
+controller nor a cookie: it tests the runner socket
+([`connecting_a_runner.md`](../deploying/connecting_a_runner.md)).
 
 ## Options and help
 
@@ -80,8 +78,8 @@ Most verbs ignore an option they do not know. The verbs where a misread word
 costs more than a refusal stop with an error instead: `flz boot await`,
 `flz relay listen` and `flz relay call`, which wait as long as their options
 say; `flz reset`, which deletes data; `flz relay start` and `flz schedule add`,
-which would run a relay without the setting meant; `flz mcp`;
-`flz template create`; and every `flz dlq` verb.
+which would run a relay without the setting meant; `flz mcp`; and every
+`flz dlq` verb.
 
 ## When a verb fails
 
@@ -145,7 +143,6 @@ one line.
 | [`flz observe`](controller_commands.md#flz-observe) | Lists the controller's sources of metrics and events, and streams their signals live. | [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks) |
 | [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_and_testing.md`](../core/running_and_testing.md#start-from-a-clean-slate-flz-reset) |
 | [`flz mcp`](../core/mcp_server.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`mcp_server.md`](../core/mcp_server.md) |
-| [`flz template`](template_commands.md) | Writes a new project from a template the release carries. | [`template_commands.md`](template_commands.md) |
 
 Which role each verb needs is in
 [`authorization.md`](../core/authorization.md#which-role-each-verb-needs).

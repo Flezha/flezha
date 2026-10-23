@@ -9,9 +9,10 @@ defmodule Mix.Tasks.Flezha.AiKit do
     code Up and running runs, each under its path;
   - `templates/<language>/<example>/`: a copy of every tracked file of that
     SDK's `examples/<example>` but `.gitignore`, and `templates/manifest.json`:
-    each template's files with their executable bit, its `.gitignore` text,
-    the summary its README's title gives and the commands of its "Run it"
-    section, which `flz template` and `flezha_new_project` serve;
+    each template's files with their executable bit, its `.gitignore` text
+    and the commands of its README's "Run it" section, which
+    `flezha_new_project` serves and a release packs as one download per
+    language;
   - `llms.txt`: the assistant map `mix flezha.llms` wrote into `doc_dir`, less
     the published API pages and the catalogue, which the operation tools carry;
   - `docs/<page>.md`: each guide page that map links, copied from its source.
@@ -165,7 +166,6 @@ defmodule Mix.Tasks.Flezha.AiKit do
     entry = %{
       language: language,
       example: example,
-      summary: summary(readme, from),
       run: run_commands(readme, from),
       gitignore: if(".gitignore" in ignores, do: File.read!(from <> ".gitignore")),
       files: for(file <- files, do: %{path: file, executable: executable?(from <> file)})
@@ -173,21 +173,6 @@ defmodule Mix.Tasks.Flezha.AiKit do
 
     {entry,
      for(file <- files, do: {"templates/#{language}/#{example}/#{file}", text!(from <> file)})}
-  end
-
-  @doc """
-  A template's one-line summary: its README's title after the first colon, so
-  "Starter: a relay that ..." is "A relay that ...". A title with no colon
-  refuses the generation, naming the README under `from`.
-  """
-  @spec summary(String.t(), Path.t()) :: String.t()
-  def summary(readme, from) do
-    [title | _] = String.split(readme, "\n", parts: 2)
-
-    case String.split(String.trim_leading(title, "# "), ": ", parts: 2) do
-      [_, words] -> String.upcase(String.first(words)) <> String.slice(words, 1..-1//1)
-      [_] -> Mix.raise("#{from}README.md's title has no \": \" before its summary")
-    end
   end
 
   # Every line of the `sh` blocks of the README's "Run it" section.

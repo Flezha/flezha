@@ -111,14 +111,14 @@ a new project from `flezha_new_project`.
 #### Scenario: A new project for a language
 
 - **WHEN** `flezha_new_project` is called with `language: "java"`
-- **THEN** the answer SHALL hold every file `flz template create java` writes, with the same
-  contents, and the starter's run commands
+- **THEN** the answer SHALL hold every file the release's `flezha-java-starter.tar.gz` holds,
+  with the same contents and executable bits, and the starter's run commands
 
 #### Scenario: An unknown template
 
 - **WHEN** `flezha_new_project` is called with `example: "nope"`
-- **THEN** the result SHALL be a tool error coded `template.unknown` whose hint names
-  `flz template list`
+- **THEN** the result SHALL be a tool error coded `template.unknown` whose hint lists every
+  valid template as `<language>/<example>`
 
 ### Requirement: The rules SHALL name no SDK function
 

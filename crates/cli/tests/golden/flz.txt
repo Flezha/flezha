@@ -15,7 +15,6 @@ COMMANDS:
     reset       Clear Controller durable runtime data on disk (controller must
                 be stopped).
     mcp         Serve Flezha to an AI assistant over MCP, on stdin and stdout.
-    template    Start a project from a template the release carries.
     observe     Observability foundation inspection.
     audit       Durable audit log inspection.
     dlq         Dead-letter queue: parked poison payloads (retry budget

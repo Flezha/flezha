@@ -104,9 +104,8 @@ impl Verb {
     /// a plain word no positional takes. The verbs that do are those a misread
     /// word costs more than a refusal: one that blocks the caller for as long
     /// as its options say, deletes state, starts a relay without the setting
-    /// meant, serves a program nobody watches (`flz mcp`), writes a folder
-    /// where a tar stream was asked for (`flz template create`), or reads an
-    /// option's value as the relay whose parked entries to touch (`flz dlq`).
+    /// meant, serves a program nobody watches (`flz mcp`), or reads an option's
+    /// value as the relay whose parked entries to touch (`flz dlq`).
     pub(crate) const fn strict(mut self) -> Self {
         self.strict = true;
         self

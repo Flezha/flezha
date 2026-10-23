@@ -48,7 +48,6 @@ const SCREENS: &[(&str, &[&str])] = &[
     ("schedule", &["schedule", "help"]),
     ("schedule-add", &["schedule", "add", "--help"]),
     ("state", &["state", "help"]),
-    ("template", &["template", "help"]),
     ("token", &["token", "help"]),
 ];
 
