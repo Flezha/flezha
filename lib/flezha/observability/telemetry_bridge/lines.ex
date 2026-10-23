@@ -91,7 +91,9 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
           outcome: :failure,
           meaning: "Shrinking a relay's saved state took too long and was stopped."},
          {[:flezha, :state, :compaction_trigger], :compaction_trigger, :event,
-          label: "Clean-up started", meaning: "A relay's saved state grew enough to be shrunk."},
+          label: "Clean-up started",
+          meaning:
+            "A relay's saved state grew enough to be shrunk, or a shrink it was too busy for is asked again."},
          {[:flezha, :state, :baseline_seed], :baseline_seed, :event,
           label: "First write", meaning: "A relay's saved state took its first sequence number."},
          {[:flezha, :state, :wal_realign], :wal_realign, :event,

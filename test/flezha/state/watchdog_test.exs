@@ -19,13 +19,16 @@ defmodule Flezha.State.WatchdogTest do
   import Flezha.State.TestHelpers, only: [uniq: 0]
   import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 3]
 
+  alias Flezha.Config.Backoff
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
+  alias Flezha.Identificator
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Suspend
+  alias Flezha.Runner.ControlUnit
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Shipper
   alias Flezha.State.Paths
-  alias Flezha.State.{Recovery, Supervisor, TestHelpers, WalWriter, Watchdog}
+  alias Flezha.State.{Commands, Recovery, Supervisor, TestHelpers, WalWriter, Watchdog}
   alias Flezha.State.WriterRegistry
   alias FlezhaTest.Helper.DurabilityBackendStub
   alias FlezhaTest.Helper.Telemetry
@@ -255,11 +258,11 @@ defmodule Flezha.State.WatchdogTest do
   # Returns the cell KEY: the Watchdog is a singleton whose sweep walks every
   # registered cell, so every assertion here must be scoped to its own — any
   # other test's WAL (a task-journal, say) triggers the same telemetry.
-  defp owned_writer(suffix, header, body) do
+  defp owned_writer(suffix, header, body, runner_id \\ "exec-trig") do
     {_rc, _op, key} = pid = TestHelpers.sample_cell_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
-    :ok = WalWriter.append(w, 0, header, body, "exec-trig")
+    :ok = WalWriter.append(w, 0, header, body, runner_id)
     # A triggered cell sits in the shared Watchdog's in-flight map; clear
     # it so it cannot expire as compaction_timeout noise in a later test.
     on_exit(fn -> Watchdog.compaction_completed(pid) end)
@@ -295,6 +298,51 @@ defmodule Flezha.State.WatchdogTest do
 
     assert_receive {:compaction_trigger, _meas, %{key: ^key} = meta}, 1_000
     assert meta.runner == "exec-live"
+  end
+
+  # Fails as: a runner refusing a snapshot mid-checkpoint is logged as a failed
+  # inspection, the in-flight entry times out into a backoff strike, and the
+  # Cell below its size and age floors is never asked again.
+  test "a busy refusal is asked again next sweep without a strike, until its writer goes", %{
+    header: header
+  } do
+    set_mimic_global_until_exit()
+    Application.put_env(:flezha, :compact_after_age_ms, 0)
+    runner_id = "exec-busy-" <> uniq()
+    stub(Recovery, :bound_runners, fn -> {:ok, %{}} end)
+
+    stub(ControlUnit, :send_control_await, fn _runner_id, {:compact_cell, _}, _opts ->
+      {:error, Flezha.Error.new("state.cell_busy", %{cell: "c", why: "mid-checkpoint"})}
+    end)
+
+    start_supervised!(%{
+      id: :busy_control_unit,
+      start: {Agent, :start_link, [fn -> nil end, [name: Identificator.control_unit(runner_id)]]}
+    })
+
+    {key, w} = owned_writer("busy_", header, "x", runner_id)
+    cell_id = TestHelpers.sample_cell_id(key)
+    deferred? = fn -> MapSet.member?(:sys.get_state(Watchdog).deferred, cell_id) end
+
+    {:ok, :dispatched} = Commands.dispatch_compact_cell(runner_id, cell_id)
+    assert wait_until(deferred?, 1_000, 1)
+
+    :ok = Watchdog.sweep_now()
+    assert_receive {:compaction_trigger, _meas, %{key: ^key, trigger: :deferred} = meta}, 1_000
+    assert meta.runner == runner_id
+    assert Backoff.attempt(:sys.get_state(Watchdog).backoff, {:compaction, cell_id}) == 0
+    refute_received {:compaction_timeout, _, %{key: ^key}}
+
+    # Refused again; then the Cell's writer goes, and the deferral with it.
+    assert wait_until(deferred?, 1_000, 1)
+    ref = Process.monitor(w)
+    :ok = WalWriter.close(w)
+    assert_receive {:DOWN, ^ref, :process, ^w, _}, 1_000
+    assert wait_until(fn -> WriterRegistry.lookup(cell_id) == :error end, 1_000, 1)
+
+    :ok = Watchdog.sweep_now()
+    refute deferred?.()
+    refute_received {:compaction_trigger, _, %{key: ^key}}
   end
 
   test "a small-but-old WAL triggers an age compaction", %{header: header} do

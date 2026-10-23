@@ -505,7 +505,7 @@ The frame SHALL carry a payload-id constant defined alongside the output's other
 
 #### Scenario: A live Cell produces a snapshot at its current seq
 
-- **GIVEN** a live Cell with persisted Changes and a current `change_seq`
+- **GIVEN** a live Cell with persisted Changes, a current `change_seq`, and no change its state holds left unshipped
 - **WHEN** the SDK receives `CompactCell` addressing that Cell
 - **THEN** the SDK SHALL ship one `cell_state_snapshot` frame carrying the Cell's serialized state stamped with a seq the Cell has reached
 - **AND** SHALL answer `CompactCellResponse` reporting that same seq and the body's byte size
@@ -525,6 +525,12 @@ The frame SHALL carry a payload-id constant defined alongside the output's other
 
 - **WHEN** the SDK receives `CompactCell` for a `cell_id` matching no live Cell
 - **THEN** the handler SHALL report an error rather than answering as though compaction succeeded
+
+#### Scenario: A Cell holding unshipped changes refuses the snapshot
+
+- **GIVEN** a live Cell whose state holds changes no shipped record carries: an open checkpoint interval, or the changes of an attempt awaiting retry
+- **WHEN** the SDK receives `CompactCell` addressing that Cell
+- **THEN** the handler SHALL ship no snapshot and SHALL report `state.cell_busy`, a retry-later refusal
 
 ### Requirement: The Rust SDK SHALL take the task-journal from the bind
 

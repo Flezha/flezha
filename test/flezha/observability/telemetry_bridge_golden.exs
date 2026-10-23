@@ -653,7 +653,8 @@
       {:flezha_state, :compaction_trigger, :event,
        [
          label: "Clean-up started",
-         meaning: "A relay's saved state grew enough to be shrunk."
+         meaning:
+           "A relay's saved state grew enough to be shrunk, or a shrink it was too busy for is asked again."
        ]},
     [:flezha, :state, :credit_anomaly] =>
       {:flezha_state, :credit_anomaly, :event,
@@ -1931,7 +1932,8 @@
           outcome: :failure
         },
         %{
-          description: "A relay's saved state grew enough to be shrunk.",
+          description:
+            "A relay's saved state grew enough to be shrunk, or a shrink it was too busy for is asked again.",
           kind: :event,
           label: "Clean-up started",
           name: :compaction_trigger,

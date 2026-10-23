@@ -1496,7 +1496,10 @@ un-snapshotted record is older than `FLEZHA_COMPACT_AFTER_AGE_MS` (default
 Cell's pending changes, clones `State` under the Cell's sticky CAS,
 serializes it, ships it as `cell_state_snapshot`, then returns
 `CompactCellResponse` as `raw_data`. `snapshot_seq` MUST be the seq the
-drained state stands at — the writer treats it as a truncation point.
+drained state stands at — the writer treats it as a truncation point. A Cell
+whose state still holds changes the drain cannot ship (an open checkpoint
+interval, a retried attempt's changes) MUST be refused with `state.cell_busy`
+and no snapshot; the controller asks again on its next sweep.
 
 ### Control command `CellMailboxStatus` (controller → runner)
 

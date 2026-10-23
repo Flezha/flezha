@@ -350,7 +350,8 @@ linked companion handle so the sync never sits in its append loop.
 
 The `Watchdog` sweep triggers compaction on size or age (`flz state rotate` manually), reading
 the writer's in-memory accounting, sharing the in-flight `compactions` map as the re-enqueue
-guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age`:
+guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age |
+:deferred`:
 
 - **Size** — un-snapshotted bytes past `PersistenceResolver.compact_after_bytes/2`: the SDK's
   declared `compact_after_bytes()` (persisted as a class sidecar), else
@@ -359,10 +360,15 @@ guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :siz
   `PersistenceResolver.compact_after_age_ms/1` (`:compact_after_age_ms`, default 300 000 ms, `0`
   disables). A declared correction window raises this floor to at least itself, because
   compaction truncates the history a rewind needs.
+- **Deferred** — the runner refused the Cell's last compaction, from any caller, with
+  `state.cell_busy`: its live state held changes no record carries yet (an open checkpoint
+  interval, or a retried attempt's changes). The refusal clears the in-flight entry without a
+  backoff strike, and the next sweep asks again whatever the size or age.
 
 1. The controller ships `CompactCell` over the control channel.
 2. The SDK locates the live Cell, **drains its pending changes first** (so memory equals the
-   shipped WAL), serializes `State` under the state lock — postcard in Rust, Kryo in Java, the
+   shipped WAL; a Cell whose memory still holds changes no record carries is refused, as
+   above), serializes `State` under the state lock — postcard in Rust, Kryo in Java, the
    codec the restore path decodes, never the JSON migration serializer — ships
    `cell_state_snapshot` stamped with the highest seq it folds, and answers
    `CompactCellResponse{snapshot_seq, snapshot_bytes_size}`.

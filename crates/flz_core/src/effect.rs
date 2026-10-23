@@ -481,7 +481,10 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
     }
 
     fn nothing_unshipped(&self) -> bool {
-        self.is_empty() && !self.staged.is_open() && self.holds.is_empty()
+        self.is_empty()
+            && !self.staged.is_open()
+            && self.pending_attempt.is_empty()
+            && self.holds.is_empty()
     }
 
     fn keep_hold(&mut self, hold: Arc<Hold>) {

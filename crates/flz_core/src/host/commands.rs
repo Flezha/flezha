@@ -136,6 +136,18 @@ pub fn snapshot_frame(
     // flusher cannot assign a seq between them.
     let mut buffer = slot.flush_buffer.lock_recover();
     flush(&mut buffer);
+    // An open checkpoint interval or a retried attempt is in the live state
+    // but in no record: a snapshot now would hold it under the last shipped
+    // seq, and a restore would apply it twice.
+    if !buffer.nothing_unshipped() {
+        return Err(Error::State(Code::CellBusy.with([
+            ("cell", slot.dispatcher.cell_label().into()),
+            (
+                "why",
+                "mid-checkpoint or mid-retry, holding changes no record carries yet".into(),
+            ),
+        ])));
+    }
     let seq = slot.change_seq.load(Ordering::Acquire).saturating_sub(1);
     // What the coming truncation would delete is re-stated AFTER the seq is
     // read, landing at `snapshot_seq + 1`, which `truncate_up_to` keeps; a

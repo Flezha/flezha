@@ -317,9 +317,13 @@ fn serialize_slot(
             Ok((value, seq))
         })
         .unwrap_or_else(|| {
+            let why = format!(
+                "inside an activation older than {}s",
+                SERIALIZE_GATE_WAIT.as_secs()
+            );
             Err(Error::State(Code::CellBusy.with([
                 ("cell", slot.dispatcher.cell_label().into()),
-                ("seconds", SERIALIZE_GATE_WAIT.as_secs().into()),
+                ("why", why.into()),
             ])))
         })
 }

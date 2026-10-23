@@ -14,7 +14,8 @@ defmodule Flezha.State.Watchdog do
 
   Four sweeps run on each pass: **output staleness** (Changes still arriving
   while the persisted seq has not advanced — an idle Cell is not flagged),
-  **compaction trigger** on un-snapshotted bytes or age, **compaction timeout**,
+  **compaction trigger** on un-snapshotted bytes or age, or a runner's earlier
+  "busy" answer, **compaction timeout**,
   and **remote RPO** when a durability backend is configured.
   """
 
@@ -47,8 +48,11 @@ defmodule Flezha.State.Watchdog do
   # that keeps a repeatedly-failing Cell from re-triggering every sweep; it is
   # filled by `init/1` rather than defaulted here, because a struct default is
   # evaluated at compile time and would make this a compile-time dependency on
-  # a module a sensor only calls.
+  # a module a sensor only calls. `deferred` holds the Cells whose runner
+  # answered "busy": the next trigger sweep asks them again, whatever their size
+  # or age.
   defstruct compactions: %{},
+            deferred: MapSet.new(),
             input_silence: MapSet.new(),
             rpo_breached: MapSet.new(),
             disk_breaches: MapSet.new(),
@@ -109,6 +113,16 @@ defmodule Flezha.State.Watchdog do
     GenServer.cast(__MODULE__, {:compaction_failed, cell_id})
   end
 
+  @doc """
+  Record a compaction the runner refused as busy: the Cell holds changes no
+  record carries yet. Clears the in-flight entry without a backoff strike, and
+  the next trigger sweep asks again.
+  """
+  @spec compaction_deferred(tuple()) :: :ok
+  def compaction_deferred(cell_id) do
+    GenServer.cast(__MODULE__, {:compaction_deferred, cell_id})
+  end
+
   # ---------- GenServer ----------
 
   @impl true
@@ -165,6 +179,7 @@ defmodule Flezha.State.Watchdog do
      %{
        state
        | compactions: Map.delete(state.compactions, cell_id),
+         deferred: MapSet.delete(state.deferred, cell_id),
          backoff: Backoff.update(state.backoff, {:compaction, cell_id}, :ok, now)
      }}
   end
@@ -178,6 +193,15 @@ defmodule Flezha.State.Watchdog do
     maybe_give_up(cell_id, attempt)
 
     {:noreply, %{state | compactions: Map.delete(state.compactions, cell_id), backoff: backoff}}
+  end
+
+  def handle_cast({:compaction_deferred, cell_id}, state) do
+    {:noreply,
+     %{
+       state
+       | compactions: Map.delete(state.compactions, cell_id),
+         deferred: MapSet.put(state.deferred, cell_id)
+     }}
   end
 
   @impl true
@@ -300,14 +324,21 @@ defmodule Flezha.State.Watchdog do
         {:error, _} -> %{}
       end
 
-    Enum.reduce(statuses, state, fn {{rc, sh, _pk} = cell_id, status}, acc ->
+    # A deferral not re-dispatched this sweep is carried to the next one; one
+    # whose Cell has no live writer any more is dropped with it.
+    cleared = %{state | deferred: MapSet.new()}
+
+    Enum.reduce(statuses, cleared, fn {{rc, _sh, _pk} = cell_id, status}, acc ->
+      deferred? = MapSet.member?(state.deferred, cell_id)
+
       with false <- Map.has_key?(acc.compactions, cell_id),
            true <- Backoff.eligible?(acc.backoff, {:compaction, cell_id}, now),
            runner_id when is_binary(runner_id) <- Map.get(bound, rc, status.owning_runner),
-           trigger when trigger != nil <- compaction_trigger(status, now, rc, sh) do
+           trigger when trigger != nil <- compaction_trigger(status, now, rc, deferred?) do
         flag_compaction_trigger(cell_id, runner_id, status, trigger)
         %{acc | compactions: Map.put(acc.compactions, cell_id, {now, runner_id})}
       else
+        _ when deferred? -> %{acc | deferred: MapSet.put(acc.deferred, cell_id)}
         _ -> acc
       end
     end)
@@ -317,7 +348,7 @@ defmodule Flezha.State.Watchdog do
   # compact away the history inside its own window), so it is read here rather
   # than hoisted out of the loop. The size floor already resolved per cell,
   # so this adds no new cost class.
-  defp compaction_trigger(status, now, relay_class, _tasklet_id) do
+  defp compaction_trigger(status, now, relay_class, deferred?) do
     age_ms = PersistenceResolver.compact_after_age_ms(relay_class)
 
     cond do
@@ -327,6 +358,9 @@ defmodule Flezha.State.Watchdog do
       age_ms > 0 and is_integer(status.oldest_unsnapshotted_at) and
           now - status.oldest_unsnapshotted_at >= age_ms ->
         :age
+
+      deferred? ->
+        :deferred
 
       true ->
         nil

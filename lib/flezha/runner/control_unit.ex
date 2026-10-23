@@ -386,7 +386,10 @@ defmodule Flezha.Runner.ControlUnit do
           error = runner_error(response.errors)
 
           if state[:env] !== :test do
-            Logger.error("runner refused a command: #{error.message} (#{error.code})")
+            Logger.log(
+              refusal_level(error),
+              "runner refused a command: #{error.message} (#{error.code})"
+            )
           end
 
           {:error, error}
@@ -394,6 +397,11 @@ defmodule Flezha.Runner.ControlUnit do
 
     handle_refs(state, response.reference_id, reply, metadata)
   end
+
+  # A busy Cell's refusal is an expected answer its caller asks again; every
+  # other refusal is a failure.
+  defp refusal_level(%{code: "state.cell_busy"}), do: :debug
+  defp refusal_level(_error), do: :error
 
   # What is left of the run's window on this controller's clock, so the runner
   # never compares a controller time with its own; unset until the first bind

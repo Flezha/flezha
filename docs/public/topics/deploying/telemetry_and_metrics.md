@@ -71,7 +71,7 @@ Compiling 34 files (.ex)
 | `flezha_state` | `compaction_failed` | event |  | Shrinking a relay's saved state failed; it will be tried again. |
 | `flezha_state` | `compaction_gave_up` | event |  | Shrinking a relay's saved state failed too often and was given up. |
 | `flezha_state` | `compaction_timeout` | event |  | Shrinking a relay's saved state took too long and was stopped. |
-| `flezha_state` | `compaction_trigger` | event |  | A relay's saved state grew enough to be shrunk. |
+| `flezha_state` | `compaction_trigger` | event |  | A relay's saved state grew enough to be shrunk, or a shrink it was too busy for is asked again. |
 | `flezha_state` | `credit_anomaly` | event |  | A runner wrote more than the controller allowed it to: a fault in the runner, not load. |
 | `flezha_state` | `disk_quota_breach` | event |  | A namespace's saved state grew past its disk quota. |
 | `flezha_state` | `fsync_tick` | event |  | Pending writes were flushed to disk together. |

@@ -158,6 +158,43 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
     assert Map.has_key?(refs, ref)
     refute_received {_ref, {:error, :timeout}}
   end
+
+  # Fails as: a busy Cell refusing a compaction once per Watchdog sweep writes
+  # an error line each time for an answer its caller simply asks again.
+  test "a busy Cell's refusal logs at debug; any other refusal logs an error" do
+    on_exit(NodeTestHelper.override_log_level(:debug))
+
+    refuse = fn code, details ->
+      wire = Flezha.Error.to_wire(Flezha.Error.new(code, details))
+      tag = make_ref()
+
+      state = %{
+        env: :prod,
+        response_refs: %{"ref-refused" => {:reply, {self(), tag}, 0, false}}
+      }
+
+      response = %RunnerCommands.CommandResponse{
+        reference_id: "ref-refused",
+        status: "error",
+        errors: [wire]
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+          ControlUnit.handle_cast({:handle_payload, response, %{}}, state)
+        end)
+
+      assert_received {^tag, {:error, %Flezha.Error{code: ^code}}}
+      log
+    end
+
+    busy = refuse.("state.cell_busy", %{cell: "c", why: "mid-checkpoint"})
+    assert busy =~ ~r/\[debug\].*runner refused a command: .*\(state\.cell_busy\)/
+    refute busy =~ ~r/\[error\].*runner refused a command/
+
+    gone = refuse.("state.cell_not_live", %{cell_id: "00"})
+    assert gone =~ ~r/\[error\].*runner refused a command: .*\(state\.cell_not_live\)/
+  end
 end
 
 defmodule FlezhaTest.Runner.ControlUnitPartitionTest do

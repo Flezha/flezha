@@ -114,6 +114,8 @@ The SDK SHALL acquire the Cell's sticky CAS, clone `Self::State`, release the CA
 
 The hot path SHALL pay only the brief sticky-CAS hold during the state clone — microseconds, not the seconds-to-minutes a synchronous full-state snapshot would take.
 
+A Cell whose live state holds changes no shipped record carries (an open checkpoint interval, or the changes of an attempt awaiting retry) SHALL refuse the compaction with `state.cell_busy` and ship no snapshot, whoever asked for it. The Watchdog SHALL treat that refusal as retry-later: it SHALL clear the in-flight compaction without a backoff strike, SHALL NOT count it toward the give-up, and SHALL ask again on its next sweep whatever the WAL's size or age.
+
 #### Scenario: Compaction triggered by size threshold
 
 - **WHEN** a Cell's `wal_size_bytes` grows past 8 MiB (the default `compact_after_bytes`)
@@ -140,6 +142,12 @@ The hot path SHALL pay only the brief sticky-CAS hold during the state clone —
 
 - **WHEN** the SDK receives `CompactCell` and clones the state
 - **THEN** the SDK SHALL acquire the sticky CAS, clone, release the CAS within the same `Tasklet::run`-equivalent invocation, and serialize the clone in a non-runner context; the cell's input throughput SHALL NOT drop below 90% of pre-compaction throughput during the clone
+
+#### Scenario: A busy refusal is asked again on the next sweep without a strike
+
+- **GIVEN** a `CompactCell` the runner refused with `state.cell_busy`
+- **WHEN** the next `Flezha.State.Watchdog` sweep runs
+- **THEN** it SHALL ship `CompactCell` for that Cell again with `trigger: :deferred`, and the Cell's `:compaction` backoff row SHALL hold no strike
 
 ### Requirement: Restart restores state via RestoreInitState handshake
 
@@ -628,7 +636,7 @@ The agent SHALL expose a `flz state` CLI subcommand tree, using relay vocabulary
 #### Scenario: flz state rotate triggers async compaction
 
 - **WHEN** the runner runs `flz state rotate MarketRelay/btc/OhlcTasklet/M1`
-- **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactCell` to the SDK; the resulting snapshot SHALL appear on disk within seconds
+- **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactCell` to the SDK; the resulting snapshot SHALL appear on disk within seconds, or, for a Cell that refused it as busy, on a later Watchdog sweep that finds its interval closed
 
 #### Scenario: flz state retention persists across agent restart
 

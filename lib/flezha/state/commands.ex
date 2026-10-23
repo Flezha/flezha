@@ -281,7 +281,9 @@ defmodule Flezha.State.Commands do
   `Flezha.Runner.StreamChannel`) followed by a
   `CompactCellResponse` control reply. The reply is inspected off-process:
   a `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a non-empty WAL
-  is recorded as a failed handshake rather than a completion.
+  is recorded as a failed handshake rather than a completion, and a
+  `state.cell_busy` refusal is left to the Watchdog to ask again, whoever
+  dispatched it.
   """
   @spec dispatch_compact_cell(binary(), {binary(), binary(), binary()}) ::
           {:ok, term()} | {:error, term()}
@@ -345,6 +347,11 @@ defmodule Flezha.State.Commands do
 
       Watchdog.compaction_failed(cell_id)
     else
+      # The Cell holds changes no record carries yet (an open checkpoint
+      # interval, a retried attempt): no snapshot now, and no strike either.
+      {:error, %Flezha.Error{code: "state.cell_busy"}} ->
+        Watchdog.compaction_deferred(cell_id)
+
       {:error, reason} ->
         Logger.warning(
           "[Overwatch] compact_cell response inspection failed " <>

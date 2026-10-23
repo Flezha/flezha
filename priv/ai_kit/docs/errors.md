@@ -683,7 +683,7 @@ SDK raises or returns its one error type carrying them.
 | `state.apply_failed` | invalid | 2 | the state could not be applied: {reason} |  |
 | `state.bad_cell_path` | invalid | 2 | '{path}' is not a Cell path; write it as `<relay>/<tasklet>/<cell_key>` |  |
 | `state.bad_live_path` | invalid | 2 | '{path}' is not a live state path; write it as `<relay>/<tasklet>[/<cell_key>]` |  |
-| `state.cell_busy` | unavailable | 7 | Cell '{cell}' is inside an activation older than {seconds}s |  |
+| `state.cell_busy` | unavailable | 7 | Cell '{cell}' is busy: {why}; try again shortly |  |
 | `state.cell_evicted` | not_found | 5 | Cell '{cell_key}' of tasklet '{tasklet}' was idle-evicted; eviction is destructive, so there is no durable value to serve | `flz state at <relay>/{tasklet}/{cell_key} <seq\|ts>` |
 | `state.cell_key_without_tasklet` | invalid | 2 | a Cell key is unique only within its tasklet, so name the tasklet as well |  |
 | `state.cell_not_found` | not_found | 5 | tasklet '{tasklet}' holds no Cell keyed '{cell_key}' | `flz state at <relay>/{tasklet}/{cell_key} <seq\|ts>` |
