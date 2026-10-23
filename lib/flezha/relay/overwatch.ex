@@ -345,6 +345,12 @@ defmodule Flezha.Relay.Overwatch do
   @impl true
   def handle_call(:get_overwatch_state, _from, state), do: {:reply, state, state}
 
+  # The state without the relay's own data, which can run to any size, so a
+  # reader of the relay's facts is never sent its init values, snapshot or
+  # held payloads.
+  def handle_call(:get_overwatch_facts, _from, state),
+    do: {:reply, %{state | init_values: nil, snapshot: nil, held_outputs: nil, seed: nil}, state}
+
   # A stop's cause, named before the hub stops this process; `nil` undoes it.
   @impl true
   def handle_call({:cause, cause}, from, %__MODULE__{} = state),

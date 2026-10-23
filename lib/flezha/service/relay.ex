@@ -249,13 +249,16 @@ defmodule Flezha.Service.Relay do
       rows: Enum.map(rows, &Map.take(&1, @cell_figures))
     }
 
-  @doc "One relay's Overwatch state."
+  @doc """
+  One relay's Overwatch state, without the relay's own data: its init values,
+  snapshot, held outputs and seed answer `nil`, since they can run to any size.
+  """
   @spec overwatch_state(String.t(), String.t(), caller_context()) ::
           {:ok, term()} | {:error, term()}
   verb overwatch_state(namespace, relay_id, caller_context),
     verb: :relay_info,
     args: [namespace: @namespace, relay_id: @relay_id] do
-    RelayManager.get_overwatch_state(namespace, relay_id)
+    RelayManager.get_overwatch_state(namespace, relay_id, :facts)
   end
 
   # ---------- Mutations ----------

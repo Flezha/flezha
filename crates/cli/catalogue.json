@@ -1174,7 +1174,7 @@
     },
     {
       "name": "Relay.overwatch_state",
-      "doc": "One relay's Overwatch state.",
+      "doc": "One relay's Overwatch state, without the relay's own data: its init values, snapshot, held outputs and seed answer `nil`, since they can run to any size.",
       "action": "relay.list",
       "remote": true,
       "stream": false,

@@ -102,12 +102,19 @@ defmodule Flezha.Service.RelayManager do
     kind, reason -> on_error.({:routed_call_failed, target, kind, reason})
   end
 
-  def get_overwatch_state(namespace, relay_id) do
+  @doc """
+  The relay's Overwatch state. `:facts` answers it with the relay's own data —
+  init values, snapshot, held outputs and seed — as `nil`, since that data can
+  run to any size.
+  """
+  def get_overwatch_state(namespace, relay_id, view \\ :full) do
+    request = if view == :facts, do: :get_overwatch_facts, else: :get_overwatch_state
+
     # `SafeCall.bounded` returns `{:ok, state} | {:error, reason}` — the same
     # success shape as before, but a wedged relay now yields a logged
     # `{:error, :timeout}` (with the target's mailbox/current-function) instead
     # of an unhandled exit.
-    with_relay_pid(namespace, relay_id, &call_overwatch(&1, :get_overwatch_state))
+    with_relay_pid(namespace, relay_id, &call_overwatch(&1, request))
   end
 
   @doc "A bounded call to the Overwatch `pid`: `{:ok, reply}` or `{:error, reason}`."
