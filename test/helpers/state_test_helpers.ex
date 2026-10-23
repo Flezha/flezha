@@ -22,11 +22,13 @@ defmodule Flezha.State.TestHelpers do
   @doc """
   Start the state subsystem's process tree under the test supervisor — the
   writer registry, `Flezha.State.Supervisor`, the `FsyncBatcher` and any
-  `extra` children — tolerating those the application already runs. Call from
-  a `setup` block.
+  `extra` children — tolerating those the application already runs, after
+  creating the tables the application would own. Call from a `setup` block.
   """
   @spec start_state_tree([Elixir.Supervisor.child_spec() | module()]) :: :ok
   def start_state_tree(extra \\ []) do
+    :ok = Supervisor.ensure_tables()
+
     children = [
       {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
       Supervisor,

@@ -31,8 +31,8 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   alias Flezha.State.WalWriter.{Admission, Boot, Settlement}
 
   # The credit of records a closed writer left on disk unshipped, one row per
-  # held batch under its Cell id, owned by `Flezha.State.Supervisor` so it
-  # outlives every writer.
+  # held batch under its Cell id, owned by the application so it outlives every
+  # writer and their supervisor.
   @owed :flezha_remote_gate_owed
 
   # `held`: synced batches not yet acknowledged, `{seq, credit}` oldest first.
@@ -263,8 +263,17 @@ defmodule Flezha.State.WalWriter.RemoteGate do
     end
   end
 
-  @doc "Create the owed-credit table; its owner must outlive every writer."
-  def new_owed_table(), do: :ets.new(@owed, [:duplicate_bag, :public, :named_table])
+  @doc "Create the owed-credit table if absent; its owner must outlive every writer."
+  @spec ensure_owed_table() :: :ok
+  def ensure_owed_table() do
+    if :ets.whereis(@owed) == :undefined do
+      :ets.new(@owed, [:duplicate_bag, :public, :named_table])
+    end
+
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
 
   @doc """
   The outbox's durable cursor once a reopen or a rewind makes `seq` durable

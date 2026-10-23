@@ -30,25 +30,28 @@ defmodule Flezha.State.Supervisor do
 
   @impl true
   def init(_) do
-    # The class→namespace claims, input-log watermark, class registry and
-    # owed-credit tables live with the state subsystem: a named table dies with
-    # its owner, and every one of these is read by the data plane, so no
-    # process that can crash and restart (a sweeper, a writer) may own them.
-    # Path resolution degrades to the on-disk layout when the claims table is
-    # absent (unit tests that use `Flezha.State.Paths` without this supervisor).
-    Paths.ensure_claims_table()
-    InputLog.ensure_watermark_table()
-    ClassRegistry.ensure_table()
-    RemoteGate.new_owed_table()
     # Every per-Cell writer and input log on the node hangs here, and they
     # fail independently — a bad payload, a disk fault, a killed run. The
     # DynamicSupervisor default (3 restarts in 5 s) is a budget for ONE
     # supervised subsystem, not for a fleet: four unrelated writers crashing in
     # the same five seconds would take this supervisor down, and with it every
-    # other relay's writer AND the four ETS tables owned above, which the
-    # data plane reads. The intensity is therefore sized for independent
+    # other relay's writer. The intensity is therefore sized for independent
     # children; a genuine restart storm still trips it, just not a burst.
     DynamicSupervisor.init([strategy: :one_for_one] ++ Cspec.intensity())
+  end
+
+  @doc """
+  Create the class→namespace claims, input-log watermark, class registry and
+  owed-credit tables, owned by the caller. The data plane reads every one of
+  them, so their owner must outlive every writer and this supervisor too: the
+  application creates them at boot. Idempotent.
+  """
+  @spec ensure_tables() :: :ok
+  def ensure_tables() do
+    :ok = Paths.ensure_claims_table()
+    :ok = InputLog.ensure_watermark_table()
+    :ok = ClassRegistry.ensure_table()
+    RemoteGate.ensure_owed_table()
   end
 
   @doc """

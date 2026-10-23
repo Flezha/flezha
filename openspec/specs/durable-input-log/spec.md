@@ -174,8 +174,9 @@ and derive the relay's min-watermark from that map; a consumed-offset
 report SHALL update the log's copy and SHALL NOT scan any shared table. A
 burst of reports SHALL fold into one watermark recompute and one credit drain.
 The published watermark table SHALL be a rebuildable cache for readers outside
-the log — the retention sweep, replay cursors, the CLI — created and owned by
-the state supervisor so it outlives every process that reports into it; a
+the log — the retention sweep, replay cursors, the CLI — created at controller
+boot and owned by the application so it outlives every process that reports
+into it, the state supervisor included; a
 (re)started log SHALL seed its own map from that table. Offsets are assigned
 monotonically, so the bytes a watermark advance frees SHALL be taken as a
 prefix of the tracked offsets, costing the number freed rather than the number
@@ -206,8 +207,8 @@ longer exist. No other path SHALL lower a stored consumed-offset.
 #### Scenario: The table survives its reporters
 
 - **WHEN** every `WalWriter` that reported a consumed-offset has exited
-- **THEN** the published table and its rows are intact, because the state
-  supervisor owns it
+- **THEN** the published table and its rows are intact, because the
+  application owns it
 
 #### Scenario: A burst of advances recomputes once
 

@@ -14,6 +14,7 @@ defmodule Flezha.Application do
   alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
+  alias Flezha.State.Supervisor, as: StateSupervisor
 
   use Application
 
@@ -63,6 +64,9 @@ defmodule Flezha.Application do
 
     # Owned here, for the application's life: a coordinator restart must not reopen admission.
     :ok = Shutdown.create_table()
+    # Likewise: a writer restart storm that takes its supervisor down must leave
+    # the tables the data plane reads in place.
+    :ok = StateSupervisor.ensure_tables()
 
     children = controller_children()
 
@@ -144,7 +148,7 @@ defmodule Flezha.Application do
       {Flezha.Observability.HookSink, :always},
       {&worker_families/0, :always},
       {{Task.Supervisor, name: Flezha.Relay.MessageHandlerTaskSup}, :always},
-      {&Flezha.State.Supervisor.application_children/0, :always},
+      {&StateSupervisor.application_children/0, :always},
       {Flezha.State.FsyncBatcher, :always},
       {Flezha.State.Retention, :always},
       {Flezha.State.Watchdog, :always},

@@ -487,8 +487,9 @@ defmodule Flezha.State.InputLog do
   @spec watermark_table() :: atom()
   def watermark_table(), do: @watermarks
 
-  # Created by `Flezha.State.Supervisor` so it outlives any one reporter; the
-  # fallback here only serves callers running without the state subsystem.
+  # Created at application boot (`Flezha.State.Supervisor.ensure_tables/0`) so it
+  # outlives any one reporter; the fallback here only serves callers running
+  # without the state subsystem.
   @doc false
   def ensure_watermark_table() do
     case :ets.whereis(@watermarks) do

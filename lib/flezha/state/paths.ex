@@ -120,8 +120,8 @@ defmodule Flezha.State.Paths do
   @aside %{set_aside: ".superseded", discarded: ".discarded", landed: ".landed"}
 
   @doc """
-  Create the class→namespace claims table. Called once by
-  `Flezha.State.Supervisor` so the table lives with the state subsystem;
+  Create the class→namespace claims table. Created at application boot
+  (`Flezha.State.Supervisor.ensure_tables/0`) so it outlives every writer;
   every resolver below degrades to the on-disk layout when it is absent.
   """
   @spec ensure_claims_table() :: :ok
