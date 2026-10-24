@@ -12,6 +12,7 @@ defmodule Flezha.Service.PluginRecords do
   alias Flezha.Plugin
   alias Flezha.Plugin.Providers
   alias Flezha.Plugin.Shared
+  alias Flezha.Process.Poll
   alias Flezha.Service.HubManager
 
   @doc """
@@ -57,6 +58,34 @@ defmodule Flezha.Service.PluginRecords do
   def entry(namespace, name) do
     with :error <- HubManager.plugin_entry(namespace, name),
          do: {:error, {:plugin_not_found, name}}
+  end
+
+  @doc """
+  Wait, at most `timeout` ms, until no other node of the namespace's hub still
+  resolves plugin `name`: they drop its record only when its removal reaches
+  them, and a convergence tick there before that brings a binding back up
+  against it. Answers the nodes still holding it when the time runs out; a
+  node that does not answer holds nothing.
+  """
+  @spec await_forgotten(binary(), binary(), non_neg_integer()) ::
+          {:ok, :forgotten} | {:error, [node()]}
+  def await_forgotten(namespace, name, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    nodes = HubManager.get_hub_nodes(namespace)
+
+    Poll.until(deadline, Durations.get(:plugin_forget_poll_ms), fn ->
+      case Enum.filter(nodes, &resolves?(&1, namespace, name)) do
+        [] -> {:ok, :forgotten}
+        holding -> {:error, holding}
+      end
+    end)
+  end
+
+  defp resolves?(node, namespace, name) do
+    timeout = Durations.get(:plugin_call_timeout_ms)
+    match?({:ok, _}, :erpc.call(node, __MODULE__, :entry, [namespace, name], timeout))
+  catch
+    _kind, _reason -> false
   end
 
   @doc "The relays bound to plugin `name` in `namespace`."
