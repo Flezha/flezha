@@ -496,7 +496,10 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "the latch reports once per episode and clears when input resumes", %{header: header} do
-    on_exit(TestHelpers.override_env(:input_silence_timeout_ms, @stall_ms))
+    # Long enough that the sweep right after the input that resumes it never
+    # reads it silent on a loaded machine; the silences are aged, not waited.
+    timeout = 5_000
+    on_exit(TestHelpers.override_env(:input_silence_timeout_ms, timeout))
 
     class = "SilenceLatch" <> uniq()
     on_exit(fn -> ClassRegistry.delete(class) end)
@@ -508,7 +511,7 @@ defmodule Flezha.State.WatchdogTest do
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
     :ok = WalWriter.append(w, 1, header, "a")
-    TestHelpers.age_writer(w, @stall_ms * 2)
+    TestHelpers.age_writer(w, timeout * 2)
 
     :ok = Watchdog.sweep_now()
     assert_receive {:input_silence, _, %{relay_class: ^class}}, 1_000
@@ -521,7 +524,7 @@ defmodule Flezha.State.WatchdogTest do
     :ok = WalWriter.append(w, 2, header, "b")
     :ok = Watchdog.sweep_now()
 
-    TestHelpers.age_writer(w, @stall_ms * 2)
+    TestHelpers.age_writer(w, timeout * 2)
     :ok = Watchdog.sweep_now()
     assert_receive {:input_silence, _, %{relay_class: ^class}}, 1_000
   end

@@ -24,6 +24,9 @@ defmodule Flezha.Service.Cli.ListenTest do
   alias FlezhaTest.Helper.CliCapture
   alias FlezhaTest.Helper.NodeTestHelper
 
+  # How long a listen over staged frames runs: the frames pass through the
+  # receiver first, so the window leaves room for that on a loaded machine.
+  @window_ms 500
   setup :set_mimic_global_until_exit
 
   setup do
@@ -70,7 +73,12 @@ defmodule Flezha.Service.Cli.ListenTest do
           })
 
           forward("again", %{"input_type" => "2"})
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
+
+          Cli.call(
+            "Relay.listen",
+            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]),
+            []
+          )
         end)
 
       assert out ==
@@ -85,7 +93,12 @@ defmodule Flezha.Service.Cli.ListenTest do
           preview("hel", %{"channel" => "answer", "flz.part" => "0", "flz.part_attempt" => "1"})
           forward("hello", %{"channel" => "answer"})
           notice("in")
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
+
+          Cli.call(
+            "Relay.listen",
+            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]),
+            []
+          )
         end)
 
       assert [part, output, notice] = String.split(out, "\n", trim: true)
@@ -104,9 +117,9 @@ defmodule Flezha.Service.Cli.ListenTest do
           forward("hello", %{"channel" => "answer"})
           notice("in")
 
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]),
-            output: "json"
-          )
+          Cli.call(
+            "Relay.listen",
+            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]), output: "json")
         end)
 
       assert [part, output, notice] =
@@ -125,9 +138,9 @@ defmodule Flezha.Service.Cli.ListenTest do
           forward("hello", %{"channel" => "echo", "flz.key" => "k"})
           forward(<<255, 0>>, %{"flz.key" => <<255>>})
 
-          Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]),
-            output: "json"
-          )
+          Cli.call(
+            "Relay.listen",
+            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]), output: "json")
         end)
 
       assert out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1) == [
@@ -255,7 +268,7 @@ defmodule Flezha.Service.Cli.ListenTest do
       in_caller(fn ->
         Cli.call(
           "Relay.listen",
-          Jason.encode!(["default", "op", "input", %{window_ms: 10}]),
+          Jason.encode!(["default", "op", "input", %{window_ms: @window_ms}]),
           []
         )
       end)
@@ -275,7 +288,11 @@ defmodule Flezha.Service.Cli.ListenTest do
 
     test "an output listener takes the output chain and the previews" do
       in_caller(fn ->
-        Cli.call("Relay.listen", Jason.encode!(["ns", "op", "output", %{window_ms: 10}]), [])
+        Cli.call(
+          "Relay.listen",
+          Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]),
+          []
+        )
       end)
 
       assert [{:enable, {_id, plugin, _}}, {:detach, _}] = calls()
@@ -468,7 +485,7 @@ defmodule Flezha.Service.Cli.ListenTest do
       "flz.call_duration_ms" => 0
     })
 
-    Cli.call("Relay.listen", Jason.encode!(["ns", "op", "calls", %{window_ms: 10}]), opts)
+    Cli.call("Relay.listen", Jason.encode!(["ns", "op", "calls", %{window_ms: @window_ms}]), opts)
   end
 
   defp timeout_error, do: Flezha.Error.new("call.timeout", relay: "op", deadline_ms: 100)
