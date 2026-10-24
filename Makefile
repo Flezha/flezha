@@ -39,7 +39,7 @@ nif-release:
 test:
 	mix test
 
-# Format every language; `python3 scripts/naming_gate.py --run @format` is the gate
+# Format every language; `python3 scripts/run_gates.py --run @format` is the gate
 fmt:
 	scripts/format-apply.sh
 

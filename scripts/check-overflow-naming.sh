@@ -26,7 +26,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 PATTERNS = [re.compile(p) for p in (
     # The enum, in every SDK's spelling — `::` Rust, `.` Java, `#` javadoc link.
@@ -97,10 +97,10 @@ KAFKA_POLICY = [re.compile(p) for p in (
     r"[Bb]lock[- ]mode\b",
 )]
 
-policy = naming_gate.pattern_check(PATTERNS, ALLOWED)
-kafka_policy = naming_gate.pattern_check(KAFKA_POLICY)
+policy = gate_support.pattern_check(PATTERNS, ALLOWED)
+kafka_policy = gate_support.pattern_check(KAFKA_POLICY)
 
-sys.exit(naming_gate.walk(
+sys.exit(gate_support.walk(
     check=lambda rel, line: policy(rel, line)
     or (kafka_policy(rel, line) if rel.startswith(KAFKA_SCOPE) else []),
     prefilter=lambda text: "lock" in text or "LOCK" in text,

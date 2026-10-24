@@ -32,7 +32,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 REFERENCE = "docs/public/configuration/vm_arguments.md"
 TEMPLATES = ["rel/vm.args.eex", "rel/remote.vm.args.eex"]
@@ -51,7 +51,7 @@ def squash(text):
 def cannot_judge(reason):
     """This gate has no answer either way, which is not the same as a clean tree."""
     print(reason, file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 
 
 def read(path):
@@ -94,7 +94,7 @@ for template in TEMPLATES:
     for flag in sorted(says - sets):
         failures.append(f"{REFERENCE} documents `{flag}` as shipped, which {template} does not set")
 
-sys.exit(naming_gate.report(
+sys.exit(gate_support.report(
     failures,
     headline="the VM arguments the release ships and the configuration reference disagree:",
     hint=f"Every flag a template sets belongs in that template's block in {REFERENCE}, "

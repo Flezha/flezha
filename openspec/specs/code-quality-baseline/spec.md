@@ -531,7 +531,7 @@ occurrence of the retired name in any tracked human-readable file. Compilation a
 test suite verify code references only; a retired name surviving in a specification,
 a document, a comment or a string compiles, tests and runs while being wrong.
 
-The gate SHALL extend the repository's shared naming-gate walk rather than introduce a
+The gate SHALL extend the repository's shared gate walk (`scripts/gate_support.py`) rather than introduce a
 second gate mechanism, and SHALL provide a recorded-history escape so that a note
 citing a retired name as history is not an offence.
 
@@ -1312,7 +1312,7 @@ ended the run and said nothing about the six languages behind it.
 
 - **GIVEN** a gate row in group `sdk-node`
 - **WHEN** `node-sdk.yml` runs its checks and the clean run runs `@clean`
-- **THEN** both run that row through `python3 scripts/naming_gate.py --run`, neither carries the
+- **THEN** both run that row through `python3 scripts/run_gates.py --run`, neither carries the
   row's command itself, and a row added to the group reaches both with no other edit
 
 #### Scenario: A noisy green is a finding
@@ -1525,7 +1525,7 @@ baseline SHALL only shrink (`load_baseline`).
 
 - **WHEN** a file under `lib/flezha/runner/` names a module defined under `lib/flezha/service/`
   and the reference is not in the baseline
-- **THEN** `python3 scripts/naming_gate.py --run layer-direction` SHALL exit `1` naming the file
+- **THEN** `python3 scripts/run_gates.py --run layer-direction` SHALL exit `1` naming the file
   and the module
 
 #### Scenario: An unranked directory is refused

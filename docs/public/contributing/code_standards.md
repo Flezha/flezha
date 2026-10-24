@@ -154,14 +154,14 @@ Every check CI runs is a gate, the test suites included, and every gate is a
 row in `scripts/gate_rows.py`. That list is the one place a gate is added: each
 workflow's check steps select rows by group, so a new row reaches CI with no
 other edit, and a workflow cannot spell a check of its own.
-`scripts/naming_gate.py` runs the rows, so what you run is what CI runs:
+`scripts/run_gates.py` runs the rows, so what you run is what CI runs:
 
 ```sh
-$ python3 scripts/naming_gate.py --list            # every gate and its command
-$ python3 scripts/naming_gate.py --list @core      # the rows one group selects
-$ python3 scripts/naming_gate.py --run @naming     # the naming and structure gates
-$ python3 scripts/naming_gate.py --run @format     # formatters, license headers, notices
-$ python3 scripts/naming_gate.py --run <id>        # one gate
+$ python3 scripts/run_gates.py --list            # every gate and its command
+$ python3 scripts/run_gates.py --list @core      # the rows one group selects
+$ python3 scripts/run_gates.py --run @naming     # the naming and structure gates
+$ python3 scripts/run_gates.py --run @format     # formatters, license headers, notices
+$ python3 scripts/run_gates.py --run <id>        # one gate
 ```
 
 A row may run in a directory of its own, under extra environment and a time

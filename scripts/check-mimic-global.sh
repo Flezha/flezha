@@ -30,7 +30,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 WRAPPER = "test/helpers/mimic_global.ex"
 
@@ -46,8 +46,8 @@ PATTERNS = [re.compile(p) for p in (
     r"\bset_mimic_from_context\b",
 )]
 
-sys.exit(naming_gate.walk(
-    check=naming_gate.pattern_check(PATTERNS),
+sys.exit(gate_support.walk(
+    check=gate_support.pattern_check(PATTERNS),
     pathspec=("test/",),
     path_filter=lambda rel: rel != WRAPPER,
     prefilter=lambda text: "set_mimic" in text,

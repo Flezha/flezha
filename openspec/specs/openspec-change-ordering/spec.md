@@ -102,7 +102,7 @@ worker asks it before checking the first box.
 
 ### Requirement: The ordering gate SHALL be reached the way every other gate is
 
-The whole-queue mode SHALL be a row in the gate registry in `scripts/naming_gate.py`, in the group
+The whole-queue mode SHALL be a row in the gate registry in `scripts/run_gates.py`, in the group
 `.github/workflows/naming.yml` runs on every pull request, so no one has to know it exists to run
 it. Where it judges is a working tree rather than that job: `openspec/changes/` is untracked, so a
 fresh checkout carries no queue at all, and over a tree with no open change the gate SHALL report
@@ -112,7 +112,7 @@ one place at once, and SHALL exit non-zero when it printed any.
 
 #### Scenario: The gate runs with the naming group
 
-- **WHEN** `python3 scripts/naming_gate.py --run @naming` is run
+- **WHEN** `python3 scripts/run_gates.py --run @naming` is run
 - **THEN** the ordering gate SHALL run and its refusal SHALL fail the run
 
 #### Scenario: A tree carrying no open change is reported, not passed over

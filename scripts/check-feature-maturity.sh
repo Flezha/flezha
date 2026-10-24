@@ -18,7 +18,7 @@
 # It reads only what git tracks, and prints how many rows it read and each
 # entry's id with its date, so a green that means "the parser matched nothing"
 # is distinguishable from a sound record, and a long-lived entry shows on every
-# run. Exit codes are the runner's contract, which naming_gate.py documents.
+# run. Exit codes are the runner's contract, which gate_support.py documents.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -31,7 +31,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 import record_table
 
 RECORD = "docs/public/publishing/maturity.md"
@@ -176,7 +176,7 @@ def main():
         lines = read(RECORD).split("\n")
     except OSError as exc:
         print(f"Feature-maturity record is unreadable:\n\n  {RECORD}: {exc}", file=sys.stderr)
-        return naming_gate.FINDING
+        return gate_support.FINDING
 
     failures = record_table.forbidden(RECORD, lines)
     tables = {}
@@ -187,7 +187,7 @@ def main():
                             f"| {' | '.join(columns)} |")
         tables[name] = found or []
 
-    tracked = set(naming_gate.tracked_files(carried=True))
+    tracked = set(gate_support.tracked_files(carried=True))
     entries = check_rows(tables["experimental"], ENTRY_COLUMNS, failures, "entry")
     tiers = check_rows(tables["tier"], TIER_COLUMNS, failures, "tier row", "sdk-")
     check_entries(entries, tracked, failures)
@@ -196,7 +196,7 @@ def main():
     dated = ", ".join(f"{key} marked {row.get('marked')}" for key, row in entries)
     read_line = (f"experimental entries read: {len(tables['experimental'])} "
                  f"({dated or 'none'}); tier rows read: {len(tables['tier'])}")
-    record_code = naming_gate.report(
+    record_code = gate_support.report(
         failures,
         headline="The feature-maturity record and the tree disagree:",
         hint=f"{RECORD} is the one declaration. Mark a listed feature with "
@@ -205,7 +205,7 @@ def main():
         noun="problem(s)",
         ok_message=f"feature-maturity record OK - {read_line}",
     )
-    prose_code = naming_gate.walk(
+    prose_code = gate_support.walk(
         check=prose_check({key for key, _ in entries}),
         path_filter=prose,
         self_files={RECORD},

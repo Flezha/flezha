@@ -17,7 +17,7 @@ the tests read only the native library for your own platform, which
 
 Pushing a `v*` tag runs the release jobs in `.github/workflows/java-sdk.yml`.
 They run the publication readiness gate
-(`python3 scripts/naming_gate.py --run @release`), build the five native
+(`python3 scripts/run_gates.py --run @release`), build the five native
 libraries, assemble both jars, and publish them as GitHub Release assets with a
 SHA-256 manifest.
 

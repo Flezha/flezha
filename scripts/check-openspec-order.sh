@@ -64,9 +64,9 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
-CHANGES = naming_gate.OPENSPEC_CHANGES
+CHANGES = gate_support.OPENSPEC_CHANGES
 ARCHIVE = os.path.join(CHANGES, "archive")
 
 DECLARATION = re.compile(r"^Depends-On:\s*(\S.*?)\s*$")
@@ -149,11 +149,11 @@ def rings(edges):
 
 def judge_queue():
     """Whole-queue mode: is the record honest, and has anyone jumped it?"""
-    opened = naming_gate.open_changes()
+    opened = gate_support.open_changes()
     if not opened:
         print(f"openspec order: no open change to judge ({CHANGES}/ is untracked, "
               "so a fresh checkout carries none)")
-        return naming_gate.OK
+        return gate_support.OK
 
     names_of = {change_id: declared(change_id) for change_id in opened}
     refusals = []
@@ -171,7 +171,7 @@ def judge_queue():
             refusals.append(f"{change_id} has a checked task while `{dep}` is still "
                             f"open; `{dep}` must be archived first")
 
-    return naming_gate.report(
+    return gate_support.report(
         sorted(refusals),
         headline="the openspec queue's Depends-On record is wrong:",
         hint=HINT,
@@ -181,18 +181,18 @@ def judge_queue():
 
 def judge_pickup(change_id):
     """Pick-up mode: may this change be started now?"""
-    opened = naming_gate.open_changes()
+    opened = gate_support.open_changes()
     if change_id not in opened:
         print(f"check-openspec-order.sh: {change_id} is not an open change under "
               f"{CHANGES}/", file=sys.stderr)
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
 
     names = declared(change_id)
     refusals = record_refusals(change_id, names, opened)
     refusals.extend(f"`{dep}` is still open; it must be archived before "
                     f"{change_id} is picked up"
                     for dep in names or () if dep != change_id and dep in opened)
-    return naming_gate.report(
+    return gate_support.report(
         refusals,
         headline=f"{change_id} cannot be picked up yet:",
         hint=HINT,
@@ -202,6 +202,6 @@ def judge_pickup(change_id):
 argv = sys.argv[1:]
 if len(argv) > 1:
     print("usage: check-openspec-order.sh [<change-id>]", file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 sys.exit(judge_pickup(argv[0]) if argv else judge_queue())
 PY

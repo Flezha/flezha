@@ -58,7 +58,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Assert the Java native surface against the declared table
-        run: python3 scripts/naming_gate.py --run rust-test-ffi-jni
+        run: python3 scripts/run_gates.py --run rust-test-ffi-jni
 
   # Java <-> Elixir integration matrix: end to end, which is the half the Java
   # repository cannot run. The submodule is what it runs the Java runtime from,
@@ -170,7 +170,7 @@ jobs:
       # clone cannot be recalled, a published SDK cannot be withdrawn. An OWED
       # entry does not stop the release; an open BLOCKING one does.
       - name: Publication readiness
-        run: python3 scripts/naming_gate.py --run @release
+        run: python3 scripts/run_gates.py --run @release
 
       - name: Set up Java
         uses: ./.github/actions/setup-java

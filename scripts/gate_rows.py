@@ -1,6 +1,6 @@
 """The gate list: every check this repository runs, one row per gate.
 
-`scripts/naming_gate.py` is the runner and the only reader of `GATES`; a gate is
+`scripts/run_gates.py` is the runner and the only reader of `GATES`; a gate is
 added here and nowhere else.
 """
 
@@ -46,7 +46,7 @@ def noisy(row, out, err):
 # ---------------------------------------------------------------------------
 # The gate registry. One row per gate; `--run` is the one reader.
 #
-# A gate is declared here and nowhere else: CI runs `naming_gate.py --run @<group>`
+# A gate is declared here and nowhere else: CI runs `run_gates.py --run @<group>`
 # rather than re-spelling one step per gate, so adding a gate is a row and a
 # workflow that forgets to call it is not a thing that can happen. A row is
 # `id`, `group` and `argv`. `tools` names what the gate needs on PATH together
@@ -93,8 +93,8 @@ GATES = (
      "argv": ["scripts/check-openspec-scenarios.sh"]},
     {"id": "build-artifacts-tracked", "group": "naming",
      "argv": ["scripts/check-build-artifacts.sh", "tracked"]},
-    {"id": "naming-gate-self-test", "group": "naming",
-     "argv": ["python3", "scripts/naming_gate.py", "--self-test"]},
+    {"id": "run-gates-self-test", "group": "naming",
+     "argv": ["python3", "scripts/run_gates.py", "--self-test"]},
     {"id": "layer-direction-self-test", "group": "naming",
      "argv": ["scripts/check-layer-direction.sh", "--self-test"]},
     {"id": "openspec-scenarios-self-test", "group": "naming",

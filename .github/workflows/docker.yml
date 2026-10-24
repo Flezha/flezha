@@ -52,4 +52,4 @@ jobs:
       - name: Enforce size budgets
         # Row `image-size` in scripts/gate_rows.py: the budgets, the measured
         # sizes and the step-summary table.
-        run: python3 scripts/naming_gate.py --run @docker
+        run: python3 scripts/run_gates.py --run @docker

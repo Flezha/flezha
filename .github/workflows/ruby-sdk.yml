@@ -61,7 +61,7 @@ jobs:
       # the point of the feature gate: a machine with no Ruby, no JVM and no
       # Node still builds it.
       - name: The ABI scenario through the Ruby veneer, and the crate without one
-        run: python3 scripts/naming_gate.py --run rust-test-ffi-ruby,rust-build-ffi
+        run: python3 scripts/run_gates.py --run rust-test-ffi-ruby,rust-build-ffi
 
       - name: The feature is additive
         # Enabling `ruby` adds the extension's module registration and removes

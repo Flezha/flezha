@@ -40,7 +40,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 BASELINE = "scripts/live-env-in-tests-baseline.txt"
 ROW_TABLES = ("lib/flezha/config/keys.ex", "lib/flezha/config/duration_rows.ex")
@@ -76,7 +76,7 @@ if len(VARIABLES) < FLOOR:
           f"{' and '.join(ROW_TABLES)}; the row shape has moved and this gate "
           "is measuring nothing. Fix the derivation before trusting a green.",
           file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 
 # The write, and the three ways its name reaches it other than as a literal.
 WRITE = re.compile(r"System\.put_env\(\s*((?:[^,()]|\([^)]*\))+)")
@@ -149,7 +149,7 @@ def check(rel, line):
     return state["check"](rel, line)
 
 
-sys.exit(naming_gate.walk_baselined(
+sys.exit(gate_support.walk_baselined(
     check=check,
     baseline=BASELINE,
     what="set one",

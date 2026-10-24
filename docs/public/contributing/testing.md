@@ -12,6 +12,25 @@ $ mix test
 That runs the controller's unit and integration tests and the static gate of
 the cross-SDK suite, and starts no runner. Slower slices of the suite, called
 tiers, are left out of a plain run and are included by their tag.
+`scripts/test.sh` runs the same and passes its arguments on, so
+`scripts/test.sh test/flezha/convergence` runs one directory.
+
+## The full suite
+
+```sh
+$ scripts/test-full.sh --list   # every row and its command, nothing run
+$ scripts/test-full.sh          # run them all
+```
+
+The full suite is every row CI checks: the compiles with warnings as errors,
+the controller's suites, the `:system` and `:multi_node` tiers, the Rust
+crates, every SDK, the plugins and the repository's gates. It runs six rows
+at a time and takes about ten minutes on a developer machine. Each row is
+reported `PASS`, `FAIL`, `NOISY` (green, but with a stray warning or log line)
+or `NO ANSWER`. The logs land in `storage/test-runs/<time>/`: one
+`<row>.log` per row and the verdicts in `summary.txt`. A failed row runs again
+on its own with `python3 scripts/run_gates.py --run <row>`. No limit applies to
+the whole run, but each row has its own, so a hung row cannot stall it.
 
 ## One SDK at a time
 
@@ -64,10 +83,10 @@ Every check a workflow runs, the suites included, is a row in
 group here and you run what CI runs:
 
 ```sh
-$ python3 scripts/naming_gate.py --list @core      # what a group runs
-$ python3 scripts/naming_gate.py --run @core       # the controller's compile and suites
-$ python3 scripts/naming_gate.py --run @sdk-java   # one SDK's gates and smoke tier
-$ python3 scripts/naming_gate.py --run <id>        # one row
+$ python3 scripts/run_gates.py --list @core      # what a group runs
+$ python3 scripts/run_gates.py --run @core       # the controller's compile and suites
+$ python3 scripts/run_gates.py --run @sdk-java   # one SDK's gates and smoke tier
+$ python3 scripts/run_gates.py --run <id>        # one row
 ```
 
 `--list` with no group prints every row and the group it is in. A runtime's

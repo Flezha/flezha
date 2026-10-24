@@ -1,6 +1,6 @@
 # Modules that build a fixture in their own `setup` and stay that way, each with
 # the reason. Read by scripts/check-test-fixture.sh through
-# `naming_gate.load_baseline`, so the rule that list carries applies: it MAY
+# `gate_support.load_baseline`, so the rule that list carries applies: it MAY
 # ONLY SHRINK. An entry the tree no longer holds fails the gate, so a module
 # that later moves onto `FlezhaTest.Case` must come off this list.
 #

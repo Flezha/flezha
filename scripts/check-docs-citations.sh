@@ -95,7 +95,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 ALLOWLIST = "scripts/docs-citation-allowlist.txt"
 SELF_FILES = {ALLOWLIST, "scripts/check-docs-citations.sh", ".github/workflows/naming.yml"}
@@ -104,7 +104,7 @@ SELF_FILES = {ALLOWLIST, "scripts/check-docs-citations.sh", ".github/workflows/n
 # through a tracked symlink for its test app. An index walk sees neither the
 # files inside the submodule nor the names reached through the link, and would
 # call every citation into one dead.
-TRACKED = set(naming_gate.tracked_files(carried=True))
+TRACKED = set(gate_support.tracked_files(carried=True))
 # Every tail of every tracked path, so a citation written from an SDK's own root
 # (`lib/flezha/runner.rb`) or with a `.../` elision resolves without the
 # gate having to know which roots this repository nests.
@@ -127,11 +127,11 @@ try:
         MAVEN_MODULES = {m.strip() for m in re.findall(r"<module>([^<]+)</module>", _fh.read())}
 except OSError as exc:
     print(f"cannot read {MAVEN_POM}, so no Maven module can be judged: {exc}", file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 if not MAVEN_MODULES:
     print(f"{MAVEN_POM} lists no <module> entries, so no Maven module can be judged",
           file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 
 SOURCE_EXT_SKIP = {".md"}
 NAME = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")
@@ -174,7 +174,7 @@ def squash(text):
 
 
 for rel in TRACKED:
-    if os.path.splitext(rel)[1] in SOURCE_EXT_SKIP or os.path.splitext(rel)[1] in naming_gate.BINARY_EXT:
+    if os.path.splitext(rel)[1] in SOURCE_EXT_SKIP or os.path.splitext(rel)[1] in gate_support.BINARY_EXT:
         continue
     try:
         with open(rel, encoding="utf-8") as fh:
@@ -397,7 +397,7 @@ def check_telemetry(line):
     return out
 
 
-allowlist = naming_gate.load_allowlist(ALLOWLIST)
+allowlist = gate_support.load_allowlist(ALLOWLIST)
 scoped = {}
 
 
@@ -419,7 +419,7 @@ def in_scope(rel):
             and os.path.basename(rel) != "CHANGELOG.md")
 
 
-code = naming_gate.walk(
+code = gate_support.walk(
     check=check,
     pathspec=["*.md"],
     path_filter=in_scope,

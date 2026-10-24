@@ -42,7 +42,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: The ABI scenario, driven through the Node veneer
-        run: python3 scripts/naming_gate.py --run rust-test-ffi-napi
+        run: python3 scripts/run_gates.py --run rust-test-ffi-napi
 
       - name: The feature is additive
         # Enabling `napi` adds one exported symbol and removes none, and the

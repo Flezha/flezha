@@ -38,7 +38,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 # The public local-mode surface: the files a user's import or a reader's link
 # reaches. Not a scope for prose — see SURFACE below for what is judged here.
@@ -94,11 +94,11 @@ if missing:
     print("\nCorrect scripts/check-local-mode-naming.sh: a gate that stopped "
           "reading a file is indistinguishable from a clean tree.\n",
           file=sys.stderr)
-    sys.exit(naming_gate.FINDING)
+    sys.exit(gate_support.FINDING)
 
-symbol = naming_gate.pattern_check(SYMBOL)
-surface = {False: naming_gate.pattern_check([DECLARATION]),
-           True: naming_gate.pattern_check([DECLARATION, HEADING])}
+symbol = gate_support.pattern_check(SYMBOL)
+surface = {False: gate_support.pattern_check([DECLARATION]),
+           True: gate_support.pattern_check([DECLARATION, HEADING])}
 
 # A path under a test directory is not part of the public surface, so it is
 # never read: `tests/`, `test/`, `src/test/` and a `*_test`/`*_tests` file.
@@ -112,7 +112,7 @@ def check(rel, line):
         found = surface[rel.endswith(".md")](rel, line)
     return found
 
-sys.exit(naming_gate.walk(
+sys.exit(gate_support.walk(
     check=check,
     prefilter=lambda text: "ocal" in text or "OCAL" in text,
     # The gate's own files carry the retired shapes as data.

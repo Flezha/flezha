@@ -30,12 +30,12 @@ runs:
 
     - name: Compile the third-party dependencies
       shell: bash
-      run: python3 scripts/naming_gate.py --run @deps
+      run: python3 scripts/run_gates.py --run @deps
 
     - name: Build the testnet bundle
       if: inputs.testnet == 'true'
       shell: bash
-      run: python3 scripts/naming_gate.py --run core-testnet
+      run: python3 scripts/run_gates.py --run core-testnet
 
     - name: The SDK's gates and the shared smoke tier
       # The reference runner every case boots, the fake controller the SDK's
@@ -43,5 +43,5 @@ runs:
       # scripts/gate_rows.py.
       shell: bash
       run: |
-        python3 scripts/naming_gate.py \
+        python3 scripts/run_gates.py \
           --run core-prep-runner,sdk-fake-controller,@sdk-${{ inputs.runtime }}

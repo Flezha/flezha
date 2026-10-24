@@ -26,7 +26,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 # A third-party action that installs a language toolchain. `actions/checkout`,
 # `upload-artifact`, `taiki-e/install-action` and `fsfe/reuse-action` install no
@@ -63,7 +63,7 @@ def check(_rel, line):
     return []
 
 
-sys.exit(naming_gate.walk(
+sys.exit(gate_support.walk(
     check=check,
     source="disk",
     roots=[".github/workflows"],

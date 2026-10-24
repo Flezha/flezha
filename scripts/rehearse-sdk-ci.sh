@@ -18,7 +18,7 @@
 #
 # What cannot run here is printed as NOT REHEARSED, never passed over in
 # silence: the macOS and Windows arms, and the jobs that need their output.
-# Exit codes are the runner's contract, which naming_gate.py documents.
+# Exit codes are the runner's contract, which gate_support.py documents.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

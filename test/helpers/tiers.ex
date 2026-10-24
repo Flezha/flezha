@@ -246,11 +246,11 @@ defmodule FlezhaTest.Tiers do
 
   @doc """
   The commands of the gate rows a workflow runs. A workflow spells no `mix test`
-  line of its own: it selects rows with `naming_gate.py --run <spec>`, itself or
+  line of its own: it selects rows with `run_gates.py --run <spec>`, itself or
   through a composite action of this repository it uses. A `${{ ... }}` in the
   spec is read as every runtime that has a manifest, and such a spec that names
   a group some runtime does not have adds nothing for it. Any other failure
-  raises with the spec and naming_gate.py's output.
+  raises with the spec and run_gates.py's output.
   """
   @spec selected_rows(String.t()) :: String.t()
   def selected_rows(source) do
@@ -261,7 +261,7 @@ defmodule FlezhaTest.Tiers do
 
     for [_, spec] <-
           Regex.scan(
-            ~r/naming_gate\.py[\s\\]+--run\s+((?:\$\{\{[^}]*\}\}|\S)+)/,
+            ~r/run_gates\.py[\s\\]+--run\s+((?:\$\{\{[^}]*\}\}|\S)+)/,
             Enum.join([source | actions], "\n")
           ),
         runtime <- Flezha.Service.PortPilot.runtimes(),
@@ -301,9 +301,9 @@ defmodule FlezhaTest.Tiers do
   end
 
   defp list_gates!(spec) do
-    case System.cmd("python3", ["scripts/naming_gate.py", "--list", spec], stderr_to_stdout: true) do
+    case System.cmd("python3", ["scripts/run_gates.py", "--list", spec], stderr_to_stdout: true) do
       {rows, 0} -> String.split(rows, "\n", trim: true)
-      {output, _} -> raise "naming_gate.py --list #{spec} failed:\n#{output}"
+      {output, _} -> raise "run_gates.py --list #{spec} failed:\n#{output}"
     end
   end
 

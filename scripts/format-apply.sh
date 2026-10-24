@@ -2,7 +2,7 @@
 # Format every language, Rust only in the files this tree changed; with
 # `--check`, report what is unformatted across the whole workspace and write
 # nothing. The list of formatters lives here and nowhere else:
-# `python3 scripts/naming_gate.py --run formatters` is what a gate run calls,
+# `python3 scripts/run_gates.py --run formatters` is what a gate run calls,
 # and .github/workflows/format.yml calls that runner rather than re-spelling
 # the list.
 #
@@ -10,7 +10,7 @@
 # not installed takes its own language out of the report and nothing else; the
 # summary lists unavailable tools apart from unformatted trees, and so does the
 # exit status. The four codes and why the distinction is the point of this
-# script are documented once, at the top of scripts/naming_gate.py, which is
+# script are documented once, at the top of scripts/run_gates.py, which is
 # the runner every gate in this repository answers to. `gate_run` and
 # `gate_report` below are that contract in shell, for the one caller that is
 # itself a driver of several tools rather than a single check.

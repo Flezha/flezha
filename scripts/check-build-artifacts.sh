@@ -13,12 +13,12 @@
 #   scripts/check-build-artifacts.sh size         # only the packed-size check
 #
 # The `tracked` check answers a question about PATHS, not about what a file
-# says, so it does not ride `naming_gate.walk` - that walk reads every tracked
+# says, so it does not ride `gate_support.walk` - that walk reads every tracked
 # file line by line and skips binaries and `dist/` by construction, which is
 # exactly the population this gate exists to look at. It does share the
-# LISTING, `naming_gate.tracked_files`, because one gate and another asking
+# LISTING, `gate_support.tracked_files`, because one gate and another asking
 # git for two different trees is the thing that shape prevents. Its exit codes
-# are the runner's contract, which naming_gate.py documents at the top.
+# are the runner's contract, which gate_support.py documents at the top.
 #
 # A binary fixture whose bytes are the subject of a test is exempt BY PATH in
 # EXEMPT below, never by extension: the extension is what the gate is for.
@@ -33,7 +33,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 # Compiled output wherever it lands. `.pyc` is here because a runner launch
 # rewrites it, so a tracked one is a diff on every run.
@@ -53,7 +53,7 @@ CEILING_MB = 150
 
 def tracked_check():
     failures = []
-    for rel in naming_gate.tracked_files():
+    for rel in gate_support.tracked_files():
         if rel in EXEMPT:
             continue
         if os.path.splitext(rel)[1] in ARTIFACT_EXT:
@@ -130,7 +130,7 @@ requested = sys.argv[1:] or list(CHECKS)
 unknown = [name for name in requested if name not in CHECKS]
 if unknown:
     print(f"unknown check(s): {', '.join(unknown)}; known: {', '.join(CHECKS)}", file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 
 sys.exit(max(CHECKS[name]() for name in requested))
 PY

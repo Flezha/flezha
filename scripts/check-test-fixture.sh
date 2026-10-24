@@ -29,7 +29,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 BASELINE = "scripts/test-fixture-baseline.txt"
 
@@ -68,7 +68,7 @@ def check(rel, line):
     return [(rel, line.strip())]
 
 
-sys.exit(naming_gate.walk_baselined(
+sys.exit(gate_support.walk_baselined(
     check=check,
     baseline=BASELINE,
     what="build a fixture by hand",

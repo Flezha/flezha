@@ -1,6 +1,6 @@
 # Modules whose result still depends on an OS variable a runner reads while it
 # is running, each with the reason. Read by scripts/check-live-env-in-tests.sh
-# through `naming_gate.load_baseline`, so the rule that list carries applies:
+# through `gate_support.load_baseline`, so the rule that list carries applies:
 # it MAY ONLY SHRINK. An entry the tree no longer holds fails the gate, so a
 # module that later states its quantity must come off this list.
 #

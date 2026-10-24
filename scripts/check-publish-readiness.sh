@@ -25,7 +25,7 @@
 #
 # Both arms print how many entries they read, so a green that means "the parser
 # matched nothing" is distinguishable from a green that means the record is
-# sound. Exit codes are the runner's contract, which naming_gate.py documents.
+# sound. Exit codes are the runner's contract, which gate_support.py documents.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -36,7 +36,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 import record_table
 
 RECORD = "docs/internal/publishing/readiness.md"
@@ -136,7 +136,7 @@ def shape_check(lines, entries):
 
     failures += record_table.forbidden(RECORD, lines)
 
-    code = naming_gate.report(
+    code = gate_support.report(
         failures,
         headline="Publication-readiness record is malformed:",
         hint=f"Every entry carries {', '.join(COLUMNS[:-1])}; `settled-by` is filled in "
@@ -149,13 +149,13 @@ def shape_check(lines, entries):
 
     if not entries:
         print(f"{RECORD} carries no entries at all", file=sys.stderr)
-        return naming_gate.FINDING
+        return gate_support.FINDING
 
     print(
         f"publication-readiness record OK - {len(entries)} entries read, "
         f"{blocking} blocking, {len(entries) - blocking} owed"
     )
-    return naming_gate.OK
+    return gate_support.OK
 
 
 def release_check(_lines, entries):
@@ -189,13 +189,13 @@ def release_check(_lines, entries):
             f"`settled-by`. An OWED entry does not stop a release and none is listed here.",
             file=sys.stderr,
         )
-        return naming_gate.FINDING
+        return gate_support.FINDING
 
     print(
         f"publication readiness OK - {blocking} blocking entries, all settled "
         f"({len(entries)} entries read)"
     )
-    return naming_gate.OK
+    return gate_support.OK
 
 
 ARMS = {"--shape": shape_check, "--release": release_check}
@@ -208,14 +208,14 @@ if unknown or len(argv) != 1:
         f"  unknown or repeated argument(s): {', '.join(unknown) or 'too many'}",
         file=sys.stderr,
     )
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 
 # Read once, here, so an unreadable record is one answer rather than one per
 # arm. Each arm below is then a judgement over what was read and nothing else.
 record_lines, record_entries, read_error = read_entries()
 if read_error:
     print(f"Publication-readiness record is unreadable:\n\n  {read_error}", file=sys.stderr)
-    sys.exit(naming_gate.FINDING)
+    sys.exit(gate_support.FINDING)
 
 sys.exit(ARMS[argv[0]](record_lines, record_entries))
 PY

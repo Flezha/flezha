@@ -13,14 +13,14 @@ indentation for Python and Ruby.
 
 THE BASELINE. scripts/ceilings_baseline.txt records every breaker the tree held
 when the gate landed, with its size, and the two cycle numbers. It is recorded
-debt and MAY ONLY SHRINK (`load_baseline` in scripts/naming_gate.py): a breaker
+debt and MAY ONLY SHRINK (`load_baseline` in scripts/run_gates.py): a breaker
 outside it, or one that grew, is a finding; an entry the tree no longer holds at
 that size is stale until it is lowered or deleted, so a commit that shrinks a
 breaker lowers its line in the same commit.
 
     python3 scripts/check_ceilings.py [--write-baseline | --self-test]
 
-Exit codes are the runner's (scripts/naming_gate.py): 3 when the baseline or
+Exit codes are the runner's (scripts/run_gates.py): 3 when the baseline or
 `mix xref` gave no answer.
 """
 
@@ -29,7 +29,7 @@ import re
 import subprocess
 import sys
 
-import naming_gate
+import gate_support
 import production_code
 
 FILE_MAX, FN_MAX = 800, 50
@@ -249,29 +249,29 @@ def main(args):
         return self_test()
     if args not in ([], ["--write-baseline"]):
         print("usage: check_ceilings.py [--write-baseline | --self-test]", file=sys.stderr)
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
     try:
         measured = measure()
     except subprocess.CalledProcessError as exc:
         print(f"{' '.join(exc.cmd)} failed, so nothing can be judged:\n{exc.stderr}",
               file=sys.stderr)
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
     if args:
         with open(BASELINE, "w", encoding="utf-8") as fh:
             fh.write(BASELINE_HEADER + "".join(f"{k} {v}\n" for k, v in sorted(measured.items())))
         print(f"recorded {len(measured)} entries in {BASELINE}")
-        return naming_gate.OK
+        return gate_support.OK
     try:
-        recorded = naming_gate.load_baseline(BASELINE)
+        recorded = gate_support.load_baseline(BASELINE)
     except OSError as exc:
         print(f"cannot read {BASELINE}, so nothing can be judged: {exc}", file=sys.stderr)
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
     findings, hits = judge(measured, recorded)
-    found = naming_gate.report(
+    found = gate_support.report(
         findings, headline="over a ceiling (file 800, function 50, cycles may only fall):",
         hint="Split it, or shrink it back under its recorded size.", noun="breaker(s)",
         ok_message=None)
-    stale = naming_gate.stale_baseline(BASELINE, recorded, hits,
+    stale = gate_support.stale_baseline(BASELINE, recorded, hits,
                                        "hold at that size; lower or delete them")
     if not found and not stale:
         print(f"ceilings OK — {len(recorded)} recorded, 0 new or grown")
@@ -307,12 +307,12 @@ def self_test():
     measured = dict(brace_functions("\n".join(lines), ".rs", test_lines))
     if measured != {"ok": 5}:
         problems.append(f"  rust test module: measured {measured}")
-    with naming_gate.scratch_tree({"kept.rs": "fn f() {}\n", "gone.rs": "fn f() {}\n"}) as repo:
+    with gate_support.scratch_tree({"kept.rs": "fn f() {}\n", "gone.rs": "fn f() {}\n"}) as repo:
         os.remove("gone.rs")
         listed = production_code.row_files(repo, ["."], untracked=True)
         if listed != ["kept.rs"]:
             problems.append(f"  tracked file deleted, not staged: listed {listed}")
-    return naming_gate.self_test_verdict("check_ceilings", problems, f" ({len(cases)} cases)")
+    return gate_support.self_test_verdict("check_ceilings", problems, f" ({len(cases)} cases)")
 
 
 if __name__ == "__main__":

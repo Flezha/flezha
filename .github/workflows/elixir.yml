@@ -86,4 +86,4 @@ jobs:
         # uncaptured [error] line fails it, so a test that drives a failure path
         # wraps it in ExUnit.CaptureLog and asserts the message. `@contract`
         # regenerates the committed prost output and fails on a diff.
-        run: python3 scripts/naming_gate.py --run @core,rust-test-core,rust-test-runner,@contract
+        run: python3 scripts/run_gates.py --run @core,rust-test-core,rust-test-runner,@contract

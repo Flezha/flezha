@@ -40,7 +40,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 SPECS = "openspec/specs"
 
@@ -113,15 +113,15 @@ def read(path):
 
 
 def judge():
-    opened = naming_gate.open_changes()
+    opened = gate_support.open_changes()
     if not opened:
-        print(f"openspec scenarios: no open change to judge ({naming_gate.OPENSPEC_CHANGES}/ "
+        print(f"openspec scenarios: no open change to judge ({gate_support.OPENSPEC_CHANGES}/ "
               "is untracked, so a fresh checkout carries none and this run checked nothing)")
-        return naming_gate.OK
+        return gate_support.OK
 
     refusals = []
     for change_id in opened:
-        change = os.path.join(naming_gate.OPENSPEC_CHANGES, change_id)
+        change = os.path.join(gate_support.OPENSPEC_CHANGES, change_id)
         notes = "\n".join(read(os.path.join(change, name)) or "" for name in NOTES)
         specs = os.path.join(change, "specs")
         for capability in sorted(os.listdir(specs)) if os.path.isdir(specs) else ():
@@ -135,7 +135,7 @@ def judge():
                 f"`Removes scenario: {scenario}` to its proposal.md or design.md"
                 for title, scenario in dropped(delta, published, notes))
 
-    return naming_gate.report(
+    return gate_support.report(
         refusals,
         headline="an open change would delete published scenarios on archive:",
         hint="A MODIFIED block replaces the whole requirement: copy every scenario "
@@ -182,7 +182,7 @@ def self_test():
                for name, (delta, _, *notes) in cases.items()}
     problems = [f"  {name}: got {answers[name]}, expected {want}"
                 for name, (_, want, *_) in cases.items() if answers[name] != want]
-    return naming_gate.self_test_verdict("check-openspec-scenarios", problems,
+    return gate_support.self_test_verdict("check-openspec-scenarios", problems,
                                          f" ({len(cases)} cases)")
 
 
@@ -191,6 +191,6 @@ if argv == ["--self-test"]:
     sys.exit(self_test())
 if argv:
     print("usage: check-openspec-scenarios.sh [--self-test]", file=sys.stderr)
-    sys.exit(naming_gate.NO_ANSWER)
+    sys.exit(gate_support.NO_ANSWER)
 sys.exit(judge())
 PY

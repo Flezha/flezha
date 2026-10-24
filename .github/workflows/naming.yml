@@ -53,12 +53,12 @@ name: Naming
 # red stops being read. That arm is group `release`, run by the tag-triggered
 # release job before it builds anything.
 #
-# Every gate here is a ROW in scripts/naming_gate.py, and `--run @naming` is the
+# Every gate here is a ROW in scripts/run_gates.py, and `--run @naming` is the
 # one reader. This file lists no gate by name, so a gate cannot be added to the
 # repository and left uncalled by CI, which is what nine hand-written steps
 # allowed. `--list` prints the table; `--run <id>` runs one.
 #
-# Most of these gates also share one walk (scripts/naming_gate.py), whose
+# Most of these gates also share one walk (scripts/run_gates.py), whose
 # recorded-history escape hatch decides which lines each gate reads. Its
 # self-test, itself a row, proves that escape scopes to its own block: it runs
 # the walk over a throwaway git tree where a whole record on one line, a
@@ -123,7 +123,7 @@ jobs:
         with:
           submodules: true
       - name: Every naming, structure and weight gate
-        run: python3 scripts/naming_gate.py --run @naming
+        run: python3 scripts/run_gates.py --run @naming
 
   # The size ceilings (file 800, function 50, the compile cycles) against their
   # baseline, and `cargo clippy --workspace --all-targets` with warnings denied:
@@ -145,7 +145,7 @@ jobs:
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
       - name: The ceilings and clippy over every target
-        run: python3 scripts/naming_gate.py --run @ceilings,rust-clippy
+        run: python3 scripts/run_gates.py --run @ceilings,rust-clippy
 
   repo-size:
     runs-on: ubuntu-latest
@@ -155,4 +155,4 @@ jobs:
         with:
           fetch-depth: 0
       - name: check-build-artifacts size
-        run: python3 scripts/naming_gate.py --run @history
+        run: python3 scripts/run_gates.py --run @history

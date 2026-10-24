@@ -153,7 +153,7 @@ jobs:
         # release test and on java the cross-SDK interop scenario) and the
         # multi-node tier.
         run: |
-          python3 scripts/naming_gate.py \
+          python3 scripts/run_gates.py \
             --run @deps,core-compile,core-prep-runner,@e2e-${{ matrix.runtime }},e2e-multi-node
 
       - name: Upload the conformance report

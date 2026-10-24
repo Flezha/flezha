@@ -148,6 +148,22 @@ Decide which ones, then specify each in OpenSpec. -->
 
 Each one is also a git submodule of this repository, under `sdk/<language>`.
 
+## Development
+
+You need Elixir 1.17 or later and a stable Rust toolchain, plus Node.js for
+the WebSocket test server.
+
+```sh
+$ git clone --recurse-submodules https://github.com/flezha/flezha.git
+$ cd flezha
+$ make build && mix test.setup   # compile everything, build the test server
+$ scripts/test.sh                # the controller's tests (mix test)
+$ scripts/test-full.sh           # everything CI checks; --list prints each command
+```
+
+[Setting up a checkout](docs/public/contributing/setting_up.md) and
+[running the tests](docs/public/contributing/testing.md) have the details.
+
 ## Contributing
 
 Contributions are welcome, and each one needs a signed [CLA](docs/public/contributing/cla.md).

@@ -63,7 +63,7 @@
 # a deliberate structural move, and like every recording in this repository it
 # is a judgement, not a reset: what it absorbs is exactly what the gate exists
 # to report. Exit 3 means the gate reached no verdict rather than the tree being
-# dirty; `scripts/naming_gate.py` documents the four codes.
+# dirty; `scripts/run_gates.py` documents the four codes.
 #
 # `--self-test` runs the whole judgement over a throwaway tree with known
 # answers, including the one claim the gate is built on: that moving a file
@@ -81,7 +81,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 LIB = "lib/flezha"
 BASELINE = "scripts/layer-direction-baseline.txt"
@@ -186,7 +186,7 @@ DOC_LINE = re.compile(r"^\s*@(?:module|type|)doc\b")
 
 
 def source_files():
-    return [rel for rel in naming_gate.disk_files([LIB]) if rel.endswith(".ex")]
+    return [rel for rel in gate_support.disk_files([LIB]) if rel.endswith(".ex")]
 
 
 def directory_of(rel):
@@ -314,13 +314,13 @@ def main(args):
             "usage: check-layer-direction.sh [--write-baseline | --self-test]",
             file=sys.stderr,
         )
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
 
     try:
         found = census()
     except Broken as broken:
         print(broken, file=sys.stderr)
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
 
     if write:
         with open(BASELINE, "w", encoding="utf-8") as fh:
@@ -331,10 +331,10 @@ def main(args):
         return 0
 
     try:
-        recorded = naming_gate.load_baseline(BASELINE)
+        recorded = gate_support.load_baseline(BASELINE)
     except OSError as exc:
         print(f"cannot read {BASELINE}, so nothing can be judged: {exc}", file=sys.stderr)
-        return naming_gate.NO_ANSWER
+        return gate_support.NO_ANSWER
 
     new = sorted(found - recorded)
     closed = sorted(recorded - found)
@@ -435,7 +435,7 @@ end
     }
 
     failures = []
-    with naming_gate.scratch_tree(tree):
+    with gate_support.scratch_tree(tree):
         os.makedirs("scripts", exist_ok=True)
         found = census()
         if found != expected:
@@ -486,7 +486,7 @@ end
         if main([]) != 1:
             failures.append("a baseline entry the tree no longer holds did not fail the gate")
 
-    return naming_gate.self_test_verdict("check-layer-direction",
+    return gate_support.self_test_verdict("check-layer-direction",
                                          [f"  {line}" for line in failures])
 sys.exit(main(sys.argv[1:]))
 PY

@@ -40,7 +40,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
-import naming_gate
+import gate_support
 
 RETIRED = (
     "Flezha.State.Registry",
@@ -55,8 +55,8 @@ RETIRED = (
 
 PATTERNS = [re.compile(re.escape(path) + r"\b") for path in RETIRED]
 
-sys.exit(naming_gate.walk(
-    check=naming_gate.pattern_check(PATTERNS),
+sys.exit(gate_support.walk(
+    check=gate_support.pattern_check(PATTERNS),
     prefilter=lambda text: "Flezha." in text,
     # The gate's own files carry the retired names as data.
     self_files={"scripts/check-module-naming.sh", ".github/workflows/naming.yml"},
