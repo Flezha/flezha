@@ -627,10 +627,17 @@ defmodule Flezha.Convergence.DiffTest do
       assert Enum.map(Planner.plan(delta, Backoff.new(:heal), max_ops: 5), & &1.primitive) ==
                List.duplicate(:rebind_relay, 5)
 
-      assert [%{primitive: :restart_plugin, target: "r"} | rest] =
-               Planner.plan(delta, Backoff.new(:heal), max_ops: 5, unmet_last: unmet_last)
+      # Over the cap, a waiting op makes room; the plan keeps its order.
+      assert Enum.map(
+               Planner.plan(delta, Backoff.new(:heal), max_ops: 5, unmet_last: unmet_last),
+               & &1.primitive
+             ) == List.duplicate(:rebind_relay, 4) ++ [:restart_plugin]
 
-      assert length(rest) == 4
+      # Within the cap, nothing moves.
+      assert Enum.map(
+               Planner.plan(delta, Backoff.new(:heal), unmet_last: unmet_last),
+               & &1.primitive
+             ) == List.duplicate(:rebind_relay, 5) ++ [:restart_plugin]
     end
 
     test "unbound relays bind via rebind_relay (un-park), not a no-op" do

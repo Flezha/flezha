@@ -62,27 +62,38 @@ defmodule Flezha.Convergence.Planner do
 
   @doc """
   The ops `delta` calls for, past their cooldowns, at most `opts[:max_ops]` of
-  them before the stall ladder. The keys in `opts[:unmet_last]` found their
-  precondition unmet last tick and are planned after every other op, so ops
-  that keep waiting take turns with the rest instead of filling every tick.
+  them before the stall ladder, in prerequisite order. When there are more, the
+  ops whose keys are in `opts[:unmet_last]` (their precondition was unmet last
+  tick) are the ones left out, so ops that keep waiting take turns with the
+  rest instead of filling every tick.
   """
   @spec plan(Diff.t(), Backoff.t(), keyword()) :: [op()]
   def plan(%Diff{} = delta, %Backoff{} = backoff, opts \\ []) do
     max_ops = Keyword.get(opts, :max_ops, @default_max_ops)
     unmet_last = Keyword.get(opts, :unmet_last, MapSet.new())
 
-    {waiting, ready} =
+    planned =
       delta
       |> ordered_ops(backoff)
       |> Backoff.filter(backoff, &key/1)
-      |> Enum.split_with(&MapSet.member?(unmet_last, key(&1)))
-
-    planned = Enum.take(ready ++ waiting, max_ops)
+      |> within_cap(max_ops, unmet_last)
 
     # The ladder is appended past `max_ops` on purpose: a relay that has
     # stopped producing must not be starved by a large structural divergence
     # filling the tick's budget.
     planned ++ stall_ops(delta, backoff, planned)
+  end
+
+  # The first `max_ops` ops, the waiting ones counted last, kept in their
+  # prerequisite order.
+  defp within_cap(ops, max_ops, _unmet_last) when length(ops) <= max_ops, do: ops
+
+  defp within_cap(ops, max_ops, unmet_last) do
+    {waiting, ready} =
+      ops |> Enum.with_index() |> Enum.split_with(&MapSet.member?(unmet_last, key(elem(&1, 0))))
+
+    kept = (ready ++ waiting) |> Enum.take(max_ops) |> MapSet.new(&elem(&1, 1))
+    for {op, i} <- Enum.with_index(ops), MapSet.member?(kept, i), do: op
   end
 
   @doc "The per-tick op cap when the caller names none."
