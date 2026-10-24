@@ -29,3 +29,13 @@ v0.1.0-alpha.1 pre-release.
   `cli.protocol_unsupported` after five seconds. `flz controller start`, the
   `flz plugin install | uninstall | sync` verbs and `flz mcp`'s knowledge tools
   with no controller still start a VM of their own.
+
+### Fixed
+
+- The convergence loop no longer lets heals that keep waiting fill every tick.
+  Twenty or more relays it could not place, such as relays whose factory no
+  runner offers, took the whole per-tick budget, so a plugin whose controller
+  died was never restarted elsewhere. A heal that found its precondition unmet
+  now waits behind the others on the next tick.
+- A `ctx.effect` result kept while the relay's input log stops is answered to the
+  runner instead of failing with `internal.uncatalogued`.

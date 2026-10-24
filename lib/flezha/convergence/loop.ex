@@ -314,9 +314,9 @@ defmodule Flezha.Convergence.Loop do
 
     {state, delta} = plan_delta(state, intent, reality)
 
-    plan = Planner.plan(delta, state.backoff)
-    {backoff, issued} = execute_plan(plan, state.backoff)
-    state = %{state | backoff: backoff}
+    plan = Planner.plan(delta, state.backoff, unmet_last: state.unmet)
+    {backoff, issued, unmet} = execute_plan(plan, state.backoff)
+    state = %{state | backoff: backoff, unmet: unmet}
 
     reclaim_vacant_hubs(reality)
 
@@ -487,14 +487,14 @@ defmodule Flezha.Convergence.Loop do
   defp execute_plan(plan, backoff) do
     now = System.monotonic_time(:millisecond)
 
-    Enum.reduce(plan, {backoff, 0}, fn op, {acc_backoff, count} ->
+    Enum.reduce(plan, {backoff, 0, MapSet.new()}, fn op, {acc_backoff, count, unmet} ->
       case Heal.execute(op) do
         :unmet ->
-          {acc_backoff, count}
+          {acc_backoff, count, MapSet.put(unmet, Planner.key(op))}
 
         result ->
           {Backoff.update(acc_backoff, Planner.key(op), ladder_outcome(op, result), now),
-           count + 1}
+           count + 1, unmet}
       end
     end)
   end

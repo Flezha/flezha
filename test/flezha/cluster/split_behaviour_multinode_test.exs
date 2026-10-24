@@ -65,6 +65,14 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
   test "the cut-off controller stops, the other two run every relay, the heal runs each once",
        %{namespace: ns, peers: [p1, p2, p3] = peers, hub_id: hub_id} do
     relays = start_relays(p1, ns)
+
+    # A start returns once the relay is placed; its process starts on its
+    # controller after that.
+    assert wait(fn ->
+             Enum.sum(Enum.map(peers, &length(running(&1, hub_id)))) == length(relays)
+           end),
+           "the relays never all ran"
+
     cut_off = running(p3, hub_id)
     assert cut_off != [], "no relay landed on the controller that is cut off"
 

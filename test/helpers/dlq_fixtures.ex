@@ -6,6 +6,7 @@ defmodule FlezhaTest.Helper.DlqFixtures do
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   alias Flezha.Dlq.Store
+  alias Flezha.Observability.TestSinks
   alias FlezhaTest.Helper.NodeTestHelper
 
   @doc """
@@ -23,6 +24,9 @@ defmodule FlezhaTest.Helper.DlqFixtures do
     Application.put_env(:flezha, :dlq, Keyword.merge(previous, [dir: dir] ++ opts))
 
     on_exit(fn ->
+      # An append a worker cast before the test ended still writes here; the
+      # store handles it before the directory goes.
+      if store = Process.whereis(Store), do: TestSinks.settle(store)
       Application.put_env(:flezha, :dlq, previous)
       File.rm_rf!(dir)
     end)

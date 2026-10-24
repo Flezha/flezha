@@ -345,8 +345,7 @@ defmodule Flezha.State.InputLog.Server do
   @impl true
   def terminate(_reason, state) do
     if state.file_handle do
-      # The answers still owed name records this sync makes durable.
-      if :file.datasync(state.file_handle) == :ok, do: Syncer.answer(Enum.reverse(state.owed))
+      settle_owed(state)
       _ = :file.close(state.file_handle)
     end
 
@@ -355,6 +354,16 @@ defmodule Flezha.State.InputLog.Server do
     # Linked, but a `:normal` exit would not take it along.
     if state.syncer, do: send(state.syncer, :stop)
     :ok
+  end
+
+  # The answers still owed name records a sync makes durable. The companion
+  # gives them behind the effect answers it already holds, so every caller is
+  # answered before this process is gone; with no live companion, this loop
+  # syncs and answers its own.
+  defp settle_owed(%{syncer: syncer} = state) do
+    owed = Enum.reverse(state.owed)
+    synced? = is_pid(syncer) and Syncer.call(syncer, &{:sync, owed, &1, &2}) == :ok
+    if not synced? and :file.datasync(state.file_handle) == :ok, do: Syncer.answer(owed)
   end
 
   # ---------- Internals ----------

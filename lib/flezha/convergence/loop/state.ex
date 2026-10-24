@@ -26,6 +26,10 @@ defmodule Flezha.Convergence.Loop.State do
             timers: %{},
             tick_pending?: false,
             backoff: Backoff.new(:heal),
+            # The backoff keys of the ops last tick that found their
+            # precondition unmet: planned after every other op this tick, so
+            # ops that keep waiting cannot hold the per-tick cap for ever.
+            unmet: MapSet.new(),
             # {kind, target} => %{at, args}: everything a site declared through
             # `Flezha.Convergence.Facts.declare/1` that is not yet repaired.
             facts: %{},

@@ -60,15 +60,24 @@ defmodule Flezha.Convergence.Planner do
     stalled_relays: [:resync_runner, :rebind_relay]
   ]
 
+  @doc """
+  The ops `delta` calls for, past their cooldowns, at most `opts[:max_ops]` of
+  them before the stall ladder. The keys in `opts[:unmet_last]` found their
+  precondition unmet last tick and are planned after every other op, so ops
+  that keep waiting take turns with the rest instead of filling every tick.
+  """
   @spec plan(Diff.t(), Backoff.t(), keyword()) :: [op()]
   def plan(%Diff{} = delta, %Backoff{} = backoff, opts \\ []) do
     max_ops = Keyword.get(opts, :max_ops, @default_max_ops)
+    unmet_last = Keyword.get(opts, :unmet_last, MapSet.new())
 
-    planned =
+    {waiting, ready} =
       delta
       |> ordered_ops(backoff)
       |> Backoff.filter(backoff, &key/1)
-      |> Enum.take(max_ops)
+      |> Enum.split_with(&MapSet.member?(unmet_last, key(&1)))
+
+    planned = Enum.take(ready ++ waiting, max_ops)
 
     # The ladder is appended past `max_ops` on purpose: a relay that has
     # stopped producing must not be starved by a large structural divergence

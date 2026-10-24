@@ -616,6 +616,39 @@ defmodule Flezha.State.InputLogTest do
     end
   end
 
+  describe "a kept effect's answer" do
+    # Fails when: a log stopped while its companion still holds an effect
+    # answer exits first, and the caller gets the exit instead of `:kept`.
+    test "reaches the caller when the log stops before the companion gave it",
+         %{class: class} do
+      {:ok, 0} = InputLog.append(class, "m0", %{})
+      {:ok, 1} = InputLog.append(class, "m1", %{})
+      # The first effect opens the effect log through the companion.
+      :kept = InputLog.keep_effect(class, 0, "id-0", "cell", "r0")
+      {:ok, log} = Supervisor.lookup({class, :input_log})
+      syncer = :sys.get_state(log).syncer
+      true = :erlang.suspend_process(syncer)
+
+      caller = Task.async(fn -> InputLog.keep_effect(class, 1, "id-1", "cell", "r1") end)
+      assert wait_until(fn -> length(InputLog.effect_results(class, -1)) == 2 end, 2_000)
+
+      stopper = Task.async(fn -> GenServer.stop(log) end)
+
+      assert wait_until(
+               fn ->
+                 not Process.alive?(log) or
+                   Process.info(log, :current_function) ==
+                     {:current_function, {Flezha.State.InputLog.Syncer, :call, 2}}
+               end,
+               2_000
+             )
+
+      true = :erlang.resume_process(syncer)
+      assert Task.await(caller) == :kept
+      assert Task.await(stopper) == :ok
+    end
+  end
+
   describe "the instance's tail" do
     test "is the floor and the last offset; what lies above the floor is owed",
          %{class: class} do

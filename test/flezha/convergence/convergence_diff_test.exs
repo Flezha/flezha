@@ -611,6 +611,28 @@ defmodule Flezha.Convergence.DiffTest do
       assert length(Planner.plan(delta, Backoff.new(:heal), max_ops: 5)) == 5
     end
 
+    # fails when: ops whose precondition stays unmet fill every tick's cap,
+    # and a repair behind them is never planned.
+    test "ops unmet last tick go after the rest, so a capped plan reaches a repair" do
+      p = plugin("lost")
+      waiting = for i <- 1..5, do: {:ns, "w#{i}"}
+
+      delta = %Diff{
+        unbound_relays: waiting,
+        unhealthy_plugins: [{{:ns, "r"}, "lost", p, {:down, :killed}}]
+      }
+
+      unmet_last = MapSet.new(waiting, fn {_ns, id} -> {:rebind_relay, id} end)
+
+      assert Enum.map(Planner.plan(delta, Backoff.new(:heal), max_ops: 5), & &1.primitive) ==
+               List.duplicate(:rebind_relay, 5)
+
+      assert [%{primitive: :restart_plugin, target: "r"} | rest] =
+               Planner.plan(delta, Backoff.new(:heal), max_ops: 5, unmet_last: unmet_last)
+
+      assert length(rest) == 4
+    end
+
     test "unbound relays bind via rebind_relay (un-park), not a no-op" do
       delta = %Diff{unbound_relays: [{:ns, "parked"}]}
 
