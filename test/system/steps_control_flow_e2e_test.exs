@@ -723,10 +723,12 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
       await_status(relay_id, "error", 30_000)
 
+      # The markers come on the data stream and the status on the control
+      # stream, so a marker can land just after the status.
       for key <- ~w(a b c) do
-        assert File.exists?(
-                 Paths.compensation_marker_path({relay_id, "keyed_commit", key}, :done)
-               ),
+        done = Paths.compensation_marker_path({relay_id, "keyed_commit", key}, :done)
+
+        assert NodeTestHelper.wait_until(fn -> File.exists?(done) end, 10_000),
                "the keyed Cell #{key} was not compensated"
       end
 
