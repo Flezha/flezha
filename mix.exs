@@ -318,6 +318,10 @@ defmodule Flezha.MixProject do
         "docs/public/topics/deploying/clustering.md",
         "docs/public/topics/deploying/kubernetes.md",
         "docs/public/topics/deploying/telemetry_and_metrics.md",
+        "docs/public/console/console.md",
+        "docs/public/console/console_docker.md",
+        "docs/public/console/console_kubernetes.md",
+        "docs/public/console/console_bare_metal.md",
         "docs/public/architecture/overview.md",
         "docs/public/architecture/kernel.md",
         "docs/public/architecture/flow_profile.md",
@@ -360,6 +364,7 @@ defmodule Flezha.MixProject do
         Plugins: ~r"docs/public/topics/plugins/",
         "Plugin catalogue": ~r"docs/public/plugins/",
         Deploying: ~r"docs/public/topics/deploying/",
+        Console: ~r"docs/public/console/",
         Architecture: ~r"docs/public/architecture/",
         Reference: ~r"docs/public/(errors|troubleshooting/|publishing/maturity)",
         Contributing: ~r"docs/public/contributing/"

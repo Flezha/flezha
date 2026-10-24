@@ -95,6 +95,13 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [Kubernetes](kubernetes.md): A controller and its runners run on Kubernetes as they run in Docker or Docker Compose: the same images, the same settings as environment variables, and a shared folder for the Unix sockets the runner reaches the controller through.
 - [Telemetry and metrics](telemetry_and_metrics.md): The controller describes what it does as signals: counts and measurements (metrics), and single happenings such as a refusal or a restart (events).
 
+## Console
+
+- [The console](console.md): The console is Flezha's web console: a Phoenix app you run beside your controllers.
+- [The console on Docker](console_docker.md): One Compose file runs a controller, the console and the console's database on one machine.
+- [The console on Kubernetes](console_kubernetes.md): The console runs as one Deployment in the namespace `flezha`, beside the controllers that [Kubernetes](kubernetes.md) runs from the reference manifests.
+- [The console on bare metal](console_bare_metal.md): The console runs as a release on the machine, started by systemd, beside a controller release on the same machine.
+
 ## Reference
 
 - [Errors](errors.md): Every failure Flezha reports carries one shape, on every surface: the `flz` CLI, the published consumer API, the SDK administration door, spawn, a runner connect and every SDK.
