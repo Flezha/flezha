@@ -2,7 +2,7 @@ defmodule Flezha.Api.RpcSurfaceTest do
   @moduledoc """
   The negative control for `FlezhaTest.Helper.RpcSurface`. A resolver that never
   refused anything would let both consumer gates pass vacuously, so the six
-  names `flezha_ui` calls today and this tree does not answer are asserted
+  names `flezha_console` calls today and this tree does not answer are asserted
   here, each in its own class.
   """
   use ExUnit.Case, async: true

@@ -190,7 +190,7 @@ fn other_callers() -> (BTreeSet<String>, Vec<String>) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
 
-    let console = read("docs/internal/api/consumers/flezha_ui.txt")
+    let console = read("docs/internal/api/consumers/flezha_console.txt")
         .lines()
         .filter_map(|line| line.strip_prefix("Flezha.Service.")?.split('/').next())
         .map(String::from)

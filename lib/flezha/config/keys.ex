@@ -640,7 +640,7 @@ defmodule Flezha.Config.Keys do
     {:image, :string, nil, runtimes: [:build], env: "FLEZHA_IMAGE"},
     {:rebuild_image, :bool, false, runtimes: [:build], env: "FLEZHA_REBUILD_IMAGE"},
     {:release_base_url, :string, nil, runtimes: [:php], env: "FLEZHA_RELEASE_BASE_URL"},
-    {:ui_path, :path, nil, runtimes: [:build], env: "FLEZHA_UI_PATH"},
+    {:console_path, :path, nil, runtimes: [:build], env: "FLEZHA_CONSOLE_PATH"},
     # A directory of bare repositories a distribution build fetches from in
     # place of the organisation's remotes.
     {:git_mirror, :path, nil, runtimes: [:build], env: "FLEZHA_GIT_MIRROR"},

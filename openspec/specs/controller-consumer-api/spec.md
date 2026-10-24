@@ -268,7 +268,7 @@ rule rather than a copy of it, so data a caller may not read never leaves the co
 
 ### Requirement: Every call the console makes SHALL be on the published surface
 
-Every entry of `docs/internal/api/consumers/flezha_ui.txt` SHALL be a function listed in
+Every entry of `docs/internal/api/consumers/flezha_console.txt` SHALL be a function listed in
 `docs/internal/api/consumers/published.txt` or one of the context-free reads (`Flezha.Service.Admin.context/2`, and, until the console
 calls it, `Flezha.AuthZ.TokenStore.verify/1`, plus `Flezha.AuthZ.enforcement_posture/0`), and the
 consumer-surface test SHALL assert it. Its record of console calls known not to resolve SHALL hold
@@ -283,7 +283,7 @@ names them.
 
 #### Scenario: A retired operation the console still calls is recorded with its survivor
 
-- **WHEN** `Relay.list_relays` is withdrawn while `docs/internal/api/consumers/flezha_ui.txt` still names <!-- docs-citation-record:begin -->`Flezha.Service.Relay.list_relays/2`<!-- docs-citation-record:end -->
+- **WHEN** `Relay.list_relays` is withdrawn while `docs/internal/api/consumers/flezha_console.txt` still names <!-- docs-citation-record:begin -->`Flezha.Service.Relay.list_relays/2`<!-- docs-citation-record:end -->
 - **THEN** the record SHALL name that call and `Relay.list`, the test SHALL pass, and a regenerated manifest that no longer names it SHALL fail the test until the record entry is removed
 
 ### Requirement: A caller SHALL be able to read which operations its role grants

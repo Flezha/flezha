@@ -2,7 +2,7 @@ defmodule Flezha.Service.DlqTest do
   @moduledoc """
   `Flezha.Dlq.Store` is a store: it deletes what it is told to delete. The
   console reaches it directly — `Flezha.Dlq.Store.drop/2` is one of the six DLQ
-  call sites in `docs/internal/api/consumers/flezha_ui.txt` — so a console drop lands
+  call sites in `docs/internal/api/consumers/flezha_console.txt` — so a console drop lands
   *below* the gate `platform-authn-authz` requires of exactly that verb, and
   below the audit the CLI's own drop emits.
 

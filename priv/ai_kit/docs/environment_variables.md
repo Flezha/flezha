@@ -324,6 +324,7 @@ Read by the build, the image or the shell wrappers rather than the controller.
 <!-- config-keys:begin build -->
 | Variable | Type | Default |
 |---|---|---|
+| `FLEZHA_CONSOLE_PATH` | path | unset |
 | `FLEZHA_CONTAINER_USER` | string | unset |
 | `FLEZHA_COOKIE_FILE` | path | unset |
 | `FLEZHA_DIST_TLS_OPTFILE` | path | unset |
@@ -337,5 +338,4 @@ Read by the build, the image or the shell wrappers rather than the controller.
 | `FLEZHA_STATE_DIR` | path | `storage/app/state` |
 | `FLEZHA_STORAGE_ROOT` | path | `storage` |
 | `FLEZHA_TESTNET_WS_PORT` | int | `4500` |
-| `FLEZHA_UI_PATH` | path | unset |
 <!-- config-keys:end -->

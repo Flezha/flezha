@@ -3,7 +3,7 @@ defmodule FlezhaTest.Helper.RpcSurface do
   Resolves `Module.function/arity` names a consumer spells at runtime against
   this tree's real exports.
 
-  `flezha_ui` reaches the controller by name, calling modules over `:erpc`, and
+  `flezha_console` reaches the controller by name, calling modules over `:erpc`, and
   gets no compiler to check it. A rename compiles clean on both sides, so the
   break is reported here, in the run that causes it.
 

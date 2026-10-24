@@ -1,16 +1,16 @@
 defmodule Flezha.Api.ConsumerSurfaceTest do
   @moduledoc """
-  `flezha_ui` is this platform's console and reaches the controller by runtime
+  `flezha_console` is this platform's console and reaches the controller by runtime
   name over `:erpc`. Its `mix.exs` does not depend on this project, so no
   compiler sees both sides and a rename here compiles clean in both trees,
   failing only on a user's machine.
 
-  `docs/internal/api/consumers/flezha_ui.txt` records what the console calls, and this
+  `docs/internal/api/consumers/flezha_console.txt` records what the console calls, and this
   test resolves every line of it against this tree's real exports. The break is
   caused here, so it is reported here, in the run that causes it.
 
   Two things keep the gate honest. A vendored manifest is a second source of
-  truth, so when `FLEZHA_UI_PATH` names a consumer checkout the manifest is
+  truth, so when `FLEZHA_CONSOLE_PATH` names a consumer checkout the manifest is
   regenerated from it and any difference in the call set fails. And an entry
   that does not resolve is listed below rather than tolerated: a new break fails
   the run, and a repaired one fails it too, until the line is removed from the
@@ -20,7 +20,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
 
   alias FlezhaTest.Helper.RpcSurface
 
-  @manifest "docs/internal/api/consumers/flezha_ui.txt"
+  @manifest "docs/internal/api/consumers/flezha_console.txt"
   @published "docs/internal/api/consumers/published.txt"
   @generator "scripts/consumer_surface.py"
 
@@ -108,7 +108,7 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   end
 
   test "a manifest that describes a consumer which has moved on is refused", ctx do
-    checkout = System.get_env("FLEZHA_UI_PATH")
+    checkout = System.get_env("FLEZHA_CONSOLE_PATH")
 
     if checkout in [nil, ""] do
       # CI has no consumer checkout; the always-on half above is the gate there.

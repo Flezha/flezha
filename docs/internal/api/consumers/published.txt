@@ -3,7 +3,7 @@
 # Every function here takes a Flezha.Service.CallerContext as its LAST argument,
 # authorizes through it before any effect, and answers data rather than text
 # formatted for a terminal. A consumer of this controller calls these and
-# nothing else; docs/internal/api/consumers/flezha_ui.txt records what one consumer
+# nothing else; docs/internal/api/consumers/flezha_console.txt records what one consumer
 # actually calls, and every call recorded there is on this list.
 #
 # Hand-maintained, and test/flezha/api/consumer_surface_test.exs holds it to
