@@ -160,7 +160,9 @@ defmodule Flezha.Service.ListenerTest do
     test "a group's member reports are summed, each with the epoch it counts in" do
       %{pid: pid, receiver: receiver} = listening(direction: :tally, tally_ms: 3_600_000)
       send(receiver, {:tally_report, "op#p0", 1, %{"prices" => 2, "" => 0}})
-      assert_receive {:event, ^pid, {:tally, %{"prices" => 2}, %{epochs: %{"op#p0" => 1}}}}
+
+      assert_receive {:event, ^pid, {:tally, %{"prices" => 2}, %{epochs: %{"op#p0" => 1}}}},
+                     2_000
 
       # Within the interval: held back, then handed on once with both members.
       send(receiver, {:tally_report, "op#p1", 7, %{"prices" => 3, "" => 1}})
