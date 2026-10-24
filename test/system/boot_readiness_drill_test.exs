@@ -39,9 +39,7 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @dockerfile "deploy/docker/prod/Dockerfile.controller"
-  # Well under the 45 s reconcile grace a node with no peers must not wait out,
-  # with room for a loaded machine.
-  @ready_within_ms 20_000
+  @ready_within_ms 10_000
 
   setup do
     on_exit(TestHelpers.override_env(:healthz_port, 0))
@@ -128,6 +126,16 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
     assert Durations.get(:process_hub_reconcile_grace_ms) > @ready_within_ms
 
     HubRegistryTestHelper.stop_new_hubs_on_exit()
+
+    # The verdict covers every hub on the node, so a hub an earlier test left
+    # still reseating its relays would hold this boot's: it starts from a node
+    # with nothing pending.
+    assert NodeTestHelper.wait_until(
+             fn -> not HubManager.durable_registry_pending?() end,
+             30_000
+           ),
+           "a hub left by another test kept relays pending: " <>
+             inspect(HubManager.get_running_namespaces())
 
     # The previous boot, leaving its registry on disk the way a restart finds it.
     namespace = "drill-no-peers-#{System.unique_integer([:positive])}"
