@@ -8,6 +8,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- The console is now named Flezha Console, in the `flezha_console` repository.
+  The build setting that points at a console checkout is `FLEZHA_CONSOLE_PATH`,
+  which replaces `FLEZHA_UI_PATH`.
 - `flz template list` and `flz template create` are removed. Each release now
   publishes every SDK language's starter project as
   `flezha-<language>-starter.tar.gz`, downloaded and unpacked with one
@@ -36,6 +39,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A `flz` verb called over Erlang distribution from another node writes its
+  refusal to that node's stderr, beside its answer. It went to the
+  controller's log, so the caller saw only the exit code.
 - A relay moved live to another controller keeps its pending timers. The move
   shipped the Cells' values without their timers or change sequence, so a
   session timer set before the move never fired, and a compaction there could
