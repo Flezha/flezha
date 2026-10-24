@@ -100,9 +100,8 @@ defmodule Flezha.Service.Cli.Context do
   # caller reaching `Flezha.Service.Cli` over `:erpc` reads the failure on its
   # own node, as it reads the answer there.
   @spec caller_stderr() :: :stderr | pid() | nil
-  defp caller_stderr do
-    with nil <- Process.get(@stderr), do: node_stderr(node(Process.group_leader()))
-  end
+  defp caller_stderr,
+    do: Process.get(@stderr) || node_stderr(node(Process.group_leader()))
 
   defp node_stderr(node) when node == node(), do: :stderr
 
