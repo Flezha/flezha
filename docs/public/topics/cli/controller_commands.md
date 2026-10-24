@@ -128,7 +128,7 @@ Lists the runners connected to a namespace, drops a runner process and readmits 
 `flz runner help` prints the group's verbs, and the [command
 reference](command_reference.md) lists each with its usage line.
 
-`check` needs no controller token and no cookie, only the socket directory:
+`check` needs no controller token, only the socket directory:
 
 ```sh
 $ flz runner check

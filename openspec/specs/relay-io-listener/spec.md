@@ -127,10 +127,9 @@ member, and the heartbeat's own disable SHALL be addressed the same way.
 
 #### Scenario: Ctrl-C ends the verb
 
-- **WHEN** SIGINT reaches a running `flz relay listen` started through the
-  release's `flzvm`
-- **THEN** the verb SHALL exit without printing the `BREAK:` menu, and the controller
-  SHALL disable its plugin
+- **WHEN** SIGINT reaches a running `flz relay listen`
+- **THEN** the verb SHALL exit, its connection to the controller SHALL close, and the
+  controller SHALL disable its plugin
 
 #### Scenario: An undeclared option is refused
 

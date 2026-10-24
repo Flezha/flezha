@@ -183,7 +183,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
     # The release's `elixir` launcher prints the command it would exec, so
     # this is the child's whole argv.
     for {bin, args} <- [
-          {"flz", ["controller", "status"]},
+          {"flz", ["plugin", "sync"]},
           {"flzvm", ["eval", "IO.puts(1)"]},
           {"flzvm", ["rpc", "IO.puts(1)"]}
         ] do
@@ -204,7 +204,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
 
       assert on_argv == []
 
-      # A verb still connects, and the controller runs with the user's HOME.
+      # `flzvm rpc` still connects, and the controller runs with the user's HOME.
       assert rpc(ctx, ~s|IO.puts(System.get_env("HOME"))|) =~ ctx.home
       refute File.exists?(Path.join(ctx.home, ".erlang.cookie"))
 

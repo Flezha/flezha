@@ -388,13 +388,13 @@ created:
 
 ## The node cookie
 
-Controllers, and `flz` reaching a controller, talk over Erlang distribution,
-which a cookie gates. The release ships none and does not fall back to a
+Controllers talk to each other over Erlang distribution, which a cookie gates.
+`flz` needs no cookie: it reaches a controller over its control socket. The release ships none and does not fall back to a
 constant. A node started without `RELEASE_COOKIE` mints one: 32 random bytes,
 written `0600` to `${FLEZHA_STATE_DIR}/cookie` (`FLEZHA_COOKIE_FILE` moves it),
 read back on later boots and announced on each. That is enough for one node.
-Only a command that starts a node writes the file; each `flz` verb only reads
-it, so a verb run before the first start reports the controller unreachable.
+Only a command that starts a node writes the file; every other release command
+only reads it.
 
 **A cluster needs a cookie you provide.** Two nodes connect only under one
 cookie given to both, so a minted cookie leaves a node clustering with nobody,
@@ -406,7 +406,7 @@ the only characters Erlang takes from a cookie file.
 
 **No command line carries the cookie**, since any local user can read one. Each
 VM the release starts that joins distribution, the controller and the one behind
-each `flz` verb, reads it from `.erlang.cookie` in a private directory under
+`flzvm remote` or `flzvm rpc`, reads it from `.erlang.cookie` in a private directory under
 the release's `tmp/home/` (`RELEASE_TMP`; `0700`, the file `0600`), one per node
 name, which the release writes from the cookie before the VM starts. Your
 `~/.erlang.cookie` is never read or created. The controller puts your own `HOME`
@@ -417,10 +417,11 @@ from `flzvm remote` or `flzvm start_iex` does not load your `~/.iex.exs`.
 
 Where the release can neither read nor mint a cookie (no `/dev/urandom`, an
 unwritable state directory, a read-only file system), it logs why and starts
-without distribution: it does not cluster, and `flz` cannot reach it. A
-rebuilt release under the default path can lose the file, and the next boot
-mints a new one; nothing breaks, since the CLI reads the same file, but a
-deployment that sets the cookie cannot meet this.
+without distribution: it does not cluster, and `flzvm remote` cannot reach it,
+though `flz` still does. A rebuilt release under the default path can lose the
+file, and the next boot mints a new one; nothing breaks, since the release
+commands read the same file, but a deployment that sets the cookie cannot meet
+this.
 
 For controllers that cross a trust boundary, point `FLEZHA_DIST_TLS_OPTFILE`
 at an `inet_tls_dist` option file (server and client certificate and CA; see

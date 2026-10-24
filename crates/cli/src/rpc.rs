@@ -1,33 +1,43 @@
-//! The one place `flz` starts the sibling `flzvm`, the one place a request is
-//! built, and the one place a failure becomes an exit code.
+//! The one place `flz` sends a request to a controller, the one place it starts
+//! the sibling `flzvm`, and the one place a failure becomes an exit code.
 //!
-//! Every verb that reaches a controller is the same shape: one door call
-//! naming a published operation, its arguments as one JSON array and the
-//! options it carries, run as `flzvm rpc <expr>`. The controller renders the
-//! answer, and a failure on this process's stderr with its class's exit code,
-//! so `flz` passes that code through and adds nothing. `flz` renders only what
-//! it decides itself: its command line, a controller it cannot reach, and an
-//! `flzvm` it cannot start. Every request ends with one options list, and the
-//! caller's token and output format join that list here and nowhere else: no
-//! verb can be gated on the controller and token-less on the wire. The
-//! arguments and the token travel on the child's stdin, never its command line,
-//! which any local user can read.
+//! Every verb that reaches a controller is the same shape: one request on the
+//! controller's UDS control socket naming a published operation, its arguments
+//! as one JSON array and the options it carries. The controller renders the
+//! answer, and a failure with its class's exit code, and sends both back as
+//! frames, so `flz` copies them through and adds nothing. `flz` renders only
+//! what it decides itself: its command line, a controller it cannot reach or
+//! that does not accept its request, and an `flzvm` it cannot start. The
+//! caller's token and output format join the options here and nowhere else: no
+//! verb can be gated on the controller and token-less on the wire, and the
+//! token travels only inside the request, over the owner-only socket.
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{exit, Child, ChildStderr, Command, ExitStatus, Stdio};
+use std::io::{self, ErrorKind, Read, Write};
+use std::net::Shutdown;
+use std::os::unix::net::UnixStream;
+use std::process::{exit, Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use std::{env, io, thread};
+use std::{env, thread};
 
 use flz_transport::errors::FlezhaError;
+use flz_transport::service::payloader;
 use flz_transport::utility::socket_dir;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 
 use crate::args::{Reading, DEFAULT_WINDOW_MS, DURATION_MS};
 
-/// One option a request carries: its key and its value already rendered as an
-/// Elixir literal — `text` for a string, `to_string` for a number, `"true"`.
-pub(crate) type Opt<'a> = (&'a str, String);
+/// One option a request carries: its key and its value.
+pub(crate) type Opt<'a> = (&'a str, Value);
+
+/// The request protocol this `flz` speaks. A controller refuses one it does
+/// not, so a mismatched pair fails clearly rather than oddly.
+const PROTOCOL: u64 = 1;
+
+/// How long a controller has to accept a request. Acceptance is immediate; a
+/// controller that never sends one does not know the request at all.
+const ACCEPT_WINDOW: Duration = Duration::from_secs(5);
 
 static JSON: OnceLock<bool> = OnceLock::new();
 
@@ -49,105 +59,253 @@ pub(crate) fn fail(error: FlezhaError) -> ! {
     exit(error.exit_code());
 }
 
-/// The one function every request to a running controller calls: the door's
-/// own name for the operation, its arguments as one JSON array, and the
-/// options list.
-const DOOR: &str = "Flezha.Service.Cli.call";
-
-/// The variable an expression names its arguments by: `request` binds it to
-/// the first line of the child's stdin before anything else runs.
-pub(crate) const ARGUMENTS: &str = "arguments";
-
 /// Run the published operation `name` on the controller with `args`, the
-/// caller's token and format appended to `opts`. Returns only when the child
-/// succeeded, so the caller's next line is its success path.
+/// caller's token and format joining `opts`. Returns only when it succeeded,
+/// so the caller's next line is its success path.
 pub(crate) fn door(name: &str, args: &[Value], opts: &[Opt], read: &Reading) {
-    settle(call(&door_request(name, args, opts, read), Out::Inherit));
+    settle(send(
+        &door_request(name, args, opts, read),
+        Out::Inherit,
+        None,
+    ));
 }
 
-/// The request `door` sends, for the calls that do not go through `door`.
-pub(crate) fn door_request(name: &str, args: &[Value], opts: &[Opt], read: &Reading) -> Request {
-    door_call(
-        name,
-        args,
-        opts,
-        read.token(),
-        read.output_format() == "json",
-    )
+/// The request `door` sends, for the calls that read its answer themselves.
+pub(crate) fn door_request(name: &str, args: &[Value], opts: &[Opt], read: &Reading) -> Value {
+    let mut opts: Map<String, Value> = (opts.iter())
+        .map(|(key, value)| (key.to_string(), value.clone()))
+        .collect();
+    if read.output_format() == "json" {
+        opts.insert("output".into(), Value::from("json"));
+    }
+    cli_request(name, args, opts, read.token())
 }
 
-/// `serde_json` keeps an object's keys sorted, so one invocation builds one
-/// request, byte for byte.
-fn door_call(name: &str, args: &[Value], opts: &[Opt], token: Option<&str>, json: bool) -> Request {
-    let arguments = Value::Array(args.to_vec()).to_string();
-    request(Some(arguments), opts, token, json, |list| {
-        format!("{}({}, {}, {})", DOOR, text(name), ARGUMENTS, list)
+/// The request that runs the published operation `name` with `args`.
+fn cli_request(name: &str, args: &[Value], opts: Map<String, Value>, token: Option<&str>) -> Value {
+    request("cli", json!({ "name": name, "args": args }), opts, token)
+}
+
+/// The request `flz mcp` answers one protocol line with.
+pub(crate) fn mcp_request(line: &str, token: Option<&str>) -> Value {
+    request("mcp", json!({ "line": line }), Map::new(), token)
+}
+
+/// One request: the protocol, the entry the controller runs it through, that
+/// entry's own fields, and the options, the caller's token among them when it
+/// has one.
+fn request(entry: &str, fields: Value, mut opts: Map<String, Value>, token: Option<&str>) -> Value {
+    if let Some(token) = token {
+        opts.insert("token".into(), Value::from(token));
+    }
+    let mut request = json!({ "protocol": PROTOCOL, "entry": entry, "opts": opts });
+    if let (Value::Object(request), Value::Object(fields)) = (&mut request, fields) {
+        request.extend(fields);
+    }
+    request
+}
+
+/// How a request ended.
+pub(crate) enum Ended {
+    /// The code the controller's `cli_exit` carried.
+    Exit(i32),
+    /// No socket, a refused connection, or one that closed before `cli_exit`.
+    Unreachable,
+    /// A controller that did not accept the request in time.
+    Unaccepted,
+}
+
+/// Where what the controller writes goes: stdout through; stdout line by line
+/// through a filter that says which lines to pass on; or stdout kept and
+/// stderr dropped, for a probe that prints nothing.
+pub(crate) enum Out<'a> {
+    Inherit,
+    Filter(&'a mut dyn FnMut(&str) -> bool),
+    Capture(&'a mut Vec<u8>),
+}
+
+/// What ends a request before it ends: asked while it runs, and once it says
+/// so the connection is closed, or the child killed and reaped.
+pub(crate) type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
+
+/// Send `request` to the controller and copy its answer to `out` and stderr as
+/// it arrives. The one function every request goes through.
+pub(crate) fn send(request: &Value, out: Out, stop: Option<Stop>) -> Ended {
+    match open(request, ACCEPT_WINDOW) {
+        Ok(stream) => answer(stream, out, stop),
+        Err(ended) => ended,
+    }
+}
+
+/// Copy an accepted request's answer, closing the connection once `stop` says
+/// so, which ends the read and, on the controller, the call.
+fn answer(mut stream: UnixStream, out: Out, stop: Option<Stop>) -> Ended {
+    let done = AtomicBool::new(false);
+    let watched = stop.zip(stream.try_clone().ok());
+
+    thread::scope(|scope| {
+        if let Some((stop, closer)) = watched {
+            let done = &done;
+            scope.spawn(move || {
+                if stopped_before(stop, || done.load(Ordering::SeqCst)) {
+                    let _ = closer.shutdown(Shutdown::Both);
+                }
+            });
+        }
+        let ended = copy(&mut stream, &mut Sink::new(out));
+        done.store(true, Ordering::SeqCst);
+        ended
     })
 }
 
-/// One request for a `flzvm` child: its expression, and the whole stdin that
-/// expression reads — the arguments line, then the token its options list
-/// reads. Only `request` builds one whose expression reads either, so an
-/// expression never reads what was not written. No `Debug`: it holds the token.
-pub(crate) struct Request {
-    expression: String,
-    stdin: String,
+/// Connect, send `request`, and wait up to `accept` for `cli_accepted`.
+fn open(request: &Value, accept: Duration) -> Result<UnixStream, Ended> {
+    let path = socket_dir::control_socket_path().map_err(|_| Ended::Unreachable)?;
+    let mut stream = UnixStream::connect(path).map_err(|_| Ended::Unreachable)?;
+    let frame = payloader::build_without_metadata("cli_request", request.to_string().as_bytes());
+    stream.write_all(&frame).map_err(|_| Ended::Unreachable)?;
+
+    stream
+        .set_read_timeout(Some(accept))
+        .map_err(|_| Ended::Unreachable)?;
+    match payloader::extract_payload(&mut stream) {
+        Ok((id, _, _)) if id == "cli_accepted" => {}
+        Ok(_) => return Err(Ended::Unaccepted),
+        Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+            return Err(Ended::Unaccepted)
+        }
+        Err(_) => return Err(Ended::Unreachable),
+    }
+    stream
+        .set_read_timeout(None)
+        .map_err(|_| Ended::Unreachable)?;
+    Ok(stream)
 }
 
-/// The request `build` makes of the options list `keyword_opts_fragment`
-/// renders. Its stdin is the arguments line when the expression reads one,
-/// then the token that list reads, which runs to the end: `serde_json` writes
-/// no raw newline, so a JSON document is one line. The line is bound to
-/// `ARGUMENTS` in a statement of its own, because Erlang leaves the order of a
-/// call's arguments undefined, and it must be read before the token.
-pub(crate) fn request(
-    arguments: Option<String>,
-    opts: &[Opt],
-    token: Option<&str>,
-    json: bool,
-    build: impl FnOnce(&str) -> String,
-) -> Request {
-    let call = build(&keyword_opts_fragment(opts, token.is_some(), json));
-    let (expression, mut stdin) = match arguments {
-        Some(line) => (
-            format!("{} = IO.read(:line); {}", ARGUMENTS, call),
-            line + "\n",
-        ),
-        None => (call, String::new()),
-    };
-    stdin.push_str(token.unwrap_or_default());
-    Request { expression, stdin }
+/// Copy the controller's frames until `cli_exit` or the connection's end.
+fn copy(stream: &mut UnixStream, sink: &mut Sink) -> Ended {
+    loop {
+        let Ok((id, bytes, _)) = payloader::extract_payload(&mut *stream) else {
+            sink.finish();
+            return Ended::Unreachable;
+        };
+        match id.as_str() {
+            "cli_stdout" => sink.stdout(&bytes),
+            "cli_stderr" => sink.stderr(&bytes),
+            "cli_exit" => {
+                sink.finish();
+                return Ended::Exit(exit_code(&bytes));
+            }
+            _ => {}
+        }
+    }
 }
 
-/// Run `module.fun` in a VM of its own (`flzvm eval`), for a verb that reaches
-/// no controller: it works where none runs, and no controller authorizes it, so
-/// it carries no token. The child prints its own answer and exits with its
-/// class's code, which `flz` passes through.
-pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
-    let request = request(None, &[], None, read.output_format() == "json", |list| {
-        let mut parts = positional.to_vec();
-        parts.push(list.to_string());
-        format!("{}.{}({})", module, fun, parts.join(", "))
-    });
-    settle(child("eval", &request, Out::Inherit, None));
+fn exit_code(frame: &[u8]) -> i32 {
+    serde_json::from_slice::<Value>(frame)
+        .ok()
+        .and_then(|exit| exit["code"].as_i64())
+        .and_then(|code| i32::try_from(code).ok())
+        .unwrap_or(1)
 }
 
-/// What `elixir --rpc-eval` says, with exit 1, whenever it could not reach the
-/// node: one that is not up yet, one whose cookie is not this shell's, a name
-/// nobody holds, and a node lost mid-call all read the same. Its exit code is
-/// the one an internal failure has, so this line is the only difference.
-const NOCONNECTION: &str = "--rpc-eval : RPC failed with reason :noconnection";
+/// Ask `stop` until `done` says the work has ended; `true` when `stop` came
+/// first.
+fn stopped_before(stop: Stop, mut done: impl FnMut() -> bool) -> bool {
+    while !done() {
+        if stop() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    false
+}
 
-/// `run`, for a verb whose job is to wait for the node: when the node could
+/// `out`, and the part of a line a filter has not been handed yet.
+struct Sink<'a> {
+    out: Out<'a>,
+    pending: Vec<u8>,
+}
+
+impl<'a> Sink<'a> {
+    fn new(out: Out<'a>) -> Self {
+        Sink {
+            out,
+            pending: Vec::new(),
+        }
+    }
+
+    fn stdout(&mut self, bytes: &[u8]) {
+        match &mut self.out {
+            Out::Inherit => {
+                let mut stdout = io::stdout().lock();
+                let _ = stdout.write_all(bytes);
+                let _ = stdout.flush();
+            }
+            Out::Capture(kept) => kept.extend_from_slice(bytes),
+            Out::Filter(_) => {
+                self.pending.extend_from_slice(bytes);
+                while let Some(end) = self.pending.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = self.pending.drain(..=end).collect();
+                    self.line(&line[..end]);
+                }
+            }
+        }
+    }
+
+    fn stderr(&mut self, bytes: &[u8]) {
+        if !matches!(self.out, Out::Capture(_)) {
+            let _ = io::stderr().write_all(bytes);
+        }
+    }
+
+    /// The last line, when the answer did not end with a newline.
+    fn finish(&mut self) {
+        if !self.pending.is_empty() {
+            let line = std::mem::take(&mut self.pending);
+            self.line(&line);
+        }
+    }
+
+    fn line(&mut self, line: &[u8]) {
+        if let Out::Filter(keep) = &mut self.out {
+            let line = String::from_utf8_lossy(line);
+            if keep(&line) {
+                println!("{}", line);
+            }
+        }
+    }
+}
+
+/// `door`, for a verb whose job is to wait for the controller: when it could
 /// not be reached at all, nothing is printed or exited, so the verb can ask
 /// again.
-pub(crate) fn run_if_reachable(request: &Request) -> Result<(), ()> {
-    match call(request, Out::Inherit) {
-        Ok(answer) if answer.unreachable => Err(()),
-        answer => {
-            settle(answer);
+pub(crate) fn run_if_reachable(request: &Value) -> Result<(), ()> {
+    match send(request, Out::Inherit, None) {
+        Ended::Unreachable => Err(()),
+        ended => {
+            settle(ended);
             Ok(())
         }
+    }
+}
+
+/// The one rule every verb's request ends with: success returns, a controller
+/// that could not be reached is `controller.unreachable`, one that did not
+/// accept the request is `cli.protocol_unsupported`, and any other failure
+/// exits with the controller's own code, whose rendering it has already sent.
+pub(crate) fn settle(ended: Ended) {
+    match ended {
+        Ended::Exit(0) => {}
+        Ended::Exit(code) => exit(code),
+        Ended::Unreachable => unreachable(),
+        Ended::Unaccepted => fail(FlezhaError::with(
+            "cli.protocol_unsupported",
+            [
+                ("got", Value::from(PROTOCOL)),
+                ("supported", Value::from("none")),
+            ],
+        )),
     }
 }
 
@@ -171,77 +329,59 @@ pub(crate) fn unreachable() -> ! {
     ))
 }
 
-/// What one `flzvm rpc` answered: its status, and whether it said the node
-/// could not be reached.
-pub(crate) struct Answer {
-    pub(crate) status: ExitStatus,
-    pub(crate) unreachable: bool,
+/// Run `module.fun` in a VM of its own (`flzvm eval`), for a verb that reaches
+/// no controller: it works where none runs, and no controller authorizes it, so
+/// it carries no token. The child prints its own answer and exits with its
+/// class's code, which `flz` passes through.
+pub(crate) fn eval(module: &str, fun: &str, positional: &[String], read: &Reading) {
+    let mut parts = positional.to_vec();
+    parts.push(match read.output_format() {
+        "json" => format!("[output: {}]", text("json")),
+        _ => "[]".to_string(),
+    });
+    let expression = format!("{}.{}({})", module, fun, parts.join(", "));
+    verdict(child(&expression, "", Out::Inherit, None));
 }
 
-/// Where a call's stdout goes: through, or line by line through a filter that
-/// says which lines to pass on.
-pub(crate) enum Out<'a> {
-    Inherit,
-    Filter(&'a mut dyn FnMut(&str) -> bool),
-}
-
-pub(crate) fn call(request: &Request, out: Out) -> io::Result<Answer> {
-    child("rpc", request, out, None)
-}
-
-/// What ends a child before it exits: asked while the child runs, and once it
-/// says so the child is killed and reaped.
-pub(crate) type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
-
-/// `call`, with the `flzvm` command named: `rpc` evaluates on the controller,
-/// `eval` in a VM of its own.
+/// Run `flzvm eval <expression>` with `stdin` as its whole input; its stdout
+/// goes to `out`, its stderr through.
 pub(crate) fn child(
-    command: &str,
-    request: &Request,
+    expression: &str,
+    stdin: &str,
     out: Out,
     stop: Option<Stop>,
-) -> io::Result<Answer> {
+) -> io::Result<ExitStatus> {
     let stdout = match out {
         Out::Inherit => Stdio::inherit(),
-        Out::Filter(_) => Stdio::piped(),
+        _ => Stdio::piped(),
     };
-    let mut child = spawn(command, request, stdout, Stdio::piped())?;
-
-    let stderr = child.stderr.take().expect("stderr is piped");
-    let forwarder = thread::spawn(move || forward_stderr(stderr));
+    let mut child = spawn(expression, stdin, stdout)?;
 
     // The child is waited for beside the read, so a stop is heard while its
     // stdout is still open; killing it closes that stdout and ends the read.
     let piped = child.stdout.take();
-    let status = thread::scope(|scope| {
+    thread::scope(|scope| {
         let waiter = scope.spawn(|| wait(&mut child, stop));
-        if let (Some(piped), Out::Filter(keep)) = (piped, out) {
-            for line in BufReader::new(piped).lines().map_while(Result::ok) {
-                if keep(&line) {
-                    println!("{}", line);
-                }
+        if let Some(mut piped) = piped {
+            let mut sink = Sink::new(out);
+            let mut chunk = [0; 8192];
+            while let Ok(read @ 1..) = piped.read(&mut chunk) {
+                sink.stdout(&chunk[..read]);
             }
+            sink.finish();
         }
         waiter.join().expect("the waiter does not panic")
-    })?;
-    let unreachable = forwarder.join().unwrap_or(false);
-
-    Ok(Answer {
-        status,
-        unreachable,
     })
 }
 
-/// Start `flzvm <command> <expression>` and write the request's stdin. The
-/// child gets no other, so nothing it reads can be a line meant for `flz`
-/// itself.
-fn spawn(command: &str, request: &Request, stdout: Stdio, stderr: Stdio) -> io::Result<Child> {
+/// Start `flzvm eval <expression>` and write its stdin. The child gets no
+/// other, so nothing it reads can be a line meant for `flz` itself.
+fn spawn(expression: &str, stdin: &str, stdout: Stdio) -> io::Result<Child> {
     let mut cmd = flzvm();
-    cmd.arg(command)
-        .arg(&request.expression)
+    cmd.arg("eval")
+        .arg(expression)
         .stdin(Stdio::piped())
-        .stdout(stdout)
-        .stderr(stderr);
+        .stdout(stdout);
     // A `flz` killed outright (SIGKILL, the OOM killer) takes the child with
     // it. The signal fires when the spawning thread exits, and every caller
     // waits for its child on that thread.
@@ -257,12 +397,11 @@ fn spawn(command: &str, request: &Request, stdout: Stdio, stderr: Stdio) -> io::
 
     // Written beside the child and closed once written, so a stop is heard
     // however long the child takes to read. A child that exits before reading
-    // closes the pipe; its own status and stderr say why, so the failed write
-    // adds nothing.
-    if let Some(mut stdin) = child.stdin.take() {
-        let input = request.stdin.clone();
+    // closes the pipe; its own status and stderr say why.
+    if let Some(mut pipe) = child.stdin.take() {
+        let input = stdin.to_string();
         thread::spawn(move || {
-            let _ = stdin.write_all(input.as_bytes());
+            let _ = pipe.write_all(input.as_bytes());
         });
     }
 
@@ -272,56 +411,15 @@ fn spawn(command: &str, request: &Request, stdout: Stdio, stderr: Stdio) -> io::
 /// Wait for `child`, killing and reaping it once `stop` says so; with nothing
 /// to stop for, a plain wait.
 fn wait(child: &mut Child, stop: Option<Stop>) -> io::Result<ExitStatus> {
-    let Some(stop) = stop else {
-        return child.wait();
-    };
-
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        if stop() {
-            let _ = child.kill();
-            return child.wait();
-        }
-        thread::sleep(Duration::from_millis(25));
+    // A failed check counts as ended: the wait below reports why.
+    if stop.is_some_and(|stop| stopped_before(stop, || !matches!(child.try_wait(), Ok(None)))) {
+        let _ = child.kill();
     }
+    child.wait()
 }
 
-// The child's stderr, passed through line by line as it arrives so a streaming
-// verb's failure is not held back, except the one line that says the node
-// could not be reached: `flz` answers that one itself.
-fn forward_stderr(stderr: ChildStderr) -> bool {
-    let mut unreachable = false;
-    let mut out = io::stderr();
-
-    for line in BufReader::new(stderr).split(b'\n').map_while(Result::ok) {
-        if line == NOCONNECTION.as_bytes() {
-            unreachable = true;
-        } else {
-            let _ = out.write_all(&line);
-            let _ = out.write_all(b"\n");
-        }
-    }
-
-    unreachable
-}
-
-/// The one rule every verb's call ends with: success returns, a child that
-/// could not reach the controller is `controller.unreachable`, and any other
-/// failure exits with the child's own code, whose rendering it has already
-/// written.
-pub(crate) fn settle(answer: io::Result<Answer>) {
-    match answer {
-        Err(e) => not_runnable(e),
-        Ok(answer) if answer.status.success() => {}
-        Ok(answer) if answer.unreachable => unreachable(),
-        Ok(answer) => exit(answer.status.code().unwrap_or(1)),
-    }
-}
-
-/// The status of a child `flz` started for something other than an rpc, judged
-/// by the same rule: a non-zero code is the child's.
+/// The status of a child `flz` started, judged by one rule: a non-zero code is
+/// the child's, which has already said why.
 pub(crate) fn verdict(status: io::Result<ExitStatus>) {
     match status {
         Err(e) => not_runnable(e),
@@ -382,8 +480,8 @@ pub(crate) fn window(read: &Reading) -> Option<Value> {
     ))
 }
 
-/// A `Command` for the sibling `flzvm`, for the three verbs that read its
-/// stdout or pass it a subcommand of their own.
+/// A `Command` for the sibling `flzvm`, for the verbs that start a VM of their
+/// own: `controller start`, the plugin-root verbs and `flz mcp` offline.
 pub(crate) fn flzvm() -> Command {
     Command::new(flzvm_path())
 }
@@ -409,12 +507,11 @@ fn exe_suffix() -> String {
     }
 }
 
-/// `value` as an Elixir string literal. A JSON string is one, and escapes a
-/// backslash as well as a quote — the one renderer for every argument that
-/// can carry JSON or free text, so no call site invents its own. An Elixir
+/// `value` as an Elixir string literal, for the expressions `flzvm eval` runs.
+/// A JSON string is one, and escapes a backslash as well as a quote. An Elixir
 /// string also interpolates `#{`, so that is escaped too: a value is never
-/// code the controller runs. The line separators and bidirectional controls
-/// Elixir refuses raw in a literal are written as `\uXXXX`.
+/// code the VM runs. The line separators and bidirectional controls Elixir
+/// refuses raw in a literal are written as `\uXXXX`.
 pub(crate) fn text(value: &str) -> String {
     let json = serde_json::Value::String(value.to_string()).to_string();
     let mut literal = String::with_capacity(json.len());
@@ -433,39 +530,16 @@ pub(crate) fn text(value: &str) -> String {
     literal.replace("#{", "\\#{")
 }
 
-/// The options list every request ends with: `opts` in the order given, then
-/// `output: "json"` when the caller asked for JSON, then the caller's identity
-/// token when the caller has one — `[]` when it carries none of them. The
-/// token's value never enters the list: the list reads it from the stdin
-/// `child` hands it on.
-fn keyword_opts_fragment(opts: &[Opt], token: bool, json: bool) -> String {
-    let mut entries: Vec<String> = opts
-        .iter()
-        .map(|(key, value)| format!("{}: {}", key, value))
-        .collect();
-
-    if json {
-        entries.push(format!("output: {}", text("json")));
-    }
-    // `child` writes the token and closes stdin, so the read ends exactly at
-    // the token's last byte.
-    if token {
-        entries.push("token: IO.read(:eof)".to_string());
-    }
-
-    format!("[{}]", entries.join(", "))
-}
-
 pub(crate) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
 
 /// Whether a controller is serving on this node — `flz reset` and
 /// `flz auth rebootstrap` both refuse to run while one is.
 ///
-/// A successful `boot_status` RPC — a liveness read served to any caller —
-/// with non-empty stdout inside the timeout means up; every other outcome (no
-/// node, timeout, distribution failure) means not up, so the caller proceeds.
-/// `FLEZHA_RESET_PROBE_OVERRIDE` short-circuits it to `up` or `down` for both
-/// callers' tests.
+/// A `boot_status` request — a liveness read served to any caller — that
+/// exits 0 with a non-empty answer inside the timeout means up; every other
+/// outcome (no socket, a refused connection, no acceptance, the timeout) means
+/// not up, so the caller proceeds. `FLEZHA_RESET_PROBE_OVERRIDE`
+/// short-circuits it to `up` or `down` for both callers' tests.
 pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
     if let Some(v) = flz_transport::env::env_raw("FLEZHA_RESET_PROBE_OVERRIDE") {
         match v.as_str() {
@@ -475,50 +549,60 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
         }
     }
 
-    let probe = door_call("Controller.boot_status", &[], &[], None, false);
-    let mut child = match spawn("rpc", &probe, Stdio::piped(), Stdio::null()) {
-        Ok(c) => c,
-        Err(_) => return false,
+    let timeout = Duration::from_millis(probe_timeout_ms.max(1));
+    let deadline = Instant::now() + timeout;
+    let probe = cli_request("Controller.boot_status", &[], Map::new(), None);
+    let Ok(stream) = open(&probe, timeout) else {
+        return false;
     };
 
-    let deadline = Instant::now() + Duration::from_millis(probe_timeout_ms);
-    match wait(&mut child, Some(&|| Instant::now() >= deadline)) {
-        Ok(status) if status.success() => {
-            let mut out = String::new();
-            if let Some(mut stdout) = child.stdout.take() {
-                let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
-            }
-            !out.trim().is_empty()
-        }
-        _ => false,
-    }
+    let mut status = Vec::new();
+    let ended = answer(
+        stream,
+        Out::Capture(&mut status),
+        Some(&|| Instant::now() >= deadline),
+    );
+    matches!(ended, Ended::Exit(0)) && !String::from_utf8_lossy(&status).trim().is_empty()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The arguments and the token are read from stdin, the arguments line
-    /// first, so neither value is on the child's command line; a call with
-    /// nothing else still ends with the list.
+    /// The token and the output format ride the options, beside whatever the
+    /// verb carries, and the arguments travel as written.
     #[test]
-    fn the_arguments_and_the_token_are_read_from_stdin() {
-        let call = door_call("Dlq.list", &[], &[], Some("abc\"def"), false);
-        assert_eq!(
-            call.expression,
-            r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Dlq.list", arguments, [token: IO.read(:eof)])"#
+    fn a_request_carries_its_options_beside_its_arguments() {
+        let fields = json!({ "name": "d\ne", "init_values": { "a": "x\"y" } });
+        let opts = Map::from_iter([("duration_ms".to_string(), Value::from(500))]);
+        let built = request(
+            "cli",
+            json!({ "name": "Schedule.add", "args": [fields] }),
+            opts,
+            Some("t"),
         );
-        assert_eq!(call.stdin, "[]\nabc\"def");
-
-        let call = door_call("Dlq.list", &[Value::Null], &[], None, false);
         assert_eq!(
-            call.expression,
-            r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Dlq.list", arguments, [])"#
+            built,
+            json!({
+                "protocol": 1,
+                "entry": "cli",
+                "name": "Schedule.add",
+                "args": [{ "name": "d\ne", "init_values": { "a": "x\"y" } }],
+                "opts": { "duration_ms": 500, "token": "t" }
+            })
         );
-        assert_eq!(call.stdin, "[null]\n");
     }
 
-    /// A value is data on the controller, never code: `#{` stays text, and a
+    /// A line `flz mcp` answers is sent as written, with the token beside it.
+    #[test]
+    fn an_mcp_request_carries_its_line() {
+        assert_eq!(
+            mcp_request("{\"id\":1}", None),
+            json!({ "protocol": 1, "entry": "mcp", "line": "{\"id\":1}", "opts": {} })
+        );
+    }
+
+    /// A value is data in the VM, never code: `#{` stays text, and a
     /// backslash before it stays a backslash.
     #[test]
     fn a_value_never_interpolates() {
@@ -536,23 +620,20 @@ mod tests {
         );
     }
 
-    /// The arguments are one JSON array on one line: a quote, a backslash and a
-    /// newline inside a value stay inside it, an object's keys come out in one
-    /// order, and the options keep theirs with the token last.
+    /// A filter is handed whole lines, however the frames split them.
     #[test]
-    fn arguments_are_one_json_line_and_options_keep_their_order() {
-        let fields = serde_json::json!({ "name": "d\ne", "init_values": { "a": "x\"y" }, "cron": "0 8 * * *" });
-        let opts = [("duration_ms", "500".to_string())];
-        let call = door_call("Schedule.add", &[fields], &opts, Some("t"), true);
-        assert_eq!(
-            call.expression,
-            r#"arguments = IO.read(:line); Flezha.Service.Cli.call("Schedule.add", arguments, [duration_ms: 500, output: "json", token: IO.read(:eof)])"#
-        );
-        assert_eq!(
-            call.stdin,
-            r#"[{"cron":"0 8 * * *","init_values":{"a":"x\"y"},"name":"d\ne"}]"#.to_string()
-                + "\nt"
-        );
+    fn a_filter_sees_whole_lines_across_frames() {
+        let mut seen = Vec::new();
+        let mut keep = |line: &str| {
+            seen.push(line.to_string());
+            false
+        };
+        let mut sink = Sink::new(Out::Filter(&mut keep));
+        sink.stdout(b"one\ntw");
+        sink.stdout(b"o\nthree");
+        sink.finish();
+        drop(sink);
+        assert_eq!(seen, ["one", "two", "three"]);
     }
 
     /// `flz reset help` quotes the default as a literal; nothing else can keep

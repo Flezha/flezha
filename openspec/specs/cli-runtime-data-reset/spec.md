@@ -65,9 +65,9 @@ The command SHALL be idempotent: a missing root directory is success, not error.
 
 `flz reset` SHALL detect a running Controller and refuse to act, exiting with the error `reset.controller_running` (class `conflict`, exit 6) whose hint is `flz controller stop`.
 
-Detection SHALL use `flzvm rpc` against `Flezha.Service.CliManager.boot_status/1` (the same transport used by `flz controller stop`/`status`). The probe is bounded by `--probe-timeout-ms` (default `1000`).
+Detection SHALL send `Controller.boot_status` as a request over the control socket (the same path used by `flz controller stop`/`status`). The probe is bounded by `--probe-timeout-ms` (default `1000`).
 
-The probe SHALL be considered "Controller is up" when `flzvm rpc` exits 0 AND the RPC returns a parseable status reply. Any non-zero exit from `flzvm rpc` (no node, distribution refused, RPC timeout) SHALL be treated as "Controller is not up" and the reset SHALL proceed.
+The probe SHALL be considered "Controller is up" when the request is accepted and answers exit code 0 with a non-empty status. Any other outcome (no socket, a refused connection, no acceptance, a non-zero code, the timeout) SHALL be treated as "Controller is not up" and the reset SHALL proceed.
 
 This guard answers about **this** Controller's node, and SHALL NOT be widened to cover a Controller colocated on the same machine: a peer is a different node with its own durable state, and its state is not this reset's to protect. What the peer shares is the socket directory, and that is guarded where it is touched.
 
@@ -77,7 +77,7 @@ A `--dry-run` changes nothing, so it SHALL NOT run the probe and previews whethe
 
 #### Scenario: Refuse when Controller is up
 
-- **GIVEN** the Controller is running and addressable via `flzvm rpc`
+- **GIVEN** the Controller is running and answers on its control socket
 - **WHEN** the user runs `flz reset --yes`
 - **THEN** the command exits with code 6 (conflict)
 - **AND** stderr carries an `error:` line ending `(reset.controller_running)` and the line `hint: flz controller stop`
@@ -85,7 +85,7 @@ A `--dry-run` changes nothing, so it SHALL NOT run the probe and previews whethe
 
 #### Scenario: Proceed when Controller is down
 
-- **GIVEN** no Controller node is registered with `epmd` and `flzvm rpc` exits non-zero
+- **GIVEN** no Controller is running and the control socket is absent
 - **WHEN** the user runs `flz reset --yes`
 - **THEN** the command proceeds with the reset and exits 0 on success
 
@@ -93,12 +93,12 @@ A `--dry-run` changes nothing, so it SHALL NOT run the probe and previews whethe
 
 - **GIVEN** the Controller crashed leaving a control socket in the resolved socket directory but no live BEAM node
 - **WHEN** the user runs `flz reset --yes`
-- **THEN** the `flzvm rpc` probe exits non-zero (no live node)
+- **THEN** the probe's connection is refused (no listener)
 - **AND** the reset proceeds; the stale socket is cleared if `--include-sockets` or `--all` is also passed
 
 #### Scenario: A dry run previews while the Controller is up
 
-- **GIVEN** the Controller is running and addressable via `flzvm rpc`
+- **GIVEN** the Controller is running and answers on its control socket
 - **WHEN** the user runs `flz reset --dry-run --json`
 - **THEN** the command prints the plan with `dry_run` set to `true` and exits 0
 - **AND** no file under `storage/app/` is touched

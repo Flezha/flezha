@@ -177,6 +177,8 @@ SDK raises or returns its one error type carrying them.
 | `cli.auth_dir_missing` | not_found | 5 | the auth directory {path} does not exist, so there is nothing to recover |  |
 | `cli.entropy_unavailable` | internal | 1 | could not read OS entropy for a bootstrap token: {reason} |  |
 | `cli.flzvm_not_runnable` | internal | 1 | flz could not run {path}: {reason} |  |
+| `cli.local_only` | denied | 4 | flz reaches a controller only over its local control socket, not over {transport} |  |
+| `cli.protocol_unsupported` | invalid | 2 | the controller speaks flz request protocol {supported}, and this request uses {got} | `use the CLI shipped with this controller's release` |
 | `cli.runner_check_failed` | unreachable | 3 | a runner on this host cannot reach a controller: {reason} |  |
 | `cli.write_failed` | internal | 1 | could not write {path}: {reason} |  |
 
@@ -212,7 +214,7 @@ SDK raises or returns its one error type carrying them.
 | `controller.shutting_down` | unavailable | 7 | the controller is shutting down |  |
 | `controller.stop_unconfirmed` | internal | 1 | the controller answered the stop without saying how it ended |  |
 | `controller.timeout` | unavailable | 7 | a part of the controller did not answer in time; try again |  |
-| `controller.unreachable` | unreachable | 3 | the controller could not be reached (its control socket is {socket}): it is not up yet or it stopped after it was reached, this shell's cookie (RELEASE_COOKIE, FLEZHA_COOKIE_FILE, FLEZHA_STATE_DIR) is not the controller's, or its node name (FLEZHA_NODE_NAME, FLEZHA_NODE_HOST) is not | `flz controller start` |
+| `controller.unreachable` | unreachable | 3 | the controller could not be reached at its control socket {socket}: it is not up yet, it stopped after it was reached, or it listens in another socket directory (FLEZHA_SOCKET_FILES_PATH) | `flz controller start` |
 
 ### diagnose
 

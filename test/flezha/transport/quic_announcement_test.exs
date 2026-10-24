@@ -86,7 +86,7 @@ defmodule Flezha.Transport.QuicAnnouncementTest do
 
       {_, log} =
         with_log(fn ->
-          {:ok, listener} = GenServer.start(Server, :uds)
+          {:ok, listener} = GenServer.start(Server, {:uds, nil})
           restore.()
           {:ok, socket} = Native.control_socket_path_in(dir)
           assert File.exists?(socket)

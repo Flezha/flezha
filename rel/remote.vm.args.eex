@@ -1,5 +1,6 @@
-## Flags for the node behind `flzvm rpc` and `flzvm remote`, which is the node
-## every `flz` verb starts. Customize: https://www.erlang.org/doc/man/erl.html
+## Flags for the node behind `flzvm rpc` and `flzvm remote`. No `flz` verb
+## starts it: `flz` reaches the controller over its control socket.
+## Customize: https://www.erlang.org/doc/man/erl.html
 ## -mode/-name/-sname/-setcookie are configured via env vars, do not set them here
 ##
 ## This node connects to the controller, evaluates there and exits. It does no
@@ -13,11 +14,11 @@
 
 ## The same ceiling the controller pins, for the same reason. This node opens
 ## two ports and was allocating a table for a million of them: 15 MB of RSS on
-## every verb.
+## every start.
 +Q 65536
 
 ## The break handler off: SIGINT ends this node instead of opening the BREAK
-## menu, so Ctrl-C ends a verb that streams and the controller sees its caller go.
+## menu, so Ctrl-C ends a call that streams and the controller sees its caller go.
 +Bd
 
 ## Reclaiming refc binaries more aggressively is a memory-drift remedy, chosen

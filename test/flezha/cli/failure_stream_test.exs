@@ -10,9 +10,9 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   script reading `flz relay stop` collected the error text as if it were
   the answer.
 
-  The in-process drives below cannot see which node a device belongs to,
-  because the caller and the callee are the same node here. `flzvm rpc` runs
-  the verb on the controller, so the last two tests drive a real second node.
+  The drives below run the verb in process; that a request over the control
+  socket carries the same failure to `flz`'s stderr is
+  `Flezha.Cli.SocketTest`'s.
   """
   # async: false: these drive the live controller's own CLI surface.
   use ExUnit.Case, async: false
@@ -22,7 +22,6 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   alias Flezha.Service.Cli
   alias Flezha.Service.Controller
   alias FlezhaTest.Helper.CliCapture
-  alias FlezhaTest.Helper.NodeTestHelper
 
   # One real failure per family that renders one, through the wire seam that
   # renders it. Each is reached with the controller as this suite boots it: no
@@ -149,38 +148,9 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     end
   end
 
-  describe "a failure rendered on the controller" do
-    @describetag :capture_log
-
-    test "lands on the caller's stderr, and exits without a banner over it" do
-      # The path `flzvm rpc` takes: `elixir --rpc-eval` is
-      # `:erpc.call(node, Kernel.CLI, :rpc_eval, [expr])` against a node that
-      # holds this node's code, and `rpc_eval/1` catches the exit rather than
-      # propagating it. Elixir must be started there to evaluate at all.
-      {_pid, peer} = NodeTestHelper.start_bare_peer(:caller_stderr)
-      {:ok, _apps} = :erpc.call(peer, :application, :ensure_all_started, [:elixir])
-
-      expression =
-        ~s|Flezha.Service.Cli.Context.render!(Flezha.Error.new("namespace.not_found", namespace: "ghost"), [])|
-
-      {outcome, out, err} =
-        CliCapture.run(fn -> :erpc.call(peer, Kernel.CLI, :rpc_eval, [expression]) end)
-
-      assert err =~ "error: namespace 'ghost' does not exist (namespace.not_found)",
-             "the failure stayed on #{peer}; the caller's stderr held #{inspect(err)}"
-
-      assert out == ""
-
-      # `Kernel.CLI.exec_fun/2` halts `{:shutdown, int}` with that int and
-      # prints nothing, so the class's code reaches `flz` and the sentence above
-      # is not buried under an exit banner.
-      assert {:ok, {:exit, {:shutdown, 5}, _stack}} = outcome
-    end
-  end
-
   describe "a progress line from another process" do
     # `flz controller stop`'s lines are emitted by the shutdown coordinator, so
-    # the handler runs outside the rpc process and cannot resolve the caller
+    # the handler runs outside the request's process and cannot resolve the caller
     # itself. It writes through the notifier bound on the way in.
     test "reaches the caller through the notifier bound at attach" do
       notify = Cli.Context.notifier()
@@ -227,8 +197,8 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
 
   describe "the CLI tree" do
     # `Context` owns the device and is the one module allowed to name a stream;
-    # every other file asking for `:stderr` by name gets the stream of the node
-    # it runs on, which under `flzvm rpc` is the controller's log.
+    # every other file asking for `:stderr` by name gets the controller's log
+    # rather than the stderr its request bound.
     @device_owner "lib/flezha/cli/context.ex"
 
     test "names no stream of its own" do
@@ -246,8 +216,8 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
         end)
 
       assert offenders == [],
-             "a CLI module writing to `:stderr` writes to the node it runs on, " <>
-               "which under `flzvm rpc` is the controller. Use " <>
+             "a CLI module writing to `:stderr` writes to the controller's log, " <>
+               "not to the caller. Use " <>
                "`Context.render!/2` or `Context.notifier/0`:\n" <>
                Enum.join(offenders, "\n")
     end

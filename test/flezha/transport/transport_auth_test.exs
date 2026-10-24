@@ -110,7 +110,7 @@ defmodule Flezha.Transport.TransportAuthTest do
       assert Loader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
     end
 
-    test "names the QUIC listen address when QUIC is enabled, and nothing when neither is" do
+    test "names the QUIC listen address when QUIC is enabled, and the socket always" do
       previous = Application.get_env(:flezha, :transports, [:uds])
 
       try do
@@ -119,8 +119,9 @@ defmodule Flezha.Transport.TransportAuthTest do
         assert Loader.attach_line() =~
                  "QUIC listening on #{Application.get_env(:flezha, :quic_listen_address)}"
 
-        Application.put_env(:flezha, :transports, [])
-        refute Loader.attach_line()
+        # The control socket `flz` reaches is open whatever runners use.
+        Application.put_env(:flezha, :transports, [:quic])
+        assert Loader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH="
       after
         Application.put_env(:flezha, :transports, previous)
       end

@@ -1,5 +1,6 @@
-//! `flz mcp`'s own part of the protocol: which `flzvm` answers a line, that
-//! stdout carries replies only, and the answers it gives itself when no child
+//! `flz mcp`'s own part of the protocol: who answers a line (the controller
+//! over its socket, or a `flzvm` of its own when none can be reached), that
+//! stdout carries replies only, and the answers it gives itself when neither
 //! can.
 
 mod common;
@@ -10,7 +11,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use common::Shim;
+use common::{Reply, Shim, ECHOING};
 use serde_json::Value;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
@@ -18,14 +19,11 @@ const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 const REQUEST: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
 const NOTIFICATION: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
 
-/// A controller that cannot be reached, and a VM of its own that logs a line
-/// at boot, replies, and shows on stderr the expression it was handed and the
-/// line its stdin carried.
+/// With no controller to reach, a VM of its own that logs a line at boot,
+/// replies, and shows on stderr the expression it was handed and the line its
+/// stdin carried.
 const OFFLINE: &str = "#!/bin/sh
-case \"$1\" in
-rpc) echo '--rpc-eval : RPC failed with reason :noconnection' >&2; exit 1 ;;
-eval) echo 'a boot log line'; echo '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}'; echo \"$2\" >&2; cat >&2 ;;
-esac
+echo 'a boot log line'; echo '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}'; echo \"$2\" >&2; cat >&2
 ";
 
 /// A child that fails without replying.
@@ -139,6 +137,62 @@ fn a_request_past_the_argument_limit_is_handed_on() {
 
     assert_eq!(replies(&out)[0]["id"], 7);
     assert!(String::from_utf8_lossy(&out.stderr).contains(&format!("{large}\n")));
+}
+
+/// With a controller serving, the line is its request and its answer the
+/// reply: no VM is started.
+#[test]
+fn a_running_controller_answers_and_no_vm_starts() {
+    let reply = r#"{"jsonrpc":"2.0","id":7,"result":{"tools":[]}}"#;
+    let shim = Shim::new(FLZ_BIN, ECHOING).serving(move |_, _| Reply::Answer {
+        stdout: format!("{reply}\n"),
+        stderr: String::new(),
+        code: 0,
+    });
+    let out = serve(&shim, &[REQUEST]);
+
+    assert_eq!(
+        replies(&out),
+        vec![serde_json::from_str::<Value>(reply).unwrap()]
+    );
+    assert_eq!(shim.starts(), Vec::<String>::new());
+    let requests = shim.requests();
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert_eq!(requests[0]["entry"], "mcp");
+    assert_eq!(requests[0]["line"], REQUEST);
+}
+
+/// A call the controller is still answering is cancelled by closing its
+/// connection, which ends the call there, and it is never answered.
+#[test]
+fn a_cancelled_call_closes_its_connection() {
+    let (closed, closes) = mpsc::channel();
+    let closed = std::sync::Mutex::new(Some(closed));
+    let shim = Shim::new(FLZ_BIN, ECHOING).serving(move |_, _| {
+        closed
+            .lock()
+            .unwrap()
+            .take()
+            .map_or(Reply::ok(), Reply::Hold)
+    });
+    let mut mcp = spawn_mcp(&shim);
+    let mut stdin = mcp.stdin.take().expect("stdin");
+    writeln!(stdin, "{}", CALL).expect("write");
+    assert!(
+        within_five_seconds(|| !shim.requests().is_empty()),
+        "the call reached the controller"
+    );
+    writeln!(stdin, "{}", CANCEL).expect("write");
+
+    let ended = closes.recv_timeout(Duration::from_secs(5));
+    drop(stdin);
+    let out = mcp.wait_with_output().expect("flz mcp ends with its input");
+    assert!(
+        ended.is_ok(),
+        "the cancelled call's connection is still open"
+    );
+    assert!(replies(&out).is_empty(), "{:?}", replies(&out));
+    assert_eq!(shim.starts(), Vec::<String>::new());
 }
 
 /// A controller that hangs on a `tools/call`, recording the hung pid beside

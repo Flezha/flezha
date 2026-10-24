@@ -10,6 +10,8 @@ defmodule Flezha.Service.Cli.Context do
   alias Flezha.Config.Durations
   alias Flezha.Service.Admin
 
+  @stderr {__MODULE__, :stderr}
+
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
 
@@ -39,15 +41,18 @@ defmodule Flezha.Service.Cli.Context do
   on the caller's stderr, then the verb exits with the code of the error's
   class.
 
-  Only the rpc process exits: `{:shutdown, n}` fails the surrounding `flzvm rpc`
-  evaluation with exit code `n` and prints no banner. Never `System.halt`
-  here, because every `Flezha.Service.Cli` call runs on the controller node and would
-  stop it.
+  Only the request's process exits: `{:shutdown, n}` is the code its
+  `cli_exit` frame carries, with no banner. Never `System.halt` here, because
+  every `Flezha.Service.Cli` call runs on the controller node and would stop it.
   """
   @spec render!(Flezha.Error.t(), keyword()) :: no_return()
-  def render!(%Flezha.Error{} = error, opts) do
+  def render!(%Flezha.Error{} = error, opts), do: exit({:shutdown, report(error, opts)})
+
+  @doc "`render!/2`'s printing alone: `error` on the caller's stderr, answering its exit code."
+  @spec report(Flezha.Error.t(), keyword()) :: pos_integer()
+  def report(%Flezha.Error{} = error, opts) do
     puts(caller_stderr(), Flezha.Error.render(error, format(opts)))
-    exit({:shutdown, Flezha.Error.exit_code(error)})
+    Flezha.Error.exit_code(error)
   end
 
   @doc """
@@ -68,9 +73,9 @@ defmodule Flezha.Service.Cli.Context do
   process.
 
   `flz controller stop`'s progress lines are emitted by the shutdown
-  coordinator, not by the rpc process, so the device has to be resolved on the
-  way in: a lookup made inside the telemetry handler would run in the emitting
-  process and answer the controller.
+  coordinator, not by the request's process, so the device has to be resolved
+  on the way in: a lookup made inside the telemetry handler would run in the
+  emitting process and answer the controller.
   """
   @spec notifier() :: (String.t() -> :ok)
   def notifier() do
@@ -79,33 +84,21 @@ defmodule Flezha.Service.Cli.Context do
     &puts(device, &1)
   end
 
-  # The device a verb writes something that is not its answer to: the
-  # caller's stderr, on whichever node the verb is running.
-  #
-  # `flzvm rpc` is `elixir --rpc-eval`, which is `:erpc.call/4`, so a verb body
-  # runs on the controller with the *caller's* group leader, and stdout already
-  # travels back over distribution. `:stderr` does not: it is `:standard_error`,
-  # a process registered per node, and the controller's is the controller's log.
-  # The caller's is resolved instead, so no verb names a stream of its own.
+  @doc """
+  Bind `device` as the stderr of the request this process serves, so every
+  failure and notice the verb writes reaches the caller rather than the
+  controller's log.
+  """
+  @spec bind_stderr(pid()) :: :ok
+  def bind_stderr(device) when is_pid(device) do
+    Process.put(@stderr, device)
+    :ok
+  end
+
+  # The device a verb writes something that is not its answer to: the one its
+  # request bound, or this node's own stderr when it runs outside a request.
   @spec caller_stderr() :: :stderr | pid()
-  defp caller_stderr() do
-    caller_node = node(Process.group_leader())
-
-    if caller_node == node(), do: :stderr, else: remote_standard_error(caller_node)
-  end
-
-  # A node that just called us is connected, so this answers quickly or not at
-  # all; either way the controller's own stderr is the honest fallback.
-  defp remote_standard_error(caller_node) do
-    budget = Durations.get(:cli_caller_device_ms)
-
-    case :erpc.call(caller_node, :erlang, :whereis, [:standard_error], budget) do
-      device when is_pid(device) -> device
-      _ -> :stderr
-    end
-  catch
-    _, _ -> :stderr
-  end
+  defp caller_stderr(), do: Process.get(@stderr, :stderr)
 
   # The device may have died with the caller that owned it. A refusal must
   # still exit the way it says it does, so a device that will not take the line

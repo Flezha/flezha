@@ -208,14 +208,18 @@ defmodule Flezha.Application do
     )
   end
 
+  # The request supervisor first, because each UDS server hands it every `flz`
+  # request.
   defp transport_children do
-    transports = Config.get(:transports)
+    servers =
+      Enum.map(Flezha.Transport.Server.transports(), fn transport ->
+        Supervisor.child_spec(
+          {Flezha.Transport.Server,
+           [transport: transport, cli_request: &Flezha.Cli.Socket.start/2]},
+          id: {Flezha.Transport.Server, transport}
+        )
+      end)
 
-    Enum.map(transports, fn transport ->
-      Supervisor.child_spec(
-        {Flezha.Transport.Server, [transport: transport]},
-        id: {Flezha.Transport.Server, transport}
-      )
-    end)
+    [{Task.Supervisor, name: Flezha.Cli.Socket.supervisor()} | servers]
   end
 end

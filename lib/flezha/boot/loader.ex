@@ -31,13 +31,10 @@ defmodule Flezha.Boot.Loader do
   def init(_) do
     run_pre_hooks()
 
-    transports = Config.get(:transports)
+    # Every controller listens on its UDS control socket.
+    Support.prepare_socket_dir()
 
-    if :uds in transports do
-      Support.prepare_socket_dir()
-    end
-
-    if :quic in transports do
+    if :quic in Flezha.Transport.Server.transports() do
       CertGenerator.ensure_certs()
     end
 
@@ -111,27 +108,18 @@ defmodule Flezha.Boot.Loader do
   How a runner reaches this controller: the absolute socket directory and the
   assignment that attaches to it, plus the QUIC listen address when QUIC is
   enabled. Logged once the sequence completes so a user never has to
-  find the documentation. `nil` when this node listens on no runner transport.
+  find the documentation.
   """
-  @spec attach_line() :: String.t() | nil
+  @spec attach_line() :: String.t()
   def attach_line() do
-    transports = Config.get(:transports)
+    socket = "runners attach with #{Config.env_name(:socket_files_path)}=#{Support.socket_dir()}"
 
-    parts =
-      Enum.concat([
-        if(:uds in transports,
-          do: [
-            "runners attach with #{Config.env_name(:socket_files_path)}=#{Support.socket_dir()}"
-          ],
-          else: []
-        ),
-        if(:quic in transports,
-          do: ["QUIC listening on #{Config.get(:quic_listen_address)}"],
-          else: []
-        )
-      ])
+    quic =
+      if :quic in Flezha.Transport.Server.transports(),
+        do: ["QUIC listening on #{Config.get(:quic_listen_address)}"],
+        else: []
 
-    if parts != [], do: "[flezha] " <> Enum.join(parts, "; ")
+    "[flezha] " <> Enum.join([socket | quic], "; ")
   end
 
   @impl true

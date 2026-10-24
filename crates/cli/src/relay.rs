@@ -284,7 +284,7 @@ fn handle_call(read: &Reading) {
             fields.insert("payload".into(), Value::from("text"));
             (Value::from(payload), vec![])
         }
-        None => (named_args(read), vec![("coerce", "true".to_string())]),
+        None => (named_args(read), vec![("coerce", Value::from(true))]),
     };
 
     rpc::door(

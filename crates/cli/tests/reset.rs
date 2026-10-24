@@ -1,3 +1,5 @@
+mod common;
+
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -5,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use common::{Reply, Shim};
 use tempfile::TempDir;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
@@ -414,6 +417,63 @@ fn probe_up_refuses_with_exit_6() {
     );
     // No modifications.
     assert!(f.root.join("state/a.bin").exists());
+}
+
+/// The probe is a `Controller.boot_status` request over the control socket:
+/// a controller that answers it refuses the reset, and nothing is touched.
+#[test]
+fn a_controller_that_answers_the_probe_refuses_the_reset() {
+    let f = Fixture::populated();
+    let shim = Shim::new(FLZ_BIN, "#!/bin/sh\nexit 1\n").serving(|_, _| Reply::Answer {
+        stdout: "boot status: ready\n".into(),
+        stderr: String::new(),
+        code: 0,
+    });
+    let out = shim
+        .cmd()
+        .args(["reset", "--yes", "--storage-root"])
+        .arg(&f.storage)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(6), "{}", stderr_of(&out));
+    assert!(stderr_of(&out).contains("(reset.controller_running)"));
+    let probes = shim.requests();
+    assert_eq!(probes.len(), 1, "{probes:?}");
+    assert_eq!(probes[0]["name"], "Controller.boot_status");
+    assert!(f.root.join("state/a.bin").exists());
+}
+
+/// A controller that answers nothing, refuses the probe, or accepts it and
+/// stays silent past the probe's timeout, is not up; nor is a socket nothing
+/// listens on. Each run proceeds.
+#[test]
+fn a_probe_without_an_answer_proceeds() {
+    let silent = Reply::Hold(std::sync::mpsc::channel().0);
+    for reply in [Reply::ok(), Reply::exit(4), Reply::Hangup, silent] {
+        let f = Fixture::populated();
+        let shim = Shim::new(FLZ_BIN, "#!/bin/sh\nexit 1\n").serving({
+            let reply = std::sync::Mutex::new(Some(reply));
+            move |_, _| reply.lock().unwrap().take().unwrap_or(Reply::Refuse)
+        });
+        let out = shim
+            .cmd()
+            .args(["reset", "--yes", "--storage-root"])
+            .arg(&f.storage)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+        assert_eq!(shim.requests().len(), 1);
+    }
+
+    let f = Fixture::populated();
+    let out = f
+        .cmd()
+        .arg("--yes")
+        .env_remove("FLEZHA_RESET_PROBE_OVERRIDE")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
 }
 
 #[test]

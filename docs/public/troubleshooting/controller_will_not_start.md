@@ -22,8 +22,8 @@ pgrep -af 'beam\.smp.*-name flezha@'
 That pattern matches the controller node and nothing else: a test-suite node is
 named `flezha_test_<pid>`, so `mix test` is never caught by it.
 
-Stop it properly first. The graceful verb needs to reach the node, and
-`flzvm stop` needs only the cookie:
+Stop it properly first. The graceful verb needs the controller's control
+socket, and `flzvm stop` needs only the cookie:
 
 ```sh
 flz controller stop          # drains; needs authorization if it is enforced
@@ -32,11 +32,12 @@ _build/prod/rel/flezha/bin/flzvm stop
 
 If neither returns, read the next section before reaching for a signal.
 
-## Every command hangs or answers `:noconnection`
+## `flzvm stop` or `flzvm remote` hangs or answers `:noconnection`
 
-A controller can reach a state where its transport socket still answers while
-its distribution is dead. `flz runner check` says the controller is reachable,
-and every other verb hangs or reports:
+A controller can reach a state where its control socket still answers while
+its distribution is dead. `flz` verbs, which use the socket, still work, so
+`flz controller stop` is the first way out; the release commands that connect
+over distribution hang or report:
 
 ```
 --rpc-eval : RPC failed with reason :noconnection
@@ -57,10 +58,10 @@ LISTEN  27     128          0.0.0.0:46233
 ```
 
 **`Recv-Q` on a listening socket counts completed connections nobody has
-accepted.** A number above zero that grows each time you run a `flz` command is
+accepted.** A number above zero that grows each time you run `flzvm remote` is
 a node whose acceptor is wedged: the kernel completes every handshake and the
-Erlang side never takes one. Nothing you pass on the command line will reach it,
-and the cookie is not the problem.
+Erlang side never takes one. Nothing you pass on the command line will reach it
+over distribution, and the cookie is not the problem.
 
 ### Capture it, then end it
 

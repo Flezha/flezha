@@ -1,8 +1,8 @@
 defmodule FlezhaTest.Helper.ControlFrameTestHelper do
   @moduledoc """
   Encodes the `ControlFrame` an SDK writes on its control stream, decodes the
-  one the controller hands its transport, and plays a runner on the
-  controller's real UDS control socket.
+  one the controller hands its transport, and plays a runner, or a `flz`
+  request, on the controller's real UDS control socket.
 
   Framing happens once, in the Rust NIF (`Flezha.Transport.Stream.send_frame/4`),
   so a ControlChannel test's capturing `write_fun` receives the raw protobuf
@@ -109,6 +109,33 @@ defmodule FlezhaTest.Helper.ControlFrameTestHelper do
   defp assigned_runner_id(socket, timeout) do
     {_ref, _kind, {:assign_runner_id, %{runner_id: runner_id}}} = peek_command(socket, timeout)
     runner_id
+  end
+
+  @doc """
+  Send `body` as a `flz` request on a fresh connection to the control socket,
+  and answer every frame up to `cli_exit`, each `{payload_id, message}`.
+  """
+  @spec cli_request(map(), timeout()) :: [{binary(), binary()}]
+  def cli_request(body, timeout \\ 5_000) do
+    socket = dial()
+    :ok = send_frame(socket, "cli_request", Jason.encode!(body))
+    frames = until_cli_exit(socket, <<>>, [], timeout)
+    :gen_tcp.close(socket)
+    frames
+  end
+
+  defp until_cli_exit(socket, buffered, frames, timeout) do
+    receive do
+      {:tcp, ^socket, bytes} ->
+        {new, rest} = decode_frames(buffered <> bytes)
+        frames = frames ++ Enum.map(new, fn {id, message, _metadata} -> {id, message} end)
+
+        if List.keymember?(frames, "cli_exit", 0),
+          do: frames,
+          else: until_cli_exit(socket, rest, frames, timeout)
+    after
+      timeout -> flunk("no cli_exit arrived; frames so far: #{inspect(frames)}")
+    end
   end
 
   @doc "Write one frame with no metadata on `socket`."

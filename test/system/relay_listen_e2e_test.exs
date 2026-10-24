@@ -17,6 +17,10 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
   import ExUnit.CaptureIO
   import ExUnit.CaptureLog
+
+  import FlezhaTest.Helper.ListenerHarness,
+    only: [runner_holds?: 2, start_bound!: 2, start_bound!: 3]
+
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   import FlezhaTest.Helper.TierE2EHarness,
@@ -26,8 +30,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.Relay.KeyGroup
-  alias Flezha.Service.{Admin, Cli, RelayManager}
-  alias FlezhaTest.Fixtures.RelayFixture
+  alias Flezha.Service.{Admin, Cli}
 
   # The listener, the plugin it enables and what detaches it are controller
   # mechanics; the reference runner's fixtures are what they need.
@@ -43,7 +46,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
   describe "flz relay listen" do
     test "a named sink's frame prints its channel and payload", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       listener = listen(ns, id)
 
       deliver!(ns, id, "hello")
@@ -55,7 +58,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     @tag capability: :state_persistence,
          skip: FlezhaTest.SystemCase.deferral(:state_persistence)
     test "a keyed sink's frame carries its cell, seq and key", %{namespace: ns} do
-      id = start!(ns, "bench_keyed")
+      id = start_bound!(ns, "bench_keyed")
       listener = listen(ns, id)
 
       deliver!(ns, id, "k1:v1")
@@ -67,7 +70,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     @tag capability: :state_persistence,
          skip: FlezhaTest.SystemCase.deferral(:state_persistence)
     test "json carries the channel, the payload and the whole metadata map", %{namespace: ns} do
-      id = start!(ns, "bench_keyed")
+      id = start_bound!(ns, "bench_keyed")
       listener = listen(ns, id, format: "json")
 
       deliver!(ns, id, "k2:v2")
@@ -84,7 +87,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
 
     test "with --input it prints what the relay ingests", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       listener = listen(ns, id, direction: "input")
 
       deliver!(ns, id, "again")
@@ -135,12 +138,12 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
 
     test "the caller going away ends the loop and detaches", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       end_by_caller(ns, listen(ns, id), [id])
     end
 
     test "the window closes, and nothing is left behind", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       %{pid: pid, ref: ref} = listen(ns, id, window: 2_000)
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 30_000
@@ -152,7 +155,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     test "counts each output channel of a live relay, and leaves nothing behind", %{
       namespace: ns
     } do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       listener = listen(ns, id, direction: "tally")
 
       for n <- 1..3, do: deliver!(ns, id, "t#{n}")
@@ -177,7 +180,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
 
     test "an Overwatch restart counts again from zero under a new epoch", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       test = self()
 
       spawn(fn ->
@@ -192,7 +195,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       {_, first} = tally_until(fn totals, _epochs -> totals["echo"] == 1 end)
 
       force_fresh_rebind(ns, id)
-      assert wait_until(fn -> listeners(ns, id) != [] and bound?(ns, id) end, 30_000)
+      assert wait_until(fn -> listeners(ns, id) != [] and runner_holds?(ns, id) end, 30_000)
       deliver!(ns, id, "after")
 
       # A count that went on would read 2 here.
@@ -218,7 +221,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     test "every surface's call and its answer reach a calls listener, paired by id", %{
       namespace: ns
     } do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       console = watch_calls(ns, id)
 
       capture_io(fn ->
@@ -265,7 +268,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
 
     test "flz relay listen --calls prints the call line and the answer line", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
       listener = listen(ns, id, direction: "calls")
 
       assert {:ok, "printed", _} =
@@ -283,7 +286,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
   describe "flz relay send --await" do
     test "prints the delivery verdict, then what came back", %{namespace: ns} do
-      id = start!(ns, "bench_echo")
+      id = start_bound!(ns, "bench_echo")
 
       out = capture_io(fn -> send_input(ns, id, "hello", await_ms: 2_000) end)
 
@@ -292,7 +295,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
 
     test "a listener attached after the delivery answers misses the frame", %{namespace: ns} do
-      id = start!(ns, "bench_echo", [forward_to(self())])
+      id = start_bound!(ns, "bench_echo", [forward_to(self())])
 
       deliver!(ns, id, "early")
       assert_receive {:message_forward, "early"}, 30_000
@@ -304,30 +307,13 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     end
   end
 
-  defp start!(ns, factory, plugins \\ []) do
-    id = "#{factory}_#{System.unique_integer([:positive])}"
-    bindings = RelayFixture.bindings(ns, id, plugins)
-    builder = %Builder{id: id, factory_id: factory, init_values: %{}, opts: [bindings: bindings]}
-
-    assert {:ok, _} = RelayManager.start_relay(ns, builder)
-    assert wait_until(fn -> bound?(ns, id) end, 30_000), "#{id} was never bound"
-    id
-  end
-
   defp start_group!(ns) do
     group = "listen_grp_#{System.unique_integer([:positive])}"
     builder = %Builder{id: group, factory_id: "partition_pass", init_values: %{}, opts: []}
 
     assert {:ok, %{members: members}} = PartitionGroup.start(ns, builder, 2)
-    for member <- members, do: assert(wait_until(fn -> bound?(ns, member) end, 30_000))
+    for member <- members, do: assert(wait_until(fn -> runner_holds?(ns, member) end, 30_000))
     {group, members}
-  end
-
-  defp bound?(ns, id) do
-    match?(
-      {:ok, %{runner_id: runner}} when is_binary(runner),
-      RelayManager.get_overwatch_state(ns, id)
-    )
   end
 
   defp deliver!(ns, id, payload) do
@@ -338,7 +324,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     do: Cli.call("Relay.send", Jason.encode!([ns, id, payload, ""]), opts)
 
   # A listener the way `flz` runs one: a process of its own, whose group leader
-  # stands in for the `flz` node and collects what it prints. Answers once the
+  # stands in for the request's stdout device and collects what it prints. Answers once the
   # plugin is on every relay in `on`.
   defp listen(ns, id, opts \\ []) do
     {:ok, device} = StringIO.open("")
@@ -404,7 +390,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     assert is_integer(ms)
   end
 
-  # The way `flz` ends a listen: its node, the loop's group leader, goes away,
+  # The way `flz` ends a listen: its request's device, the loop's group leader, goes away,
   # and the loop detaches as it returns.
   defp end_by_caller(ns, %{pid: pid, ref: ref, device: device}, targets) do
     Process.exit(device, :kill)

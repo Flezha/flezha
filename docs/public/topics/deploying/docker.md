@@ -113,8 +113,8 @@ jemalloc, which keeps a long-running Ruby process from growing through fragmenta
 
 ## flz in the container
 
-The image carries the CLI. Run it with `docker exec`; it reads the controller's own cookie
-and state directory, and the container's environment, so it needs nothing more:
+The image carries the CLI. Run it with `docker exec`; it finds the controller's control
+socket through the container's environment, so it needs nothing more:
 
 ```sh
 $ docker exec flezha-controller bin/flz boot status

@@ -36,8 +36,8 @@ $ claude mcp add --scope user flezha -e FLEZHA_TOKEN=$FLEZHA_TOKEN -- "$PWD/bin/
 ```
 
 `flz mcp` reaches the controller the way `flz` does, so the shell that starts
-the assistant needs nothing else: the same machine, the same cookie and node
-name ([cli.md](../cli/cli.md)).
+the assistant needs nothing else: the same machine and the same socket
+directory ([cli.md](../cli/cli.md#how-it-reaches-the-controller)).
 
 ## Add it to another client
 
@@ -116,8 +116,8 @@ verify gets the token's own error, as on every surface
 
 ## A controller on another machine
 
-`flz mcp` reaches a controller over Erlang distribution, as `flz` does. For a
-controller the assistant's machine cannot reach that way, enable the
+`flz mcp` reaches a controller over its local control socket, as `flz` does.
+For a controller on another machine, enable the
 [HTTP API plugin](../../plugins/http_api.md) on the controller and connect the
 assistant to its `/mcp` address with a bearer token. It serves the same tools,
 the five knowledge tools included.
@@ -138,11 +138,11 @@ for this project's language before writing SDK code.
 
 ## Limits
 
-- **Each message starts a short VM.** A call takes about a quarter of a second
-  with a controller, and about twice that without one. Messages are answered
-  one at a time, except a `ping`, which is always answered by a VM of its own
-  without the controller, even while a call runs, and a cancellation, which
-  stops the cancelled call's VM.
+- **Without a controller, each message starts a short VM.** With one running,
+  a message is one request over its socket. Messages are answered one at a
+  time, except a `ping`, which is always answered by a VM of its own without
+  the controller, even while a call runs, and a cancellation, which ends the
+  cancelled call.
 - **No streaming operations.** `flz relay listen` and `flz observe tail` are
   not tools, as over HTTP.
 - **The token is read when the assistant starts the server.** After issuing a new

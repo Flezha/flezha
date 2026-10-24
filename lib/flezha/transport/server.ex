@@ -4,8 +4,11 @@ defmodule Flezha.Transport.Server do
 
   Multiple instances can run simultaneously — one per enabled transport type.
   Each instance starts either a UDS or QUIC NIF server (based on its init arg),
-  receives connections, reads the initial `connect_control_channel` frame, and
-  dispatches to FleetManager with the transport type attached.
+  receives connections, reads each one's first frame, and dispatches it: a
+  `connect_control_channel` to FleetManager with the transport type attached, a
+  `cli_request` on UDS to the `:cli_request` function it was started with. A
+  `cli_request` on any other transport runs nothing: a `flz` caller is trusted
+  as a local one, which only the socket directory's permissions vouch for.
 
   ## Message flow
 
@@ -52,9 +55,16 @@ defmodule Flezha.Transport.Server do
                        "behaviour may change drastically or it may be removed without a " <>
                        "compatibility break. See docs/public/publishing/maturity.md#quic"
 
+  @doc """
+  Start the server for `opts[:transport]`. `opts[:cli_request]` serves a `flz`
+  request arriving on UDS, as `(stream, body) -> :ok`.
+  """
   def start_link(opts) do
     transport = Keyword.fetch!(opts, :transport)
-    GenServer.start_link(__MODULE__, transport, name: name(transport))
+
+    GenServer.start_link(__MODULE__, {transport, Keyword.get(opts, :cli_request)},
+      name: name(transport)
+    )
   end
 
   def name(:uds), do: :"#{__MODULE__}.Uds"
@@ -86,11 +96,18 @@ defmodule Flezha.Transport.Server do
   end
 
   @doc """
+  The transports this node listens on: the configured ones, and always UDS,
+  whose control socket is how `flz` reaches the controller.
+  """
+  @spec transports() :: [:uds | :quic]
+  def transports, do: Enum.uniq([:uds | Config.get(:transports)])
+
+  @doc """
   List configured transports that are currently up.
   """
   @spec list_active_transports() :: [:uds | :quic]
   def list_active_transports() do
-    Config.get(:transports)
+    transports()
     |> Enum.filter(fn t ->
       case Process.whereis(name(t)) do
         pid when is_pid(pid) -> Process.alive?(pid)
@@ -124,7 +141,7 @@ defmodule Flezha.Transport.Server do
 
   @doc false
   def transports_step(%{supervisor: sup}, _budget) do
-    Enum.each(Config.get(:transports), &(:ok = Supervisor.terminate_child(sup, {__MODULE__, &1})))
+    Enum.each(transports(), &(:ok = Supervisor.terminate_child(sup, {__MODULE__, &1})))
   end
 
   @impl true
@@ -155,13 +172,15 @@ defmodule Flezha.Transport.Server do
   end
 
   @impl true
-  def init(transport) when transport in [:uds, :quic] do
+  def init({transport, cli_request}) when transport in [:uds, :quic] do
     # Only `terminate/2` releases the listening socket, and a supervisor's
     # shutdown reaches it only through a trapped exit.
     Process.flag(:trap_exit, true)
     :ok = Native.set_notice_sink(self())
     warn_if_transport_auth_disabled()
-    listen(transport)
+
+    with {:ok, state} <- listen(transport),
+         do: {:ok, Map.put(state, :cli_request, cli_request)}
   end
 
   # Secure default posture: peer authentication is required unless the
@@ -291,33 +310,25 @@ defmodule Flezha.Transport.Server do
     end
   end
 
-  # Data frame: connect_control_channel handshake. Bind to the exact stream the
-  # frame arrived on — picking an arbitrary pending stream mis-binds the
-  # ControlChannel to the wrong (often already-closed) handle whenever more than
-  # one connection is pending, e.g. when liveness probes (`nc -zU`) churn the
-  # control socket.
+  # A connection's first frame: a runner's connect_control_channel, or a `flz`
+  # request. Bind to the exact stream the frame arrived on — picking an
+  # arbitrary pending stream mis-binds it to the wrong (often already-closed)
+  # handle whenever more than one connection is pending, e.g. when liveness
+  # probes (`nc -zU`) churn the control socket.
   @impl true
-  def handle_info(
-        {:flz_data, stream_id, "connect_control_channel", message, _metadata},
-        state
-      ) do
+  def handle_info({:flz_data, stream_id, payload_id, message, _metadata}, state)
+      when payload_id in ["connect_control_channel", "cli_request"] do
     case Map.pop(state.pending_streams, stream_id) do
       {nil, _pending} ->
         Logger.warning(
-          "[Transport.Server] connect_control_channel for unknown stream_id=#{stream_id} (no pending connection)"
+          "[Transport.Server] #{payload_id} for unknown stream_id=#{stream_id} (no pending connection)"
         )
 
         {:noreply, state}
 
       {stream_ref, pending} ->
-        Logger.info(
-          "[Transport.Server] Received connect_control_channel frame, stream_id=#{stream_id}, pending_streams=#{map_size(pending)}"
-        )
-
         state = %{state | pending_streams: pending}
-        # For QUIC, stream_id is the control stream's nif id == the conn_id the
-        # driver tags this connection's data streams with.
-        handle_new_runner(stream_ref, stream_id, message, state)
+        first_frame(payload_id, stream_ref, stream_id, message, state)
     end
   end
 
@@ -385,6 +396,50 @@ defmodule Flezha.Transport.Server do
     end
 
     :ok
+  end
+
+  defp first_frame("connect_control_channel", stream_ref, stream_id, message, state) do
+    Logger.info(
+      "[Transport.Server] Received connect_control_channel frame, stream_id=#{stream_id}, pending_streams=#{map_size(state.pending_streams)}"
+    )
+
+    # For QUIC, stream_id is the control stream's nif id == the conn_id the
+    # driver tags this connection's data streams with.
+    handle_new_runner(stream_ref, stream_id, message, state)
+  end
+
+  # A request is never a runner: it is not admitted, counted or announced.
+  defp first_frame("cli_request", stream_ref, _stream_id, message, state) do
+    case state do
+      %{transport: :uds, cli_request: serve} when is_function(serve, 2) ->
+        :ok = serve.(stream_ref, message)
+
+      %{transport: transport} ->
+        refuse_cli_request(stream_ref, message, transport)
+    end
+
+    {:noreply, state}
+  end
+
+  defp refuse_cli_request(stream_ref, message, transport) do
+    refusal = Flezha.Error.new("cli.local_only", transport: transport)
+
+    format =
+      case Jason.decode(message) do
+        {:ok, %{"opts" => %{"output" => "json"}}} -> "json"
+        _text -> "text"
+      end
+
+    TStream.send_frame(
+      stream_ref,
+      "cli_stderr",
+      Flezha.Error.render(refusal, format) <> "\n",
+      %{}
+    )
+
+    exit_frame = Jason.encode!(%{code: Flezha.Error.exit_code(refusal)})
+    TStream.send_frame(stream_ref, "cli_exit", exit_frame, %{})
+    safe_close(stream_ref)
   end
 
   defp handle_new_runner(stream_ref, conn_id, init_message, state) do

@@ -20,6 +20,32 @@ defmodule Flezha.Observability.TestSinks do
     end
   end
 
+  @doc """
+  Turn the PubSub sink on for the calling test, and back off when it ends.
+  `config/test.exs` sets `:pubsub_sink_enabled` false and starts no sink, and
+  every tail subscription gate reads both.
+  """
+  def claim_pubsub_sink do
+    prev = Application.get_env(:flezha, :observability, [])
+    Application.put_env(:flezha, :observability, Keyword.put(prev, :pubsub_sink_enabled, true))
+    ExUnit.Callbacks.on_exit(fn -> Application.put_env(:flezha, :observability, prev) end)
+
+    if Process.whereis(Flezha.Observability.PubSubSink) == nil do
+      sink = :"obs_tail_pubsub_#{:erlang.unique_integer([:positive])}"
+      sink_spec = %{name: sink, module: Flezha.Observability.PubSubSink, config: %{}}
+      {:ok, _pid} = Flezha.Observability.Registry.register_sink(sink_spec)
+      ExUnit.Callbacks.on_exit(fn -> Flezha.Observability.Registry.unregister_sink(sink) end)
+    end
+
+    :ok
+  end
+
+  @doc "The processes subscribed to `source`'s live signals."
+  def subscribers(source) do
+    topic = Flezha.Observability.PubSubSink.topic_for(source)
+    Elixir.Registry.lookup(Flezha.Observability.PubSub, topic)
+  end
+
   # Everything that starts after the registry, in its boot order.
   @after_registry [
     Flezha.Observability.SinkSupervisor,

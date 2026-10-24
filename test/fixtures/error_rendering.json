@@ -74,7 +74,7 @@
     "details": {
       "socket": "/run/flezha/runner_control_channel.sock"
     },
-    "text": "error: the controller could not be reached (its control socket is /run/flezha/runner_control_channel.sock): it is not up yet or it stopped after it was reached, this shell's cookie (RELEASE_COOKIE, FLEZHA_COOKIE_FILE, FLEZHA_STATE_DIR) is not the controller's, or its node name (FLEZHA_NODE_NAME, FLEZHA_NODE_HOST) is not (controller.unreachable)\nhint: flz controller start",
-    "json": "{\"error\":{\"code\":\"controller.unreachable\",\"class\":\"unreachable\",\"message\":\"the controller could not be reached (its control socket is /run/flezha/runner_control_channel.sock): it is not up yet or it stopped after it was reached, this shell's cookie (RELEASE_COOKIE, FLEZHA_COOKIE_FILE, FLEZHA_STATE_DIR) is not the controller's, or its node name (FLEZHA_NODE_NAME, FLEZHA_NODE_HOST) is not\",\"details\":{\"socket\":\"/run/flezha/runner_control_channel.sock\"},\"hint\":\"flz controller start\"}}"
+    "text": "error: the controller could not be reached at its control socket /run/flezha/runner_control_channel.sock: it is not up yet, it stopped after it was reached, or it listens in another socket directory (FLEZHA_SOCKET_FILES_PATH) (controller.unreachable)\nhint: flz controller start",
+    "json": "{\"error\":{\"code\":\"controller.unreachable\",\"class\":\"unreachable\",\"message\":\"the controller could not be reached at its control socket /run/flezha/runner_control_channel.sock: it is not up yet, it stopped after it was reached, or it listens in another socket directory (FLEZHA_SOCKET_FILES_PATH)\",\"details\":{\"socket\":\"/run/flezha/runner_control_channel.sock\"},\"hint\":\"flz controller start\"}}"
   }
 ]

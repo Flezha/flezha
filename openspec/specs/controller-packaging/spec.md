@@ -445,19 +445,15 @@ network once its deps volume is populated.
 
 ### Requirement: The Release SHALL Ship VM Arguments Sized for the Controller, and CLI Arguments Sized for the CLI's Node
 
-The release SHALL ship a `vm.args` tuned for a long-running controller and a `remote.vm.args` sized for the short-lived node a `flz` verb starts, and each flag SHALL carry its reason where it is set.
+The release SHALL ship a `vm.args` tuned for a long-running controller and a `remote.vm.args` sized for the short-lived node `flzvm rpc` and `flzvm remote` start, which no `flz` verb starts, and each flag SHALL carry its reason where it is set.
 
 The two files are separately addressable by the launcher: start commands read
-`RELEASE_VM_ARGS` and `rpc`/`remote` read `RELEASE_REMOTE_VM_ARGS`. Today both
-are comment-only, so every `flz` verb boots a node sized for the whole host to
-make one call, and the controller runs on whatever the ERTS in the image happens
-to default to. Those are two different jobs and they get two different budgets.
+`RELEASE_VM_ARGS` and `rpc`/`remote` read `RELEASE_REMOTE_VM_ARGS`. A short-lived node and a long-running controller are two
+different jobs and they get two different budgets.
 
-The node a `flz` verb starts SHALL run with the Erlang break handler disabled, so
-that SIGINT terminates it. A verb that streams until a window closes, such as
-`flz relay listen` or `flz observe tail`, is ended by Ctrl-C, and the default
-handler would answer that with the `BREAK:` menu instead, leaving the node alive and
-the controller-side process it spawned orphaned.
+A short-lived node the release starts SHALL run with the Erlang break handler
+disabled, so that SIGINT terminates it rather than answering with the `BREAK:` menu
+and leaving the node alive.
 
 The controller node SHALL run with the break handler disabled too, so that Ctrl-C
 on a controller started in attached mode ends it. The default handler pauses the
@@ -470,20 +466,20 @@ drain; SIGTERM is the graceful one.
 - **WHEN** the release is started and asked for its own `system_info`
 - **THEN** every value the shipped `vm.args` sets SHALL be the value reported
 
-#### Scenario: A CLI verb's node is smaller than the controller's
+#### Scenario: A remote shell's node is smaller than the controller's
 
-- **WHEN** a `flz` verb starts its node through `flzvm rpc`
-- **THEN** that node SHALL run with the reduced scheduler budget `remote.vm.args` sets, and the verb SHALL return the same result it returned before
+- **WHEN** `flzvm remote` starts its node
+- **THEN** that node SHALL run with the reduced scheduler budget `remote.vm.args` sets
 
 #### Scenario: A shipped throughput flag names its evidence
 
 - **WHEN** a flag is shipped for throughput rather than for capacity, clustering or clock semantics
 - **THEN** the benchmarking documentation SHALL record the measured series that chose it, including the arm it was measured against
 
-#### Scenario: A CLI verb's node ends on SIGINT
+#### Scenario: A remote shell's node ends on SIGINT
 
-- **WHEN** SIGINT reaches the node a `flz` verb started through the release's `flzvm rpc`
-- **THEN** the node SHALL terminate without printing the `BREAK:` menu, and the verb SHALL exit
+- **WHEN** SIGINT reaches the node `flzvm remote` started
+- **THEN** the node SHALL terminate without printing the `BREAK:` menu, and the shell SHALL exit
 
 #### Scenario: An attached controller ends on SIGINT
 

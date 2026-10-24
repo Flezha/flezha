@@ -24,8 +24,8 @@ $ make build-release
 ```
 
 That writes `_build/prod/rel/flezha/`, the same directory the release archive
-unpacks to: `bin/flz`, the CLI, and `bin/flzvm`, the release script the CLI
-calls. The release carries its own Erlang runtime, so the machine it runs on
+unpacks to: `bin/flz`, the CLI, and `bin/flzvm`, the release script that
+starts the controller. The release carries its own Erlang runtime, so the machine it runs on
 needs no Elixir and no Erlang, but it runs only on the platform it was built
 on. From here, [Deploying a controller](deploying_a_controller.md)
 applies as it does to a downloaded release.

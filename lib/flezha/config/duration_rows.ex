@@ -72,10 +72,10 @@ defmodule Flezha.Config.DurationRows do
     # hook is a named exit rather than a hang.
     {:boot_sequence_await_ms, :ms, 30_000, []},
     {:boot_await_poll_ms, :ms, 200, []},
-    # How long a controller-side `flz` verb waits for the caller's node to
-    # name its `:standard_error`, before it writes to the controller's own.
-    # The caller has just called us, so this is a liveness bound, not a wait.
-    {:cli_caller_device_ms, :ms, 5_000, []},
+    # How long a served `flz` request waits, after its exit frame, for `flz`
+    # to close the socket before closing it itself. `flz` closes it on reading
+    # that frame, so this only bounds a caller that does not.
+    {:cli_close_wait_ms, :ms, 5_000, []},
     # How long a streaming verb runs when its request names no window.
     {:cli_stream_window_ms, :ms, 30_000, []},
     {:runner_lookup_ms, :ms, 5_000, []},

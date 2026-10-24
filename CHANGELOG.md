@@ -19,3 +19,13 @@ v0.1.0-alpha.1 pre-release.
   snapshot, held outputs and seed answer `nil`. A relay started with large init
   values, such as a long price history, made each read copy all of it, enough
   to exhaust a console that read it every few seconds.
+- `flz` sends each verb to the controller as one request over the controller's
+  control socket, the Unix socket its runners attach to, instead of starting
+  an Erlang VM for every command. Verbs start faster, need no Erlang cookie, and
+  a controller whose runners use QUIC still opens the socket for `flz`. A shell
+  reaches the controller whose `FLEZHA_SOCKET_FILES_PATH` it shares
+  ([CLI](docs/public/topics/cli/cli.md#how-it-reaches-the-controller)). Use the
+  `flz` of the controller's own release: an older controller is reported as
+  `cli.protocol_unsupported` after five seconds. `flz controller start`, the
+  `flz plugin install | uninstall | sync` verbs and `flz mcp`'s knowledge tools
+  with no controller still start a VM of their own.

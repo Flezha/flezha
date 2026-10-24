@@ -342,7 +342,6 @@ defmodule Flezha.Relay.Overwatch do
 
   def handle_call({:plugin_heal, _, _, _} = verb, _from, state), do: Plugins.answer(verb, state)
 
-  @impl true
   def handle_call(:get_overwatch_state, _from, state), do: {:reply, state, state}
 
   # The state without the relay's own data, which can run to any size, so a
@@ -352,7 +351,6 @@ defmodule Flezha.Relay.Overwatch do
     do: {:reply, %{state | init_values: nil, snapshot: nil, held_outputs: nil, seed: nil}, state}
 
   # A stop's cause, named before the hub stops this process; `nil` undoes it.
-  @impl true
   def handle_call({:cause, cause}, from, %__MODULE__{} = state),
     do: handle_call(:get_overwatch_state, from, %{state | cause: cause})
 
@@ -361,7 +359,6 @@ defmodule Flezha.Relay.Overwatch do
   # — the seq rides the reply frame's metadata, so the JSON body stays the shape
   # the whole-Relay caller already decodes; `RelayManager` drops the seq
   # for callers that predate it.
-  @impl true
   def handle_call({:get_cell_state, selector}, from, %__MODULE__{} = state)
       when is_map(selector) do
     if ClassRegistry.persistent?(relay_class(state)) do
@@ -382,7 +379,6 @@ defmodule Flezha.Relay.Overwatch do
   # Each tasklet's live Cells, queues and totals, as the hosting runner counts
   # them, and the Cells of the tasklet `read` names, answered with that runner's
   # id; a relay that keeps no state has activity all the same.
-  @impl true
   def handle_call({:get_tasklet_activity, read}, from, %__MODULE__{} = state) do
     command = struct(%RunnerCommands.TaskletActivity{relay_id: state.id}, read)
 
@@ -390,30 +386,25 @@ defmodule Flezha.Relay.Overwatch do
     read_runner(state, from, {:tasklet_activity, command}, opts, &{&1, &2})
   end
 
-  @impl true
   def handle_call({:rebind, new_runner_id}, _from, %__MODULE__{} = state),
     do: Rebind.rebind(state, new_runner_id)
 
-  @impl true
   def handle_call({:wake, then: :stop}, _from, state), do: Suspend.wake_to_stop(state)
 
   # The convergence loop's `publish_binding`: re-write the durable row and the
   # runner's route from the binding this process holds. Must run here — the
   # route points at `self()`.
-  @impl true
   def handle_call(:publish_binding, _from, %__MODULE__{runner_id: runner_id} = state)
       when is_binary(runner_id),
       do: {:reply, :ok, Lifecycle.publish_binding(state, nil)}
 
   def handle_call(:publish_binding, _from, state), do: {:reply, {:error, :unbound}, state}
 
-  @impl true
   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
 
   # Blocking ingest for source adapters, which act on "accepted" vs "halted" and
   # nothing finer — the same path as the confirming entry point below, reported
   # coarsely.
-  @impl true
   def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
       when reason != nil,
       do: {:reply, {:error, :startup_failed}, state}
@@ -422,7 +413,6 @@ defmodule Flezha.Relay.Overwatch do
   # pre-delivery path as the `{:io_in, _, _}` cast, answering what happened so a
   # forwarding sink can tell "done" from "retry". The cast keeps its
   # fire-and-forget shape, including its silent drop for a halted relay.
-  @impl true
   def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{halt_reason: reason} = state)
       when reason != nil,
       do: {:reply, Ingest.named({:error, :not_ready}, state.id), state}
@@ -430,7 +420,6 @@ defmodule Flezha.Relay.Overwatch do
   # Both blocking entry points: the reply is owed until the journal answers, so
   # a source parked at zero credit is parked on its own call, never on this
   # process.
-  @impl true
   def handle_call({entry_point, message, metadata}, from, state)
       when entry_point in [:io_in, :ingest] do
     case Ingest.confirming_ingest(state, message, metadata, {entry_point, from}) do
@@ -441,7 +430,6 @@ defmodule Flezha.Relay.Overwatch do
 
   # The `:call` entry point: an outside call (an integer deadline) or an
   # relay's call the controller delivers (a map); see `Inbound.take_call/5`.
-  @impl true
   def handle_call({:call, message, metadata, deadline}, from, %__MODULE__{} = state)
       when (is_integer(deadline) and deadline > 0) or is_map(deadline),
       do: Inbound.take_call(state, message, metadata, deadline, from)
@@ -450,16 +438,13 @@ defmodule Flezha.Relay.Overwatch do
   def handle_call({:call_answer, id, outcome}, from, %__MODULE__{} = state),
     do: {:noreply, Outbound.respond(state, id, outcome, from)}
 
-  @impl true
   def handle_call(:create_snapshot, _from, %__MODULE__{} = state),
     do: {:reply, {:ok, Handover.create_snapshot(state.id, state.runner_id)}, state}
 
-  @impl true
   def handle_call({:replay_from, cell_id, baseline_seq}, _from, %__MODULE__{} = state) do
     {:reply, Replay.run_replay(state, cell_id, baseline_seq), state}
   end
 
-  @impl true
   def handle_call({:rewind, to_iter}, _from, %__MODULE__{} = state),
     do: Suspend.rewind_to(state, to_iter)
 

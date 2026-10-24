@@ -6,7 +6,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
   alias Flezha.Observability.AuditLog.Codec
   alias Flezha.Observability.Bus
-  alias Flezha.Observability.{PubSubSink, Registry, RingBufferSink, Signal}
+  alias Flezha.Observability.{Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
   alias Flezha.Service.{Admin, Cli, Observability}
   alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper}
@@ -249,7 +249,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
   describe "unsubscribe/2" do
     test "undoes a tail taken on the same surface", %{src: src} do
-      claim_pubsub_sink()
+      TestSinks.claim_pubsub_sink()
 
       assert :ok = Observability.tail(src, %{source: :cli})
       assert :ok = Observability.unsubscribe(src, %{source: :cli})
@@ -266,7 +266,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
   describe "through the door" do
     test "a source written as text reaches tail/2 as the atom it names", %{src: src} do
-      claim_pubsub_sink()
+      TestSinks.claim_pubsub_sink()
 
       assert {:ok, :ok} =
                Admin.run("Observability.tail", ~s(["#{src}"]), %{source: :cli}, :given)
@@ -319,7 +319,7 @@ defmodule Flezha.Service.ObservabilityTest do
   describe "a tail forwarded to a pid" do
     test "hands each signal on as {:flezha_emit, signal} and ends when the pid exits",
          %{src: src} do
-      claim_pubsub_sink()
+      TestSinks.claim_pubsub_sink()
       {sink, tail} = forwarded_tail(src, %{source: :ui})
 
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :forwarded}))
@@ -327,11 +327,11 @@ defmodule Flezha.Service.ObservabilityTest do
 
       Process.exit(sink, :kill)
       assert Task.await(tail, 2_000) == {:ok, :caller_down}
-      assert subscribers(src) == []
+      assert TestSinks.subscribers(src) == []
     end
 
     test "ends when the context's window runs out", %{src: src} do
-      claim_pubsub_sink()
+      TestSinks.claim_pubsub_sink()
 
       assert {:ok, :window_closed} =
                :erpc.call(node(), Observability, :tail, [
@@ -339,11 +339,11 @@ defmodule Flezha.Service.ObservabilityTest do
                  %{source: :ui, emit: self(), window_ms: 50}
                ])
 
-      assert subscribers(src) == []
+      assert TestSinks.subscribers(src) == []
     end
 
     test "drops a signal of a namespace the caller may not read", %{src: src} do
-      claim_pubsub_sink()
+      TestSinks.claim_pubsub_sink()
       AuthTestHelper.setup_auth_stores(prefix: "flz_obs_tail", claim: true)
       context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
       {sink, tail} = forwarded_tail(src, context)
@@ -475,7 +475,7 @@ defmodule Flezha.Service.ObservabilityTest do
   # owns that flag for its own duration rather than inheriting whatever the
   # previous test left.
   defp capture_tail_json(src, signal) do
-    claim_pubsub_sink()
+    TestSinks.claim_pubsub_sink()
     send(self(), {:flezha_signal, signal})
 
     out =
@@ -501,7 +501,7 @@ defmodule Flezha.Service.ObservabilityTest do
         :erpc.call(node(), Observability, :tail, [src, Map.put(context, :emit, sink)])
       end)
 
-    assert NodeTestHelper.wait_until(fn -> subscribers(src) != [] end, 2_000)
+    assert NodeTestHelper.wait_until(fn -> TestSinks.subscribers(src) != [] end, 2_000)
     {sink, tail}
   end
 
@@ -511,22 +511,5 @@ defmodule Flezha.Service.ObservabilityTest do
     end
 
     forward_to(test)
-  end
-
-  defp subscribers(src),
-    do: Elixir.Registry.lookup(Flezha.Observability.PubSub, PubSubSink.topic_for(src))
-
-  # `config/test.exs` sets `:pubsub_sink_enabled` false and starts no sink, and
-  # every subscription gate reads both. The test owns the flag for its own
-  # duration rather than inheriting whatever the previous one left.
-  defp claim_pubsub_sink do
-    prev = Application.get_env(:flezha, :observability, [])
-    Application.put_env(:flezha, :observability, Keyword.put(prev, :pubsub_sink_enabled, true))
-
-    if Process.whereis(PubSubSink) == nil do
-      sink = :"obs_tail_pubsub_#{:erlang.unique_integer([:positive])}"
-      {:ok, _pid} = Registry.register_sink(%{name: sink, module: PubSubSink, config: %{}})
-      on_exit(fn -> Registry.unregister_sink(sink) end)
-    end
   end
 end

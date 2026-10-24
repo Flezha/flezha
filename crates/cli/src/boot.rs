@@ -31,10 +31,9 @@ pub(crate) const TABLE: Command = Command {
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
-/// The pause between two attempts to reach a node that is not up yet. Each
-/// attempt starts a VM of its own, so the pause keeps the wait from crowding
-/// the boot it waits for; 200 ms is the pace the controller polls its own
-/// verdict at once reached (`boot_await_poll_ms`).
+/// The pause between two attempts to reach a controller whose socket is not up
+/// yet, so the wait does not crowd the boot it waits for; 200 ms is the pace
+/// the controller polls its own verdict at once reached (`boot_await_poll_ms`).
 const UNREACHABLE_PAUSE: Duration = Duration::from_millis(200);
 
 /// One budget, spent on reaching the node and then on the node's own wait: the

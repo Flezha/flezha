@@ -60,6 +60,7 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.Dlq.Store,
     Flezha.Process.DurableTasks,
     Flezha.Service.HubManager.Starter,
+    Flezha.Cli.Socket.Supervisor,
     {Flezha.Transport.Server, :uds},
     Flezha.Service.PortPilot,
     Flezha.Convergence.Loop,

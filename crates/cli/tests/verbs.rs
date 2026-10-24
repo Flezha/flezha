@@ -7,12 +7,13 @@
 //! case below is the same invocation written both ways, and the values carry
 //! the three characters an argument list has historically lost.
 //!
-//! The evidence is the request itself, so the fixture is a `flzvm` that
-//! echoes what it was handed instead of running it.
+//! The evidence is the request itself, so the fixture is a socket that records
+//! what it was sent, and a `flzvm` that echoes what it was handed, instead of
+//! running either.
 
 mod common;
 
-use common::{door_request, Shim, DOOR, ECHOING};
+use common::Shim;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
@@ -23,23 +24,23 @@ const CASES: &[(&[&str], &str)] = &[
     // entirely; every verb below is the same invocation written both ways.
     (
         &["relay", "stop", "--token", "t", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.stop", ["default","op1"], [token: IO.read(:eof)])"#,
+        r#"Relay.stop ["default","op1"] {"token":"t"}"#,
     ),
     (
         &["relay", "stop", "op1", "--token", "t"],
-        r#"Flezha.Service.Cli.call("Relay.stop", ["default","op1"], [token: IO.read(:eof)])"#,
+        r#"Relay.stop ["default","op1"] {"token":"t"}"#,
     ),
     (
         &["relay", "stop", "-n", "prod", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.stop", ["prod","op1"], [])"#,
+        r#"Relay.stop ["prod","op1"] {}"#,
     ),
     (
         &["relay", "state", "--namespace=prod", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.cell_state", ["prod","op1"], [])"#,
+        r#"Relay.cell_state ["prod","op1"] {}"#,
     ),
     (
         &["state", "get", "--output", "json", "a/b/c"],
-        r#"Flezha.Service.Cli.call("Steps.state_get", ["a/b/c"], [output: "json"])"#,
+        r#"Steps.state_get ["a/b/c"] {"output":"json"}"#,
     ),
     // A verb that reaches no controller carries no token, wherever it is written.
     (
@@ -48,36 +49,36 @@ const CASES: &[(&[&str], &str)] = &[
     ),
     (
         &["token", "issue", "--ttl", "60", "p", "ns", "viewer"],
-        r#"Flezha.Service.Cli.call("Namespace.issue_token", ["p","ns","viewer",{"ttl":60}], [])"#,
+        r#"Namespace.issue_token ["p","ns","viewer",{"ttl":60}] {}"#,
     ),
     // A switch and the credential read the same on either side of the relay.
     (
         &["relay", "listen", "--input", "--token", "t", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.listen", ["default","op1","input",{"window_ms":30000}], [token: IO.read(:eof)])"#,
+        r#"Relay.listen ["default","op1","input",{"window_ms":30000}] {"token":"t"}"#,
     ),
     (
         &["relay", "listen", "op1", "--token", "t", "--input"],
-        r#"Flezha.Service.Cli.call("Relay.listen", ["default","op1","input",{"window_ms":30000}], [token: IO.read(:eof)])"#,
+        r#"Relay.listen ["default","op1","input",{"window_ms":30000}] {"token":"t"}"#,
     ),
     (
         &["relay", "listen", "op1", "--calls"],
-        r#"Flezha.Service.Cli.call("Relay.listen", ["default","op1","calls",{"window_ms":30000}], [])"#,
+        r#"Relay.listen ["default","op1","calls",{"window_ms":30000}] {}"#,
     ),
     // A value carrying a quote, a backslash and a non-ASCII letter survives
     // whichever side of the positionals it was written on.
     (
         &["relay", "send", "--text", "a\"b\\cä", "-n", "prod", "op1"],
-        r#"Flezha.Service.Cli.call("Relay.send", ["prod","op1","a\"b\\cä",null,{}], [])"#,
+        r#"Relay.send ["prod","op1","a\"b\\cä",null,{}] {}"#,
     ),
     (
         &["relay", "send", "op1", "-n", "prod", "--text", "a\"b\\cä"],
-        r#"Flezha.Service.Cli.call("Relay.send", ["prod","op1","a\"b\\cä",null,{}], [])"#,
+        r#"Relay.send ["prod","op1","a\"b\\cä",null,{}] {}"#,
     ),
     // `call` sends a deadline only with `--timeout`, so the controller's
     // default holds without it; `-t` is `--text`, the payload as written.
     (
         &["relay", "call", "echo", "-t", "hello"],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", ["default","echo","","hello",{"payload":"text"}], [])"#,
+        r#"Relay.call_channel ["default","echo","","hello",{"payload":"text"}] {}"#,
     ),
     (
         &[
@@ -91,7 +92,7 @@ const CASES: &[(&[&str], &str)] = &[
             "--text",
             "x",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", ["default","prices","","x",{"deadline_ms":100,"key":"EURUSD","payload":"text"}], [])"#,
+        r#"Relay.call_channel ["default","prices","","x",{"deadline_ms":100,"key":"EURUSD","payload":"text"}] {}"#,
     ),
     // The answer channel rides beside the deadline; `--channel` stays the entry.
     (
@@ -104,7 +105,7 @@ const CASES: &[(&[&str], &str)] = &[
             "--answer-channel",
             "quotes",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", ["default","quoter","","EUR/USD",{"answer_channel":"quotes","payload":"text"}], [])"#,
+        r#"Relay.call_channel ["default","quoter","","EUR/USD",{"answer_channel":"quotes","payload":"text"}] {}"#,
     ),
     // Each `--arg` is one field, still text: the controller types it by the
     // channel's schema, which `coerce` asks it to read first.
@@ -120,48 +121,50 @@ const CASES: &[(&[&str], &str)] = &[
             "--arg",
             "amount=1000",
         ],
-        r#"Flezha.Service.Cli.call("Relay.call_channel", ["default","orders-eu","place",{"amount":"1000","pair":"EUR/USD"},{}], [coerce: true])"#,
+        r#"Relay.call_channel ["default","orders-eu","place",{"amount":"1000","pair":"EUR/USD"},{}] {"coerce":true}"#,
     ),
     // With a relay id, `info` reads that relay's API.
     (
         &["relay", "info", "orders-eu"],
-        r#"Flezha.Service.Cli.call("Relay.api", ["default","orders-eu"], [])"#,
+        r#"Relay.api ["default","orders-eu"] {}"#,
     ),
     (
         &["relay", "send", "prices", "--key", "EURUSD", "--text", "x"],
-        r#"Flezha.Service.Cli.call("Relay.send", ["default","prices","x",null,{"key":"EURUSD"}], [])"#,
+        r#"Relay.send ["default","prices","x",null,{"key":"EURUSD"}] {}"#,
     ),
     (
         &["relay", "send", "orders", "--msg-id", "a1", "--text", "x"],
-        r#"Flezha.Service.Cli.call("Relay.send", ["default","orders","x",null,{"msg_id":"a1"}], [])"#,
+        r#"Relay.send ["default","orders","x",null,{"msg_id":"a1"}] {}"#,
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],
-        r#"Flezha.Service.Cli.call("AuditLog.read", [{"file":"f.log","source":"x\"y"}], [])"#,
+        r#"AuditLog.read [{"file":"f.log","source":"x\"y"}] {}"#,
     ),
 ];
 
 #[test]
 fn an_option_reads_the_same_wherever_it_is_written() {
-    let shim = Shim::new(FLZ_BIN, ECHOING);
+    let shim = Shim::recording(FLZ_BIN);
     let mut wrong: Vec<String> = Vec::new();
 
     for (argv, want) in CASES {
         let out = shim.run(argv);
         let got = String::from_utf8_lossy(&out.stdout);
+        let doors = shim.doors();
 
-        // A verb that reaches no controller still writes its call whole on
-        // the command line; only a door call reads its arguments from stdin.
-        let reached = if want.starts_with(DOOR) {
-            door_request(&got).as_deref() == Some(*want)
+        // A verb that reaches no controller writes its call whole on the
+        // `flzvm` command line; every other verb sends it over the socket.
+        let reached = if want.starts_with("Flezha.") {
+            doors.is_empty() && got.lines().any(|line| line == *want)
         } else {
-            got.lines().any(|line| line == *want)
+            doors == [*want]
         };
         if !reached {
             wrong.push(format!(
-                "flz {}\n     got  {}\n     want {}",
+                "flz {}\n     got  {} {:?}\n     want {}",
                 argv.join(" "),
                 got.trim().replace('\n', " | "),
+                doors,
                 want
             ));
         }
@@ -181,7 +184,7 @@ fn an_option_reads_the_same_wherever_it_is_written() {
 /// refused before anything is sent.
 #[test]
 fn a_call_takes_its_value_one_way() {
-    let shim = Shim::new(FLZ_BIN, ECHOING);
+    let shim = Shim::recording(FLZ_BIN);
 
     for (argv, code) in [
         (
@@ -208,7 +211,7 @@ fn a_call_takes_its_value_one_way() {
         assert_eq!(out.status.code(), Some(2), "flz {}: {err}", argv.join(" "));
         assert!(err.contains(code), "flz {}: {err}", argv.join(" "));
         assert!(
-            out.stdout.is_empty(),
+            shim.requests().is_empty(),
             "flz {} sent a request",
             argv.join(" ")
         );

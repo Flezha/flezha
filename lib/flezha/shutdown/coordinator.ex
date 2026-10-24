@@ -19,7 +19,8 @@ defmodule Flezha.Shutdown.Coordinator do
   - **Finalise** is the rest of the `:node` walk, the rows from order 20:
     the fsync flush, the audit log close, then the hub supervisor and the
     transports, terminated in `Flezha.Supervisor` so neither is restarted.
-    A failed row is logged and the next one runs.
+    A failed row is logged and the next one runs. `shutdown_and_stop/3` stops
+    the transports after its report instead.
 
   The drain is bounded by `:flezha, :graceful_shutdown_timeout_ms`, finalise
   by the headroom the orchestrator grace keeps above it. Idempotent —
@@ -43,6 +44,9 @@ defmodule Flezha.Shutdown.Coordinator do
   alias Flezha.Shutdown.SignalHandler
 
   @finalise_from 20
+  # The finalise rows a reporting stop runs after its report: the transports
+  # carry that report to a `flz` on the control socket.
+  @after_report [:transports]
   @finalise_target %{supervisor: Flezha.Supervisor}
 
   defstruct phase: :idle,
@@ -91,8 +95,9 @@ defmodule Flezha.Shutdown.Coordinator do
   Drain with `reason`, hand the outcome to `report`, then stop the node.
 
   This is how a signal and `flz controller stop` end a controller. `report`
-  runs before `:init.stop/0`, so a caller can print the outcome while the node
-  still answers, and its answer is returned. A coordinator that exits is
+  runs before the transports stop and before `:init.stop/0`, so a caller can
+  print the outcome while the node still answers, also to a `flz` on the
+  control socket, and its answer is returned. A coordinator that exits is
   reported as `{:exit, reason}` and the node is stopped anyway. The stop
   re-enters the application's `prep_stop/1`, whose drain lands on the
   `phase: :done` short-circuit.
@@ -101,12 +106,13 @@ defmodule Flezha.Shutdown.Coordinator do
   def shutdown_and_stop(reason, opts \\ [], report \\ fn _outcome -> :ok end) do
     outcome =
       try do
-        shutdown(reason, opts)
+        shutdown(reason, Keyword.put(opts, :defer, @after_report))
       catch
         :exit, exit_reason -> {:exit, exit_reason}
       end
 
     answer = report.(outcome)
+    _ = finalise_rows(@finalise_target, finalise_budget_ms(), &(&1.name in @after_report))
     :init.stop()
     answer
   end
@@ -126,7 +132,8 @@ defmodule Flezha.Shutdown.Coordinator do
   when no coordinator drives the node.
   """
   @spec finalise(map()) :: {:ok, Shutdown.report()} | {:partial, Shutdown.report()}
-  def finalise(target \\ @finalise_target), do: walk(:finalise, target, finalise_budget_ms())
+  def finalise(target \\ @finalise_target),
+    do: walk({:finalise, []}, target, finalise_budget_ms())
 
   @doc false
   def __reset_for_tests__() do
@@ -299,7 +306,7 @@ defmodule Flezha.Shutdown.Coordinator do
     state
     |> transition(:finalising, now)
     |> arm_timer(:phase_timeout, budget + Durations.get(:drain_budget_slack_ms), :phase_timeout)
-    |> start_walk(:finalise, @finalise_target, budget)
+    |> start_walk({:finalise, Keyword.get(state.opts, :defer, [])}, @finalise_target, budget)
   end
 
   defp phase_completed(state, phase, now) do
@@ -369,14 +376,18 @@ defmodule Flezha.Shutdown.Coordinator do
     do: Durations.get(:orchestrator_grace_ms) - configured_timeout_ms()
 
   # The drain is the `:node` rows below 20 and halts on a failure; finalise is
-  # the rows from 20, each failure logged and the next row run.
+  # the rows from 20 less the deferred ones, each failure logged and the next
+  # row run.
   defp walk(:drain, target, budget),
-    do: Shutdown.run(:node, target, budget, rows(&(&1 < @finalise_from)))
+    do: Shutdown.run(:node, target, budget, rows(&(&1.order < @finalise_from)))
 
-  defp walk(:finalise, target, budget),
-    do: Shutdown.run(:node, target, budget, rows(&(&1 >= @finalise_from)), on_error: :continue)
+  defp walk({:finalise, deferred}, target, budget),
+    do: finalise_rows(target, budget, &(&1.order >= @finalise_from and &1.name not in deferred))
 
-  defp rows(order?), do: Enum.filter(Shutdown.steps(:node), &order?.(&1.order))
+  defp finalise_rows(target, budget, row?),
+    do: Shutdown.run(:node, target, budget, rows(row?), on_error: :continue)
+
+  defp rows(row?), do: Enum.filter(Shutdown.steps(:node), row?)
 
   # Runs a walk off the coordinator loop: the drain blocks up to its deadline
   # and a hub stop up to its own bound. One `{:walk_done, ref, report}` lands

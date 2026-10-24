@@ -141,6 +141,7 @@ Mimic.copy(Flezha.Convergence.Intent)
 Mimic.copy(Flezha.Convergence.Probe)
 Mimic.copy(Flezha.Convergence.RecoveryGate)
 Mimic.copy(Flezha.Shutdown.Coordinator)
+Mimic.copy(Flezha.Service.Cli)
 
 # Registered after every `Mimic.copy/1` above, so it runs before their own
 # after-suite resets: a reset purges a copied module's original code, which kills

@@ -116,6 +116,19 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     end
   end
 
+  describe "shutdown/2 with rows deferred" do
+    # A stop that reports runs the transports after its report, which travels
+    # over them to a `flz` on the control socket.
+    test "finalise leaves the deferred rows to its caller" do
+      stub(HubManager, :get_running_namespaces, fn -> [] end)
+      stub_finalise_rows()
+
+      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000, defer: [:transports])
+
+      assert received_rows() == [:fsync, :audit_log, :hubs]
+    end
+  end
+
   describe "idempotent re-entry" do
     test "second call during in-flight shutdown joins and receives same outcome" do
       # Make drain take long enough that two callers race into it.

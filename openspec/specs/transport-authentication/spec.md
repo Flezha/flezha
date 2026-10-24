@@ -71,12 +71,12 @@ it readable only by its owner, and reuse it on later boots; such a value SHALL b
 unique to the node that minted it, SHALL NOT appear in the source tree, and SHALL
 leave the node unable to cluster with any node that did not receive it explicitly.
 Only a release command that starts a node SHALL mint and persist that value. Every
-other release command, including the one behind each CLI verb, SHALL only read it and
-SHALL NOT mint or change it;
+other release command, including `flzvm remote` and the `flzvm eval` behind the CLI's local
+verbs, SHALL only read it and SHALL NOT mint or change it;
 with nothing to read it SHALL persist nothing, and its call SHALL reach no node and
 report the node unreachable. A node start that can neither be given nor mint a cookie
 SHALL refuse to start distribution rather than proceed without one, and SHALL say so. The cookie SHALL NOT appear on the command line of any process the release
-starts, the node itself or the one behind a CLI verb, because any local user can read a
+starts, the node itself or `flzvm remote`, because any local user can read a
 command line; each VM SHALL be given it through an owner-only cookie file of its own, written from
 `RELEASE_COOKIE` or the minted value, which the runtime reads before distribution starts,
 while the processes the node spawns see the user's own home directory.
@@ -112,37 +112,34 @@ while the processes the node spawns see the user's own home directory.
 
 - **GIVEN** no cookie is provisioned and no node has started with this cookie file
 - **WHEN** a CLI verb runs
-- **THEN** no cookie file SHALL be written, and the verb SHALL report the controller unreachable
+- **THEN** no cookie file SHALL be written, and a verb that reaches a controller SHALL report it
+  unreachable
 
-#### Scenario: A verb racing a first start leaves the node's cookie in the file
+#### Scenario: A remote shell racing a first start leaves the node's cookie in the file
 
-- **WHEN** a CLI verb has found no cookie file and a node's first start writes one before the verb finishes
-- **THEN** the file SHALL hold the value the node started with, and a later verb SHALL read that value
+- **WHEN** `flzvm remote` has found no cookie file and a node's first start writes one before it finishes
+- **THEN** the file SHALL hold the value the node started with, and a later `flzvm remote` SHALL read that value
 
 #### Scenario: No command line carries the cookie
 
-- **WHEN** a controller is running and a CLI verb's `flzvm` child is connected to it
-- **THEN** neither `/proc/<pid>/cmdline` of the controller nor that of the child SHALL hold the cookie, and the verb SHALL still reach the controller
+- **WHEN** a controller is running and `flzvm remote` is connected to it
+- **THEN** neither `/proc/<pid>/cmdline` of the controller nor that of the `flzvm remote` process SHALL hold the cookie, and the remote shell SHALL still reach the controller
 
 ### Requirement: CLI callers present a verifiable identity
 
 The `flz` CLI SHALL accept a token (`--token` flag or `FLEZHA_TOKEN` environment
-variable) and pass it through to the controller in one place: the trailing options
-list every verb's request ends with, appended once by the one function that issues
-every RPC. That entry SHALL read the token from the child's stdin, where `child` in
-`crates/cli/src/rpc.rs` writes it with the request that reads it, so the token never appears
-on a child's command line, which any local user can read. The request's arguments SHALL travel the same
-way, written to the child's stdin ahead of the token, so no argument a verb was given, and no
-protocol line `flz mcp` answers, reaches a child's command line. A child `flz mcp` starts
-SHALL get that stdin and no other, so it never reads a
-protocol line. No verb SHALL carry the credential another way, and no verb that issues
-a request SHALL omit it, so that a verb cannot be gated on the controller and
-token-less on the wire. The verbs that run in a VM of their own and reach no
-controller (`flz plugin install`, `flz plugin uninstall`, `flz plugin sync`) issue no
-request and carry no token; write access to the plugin root is their gate. The
-controller SHALL resolve the token via the token registry into the `caller_context`
-principal at one place. While authorization is enforced, a gated verb invoked without
-a resolvable principal SHALL be refused with a message naming the token requirement;
+variable) and pass it through to the controller in one place: the `opts` object of the
+`cli_request` frame every controller request sends, filled once by the one function that sends
+every request. The token SHALL travel only inside that frame, over the owner-only control
+socket, and SHALL NOT appear on any command line or in any child process's environment or
+stdin. No verb SHALL carry the credential another way, and no verb that sends a request SHALL
+omit it, so that a verb cannot be gated on the controller and token-less on the wire. The
+verbs that run in a VM of their own and reach no controller (`flz plugin install`,
+`flz plugin uninstall`, `flz plugin sync`, and `flz mcp`'s knowledge tools while no controller
+can be reached) send no request and carry no token; write access to the plugin root is the
+plugin verbs' gate. The controller SHALL resolve the token via the token registry into the
+`caller_context` principal at one place. While authorization is enforced, a gated verb invoked
+without a resolvable principal SHALL be refused with a message naming the token requirement;
 `flz auth bootstrap` SHALL remain callable without a prior token, and SHALL read the one-time
 bootstrap token from its own standard input, never from an argument.
 
@@ -163,42 +160,35 @@ bootstrap token from its own standard input, never from an argument.
 #### Scenario: Every verb's request carries the token it was given
 
 - **WHEN** each verb `flz` builds a request for is invoked with `--token <t>` against a
-  shim that echoes the request
-- **THEN** every echoed request SHALL end with an options list carrying
-  `token: IO.read(:eof)`, and a verb whose request does not SHALL fail the CLI's own test
+  stand-in socket server that records the request
+- **THEN** every recorded `cli_request` SHALL carry `<t>` as `opts.token`, and a verb whose
+  request does not SHALL fail the CLI's own test
 
-#### Scenario: The token never rides a child's command line
+#### Scenario: The token never rides a command line
 
-- **WHEN** a gated verb, or `flz mcp` answering a line, runs with `FLEZHA_TOKEN` set
-  against a shim that records its arguments and its stdin
-- **THEN** neither the token nor the request's arguments (the verb's arguments, or the
-  protocol line `flz mcp` answers) SHALL appear in the shim's arguments; the arguments
-  SHALL be the first line of its stdin and the token the rest
-
-#### Scenario: A child of `flz mcp` cannot read a protocol line
-
-- **WHEN** `flz mcp` without a token answers a line with a child that reads its stdin,
-  and the client writes the next line while that child runs
-- **THEN** the child SHALL read nothing, and the next line SHALL be answered by the
-  server
+- **WHEN** a gated verb, or `flz mcp` answering a line, runs with `FLEZHA_TOKEN` set while a
+  controller runs
+- **THEN** `flz` SHALL start no child process for the request, and the token SHALL appear only
+  in the `cli_request` frame
 
 #### Scenario: A verb that carries a JSON document still carries the token beside it
 
 - **WHEN** `flz plugin enable` or `relay scale` is invoked with a token
-- **THEN** the JSON document SHALL travel unchanged and the token SHALL ride the
-  trailing options list, never inside the document
+- **THEN** the JSON document SHALL travel unchanged in `args` and the token SHALL ride
+  `opts`, never inside the document
 
 #### Scenario: A verb that reaches no controller starts no RPC
 
 - **WHEN** `flz plugin install ./p.fpz --token <t>` is invoked against a shim that echoes
-  every `flzvm` invocation
-- **THEN** the shim SHALL see one `eval` and no `rpc`, and the token SHALL appear in
-  neither
+  every `flzvm` invocation, with a stand-in socket server listening
+- **THEN** the shim SHALL see one `eval`, the server SHALL receive no request, and the token
+  SHALL appear in neither
 
 #### Scenario: The bootstrap token is read from stdin
 
 - **WHEN** `flz auth bootstrap < bootstrap.token` runs against a controller with an unclaimed bootstrap
-- **THEN** the claim succeeds, and neither `flz`'s command line nor its `flzvm` child's holds the token
+- **THEN** the claim succeeds, `flz`'s command line does not hold the token, and no child
+  process is started
 
 ### Requirement: Secure default posture
 

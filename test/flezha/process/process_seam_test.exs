@@ -71,6 +71,7 @@ defmodule Flezha.Process.SeamTest do
       # the ref is returned to the caller as its subscription handle
       "lib/flezha/observability/audit_log/writer.ex",
       # one monitor for one owner; no map, nothing to book
+      "lib/flezha/cli/socket.ex",
       "lib/flezha/plugin/installer.ex",
       "lib/flezha/service/hub_manager/lifecycle.ex",
       # the ref is a field of the worker entry the table replaces in place

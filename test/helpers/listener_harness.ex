@@ -1,16 +1,46 @@
 defmodule FlezhaTest.Helper.ListenerHarness do
   @moduledoc """
-  What the listener and part system tests read and attach: the listener rows
-  a relay carries, and a file sink beside a listener with the lines it
-  wrote.
+  What the listener and part system tests read and attach: a relay bound to
+  a runner, the listener rows it carries, and a file sink beside a listener
+  with the lines it wrote.
   """
 
+  import ExUnit.Assertions, only: [assert: 1, assert: 2]
   import ExUnit.Callbacks, only: [on_exit: 1]
 
   alias Flezha.Config
   alias Flezha.Plugin
+  alias Flezha.Relay.Builder
   alias Flezha.Service.{HubManager, RelayManager}
+  alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
+
+  @doc """
+  Start `factory` as a relay under a fresh id with `plugins` bound, and answer
+  the id once a runner holds it.
+  """
+  @spec start_bound!(String.t(), String.t(), [Plugin.t()]) :: String.t()
+  def start_bound!(ns, factory, plugins \\ []) do
+    id = "#{factory}_#{System.unique_integer([:positive])}"
+    bindings = RelayFixture.bindings(ns, id, plugins)
+    builder = %Builder{id: id, factory_id: factory, init_values: %{}, opts: [bindings: bindings]}
+
+    assert {:ok, _} = RelayManager.start_relay(ns, builder)
+
+    assert NodeTestHelper.wait_until(fn -> runner_holds?(ns, id) end, 30_000),
+           "#{id} was never bound"
+
+    id
+  end
+
+  @doc "Whether a runner holds the relay `id`."
+  @spec runner_holds?(String.t(), String.t()) :: boolean()
+  def runner_holds?(ns, id) do
+    match?(
+      {:ok, %{runner_id: runner}} when is_binary(runner),
+      RelayManager.get_overwatch_state(ns, id)
+    )
+  end
 
   @doc """
   The listener plugins on `id`: on its live extension table and in its

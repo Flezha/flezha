@@ -443,9 +443,9 @@ except where the verb's row declares that it refuses unrecognised words.
 
 Every refusal and every error a `flz` verb renders SHALL be written to the stderr of the process the user ran, whatever the verb's family and whatever the output format, and the stream SHALL NOT be a per-call argument. A user who pipes a verb's output into a file or another program is collecting the answer, not the failure; a failure written to stdout is a failure inside the data, and a failure written to the controller's own stderr is a failure the user never sees at all.
 
-A verb body evaluated on the controller SHALL resolve the device it writes to from its caller, and SHALL NOT name a local stream. A named stream selects the device registered under that name on the node the body is running on, which for every controller-side verb is the controller's log rather than the user's terminal.
+A verb body evaluated on the controller SHALL write its failures to the stderr device bound to its request, which sends them to the stderr of the `flz` that sent it, and SHALL NOT name a local stream. A named stream selects the device registered under that name on the node the body is running on, which for every controller-side verb is the controller's log rather than the user's terminal.
 
-A failure SHALL be rendered by the error model's one renderer: in text, the line `error: <message> (<code>)` and, when the code has a hint, the line `hint: <hint>`; under `--json` or `--output json`, the one-line object `{"error": {"code", "class", "message", "details", "hint"}}`. A failure SHALL be rendered once: `flz` SHALL add no line of its own after a failure the controller rendered. `flz`'s own refusals, of the command line, of a controller it cannot reach and of an `flzvm` it cannot start, SHALL be rendered in the same two forms by the same catalogue.
+A failure SHALL be rendered by the error model's one renderer: in text, the line `error: <message> (<code>)` and, when the code has a hint, the line `hint: <hint>`; under `--json` or `--output json`, the one-line object `{"error": {"code", "class", "message", "details", "hint"}}`. A failure SHALL be rendered once: `flz` SHALL add no line of its own after a failure the controller rendered. `flz`'s own refusals, of the command line, of a controller it cannot reach or that does not accept its request, and of an `flzvm` it cannot start, SHALL be rendered in the same two forms by the same catalogue.
 
 A refused verb SHALL exit with the exit code of its error's class: 1 internal, 2 invalid, 3 unreachable, 4 denied, 5 not_found, 6 conflict, 7 unavailable. It SHALL halt the calling process without printing a language-level exit trace over the rendering. The verb's success output stays on stdout, and an acting verb's success output is text whatever the format.
 
@@ -463,7 +463,7 @@ A refused verb SHALL exit with the exit code of its error's class: 1 internal, 2
 
 #### Scenario: A verb evaluated on the controller renders on the caller's stderr
 
-- **WHEN** a `flz` verb is evaluated on the controller node through `flzvm rpc` and
+- **WHEN** a `flz` verb is evaluated on the controller node through its socket request and
   refuses
 - **THEN** the refusal SHALL appear on the stderr of the process that ran `flz`,
   and SHALL NOT appear only in the controller's own log

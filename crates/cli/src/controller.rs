@@ -50,7 +50,7 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
-/// The one verb that does not run `flzvm rpc`: it hands `flzvm` a start mode.
+/// The one verb that starts the release itself: it hands `flzvm` a start mode.
 /// `flzvm` halts non-zero when the node refuses to boot, and that code is the
 /// verb's.
 fn handle_start(read: &Reading) {
@@ -94,7 +94,7 @@ fn handle_stop(read: &Reading) {
     eprintln!("Stopping flezha controller...");
 
     let mut marker: Option<String> = None;
-    let answer = rpc::call(
+    let ended = rpc::send(
         &request,
         Out::Filter(&mut |line| match line.strip_prefix(STOP_MARKER) {
             Some(outcome) => {
@@ -103,6 +103,7 @@ fn handle_stop(read: &Reading) {
             }
             None => true,
         }),
+        None,
     );
 
     match marker.as_deref() {
@@ -112,7 +113,7 @@ fn handle_stop(read: &Reading) {
         }
         Some(other) => rpc::fail(unconfirmed(other)),
         None => {
-            rpc::settle(answer);
+            rpc::settle(ended);
             rpc::fail(unconfirmed(""));
         }
     }

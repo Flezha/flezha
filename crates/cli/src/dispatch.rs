@@ -229,12 +229,8 @@ pub(crate) fn send(read: &Reading) {
             arg => args.push(arg.value(read).unwrap_or(Value::Null)),
         }
     }
-    // An option's value is an Elixir literal.
     let opts: Vec<rpc::Opt> = (read.verb.carries.iter())
-        .filter_map(|(key, arg)| match arg.value(read)? {
-            Value::String(text) => Some((*key, rpc::text(&text))),
-            other => Some((*key, other.to_string())),
-        })
+        .filter_map(|(key, arg)| Some((*key, arg.value(read)?)))
         .collect();
     rpc::door(read.operation(), &args, &opts, read);
 }

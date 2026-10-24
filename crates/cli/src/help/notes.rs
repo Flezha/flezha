@@ -26,9 +26,7 @@ pub(crate) const BOOT: Help = r#"`await` also waits, inside the same timeout, fo
 yet, such as one started as a daemon a moment ago. Once reached, the
 controller's verdict is the answer. Still unreachable at the timeout, it exits 3
 (controller.unreachable) naming what that can mean: not up yet, stopped after it
-was reached, or a cookie or node name that is not the controller's. A controller
-that refuses the cookie logs two errors per attempt meanwhile, about four a
-second."#;
+was reached, or listening in another socket directory."#;
 
 pub(crate) const CLUSTER: Help = r#"EXAMPLES:
     flz cluster status

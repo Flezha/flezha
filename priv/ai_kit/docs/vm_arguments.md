@@ -11,8 +11,8 @@ that table can express them.
 ## What the release sets
 
 The launcher reads two files: the start commands take
-`vm.args`, and `rpc` and `remote` take `remote.vm.args`, which is the node every
-`flz` verb starts to make its one call. A gate holds these tables and the two
+`vm.args`, and `rpc` and `remote` take `remote.vm.args`, the short-lived node
+those two commands start; no `flz` verb starts one. A gate holds these tables and the two
 templates to each other, so a flag cannot ship undocumented.
 
 <!-- vm-args:rel/vm.args.eex:begin -->
@@ -24,7 +24,7 @@ templates to each other, so a flag cannot ship undocumented.
 | `+sbwtdio short` | The same, for the dirty IO schedulers, which is where every transport NIF call that can block is scheduled. |
 | `+Q 65536` | The ceiling on ports: plugin sockets, runner connections, distribution. Pinned because the default moves with whichever ERTS is underneath, 65 536 on the image's OTP 27 and 1 048 576 on OTP 29, so the ceiling is a decision rather than a property of the runtime that happened to be built in. The table is allocated up front at about 16 bytes a slot, so pinning at the image's own value costs nothing there and returns **15 MB of RSS** on the larger default. Raise it if port exhaustion ever appears. |
 | `+C multi_time_warp` | Already the default on both OTP 27 and OTP 29, pinned so a future ERTS cannot move it. The keepalive roster compares a monotonic epoch, which is only well defined in this mode. Costs nothing: it is the mode the VM already chooses. |
-| `+Bd` | Ctrl-C ends an attached controller at once. With the default break handler SIGINT opens the `BREAK:` menu, which pauses the whole VM: the prompt comes back while the node stays alive holding its name and its socket, and every `flz` verb answers `:noconnection`. It is a hard stop with no drain, recovered on the next boot as a crash would be; SIGTERM and `flz controller stop` drain. |
+| `+Bd` | Ctrl-C ends an attached controller at once. With the default break handler SIGINT opens the `BREAK:` menu, which pauses the whole VM: the prompt comes back while the node stays alive holding its name and its socket, and answers no `flz` verb. It is a hard stop with no drain, recovered on the next boot as a crash would be; SIGTERM and `flz controller stop` drain. |
 
 <!-- vm-args:rel/vm.args.eex:end -->
 
@@ -34,8 +34,8 @@ templates to each other, so a flag cannot ship undocumented.
 |---|---|
 | `+S 1:1` | This node connects to the controller, evaluates there and exits. It was being given the host's full scheduler complement to do that. |
 | `+SDio 1` | It opens no transport, so the dirty IO pool has nothing to serve. |
-| `+Q 65536` | The same ceiling, pinned for the same reason. This node opens two ports and was allocating a table for a million of them: **15 MB of RSS**, and a tenth of the node's startup, on every `flz` verb. |
-| `+Bd` | Ctrl-C ends the verb. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a verb that streams, such as `flz relay listen`, could not be interrupted. |
+| `+Q 65536` | The same ceiling, pinned for the same reason. This node opens two ports and was allocating a table for a million of them: **15 MB of RSS**, and a tenth of the node's startup, on every start. |
+| `+Bd` | Ctrl-C ends the node. With the default break handler SIGINT opens the `BREAK:` menu and the node stays up, so a call that streams could not be interrupted. |
 
 <!-- vm-args:rel/remote.vm.args.eex:end -->
 
@@ -67,8 +67,8 @@ file does set. **Use `ERL_FLAGS`.**
 | Bare metal | Either, plus editing the assembled `releases/<vsn>/vm.args` directly |
 
 Two things to know before you set one. `ERL_FLAGS` is read by every `flzvm`
-invocation, and every `flz` verb starts one, so exporting it in a profile
-enlarges those short-lived nodes too. And a flag the VM does not accept refuses
+invocation, so exporting it in a profile also enlarges the nodes `flzvm rpc`,
+`flzvm remote` and the few `flz` verbs that run `flzvm` start. And a flag the VM does not accept refuses
 the boot naming itself (`bad scheduler busy wait threshold: banana`), which
 under an orchestrator is a crash loop rather than a setting quietly dropped.
 

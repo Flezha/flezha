@@ -4,8 +4,8 @@
 //! The operations are `crates/cli/catalogue.json`, which `mix flezha.catalogue`
 //! writes from the controller's own declarations and a test on that side
 //! holds fresh. Two checks hold the CLI to it: every door name written in
-//! `crates/cli/src` is an entry, and one invocation of each, run against a `flzvm`
-//! that echoes what it was handed, sends an operation its verb's row names and
+//! `crates/cli/src` is an entry, and one invocation of each, run against a socket
+//! that records what it was sent, sends an operation its verb's row names and
 //! a positional count the entry accepts. The rows are read from the tables'
 //! source, since a binary's internals are out of an integration test's reach.
 //!
@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
-use common::{door_request, output_fed, Shim, BOOTSTRAP_INPUT, DOOR, ECHOING};
-use serde_json::{Deserializer, Value};
+use common::{output_fed, Shim, BOOTSTRAP_INPUT};
+use serde_json::Value;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 
@@ -222,17 +222,11 @@ fn door_name(literal: &str) -> bool {
     }
 }
 
-/// The operation and the arguments one echoed request names.
-fn sent(stdout: &str) -> Option<(String, Vec<Value>)> {
-    let request = door_request(stdout)?;
-    let call = request.strip_prefix(DOOR)?;
-    let mut values = Deserializer::from_str(call).into_iter::<Value>();
-    let name = values.next()?.ok()?.as_str()?.to_string();
-    let rest = call[values.byte_offset()..].trim_start_matches([',', ' ']);
-    let args = Deserializer::from_str(rest)
-        .into_iter::<Vec<Value>>()
-        .next()?
-        .ok()?;
+/// The operation and the arguments the last recorded request names.
+fn sent(shim: &Shim) -> Option<(String, Vec<Value>)> {
+    let request = shim.requests().pop()?;
+    let name = request["name"].as_str()?.to_string();
+    let args = request["args"].as_array()?.clone();
     Some((name, args))
 }
 
@@ -261,12 +255,12 @@ fn every_door_name_in_the_source_is_a_catalogue_entry() {
 #[test]
 fn every_request_sends_an_operation_its_row_names() {
     let rows = row_calls();
-    let shim = Shim::new(FLZ_BIN, ECHOING);
+    let shim = Shim::recording(FLZ_BIN);
     let mut wrong: Vec<String> = Vec::new();
 
     for argv in INVOCATIONS {
-        let out = run(&shim, argv);
-        let Some((name, _args)) = sent(&String::from_utf8_lossy(&out.stdout)) else {
+        run(&shim, argv);
+        let Some((name, _args)) = sent(&shim) else {
             continue;
         };
         let row = (format!("flz {}", argv[0]), argv[1].to_string());
@@ -287,13 +281,13 @@ fn every_request_sends_an_operation_its_row_names() {
 #[test]
 fn every_request_sends_a_count_of_arguments_its_operation_takes() {
     let catalogue = catalogue();
-    let shim = Shim::new(FLZ_BIN, ECHOING);
+    let shim = Shim::recording(FLZ_BIN);
     let mut wrong: Vec<String> = Vec::new();
     let mut reached = BTreeSet::new();
 
     for argv in INVOCATIONS {
-        let out = run(&shim, argv);
-        let Some((name, args)) = sent(&String::from_utf8_lossy(&out.stdout)) else {
+        run(&shim, argv);
+        let Some((name, args)) = sent(&shim) else {
             wrong.push(format!("flz {} sent no door call", argv.join(" ")));
             continue;
         };

@@ -26,18 +26,17 @@ else installed. What is in it, and what matters to you:
 | `storage/app/` | the controller's durable state and its cookie, created in the directory the controller starts from |
 | `storage/logs/flezha.log` | everything the controller logs, also in the directory it starts from |
 | `tmp/log/` | the boot, and anything printed before the logger is up |
-| `bin/flzvm` | the script every Elixir release comes with, which starts and stops the controller's VM. `flz` is a separate, compiled program that checks your command and prints the answer, and hands each call to `flzvm`; you rarely run it yourself |
+| `bin/flzvm` | the script every Elixir release comes with, which starts and stops the controller's VM. `flz` is a separate, compiled program that checks your command, sends it to the controller and prints the answer; it runs `flzvm` only to start the controller and for the few verbs that need no controller. You rarely run it yourself |
 | `erts-<version>/`, `lib/` | the Erlang runtime and the compiled code; nothing to change |
 
 Three things about it are worth knowing before anything else:
 
-- **It talks to the running controller over Erlang distribution.** Each
-  command becomes one function call, which `flz` hands to the release script
-  `bin/flzvm`. That starts a short-lived Erlang node, which connects to the
-  controller's node by its name, proves itself with the cookie the two share,
-  runs the call on the controller and prints the answer. So `flz` reaches only
-  a controller whose node name and cookie it knows
-  ([how it finds them](#how-it-reaches-the-controller)).
+- **It talks to the running controller over the controller's control
+  socket.** Each command becomes one request on the Unix socket the
+  controller's runners attach to. The controller runs it and sends the answer
+  back, and `flz` prints it and exits with the code the controller gave. So
+  `flz` reaches only a controller on its own machine whose socket directory it
+  finds ([how it finds it](#how-it-reaches-the-controller)).
 - **Each verb takes `--json`** (or `--output json`). A verb that answers data
   answers it as JSON. A verb that acts still prints its success in text, so
   for it `--json` changes only how a failure is written.
@@ -47,13 +46,27 @@ Three things about it are worth knowing before anything else:
 
 ## How it reaches the controller
 
-`flz` resolves the controller's node the same way the controller did, and
-reads the same cookie file: with the same `FLEZHA_STATE_DIR` and
-`FLEZHA_COOKIE_FILE` as the controller, or neither, it needs nothing more. A
-controller started with `RELEASE_COOKIE` set needs the same value exported
-where `flz` runs. A verb that cannot reach the controller reports it
-unreachable (exit 3). `flz runner check` is the exception, needing neither a
-controller nor a cookie: it tests the runner socket
+`flz` looks for the controller's control socket, `runner_control_channel.sock`,
+the way a runner does: in `FLEZHA_SOCKET_FILES_PATH` when it is set, and
+otherwise in the directory the controller chooses
+([the socket directory](../deploying/connecting_a_runner.md#the-socket-directory)).
+A shell with the same `FLEZHA_SOCKET_FILES_PATH` as the controller, or neither,
+needs nothing more. The directory is open only to the controller's user, or to
+one group, so only they reach the controller this way, and a gated verb still
+needs its token. Every controller listens on this socket, whatever
+`FLEZHA_TRANSPORT` its runners use.
+
+A verb that finds no socket, or no controller behind it, reports it
+unreachable (exit 3). A controller that does not accept the request within five
+seconds, such as one from an older release, is reported as
+`cli.protocol_unsupported` (exit 2): use the `flz` of the controller's own
+release.
+
+Three verbs start a VM of their own through `bin/flzvm` instead, because they
+work with no controller running: `flz controller start`, the `flz plugin
+install`, `uninstall` and `sync` verbs, and `flz mcp`'s knowledge tools while
+no controller can be reached. `flz runner check` needs no controller either: it
+tests the runner socket
 ([`connecting_a_runner.md`](../deploying/connecting_a_runner.md)).
 
 ## Options and help
@@ -149,10 +162,11 @@ Which role each verb needs is in
 
 ## Limits and gotchas
 
-- **`flz` lives in a release.** There is no standalone `flz` that reaches a
-  remote controller; run it on the controller's machine or in its container.
+- **`flz` reaches only a controller on its own machine.** The control socket
+  is local; run `flz` on the controller's machine or in its container.
 - **`--json` does not turn an action's success into JSON.**
-- **A cookie mismatch looks like an unreachable controller**:
-  `--rpc-eval : RPC failed with reason :noconnection`.
-- **`ERL_FLAGS` exported in a shell profile** also enlarges the short-lived
-  node each `flz` verb starts.
+- **Another socket directory looks like an unreachable controller.** A shell
+  whose `FLEZHA_SOCKET_FILES_PATH` differs from the controller's finds no
+  socket; the error names the path it looked at.
+- **`ERL_FLAGS` exported in a shell profile** also reaches the VM each of the
+  three verbs above starts.

@@ -236,18 +236,18 @@ serve anything, so the second question is separate: can a runner reach it.
 
 ## Point the CLI at it
 
-`flz` runs the controller's own `flzvm` underneath, so it resolves the node
-the same way the controller did and reads the same cookie file: with the same
-`FLEZHA_STATE_DIR` and `FLEZHA_COOKIE_FILE` as the controller, or neither, it
-needs nothing more. A controller started with `RELEASE_COOKIE` set needs the
-same value exported wherever `flz` runs.
+`flz` sends each verb to the controller over its control socket, which it
+finds the way a runner does: with the same `FLEZHA_SOCKET_FILES_PATH` as the
+controller, or neither, it needs nothing more. Every controller listens on that
+socket, whatever `FLEZHA_TRANSPORT` its runners use.
 
-Only the controller's start creates the cookie file. A verb run before the
-first start, or with a cookie that is not the controller's, reports the
-controller unreachable:
+A verb run before the controller has started, or from a shell that looks in
+another socket directory, reports the controller unreachable and names the
+socket it looked for:
 
 ```output
---rpc-eval : RPC failed with reason :noconnection
+error: the controller could not be reached at its control socket /run/user/1000/flezha/runner_control_channel.sock: it is not up yet, it stopped after it was reached, or it listens in another socket directory (FLEZHA_SOCKET_FILES_PATH) (controller.unreachable)
+hint: flz controller start
 ```
 
 ## Variables a deployment sets

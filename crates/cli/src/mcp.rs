@@ -2,17 +2,18 @@
 //!
 //! It holds no MCP of its own. Each line is one JSON-RPC message, answered by
 //! `Flezha.Mcp.Stdio` the way every verb is answered: on the controller through
-//! `flzvm rpc`, as the caller's token, or, while no controller can be reached,
-//! in a VM of its own through `flzvm eval`, which serves the knowledge tools and
-//! refuses the operations. Each line asks again, so a controller started later
-//! is found without restarting the assistant.
+//! a request over its control socket, as the caller's token, or, while no
+//! controller can be reached, in a VM of its own through `flzvm eval`, which
+//! serves the knowledge tools and refuses the operations. Each line asks again,
+//! so a controller started later is found without restarting the assistant.
 //!
-//! Messages are answered one at a time, in order, so one assistant never runs
-//! more than one VM against the controller. Two exceptions are heard while one
-//! runs: a `ping`, answered beside it in a VM of its own, since its answer never
-//! needs a controller; and `notifications/cancelled`, which kills the cancelled
-//! request's child and leaves the request unanswered. SIGINT and SIGTERM kill
-//! the running children before `flz mcp` exits.
+//! Messages are answered one at a time, in order, so one assistant never has
+//! more than one request running against the controller. Two exceptions are
+//! heard while one runs: a `ping`, answered beside it in a VM of its own, since
+//! its answer never needs a controller; and `notifications/cancelled`, which
+//! closes the cancelled request's connection, or kills its child, and leaves
+//! the request unanswered. SIGINT and SIGTERM end the running requests before
+//! `flz mcp` exits.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
@@ -27,14 +28,14 @@ use flz_transport::utility::socket_dir;
 use serde_json::{json, Value};
 
 use crate::args::Reading;
-use crate::rpc::{self, text, Out, Stop, ARGUMENTS};
+use crate::rpc::{self, text, Ended, Out, Stop};
 
-/// Set when SIGINT or SIGTERM arrives: every running child is killed, and no
+/// Set when SIGINT or SIGTERM arrives: every running request is ended, and no
 /// message is answered after it.
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
 /// Held by each lane while it answers a message, so a signal waits for the
-/// lane's child to be killed and reaped before the process exits.
+/// lane's request to end before the process exits.
 static BUSY: [Mutex<()>; 2] = [Mutex::new(()), Mutex::new(())];
 
 /// One message to answer, with the flag a cancellation of it sets.
@@ -136,22 +137,9 @@ impl Server<'_> {
     }
 
     fn answer(&self, line: &str, local: bool, stop: Stop) {
-        // The line is the request's arguments line: an assistant's tool
-        // arguments never ride a command line.
-        let online = rpc::request(Some(line.to_string()), &[], self.token, false, |list| {
-            format!("Flezha.Mcp.Stdio.answer({}, {})", ARGUMENTS, list)
-        });
-        let offline = rpc::request(Some(line.to_string()), &[], None, false, |_| {
-            format!(
-                "Flezha.Mcp.Stdio.offline({}, {})",
-                ARGUMENTS,
-                text(&self.socket)
-            )
-        });
-
-        // Stdout is the protocol's alone: a line the child printed that is not
-        // a reply, such as a boot-time log line, goes to stderr, where a client
-        // keeps a server's log.
+        // Stdout is the protocol's alone: a line printed that is not a reply,
+        // such as a boot-time log line, goes to stderr, where a client keeps a
+        // server's log.
         let mut replied = false;
         let mut pass = |line: &str| {
             let reply = line.starts_with('{');
@@ -163,26 +151,41 @@ impl Server<'_> {
             reply
         };
 
-        let mut run =
-            |command, request| rpc::child(command, request, Out::Filter(&mut pass), Some(stop));
-        let reached = if local {
-            None
+        let online = if local {
+            Ended::Unreachable
         } else {
-            Some(run("rpc", &online))
+            let request = rpc::mcp_request(line, self.token);
+            rpc::send(&request, Out::Filter(&mut pass), Some(stop))
         };
-        let answered = match reached {
-            Some(answered) if !matches!(answered, Ok(ref a) if a.unreachable) => answered,
+        let answered = match online {
+            Ended::Exit(code) => code == 0,
+            Ended::Unaccepted => false,
             // A request cancelled meanwhile starts no VM only to kill it.
-            _ if stop() => return,
-            _ => run("eval", &offline),
+            Ended::Unreachable if stop() => return,
+            Ended::Unreachable => self.offline(line, &mut pass, stop),
         };
 
         // A stopped request gets no answer: MCP sends none for a cancelled one.
-        // A child that failed before replying has said why on stderr; the
+        // A request that failed before replying has said why on stderr; the
         // client still gets an answer to its request rather than waiting.
-        if !stop() && !replied && !matches!(answered, Ok(ref answer) if answer.status.success()) {
+        if !stop() && !replied && !answered {
             internal_error(line);
         }
+    }
+
+    /// Answer `line` in a VM of its own, which knows the socket `flz` looked
+    /// for. The line is the child's stdin: an assistant's tool arguments never
+    /// ride a command line.
+    fn offline(&self, line: &str, pass: &mut dyn FnMut(&str) -> bool, stop: Stop) -> bool {
+        let expression = format!(
+            "arguments = IO.read(:line); Flezha.Mcp.Stdio.offline(arguments, {})",
+            text(&self.socket)
+        );
+        let input = format!("{}\n", line);
+        matches!(
+            rpc::child(&expression, &input, Out::Filter(pass), Some(stop)),
+            Ok(status) if status.success()
+        )
     }
 }
 
