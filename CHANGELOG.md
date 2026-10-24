@@ -39,3 +39,5 @@ v0.1.0-alpha.1 pre-release.
   now waits behind the others on the next tick.
 - A `ctx.effect` result kept while the relay's input log stops is answered to the
   runner instead of failing with `internal.uncatalogued`.
+- A plugin copy a disable stopped is no longer still listed on its controller
+  for a moment after `flz plugin disable` answers.

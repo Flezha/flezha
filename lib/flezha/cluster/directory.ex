@@ -58,6 +58,17 @@ defmodule Flezha.Cluster.Directory do
   @spec join_plugin(pid(), String.t() | atom(), String.t()) :: :ok
   def join_plugin(pid, namespace, name), do: join(plugin_group(namespace, name), pid)
 
+  @doc """
+  Withdraw `pid` as a copy of the plugin `name` before it exits, so a stop that
+  has returned finds it gone on this node: the exit alone leaves the group
+  only when the scope reads it.
+  """
+  @spec leave_plugin(pid(), String.t() | atom(), String.t()) :: :ok
+  def leave_plugin(pid, namespace, name) do
+    if scope_up?(), do: :pg.leave(@scope, plugin_group(namespace, name), pid)
+    :ok
+  end
+
   defp join(group, pid) do
     if scope_up?() and pid not in :pg.get_local_members(@scope, group) do
       :pg.join(@scope, group, pid)

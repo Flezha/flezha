@@ -610,6 +610,7 @@ defmodule Flezha.Plugin.Shared do
   # A hook still running, or waiting, goes with its plugin.
   @impl true
   def terminate(_reason, state) do
+    Directory.leave_plugin(self(), state.namespace, state.name)
     if state.hooks, do: Forwarder.stop(state.hooks)
     if state.hook_task, do: Task.Supervisor.terminate_child(@task_sup, state.hook_task)
     Table.teardown_all(state.table, :now)
