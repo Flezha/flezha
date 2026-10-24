@@ -199,14 +199,14 @@ defmodule Flezha.Runner.ControlUnit do
   any saga compensation, then emits `RelayCompleted` (status "cancelled") which
   drives the single teardown via `ControlChannel.handle_relay_completed/2`.
 
-  Fire-and-forget (mirrors `:stop_relay_async`) — the teardown is asynchronous,
+  Fire-and-forget, as `stop_relay_async/2` is — the teardown is asynchronous,
   so the caller does not wait on the SDK ack. Returns `{:error, :no_control_unit}`
   when the runner's control unit is gone (caller falls back to a hard stop).
   """
   @spec steps_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
   def steps_stop(runner_id, relay_id)
       when is_binary(runner_id) and is_binary(relay_id) do
-    cast_to_unit(runner_id, {:steps_stop, relay_id})
+    cast_to_unit(runner_id, {:steps_stop, %RunnerCommands.StepsStop{relay_id: relay_id}})
   end
 
   @doc """
@@ -230,10 +230,12 @@ defmodule Flezha.Runner.ControlUnit do
   @spec stop_relay_async(binary(), binary()) :: :ok | {:error, :no_control_unit}
   def stop_relay_async(runner_id, relay_id)
       when is_binary(runner_id) and is_binary(relay_id) do
-    cast_to_unit(runner_id, {:stop_relay_async, relay_id})
+    cast_to_unit(runner_id, {:rem_relay, %RunnerCommands.RemRelay{relay_id: relay_id}})
   end
 
-  defp cast_to_unit(runner_id, message) do
+  # Through the unit, so the command keeps its place behind whatever the unit
+  # is still sending.
+  defp cast_to_unit(runner_id, command) do
     control_unit = Identificator.control_unit(runner_id)
 
     case GenServer.whereis(control_unit) do
@@ -241,7 +243,7 @@ defmodule Flezha.Runner.ControlUnit do
         {:error, :no_control_unit}
 
       _ ->
-        GenServer.cast(control_unit, message)
+        GenServer.cast(control_unit, {:send_async, command})
         :ok
     end
   end
@@ -341,28 +343,8 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:stop_relay_async, relay_id}, state) do
-    ControlChannel.send_control_async(
-      state.runner_id,
-      {
-        :rem_relay,
-        %RunnerCommands.RemRelay{relay_id: relay_id}
-      }
-    )
-
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_cast({:steps_stop, relay_id}, state) do
-    ControlChannel.send_control_async(
-      state.runner_id,
-      {
-        :steps_stop,
-        %RunnerCommands.StepsStop{relay_id: relay_id}
-      }
-    )
-
+  def handle_cast({:send_async, command}, state) do
+    ControlChannel.send_control_async(state.runner_id, command)
     {:noreply, state}
   end
 

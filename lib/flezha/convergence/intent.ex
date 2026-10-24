@@ -48,18 +48,25 @@ defmodule Flezha.Convergence.Intent do
   end
 
   defp declared_for_namespace(namespace) do
-    namespace
-    |> intent_entries()
-    |> Enum.map(fn %{id: relay_id, factory_id: factory_id} ->
-      plugins = declared_bindings(namespace, relay_id)
+    relays =
+      namespace
+      |> intent_entries()
+      |> Enum.map(fn %{id: relay_id, factory_id: factory_id} ->
+        %{
+          namespace: namespace,
+          relay_id: relay_id,
+          factory_id: factory_id,
+          plugins: declared_bindings(namespace, relay_id)
+        }
+      end)
 
-      %{
-        namespace: namespace,
-        relay_id: relay_id,
-        factory_id: factory_id,
-        plugins: plugins,
-        disabled_plugins: disabled(namespace, plugins)
-      }
+    gone = unresolved_plugins(namespace, relays)
+
+    Enum.map(relays, fn relay ->
+      disabled =
+        for {id, _} <- relay.plugins, Plugin.base_id(id) in gone, into: MapSet.new(), do: id
+
+      Map.put(relay, :disabled_plugins, disabled)
     end)
   catch
     :exit, _ -> []
@@ -90,17 +97,21 @@ defmodule Flezha.Convergence.Intent do
     end
   end
 
-  # The bindings whose plugin no longer resolves here: a disable keeps them,
-  # and a stale copy of the plugin can bring one up after the disable ended.
-  # Read only while the hub is up, so a hub that cannot answer disables none.
-  defp disabled(namespace, plugins) do
+  # The bound plugins that no longer resolve here: a disable keeps their
+  # bindings, and a stale copy of one can bring a binding up after the disable
+  # ended. Read once per namespace and only while the hub is up, so a hub that
+  # cannot answer disables none.
+  defp unresolved_plugins(namespace, relays) do
     namespace = to_string(namespace)
 
+    names =
+      for %{plugins: plugins} <- relays, {id, _} <- plugins, uniq: true, do: Plugin.base_id(id)
+
     HubManager.with_live_hub_id(Identificator.hub(namespace), MapSet.new(), fn _hub_id ->
-      for {id, _binding} <- plugins,
-          HubManager.plugin_entry(namespace, Plugin.base_id(id)) == :error,
+      for name <- names,
+          HubManager.plugin_entry(namespace, name) == :error,
           into: MapSet.new(),
-          do: id
+          do: name
     end)
   end
 
