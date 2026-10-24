@@ -260,6 +260,10 @@ def _core():
 # Builds the prod release itself and drives no runner: one row, not one per runtime.
 PACKAGE_RELEASE = "test/system/plugin_package_release_test.exs"
 
+# Judges a freshly booted controller, whose ready verdict covers every hub on
+# the node: a row of its own, so no other file's hubs are there.
+BOOT_READINESS = "test/system/boot_readiness_drill_test.exs"
+
 
 def _e2e(runtime):
     """The `:system` tier under one runtime, in shards of six files."""
@@ -268,10 +272,13 @@ def _e2e(runtime):
     rows = [_bar("e2e-prep-elixir-deps", group, "mix", "deps.get", cwd=app, stderr_ok=True),
             *_deps_compile("e2e-prep-elixir", group, app, "dev")] if runtime == "elixir" else []
     rows.append(_build(f"e2e-prep-{runtime}", group, runtime))
-    system = [path for path in _files("test/system/*_test.exs") if path != PACKAGE_RELEASE]
+    system = [path for path in _files("test/system/*_test.exs")
+              if path not in (PACKAGE_RELEASE, BOOT_READINESS)]
     for start in range(0, len(system), 6):
         rows.append(_mix_test(f"e2e-{runtime}-{start // 6 + 1}", group, "--include", "system",
                               *system[start:start + 6], env={"FLEZHA_E2E_RUNTIME": runtime}))
+    rows.append(_mix_test(f"e2e-{runtime}-readiness", group, "--include", "system",
+                          BOOT_READINESS, env={"FLEZHA_E2E_RUNTIME": runtime}))
     return rows
 
 
