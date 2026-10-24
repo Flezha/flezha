@@ -363,6 +363,81 @@ pub fn apply_init_values(instance: &RelayInstance, init_values: &str) -> Result<
     Ok(())
 }
 
+/// Where a move's state carries what each Cell holds beside its value: the
+/// pending timers and the next change seq, which the values alone lose. The
+/// destination's Cell would otherwise restart its seq under the records the
+/// source shipped, so a compaction there truncates them, timers included.
+const MOVED_CELLS: &str = "$cells";
+
+/// One Cell's part of a move beyond its value, keyed by Cell identity.
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct MovedCell {
+    identity: Vec<u8>,
+    timers: crate::timer::PendingTimers,
+    next_seq: u64,
+}
+
+/// What a move ships: the relay's state, and every Cell's timers and next seq.
+pub fn serialize_moved(instance: &Arc<RelayInstance>) -> Vec<u8> {
+    let state = serialize_relay_state(instance);
+    let cells: Vec<MovedCell> = instance
+        .all_slots()
+        .iter()
+        .map(|slot| MovedCell {
+            identity: slot.cell_identity.to_vec(),
+            timers: slot.timers.lock_recover().clone(),
+            next_seq: slot.change_seq.load(Ordering::Acquire),
+        })
+        .collect();
+    let Ok(Value::Object(mut top)) = serde_json::from_slice(&state) else {
+        return state;
+    };
+    top.insert(MOVED_CELLS.into(), serde_json::json!(cells));
+    serde_json::to_vec(&top).unwrap_or(state)
+}
+
+/// Apply what `serialize_moved` shipped: the values as `apply_init_values`
+/// does, then each Cell's seq and timers, as a restore gives them.
+pub fn apply_moved(
+    runner: &mut RunnerNode,
+    instance: &RelayInstance,
+    state: &str,
+) -> Result<(), Error> {
+    let (values, cells) = take_moved_cells(state);
+    let applied = apply_init_values(instance, &values);
+    restore_moved(runner, cells);
+    applied
+}
+
+/// A moved state split into its values and the Cells beside them.
+fn take_moved_cells(state: &str) -> (String, Vec<MovedCell>) {
+    let Ok(Value::Object(mut top)) = serde_json::from_str(state) else {
+        return (state.to_string(), Vec::new());
+    };
+    let Some(cells) = top.remove(MOVED_CELLS) else {
+        return (state.to_string(), Vec::new());
+    };
+    (
+        Value::Object(top).to_string(),
+        serde_json::from_value(cells).unwrap_or_default(),
+    )
+}
+
+/// Give each moved Cell what its source held, as a restore does: the seq goes
+/// on from the source's and the timers are armed.
+fn restore_moved(runner: &mut RunnerNode, cells: Vec<MovedCell>) {
+    for cell in cells {
+        let Some((_, slot)) = runner.find_cell(&cell.identity) else {
+            continue;
+        };
+        crate::poll_core::global().with_cell_exclusive(&slot, || {
+            slot.change_seq.fetch_max(cell.next_seq, Ordering::AcqRel);
+            *slot.timers.lock_recover() = cell.timers;
+        });
+        crate::timer::rearm_restored(&slot);
+    }
+}
+
 /// One `init_values` entry onto its tasklet's Cells.
 fn apply_tasklet(instance: &RelayInstance, tasklet_name: &str, tasklet_value: Value) {
     let Some(&tasklet_id) = instance.topology.tasklet_name_to_id.get(tasklet_name) else {
@@ -494,6 +569,27 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    // fails when: a live move ships the Cells' values without their timers
+    // and seq, so a moved session never closes.
+    #[test]
+    fn a_moved_state_gives_back_its_values_and_the_cells_beside_them() {
+        let cell = super::MovedCell {
+            identity: b"cell".to_vec(),
+            timers: crate::timer::PendingTimers::default(),
+            next_seq: 4,
+        };
+        let shipped = serde_json::json!({"t": {"touched": ["hello"]}, super::MOVED_CELLS: [&cell]});
+
+        let (values, cells) = super::take_moved_cells(&shipped.to_string());
+
+        assert_eq!(values, r#"{"t":{"touched":["hello"]}}"#);
+        assert_eq!(cells, vec![cell]);
+        assert_eq!(
+            super::take_moved_cells(&values),
+            (values.clone(), Vec::new())
+        );
+    }
 
     use super::*;
     use crate::test_support::host_class;

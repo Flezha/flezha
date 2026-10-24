@@ -36,6 +36,11 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay moved live to another controller keeps its pending timers. The move
+  shipped the Cells' values without their timers or change sequence, so a
+  session timer set before the move never fired, and a compaction there could
+  truncate the record that held it. A compaction is now also reported complete
+  only once its snapshot is on disk.
 - A large message to a runner is no longer dropped after the send buffer
   reopens. The buffer reopens at half full, and a message too big for the room
   left was answered as sent and then thrown away; a Cell restored that way

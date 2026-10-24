@@ -1,11 +1,11 @@
 //! `MigrationDeserialization` — restore a Relay instance's per-Tasklet /
 //! per-Cell state from a snapshot blob and register it locally.
-//! Reuses `apply_init_values` for the state-application path so a
-//! migrated instance ends up with byte-identical Cell state to the
-//! source instance produced by `serialize_relay_state`.
+//! `apply_moved` takes what `serialize_moved` shipped: the Cell state
+//! through `apply_init_values`, so a migrated instance ends up byte-identical
+//! to its source, and each Cell's change seq and pending timers.
 
 use super::{CommandAction, Reply};
-use crate::command::cell_state::apply_init_values;
+use crate::command::cell_state::apply_moved;
 use crate::pb::MigrationDeserialization;
 use crate::runner::RunnerNode;
 
@@ -40,7 +40,7 @@ impl CommandAction for MigrationDeserialization {
                             };
                         }
                     };
-                    if let Err(e) = apply_init_values(&instance, json_str) {
+                    if let Err(e) = apply_moved(runner, &instance, json_str) {
                         errors.push(e);
                     }
                 }

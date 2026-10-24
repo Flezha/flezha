@@ -492,3 +492,46 @@ fn a_data_heartbeat_leaves_while_a_compaction_waits_on_an_activation() {
         liveness::DATA_HEARTBEAT_PAYLOAD_ID,
     );
 }
+
+/// fails when: a move reads the next change seq before the source relay
+/// stops, and the stop's final drain then ships a record at that seq, so the
+/// destination's first record collides with it and is dropped.
+#[test]
+fn a_move_hands_over_a_seq_above_what_the_source_drains_as_it_stops() {
+    let _sink = crate::state_sink::test_guard();
+    crate::state_sink::install_global_sink(Arc::new(|_: &str, _: &[u8]| Ok(())));
+    let mut node = RunnerNode::new("test-ns".to_string());
+    let (_cell_id, slot) = bound_cell(&mut node);
+    {
+        let mut buffer = crate::util::LockRecover::lock_recover(&*slot.flush_buffer);
+        let bytes = buffer
+            .as_any_mut()
+            .downcast_mut::<crate::host::BytesBuffer>()
+            .expect("a host buffer");
+        bytes.timer_ops.push(crate::schema::TimerOp::register(
+            crate::schema::TimerKind::ProcessingTime,
+            31_000,
+        ));
+    }
+
+    let mut errors = Vec::new();
+    let serialize = crate::pb::MigrationSerialization {
+        relay_id: slot.instance_id.to_string(),
+    };
+    let reply = crate::command::CommandAction::handle(&serialize, &mut node, "", &mut errors);
+
+    let shipped: serde_json::Value = serde_json::from_slice(&reply.bytes).expect("a JSON state");
+    let next_seq = shipped["$cells"][0]["next_seq"]
+        .as_u64()
+        .expect("the Cell's next seq");
+    let drained = slot.change_seq.load(std::sync::atomic::Ordering::Acquire);
+    assert!(
+        drained >= 1,
+        "the stop drained the buffered timer op: next_seq={next_seq} drained={drained}"
+    );
+    assert!(
+        next_seq >= drained,
+        "the move hands over seq {next_seq}, but the source's last record took {}",
+        drained - 1
+    );
+}

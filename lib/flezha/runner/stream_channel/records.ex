@@ -668,11 +668,11 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   def write_snapshot(cell_id, seq, header, body) do
-    Watchdog.compaction_completed(cell_id)
-
     case StateSnapshot.write_snapshot(cell_id, seq, header, body) do
+      # Completed once the snapshot is on disk: what hears it acts on the
+      # file, and a failed write is left to the watchdog's timeout.
       {:ok, _path} ->
-        :ok
+        Watchdog.compaction_completed(cell_id)
 
       {:error, reason} ->
         Logger.error(
