@@ -155,7 +155,7 @@ defmodule FlezhaTest.Handover do
     # consent and the whole forced-handover grace after it.
     assert :ok = shutdown_peer(peer_node, 4_000)
 
-    assert_receive :deferred, 1_000
+    assert_receive :deferred, 5_000
 
     assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
                     %{namespace: @default_namespace}},

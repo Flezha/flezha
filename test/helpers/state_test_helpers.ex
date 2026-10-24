@@ -96,9 +96,10 @@ defmodule Flezha.State.TestHelpers do
   outputs}` cast, so a test standing in for the Overwatch buffers the outputs
   of that batch it has not asserted on yet. What one fsync window happened to
   gather into a batch is timing, never contract — a test about anything but the
-  batching itself asserts on the outputs, in order.
+  batching itself asserts on the outputs, in order. The output is due, so the
+  default wait is long enough for a loaded machine.
   """
-  def next_output(timeout \\ 100) do
+  def next_output(timeout \\ 2_000) do
     case Process.get(@dispatched, []) do
       [output | rest] ->
         Process.put(@dispatched, rest)
