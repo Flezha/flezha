@@ -119,7 +119,9 @@ defmodule Flezha.Service.Cli.ListenTest do
 
           Cli.call(
             "Relay.listen",
-            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]), output: "json")
+            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]),
+            output: "json"
+          )
         end)
 
       assert [part, output, notice] =
@@ -140,7 +142,9 @@ defmodule Flezha.Service.Cli.ListenTest do
 
           Cli.call(
             "Relay.listen",
-            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]), output: "json")
+            Jason.encode!(["ns", "op", "output", %{window_ms: @window_ms}]),
+            output: "json"
+          )
         end)
 
       assert out |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1) == [

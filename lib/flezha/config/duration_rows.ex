@@ -177,6 +177,9 @@ defmodule Flezha.Config.DurationRows do
     # How often a retiring copy of a `single` plugin asks its successor whether
     # its upstream is open.
     {:plugin_successor_poll_ms, :ms, 50, key: true},
+    # How often a disable asks the hub's other nodes whether they still hold
+    # the plugin's record, before it reconverges the relays bound to it.
+    {:plugin_forget_poll_ms, :ms, 50, []},
 
     # ---- plugins -----------------------------------------------------------
     # Headroom above the Overwatch call for provider health probes: each

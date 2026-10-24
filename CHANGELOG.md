@@ -41,3 +41,7 @@ v0.1.0-alpha.1 pre-release.
   runner instead of failing with `internal.uncatalogued`.
 - A plugin copy a disable stopped is no longer still listed on its controller
   for a moment after `flz plugin disable` answers.
+- A plugin disabled through one controller no longer comes back on a relay
+  hosted by another. The disable now waits until every controller of the
+  namespace has dropped the plugin's record before it tells the relays, so a
+  convergence tick on a slower controller cannot bring the binding up again.

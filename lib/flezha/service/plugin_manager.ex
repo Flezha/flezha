@@ -33,6 +33,7 @@ defmodule Flezha.Service.PluginManager do
   alias Flezha.Plugin.Providers
   alias Flezha.Plugin.Shared
   alias Flezha.Process.Cspec
+  alias Flezha.Process.Poll
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
   alias Flezha.Service.PluginRecords
@@ -603,6 +604,7 @@ defmodule Flezha.Service.PluginManager do
 
     with {:ok, _entry} <- PluginRecords.entry(namespace, name),
          :ok <- Teardown.hub_stop_child(namespace, {:plugin, name}, timeout) do
+      _ = forgotten(namespace, name, timeout)
       Enum.each(Directory.plugin_hosts(namespace, name), &Shared.stop/1)
 
       case reconverge(namespace, name, &Overwatch.plugin_subscribe(&1, &2, &3, :none)) do
@@ -610,6 +612,28 @@ defmodule Flezha.Service.PluginManager do
         undisabled -> {:error, {:undisabled, undisabled}}
       end
     end
+  end
+
+  # The hub's other nodes drop the plugin's record only when its removal reaches
+  # them, and a convergence tick there before that brings a binding back up
+  # against it. So the relays are reconverged once no node resolves it, or the
+  # budget is spent; a node that does not answer holds nothing back.
+  defp forgotten(namespace, name, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    nodes = HubManager.get_hub_nodes(namespace)
+
+    Poll.until(deadline, Durations.get(:plugin_forget_poll_ms), fn ->
+      if Enum.any?(nodes, &resolves?(&1, namespace, name)),
+        do: {:error, :held},
+        else: {:ok, :forgotten}
+    end)
+  end
+
+  defp resolves?(node, namespace, name) do
+    timeout = Durations.get(:plugin_call_timeout_ms)
+    match?({:ok, _}, :erpc.call(node, PluginRecords, :entry, [namespace, name], timeout))
+  catch
+    _kind, _reason -> false
   end
 
   ## Listeners
