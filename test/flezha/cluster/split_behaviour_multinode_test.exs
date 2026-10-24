@@ -64,17 +64,8 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
 
   test "the cut-off controller stops, the other two run every relay, the heal runs each once",
        %{namespace: ns, peers: [p1, p2, p3] = peers, hub_id: hub_id} do
-    relays = start_relays(p1, ns)
-
-    # A start returns once the relay is placed; its process starts on its
-    # controller after that.
-    assert wait(fn ->
-             Enum.sum(Enum.map(peers, &length(running(&1, hub_id)))) == length(relays)
-           end),
-           "the relays never all ran"
-
+    relays = start_until_on(p3, peers, ns, hub_id, start_relays(p1, ns))
     cut_off = running(p3, hub_id)
-    assert cut_off != [], "no relay landed on the controller that is cut off"
 
     :ok =
       :erpc.call(p3, NodeTestHelper, :report_calls, [ControlUnit, :stop_relay_async, 2, self()])
@@ -126,14 +117,41 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
     assert wait(fn -> counts([p1], hub_id, relays) == ones(relays) end, 30_000)
   end
 
-  defp start_relays(at, ns) do
-    for i <- 1..9 do
-      id = "split_#{i}"
+  defp start_relays(at, ns), do: for(i <- 1..9, do: start_relay(at, ns, i))
 
-      {:ok, _} =
-        :erpc.call(at, RelayManager, :start_relay, [ns, RelayFixture.get(id, @factory)], 30_000)
+  defp start_relay(at, ns, i) do
+    id = "split_#{i}"
 
-      id
+    {:ok, _} =
+      :erpc.call(at, RelayManager, :start_relay, [ns, RelayFixture.get(id, @factory)], 30_000)
+
+    id
+  end
+
+  # Placement hashes each id, so nine relays can all miss one controller: more
+  # are started until one runs on `target`. A start returns once the relay is
+  # placed, and its process starts after that.
+  defp start_until_on(target, [at | _] = peers, ns, hub_id, relays) do
+    assert wait(fn ->
+             Enum.sum(Enum.map(peers, &length(running(&1, hub_id)))) == length(relays)
+           end),
+           "the relays never all ran"
+
+    cond do
+      running(target, hub_id) != [] ->
+        relays
+
+      length(relays) >= 30 ->
+        flunk("no relay landed on the controller that is cut off")
+
+      true ->
+        start_until_on(
+          target,
+          peers,
+          ns,
+          hub_id,
+          relays ++ [start_relay(at, ns, length(relays) + 1)]
+        )
     end
   end
 

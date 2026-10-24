@@ -31,7 +31,9 @@ defmodule Flezha.Plugin.Provider.FileSourceBootTest do
       Plugin.new(
         id: name,
         provider: Source,
-        opts: %{path: "events.ndjson", channel_in: "events"},
+        # The factory's own input channel: a line nothing reads would be
+        # dead-lettered into the shared store, not fed to the relay.
+        opts: %{path: "events.ndjson", channel_in: "input"},
         hooks: [{:on_terminate, []}],
         namespace: @namespace
       )

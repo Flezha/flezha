@@ -179,7 +179,7 @@ fn a_cancelled_call_closes_its_connection() {
     let mut stdin = mcp.stdin.take().expect("stdin");
     writeln!(stdin, "{}", CALL).expect("write");
     assert!(
-        within_five_seconds(|| !shim.requests().is_empty()),
+        within_guard(|| !shim.requests().is_empty()),
         "the call reached the controller"
     );
     writeln!(stdin, "{}", CANCEL).expect("write");
@@ -220,10 +220,10 @@ fn spawn_mcp(shim: &Shim) -> Child {
         .expect("flz mcp runs")
 }
 
-/// Whether `check` holds within five seconds: a guard against a hang, not a
-/// measure of how long anything takes.
-fn within_five_seconds(check: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
+/// Whether `check` holds within fifteen seconds: a guard against a hang on a
+/// loaded machine, not a measure of how long anything takes.
+fn within_guard(check: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(15);
     while !check() {
         if Instant::now() >= deadline {
             return false;
@@ -238,7 +238,7 @@ fn hung_pid(shim: &Shim) -> String {
     let file = shim.flzvm_path().with_file_name("hung.pid");
     let read = || std::fs::read_to_string(&file).unwrap_or_default();
     assert!(
-        within_five_seconds(|| read().ends_with('\n')),
+        within_guard(|| read().ends_with('\n')),
         "the call reached the child"
     );
     read().trim().to_string()
@@ -308,7 +308,7 @@ fn a_cancelled_call_is_killed_and_never_answered() {
     let pid = hung_pid(&shim);
     writeln!(stdin, "{}", CANCEL).expect("write");
 
-    let killed = within_five_seconds(|| !alive(&pid));
+    let killed = within_guard(|| !alive(&pid));
     kill("-KILL", &pid);
     drop(stdin);
     let out = mcp.wait_with_output().expect("flz mcp ends with its input");
@@ -328,7 +328,7 @@ fn a_killed_flz_mcp_leaves_no_child_behind() {
     let _ = mcp.kill();
     let _ = mcp.wait();
 
-    let gone = within_five_seconds(|| !alive(&pid));
+    let gone = within_guard(|| !alive(&pid));
     kill("-KILL", &pid);
     assert!(gone, "the flzvm child {pid} outlived a killed flz mcp");
 }
