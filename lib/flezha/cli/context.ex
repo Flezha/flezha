@@ -96,14 +96,26 @@ defmodule Flezha.Service.Cli.Context do
   end
 
   # The device a verb writes something that is not its answer to: the one its
-  # request bound, or this node's own stderr when it runs outside a request.
-  @spec caller_stderr() :: :stderr | pid()
-  defp caller_stderr(), do: Process.get(@stderr, :stderr)
+  # request bound, or else the stderr of the node its group leader is on, so a
+  # caller reaching `Flezha.Service.Cli` over `:erpc` reads the failure on its
+  # own node, as it reads the answer there.
+  @spec caller_stderr() :: :stderr | pid() | nil
+  defp caller_stderr do
+    with nil <- Process.get(@stderr), do: node_stderr(node(Process.group_leader()))
+  end
+
+  defp node_stderr(node) when node == node(), do: :stderr
+
+  defp node_stderr(node) do
+    :erpc.call(node, Process, :whereis, [:standard_error])
+  catch
+    _, _ -> nil
+  end
 
   # The device may have died with the caller that owned it. A refusal must
   # still exit the way it says it does, so a device that will not take the line
   # loses the line rather than replacing the exit with a raise.
-  @spec puts(:stderr | pid(), String.t()) :: :ok
+  @spec puts(:stderr | pid() | nil, String.t()) :: :ok
   defp puts(device, message) do
     IO.puts(device, message)
   catch

@@ -22,6 +22,7 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
   alias Flezha.Service.Cli
   alias Flezha.Service.Controller
   alias FlezhaTest.Helper.CliCapture
+  alias FlezhaTest.Helper.NodeTestHelper
 
   # One real failure per family that renders one, through the wire seam that
   # renders it. Each is reached with the controller as this suite boots it: no
@@ -174,6 +175,50 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
         end)
 
       assert err =~ "phase=quiesce"
+    end
+  end
+
+  describe "a caller on another node" do
+    # The caller is a process on a peer whose group leader is on the peer, as a
+    # node that calls the door over `:erpc` (the console's dev helper) is. Fails
+    # when the refusal is written to this node's stderr instead of the caller's.
+    @remote_caller """
+    {:ok, stdout} = StringIO.open("")
+    {:ok, stderr} = StringIO.open("")
+    Process.unregister(:standard_error)
+    Process.register(stderr, :standard_error)
+    Process.group_leader(self(), stdout)
+
+    outcome =
+      try do
+        :erpc.call(origin, Flezha.Service.Cli, :call, request)
+      catch
+        :exit, reason -> {:exited, reason}
+      end
+
+    {outcome, elem(StringIO.contents(stdout), 1), elem(StringIO.contents(stderr), 1)}
+    """
+
+    test "gets the refusal on its own node's stderr" do
+      {_peer_pid, peer} = NodeTestHelper.start_bare_peer(:cli_remote_caller)
+      request = ["Relay.stop", Jason.encode!(["default", "no-such-op-xyz"]), [output: "json"]]
+
+      here =
+        capture_io(:stderr, fn ->
+          {result, _binding} =
+            :erpc.call(peer, Code, :eval_string, [
+              @remote_caller,
+              [origin: node(), request: request]
+            ])
+
+          send(self(), {:remote_caller, result})
+        end)
+
+      assert_received {:remote_caller, {outcome, stdout, stderr}}
+      assert {:exited, {:exception, {:shutdown, _code}}} = outcome
+      assert stderr =~ ~s("code":"relay.not_found")
+      assert stdout == ""
+      assert here == ""
     end
   end
 
