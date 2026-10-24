@@ -33,7 +33,12 @@ defmodule FlezhaTest.Plugin.NamedPluginTest do
   setup_all do
     TestHelpers.reset_all_cells()
     NodeTestHelper.start_runner(@namespace)
-    on_exit(fn -> FleetManager.stop_namespace(@namespace) end)
+    # The hub goes too: left running, its relays' rows outlive their runner and
+    # every later test reads them as relays still waiting to be reseated.
+    on_exit(fn ->
+      FleetManager.stop_namespace(@namespace)
+      HubManager.stop_hub(@namespace)
+    end)
 
     :ok
   end
