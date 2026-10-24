@@ -42,6 +42,11 @@ v0.1.0-alpha.1 pre-release.
   relay's files, writing them again for the next start to restore. The stop
   now waits for the runner's answer and takes those changes in before it
   deletes anything.
+- A disabled plugin no longer comes back on a relay that moved to another
+  controller. A controller that had not yet heard of the disable could start
+  the plugin again for a moment, the convergence loop bound the relay to it,
+  and nothing took it down afterwards. The loop now stops a running plugin
+  whose record is gone.
 - Controllers no longer disagree for good on which of them serve a factory. A
   controller that joined while another changed what it serves could miss that
   change, and relay starts it placed were then forwarded without an answer. A

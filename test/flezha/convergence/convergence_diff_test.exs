@@ -111,6 +111,25 @@ defmodule Flezha.Convergence.DiffTest do
       assert Planner.plan(delta, Backoff.new(:heal)) == []
     end
 
+    # fails when: a binding whose plugin was disabled keeps running after a
+    # stale copy of the plugin brought it up, because the loop reads a
+    # running declared binding as converged.
+    test "a running binding whose plugin no longer resolves is started again, to be taken down" do
+      intent = plugin_intent(["src", "gone"])
+      [relay] = intent.relays
+      intent = %{intent | relays: [Map.put(relay, :disabled_plugins, MapSet.new(["gone"]))]}
+      observed = %{running_plugins: ["src", "gone"], subscribed_plugins: ["src", "gone"]}
+
+      delta = diff(intent, plugin_reality(observed))
+
+      assert [{{:ns, "r"}, "gone", _plugin}] = delta.missing_plugins
+
+      assert [{:start_plugin, "gone"}] =
+               delta
+               |> Planner.plan(Backoff.new(:heal))
+               |> Enum.map(&{&1.primitive, &1.args.plugin_id})
+    end
+
     test "an undeclared plugin is extra in BOTH phases" do
       for observed <- [
             %{running_plugins: ["src", "stray"], subscribed_plugins: ["src", "stray"]},

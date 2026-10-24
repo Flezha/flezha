@@ -403,13 +403,15 @@ defmodule Flezha.Convergence.Diff do
   # one; unbound relays are healed by binding first, which replays the full
   # cspec plugin list.
   defp plugin_divergence(declared, observed) do
-    Enum.reduce(declared, {[], [], [], []}, fn %{namespace: ns, relay_id: rid, plugins: plugins},
+    Enum.reduce(declared, {[], [], [], []}, fn relay,
                                                {missing_acc, not_started_acc, extra_acc,
                                                 unhealthy_acc} ->
+      %{namespace: ns, relay_id: rid, plugins: plugins} = relay
       ref = {ns, rid}
+      disabled = Map.get(relay, :disabled_plugins, MapSet.new())
 
       {missing, not_started, extra, unhealthy} =
-        relay_plugins(ref, plugins, Map.get(observed, ref, %{}))
+        relay_plugins(ref, plugins, disabled, Map.get(observed, ref, %{}))
 
       {missing_acc ++ missing, not_started_acc ++ not_started, extra_acc ++ extra,
        unhealthy_acc ++ unhealthy}
@@ -418,7 +420,7 @@ defmodule Flezha.Convergence.Diff do
 
   # One relay's plugin divergence: `{missing, not_started, extra, unhealthy}`,
   # or four empty lists when its plugin sets are not diffable this tick.
-  defp relay_plugins(ref, plugins, observed_relay) do
+  defp relay_plugins(ref, plugins, disabled, observed_relay) do
     if plugins_diffable?(observed_relay) do
       # Two sets, deliberately. `running` is the `:running`-phase set — a
       # declared plugin outside it is missing, whether it was never
@@ -442,7 +444,11 @@ defmodule Flezha.Convergence.Diff do
         |> missing_plugins(plugins, running, down)
         |> Enum.split_with(fn {_ref, id, _plugin} -> Map.has_key?(not_started_ids, id) end)
 
-      {missing, not_started, extra_plugins(ref, plugins, observed_relay),
+      # A running binding whose plugin no longer resolves: its start heal
+      # finds that and records it not started, which takes it down.
+      stale = for {id, plugin} <- plugins, id in disabled, id in running, do: {ref, id, plugin}
+
+      {missing ++ stale, not_started, extra_plugins(ref, plugins, observed_relay),
        unhealthy_plugins(ref, plugins, running, down, health)}
     else
       {[], [], [], []}

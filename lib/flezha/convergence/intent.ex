@@ -19,6 +19,7 @@ defmodule Flezha.Convergence.Intent do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.Identificator
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
   alias Flezha.State.Completion
@@ -30,7 +31,8 @@ defmodule Flezha.Convergence.Intent do
           namespace: atom(),
           relay_id: binary(),
           factory_id: binary() | nil,
-          plugins: [{binary(), Plugin.t()}]
+          plugins: [{binary(), Plugin.t()}],
+          disabled_plugins: MapSet.t(binary())
         }
   @type t :: %__MODULE__{relays: [relay()]}
 
@@ -49,11 +51,14 @@ defmodule Flezha.Convergence.Intent do
     namespace
     |> intent_entries()
     |> Enum.map(fn %{id: relay_id, factory_id: factory_id} ->
+      plugins = declared_bindings(namespace, relay_id)
+
       %{
         namespace: namespace,
         relay_id: relay_id,
         factory_id: factory_id,
-        plugins: declared_bindings(namespace, relay_id)
+        plugins: plugins,
+        disabled_plugins: disabled(namespace, plugins)
       }
     end)
   catch
@@ -83,6 +88,20 @@ defmodule Flezha.Convergence.Intent do
       {:ok, bindings} when is_list(bindings) -> bindings
       _ -> []
     end
+  end
+
+  # The bindings whose plugin no longer resolves here: a disable keeps them,
+  # and a stale copy of the plugin can bring one up after the disable ended.
+  # Read only while the hub is up, so a hub that cannot answer disables none.
+  defp disabled(namespace, plugins) do
+    namespace = to_string(namespace)
+
+    HubManager.with_live_hub_id(Identificator.hub(namespace), MapSet.new(), fn _hub_id ->
+      for {id, _binding} <- plugins,
+          HubManager.plugin_entry(namespace, Plugin.base_id(id)) == :error,
+          into: MapSet.new(),
+          do: id
+    end)
   end
 
   @doc """
