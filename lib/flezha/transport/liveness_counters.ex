@@ -46,6 +46,7 @@ defmodule Flezha.Transport.LivenessCounters do
   """
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Observability.CounterTable
 
   @table :flezha_liveness_counters
@@ -662,6 +663,25 @@ defmodule Flezha.Transport.LivenessCounters do
 
         %{channels: channels, relays: relays}
     end
+  end
+
+  @doc """
+  `snapshot_all/0` on this node and every connected controller, rows joined.
+  A relay's counters live on the controller running it, so a reader pinned to
+  one controller needs this to see a relay placed on another. A peer that does
+  not answer in time is left out.
+  """
+  @spec snapshot_cluster() :: %{channels: [map()], relays: [map()]}
+  def snapshot_cluster() do
+    Node.list()
+    |> :erpc.multicall(__MODULE__, :snapshot_all, [], Durations.get(:transport_stats_call_ms))
+    |> Enum.reduce(snapshot_all(), fn
+      {:ok, %{channels: channels, relays: relays}}, acc ->
+        %{channels: channels ++ acc.channels, relays: relays ++ acc.relays}
+
+      _unanswered, acc ->
+        acc
+    end)
   end
 
   @doc """

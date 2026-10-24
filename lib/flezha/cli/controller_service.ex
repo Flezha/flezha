@@ -167,10 +167,10 @@ defmodule Flezha.Service.Controller do
     {:ok, DurabilityTier.status()}
   end
 
-  @doc "Every data-plane liveness counter this node holds."
+  @doc "Every data-plane liveness counter the connected controllers hold."
   @spec liveness_counters(caller_context()) :: {:ok, term()} | {:error, term()}
   verb liveness_counters(caller_context), verb: :controller_status do
-    {:ok, LivenessCounters.snapshot_all()}
+    {:ok, LivenessCounters.snapshot_cluster()}
   end
 
   # ---------- Mutations ----------

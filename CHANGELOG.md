@@ -19,6 +19,10 @@ v0.1.0-alpha.1 pre-release.
   snapshot, held outputs and seed answer `nil`. A relay started with large init
   values, such as a long price history, made each read copy all of it, enough
   to exhaust a console that read it every few seconds.
+- `Controller.liveness_counters` answers the counters of every connected
+  controller, not only the one asked. A console pinned to one controller saw
+  no counters for a relay running on another, so its relay graph never showed
+  data moving.
 - `flz` sends each verb to the controller as one request over the controller's
   control socket, the Unix socket its runners attach to, instead of starting
   an Erlang VM for every command. Verbs start faster, need no Erlang cookie, and

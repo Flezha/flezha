@@ -23,6 +23,8 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Schedule
   alias Flezha.Service.Steps
+  alias Flezha.Transport.LivenessCounters
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RpcSurface
 
   # The two domains that had a service API before this surface existed keep
@@ -247,6 +249,17 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
       assert {:ok, %{principal: "runner@default", namespace: "default"}} =
                Fleet.runner_caller_context("default", context)
+    end
+
+    # A console is pinned to one controller, and a relay runs on whichever one
+    # placed it: read from the peer, a relay counted here must still show.
+    test "the liveness read includes a relay held by another controller" do
+      relay = "relay_#{System.unique_integer([:positive])}"
+      LivenessCounters.bump_relay(LivenessCounters.register_relay(relay), :io_in_received)
+      {_peer_pid, peer} = NodeTestHelper.start_bare_peer(:liveness_peer)
+
+      assert %{relays: relays} = :erpc.call(peer, LivenessCounters, :snapshot_cluster, [])
+      assert %{io_in_received: 1} = Enum.find(relays, &(&1.relay_id == relay))
     end
   end
 end
