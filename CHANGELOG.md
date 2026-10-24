@@ -36,6 +36,10 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A large message to a runner is no longer dropped after the send buffer
+  reopens. The buffer reopens at half full, and a message too big for the room
+  left was answered as sent and then thrown away; a Cell restored that way
+  came back empty. The message now waits until it fits.
 - A relay stopped and started again under the same id no longer comes back
   with its old Cell state. The runner ships each Cell's last change as it
   drops the relay, and that change could arrive after the stop had deleted the

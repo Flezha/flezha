@@ -172,6 +172,23 @@ impl SendGate {
     /// The driver has taken `len` queued bytes off the sender's hands — or the
     /// queue refused them and they were never sent. Saturating, so a ledger
     /// broken by a future caller reads as zero rather than as `usize::MAX`.
+    /// Reserve `len` bytes for a frame a sender is about to queue, or refuse
+    /// it: while the gate is raised, and when the frame would not fit under
+    /// the ceiling beside what is already pending, which the driver would take
+    /// and then drop behind an answer that said it was sent. A frame refused
+    /// for the ceiling raises the gate, so its sender waits for the next drain.
+    pub fn reserve(&self, len: usize) -> bool {
+        if self.is_raised() {
+            return false;
+        }
+        if self.over_ceiling(self.pending(), len) {
+            self.raise();
+            return false;
+        }
+        self.queued(len);
+        true
+    }
+
     pub fn release(&self, len: usize) {
         if len == 0 {
             return;
@@ -331,6 +348,29 @@ mod tests {
             gate.is_raised(),
             "900 bytes queued past an 800-byte mark raises it before any arrive"
         );
+    }
+
+    // fails when: a sender is told its frame went while what is pending
+    // leaves it no room under the ceiling, and the driver then drops it.
+    #[test]
+    fn a_frame_that_would_not_fit_beside_the_pending_bytes_is_refused_and_raises() {
+        let gate = SendGate::with_watermarks(1000, 800, 500);
+        let mut buffer = Vec::new();
+        assert!(gate.offer(&mut buffer, &[0u8; 900]));
+        assert_eq!(gate.observe(400), None);
+        assert!(!gate.is_raised(), "400 pending is under the low mark");
+
+        assert!(
+            !gate.reserve(700),
+            "400 pending + 700 is over the 1000 ceiling"
+        );
+        assert!(
+            gate.is_raised(),
+            "the refusal holds the sender until a drain"
+        );
+
+        assert_eq!(gate.observe(0), Some(GateChange::Lowered));
+        assert!(gate.reserve(700), "an empty buffer takes it");
     }
 
     #[test]

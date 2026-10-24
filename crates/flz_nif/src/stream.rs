@@ -15,10 +15,6 @@ fn send_frame<'a>(
     message: rustler::Binary<'a>,
     metadata: HashMap<String, String>,
 ) -> NifResult<Term<'a>> {
-    if stream.gate.is_raised() {
-        return Ok((atoms::error(), atoms::send_buffer_full()).encode(env));
-    }
-
     // The gate weighs what this call is about to queue as well as what the
     // driver already holds, and it is raised HERE rather than on the driver
     // thread. The bit lives on the far side of an unbounded command channel,
@@ -26,7 +22,9 @@ fn send_frame<'a>(
     // it has queued the whole burst — and the ceiling then turns those frames
     // away behind an answer that said they were sent.
     let reserved = message.len();
-    stream.gate.queued(reserved);
+    if !stream.gate.reserve(reserved) {
+        return Ok((atoms::error(), atoms::send_buffer_full()).encode(env));
+    }
 
     let queued = stream.cmd_tx.send(ServerCommand::SendFrame {
         stream_id: stream.stream_id,
