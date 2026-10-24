@@ -158,10 +158,13 @@ defmodule FlezhaTest.System.LayoutAndIdE2ETest do
     root
   end
 
+  # The probe would find any controller serving on this machine's default
+  # socket; these rows are about the layout, so it reads none.
   defp reset_json(root, flags) do
     {out, 0} =
       System.cmd(flz_binary(), ["reset", "--storage-root", root, "--json"] ++ flags,
-        stderr_to_stdout: true
+        stderr_to_stdout: true,
+        env: [{"FLEZHA_RESET_PROBE_OVERRIDE", "down"}]
       )
 
     Jason.decode!(out)
