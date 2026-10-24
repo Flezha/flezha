@@ -192,7 +192,9 @@ defmodule FlezhaTest.System.CliSocketE2ETest do
       kept = Path.join(root, "app/state/a.bin")
       File.mkdir_p!(Path.dirname(kept))
       File.write!(kept, "x")
-      reset = ["reset", "--storage-root", root]
+      # A loaded machine can take longer than the default second to answer
+      # the probe, which then reads the controller as down.
+      reset = ["reset", "--storage-root", root, "--probe-timeout-ms", "15000"]
 
       {0, plan, ""} = flz(ctx, reset ++ ["--dry-run", "--json"], sockets)
       assert plan =~ ~s("dry_run":true)

@@ -15,7 +15,9 @@ defmodule Flezha.Cluster.GroupedHashingTest do
 
   alias Flezha.Cluster.GroupedHashing
   alias FlezhaTest.Helper.NodeTestHelper
+  alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Storage
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Strategy.Distribution.ConsistentHashing
@@ -232,6 +234,17 @@ defmodule Flezha.Cluster.GroupedHashingTest do
                       {:exec_cast, {GroupedHashing, :apply_announcement, [_from, groups]}}}
 
       assert Enum.sort(groups) == ["echo", "report"]
+    end
+
+    # fails when: the joining node is sent this node's set before it is in
+    # the hub's node list, so a change landing in between is announced to
+    # every node but it, and the two disagree on the group from then on.
+    test "a joining node is sent the set once it is in the hub's node list", %{hub: hub} do
+      handlers =
+        &Enum.map(HookManager.registered_handlers(hub.storage.hook, &1), fn h -> h.id end)
+
+      assert :gh_join in handlers.(Hook.post_node_join())
+      refute :gh_join in handlers.(Hook.pre_node_join())
     end
 
     test "a stopping hub leaves every group and forgets the hub", %{hub: hub} do

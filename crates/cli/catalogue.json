@@ -128,7 +128,7 @@
     },
     {
       "name": "Controller.liveness_counters",
-      "doc": "Every data-plane liveness counter this node holds.",
+      "doc": "Every data-plane liveness counter the connected controllers hold.",
       "action": "controller.status",
       "remote": true,
       "stream": false,

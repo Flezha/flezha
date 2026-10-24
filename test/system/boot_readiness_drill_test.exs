@@ -39,7 +39,9 @@ defmodule FlezhaTest.System.BootReadinessDrillTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @dockerfile "deploy/docker/prod/Dockerfile.controller"
-  @ready_within_ms 10_000
+  # Well under the 45 s reconcile grace a node with no peers must not wait out,
+  # with room for a loaded machine.
+  @ready_within_ms 20_000
 
   setup do
     on_exit(TestHelpers.override_env(:healthz_port, 0))

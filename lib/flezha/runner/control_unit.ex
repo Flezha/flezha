@@ -210,10 +210,22 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @doc """
+  `RemRelay`, awaiting the runner's answer for up to `timeout_ms`. The runner
+  ships its Cells' last buffered changes as it removes the relay, so they are
+  on their way once it answers. The Overwatch's own teardown uses it.
+  """
+  @spec stop_relay(binary(), binary(), non_neg_integer()) ::
+          {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
+  def stop_relay(runner_id, relay_id, timeout_ms) do
+    command = {:rem_relay, %RunnerCommands.RemRelay{relay_id: relay_id}}
+    send_control_await(runner_id, command, timeout: timeout_ms)
+  end
+
+  @doc """
   Hard, fire-and-forget `RemRelay`: remove the relay from the runner
-  without waiting for the SDK ack. The Overwatch's own teardown uses it, and so
-  does the durable-suspension eviction — a suspended instance holds zero runner
-  resources while its controller-side registry entry (and Overwatch) stay.
+  without waiting for the SDK ack. The durable-suspension eviction uses it — a
+  suspended instance holds zero runner resources while its controller-side
+  registry entry (and Overwatch) stay — and so does a refused foreign frame.
   """
   @spec stop_relay_async(binary(), binary()) :: :ok | {:error, :no_control_unit}
   def stop_relay_async(runner_id, relay_id)
@@ -320,23 +332,6 @@ defmodule Flezha.Runner.ControlUnit do
     command = with_partition_identity(command, relay.opts)
 
     case ControlChannel.send_control(state.runner_id, {:add_relay, command}) do
-      {:ok, ref} ->
-        {:noreply, store_ref(state, ref, from)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call({:stop_relay, relay_id}, from, state) do
-    case ControlChannel.send_control(
-           state.runner_id,
-           {
-             :rem_relay,
-             %RunnerCommands.RemRelay{relay_id: relay_id}
-           }
-         ) do
       {:ok, ref} ->
         {:noreply, store_ref(state, ref, from)}
 

@@ -65,6 +65,9 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
     run_live_read_case()
   end
 
+  # fails when: the Cells' last changes, which the runner ships as it removes
+  # the relay, land after the stop dropped its files, so the next start of the
+  # id restores them.
   test "a relay id started again after a stop starts its Cells from init_state" do
     run_restarted_id_case()
   end
@@ -145,7 +148,9 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
 
     assert {:ok, _} = RelayManager.start_relay(namespace, builder)
     RelayTestHelper.cast_io(relay_id, namespace, "#{key}:first", %{"input_type" => "2"})
-    assert wait_until(fn -> cell_keys(namespace, relay_id) == [key] end, 15_000)
+    # Applied, not only minted: an input still queued at the stop is not the
+    # stopped instance's state.
+    assert wait_until(fn -> applied?(namespace, relay_id, key, "first") end, 15_000)
 
     assert :ok = RelayManager.stop_relay(namespace, relay_id)
     assert {:ok, _} = RelayManager.start_relay(namespace, builder)

@@ -113,43 +113,7 @@ defmodule FlezhaTest.Handover do
   @tag :drain_migration_forced
   test "a deferring relay is force-migrated at the drain deadline without wedging" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node2)
-
-    relay_id = start_relay_on_peer(peer_node, "drain_forced")
-    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "seed", %{})
-
-    # Hold the busy signal: a correction that never leaves its debounce
-    # window, so `migration_consent/1` answers :defer for the whole drain.
-    :ok =
-      :erpc.call(peer_node, Application, :put_env, [:flezha, :correction_debounce_ms, 600_000])
-
-    hub_id = Identificator.hub(@default_namespace)
-
-    {^relay_id, ow_pid} =
-      :erpc.call(peer_node, ProcessHub, :process_list, [hub_id, :local])
-      |> Enum.find(fn {id, _pid} -> id == relay_id end)
-
-    GenServer.cast(
-      ow_pid,
-      {:correction_request, {relay_id, "store_input_tasklet", "poke"}, 1}
-    )
-
-    # Sync barrier: the cast is folded into state before the drain begins.
-    _ = :sys.get_state(ow_pid)
-
-    test_pid = self()
-
-    :erpc.call(peer_node, ProcessHub, :register_hook_handlers, [
-      hub_id,
-      Hook.migration_deferred(),
-      [
-        %ProcessHub.Service.HookManager{
-          id: "deferred_wait",
-          m: Process,
-          f: :send,
-          a: [test_pid, :deferred, []]
-        }
-      ]
-    ])
+    relay_id = deferring_relay_on(peer_node)
 
     # The shortest budget that still leaves the drain its one-second floor of
     # consent and the whole forced-handover grace after it.
@@ -258,6 +222,53 @@ defmodule FlezhaTest.Handover do
       [:cli, [timeout_ms: timeout_ms]],
       timeout_ms + 15_000
     )
+  end
+
+  # A relay on `peer_node` that defers every migration: it holds a correction
+  # that never leaves its debounce window, so `migration_consent/1` answers
+  # :defer. Each deferral reaches the test as `:deferred`. Placement can still
+  # settle just after a start, so a relay that left the peer before holding
+  # the signal is replaced by a new one.
+  defp deferring_relay_on(peer_node) do
+    hub_id = Identificator.hub(@default_namespace)
+    NodeTestHelper.await_serving(peer_node, @default_namespace, @test_store_input_factory)
+
+    :ok =
+      :erpc.call(peer_node, Application, :put_env, [:flezha, :correction_debounce_ms, 600_000])
+
+    :erpc.call(peer_node, ProcessHub, :register_hook_handlers, [
+      hub_id,
+      Hook.migration_deferred(),
+      [
+        %ProcessHub.Service.HookManager{
+          id: "deferred_wait",
+          m: Process,
+          f: :send,
+          a: [self(), :deferred, []]
+        }
+      ]
+    ])
+
+    Enum.find_value(1..5, fn attempt ->
+      relay_id = start_relay_on_peer(peer_node, "drain_forced#{attempt}")
+      RelayTestHelper.send_sync_io(relay_id, @default_namespace, "seed", %{})
+
+      with {^relay_id, ow_pid} <- local_child(peer_node, hub_id, relay_id) do
+        GenServer.cast(
+          ow_pid,
+          {:correction_request, {relay_id, "store_input_tasklet", "poke"}, 1}
+        )
+
+        # The cast is folded into state before the placement is read again.
+        _ = :sys.get_state(ow_pid)
+        if local_child(peer_node, hub_id, relay_id) == {relay_id, ow_pid}, do: relay_id
+      end
+    end) || flunk("no relay stayed on #{inspect(peer_node)} long enough to hold the signal")
+  end
+
+  defp local_child(peer_node, hub_id, relay_id) do
+    :erpc.call(peer_node, ProcessHub, :process_list, [hub_id, :local])
+    |> Enum.find(fn {id, _pid} -> id == relay_id end)
   end
 
   defp start_relay_on_peer(peer_node, prefix) do

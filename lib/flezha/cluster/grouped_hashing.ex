@@ -163,7 +163,13 @@ defmodule Flezha.Cluster.GroupedHashing do
     :ok
   end
 
-  @doc "Sends the joining node this node's served set."
+  @doc """
+  Sends the joining node this node's served set.
+
+  Run once the node is in the hub's node list. A change of this node's set
+  that lands meanwhile then either finds the node in that list and announces
+  to it, or was written before this reads the set.
+  """
   @spec handle_node_join(ProcessHub.Hub.t(), %{node: node()}) :: :ok
   def handle_node_join(hub, %{node: joining}) do
     cast_announcement(hub, joining, Map.get(node_groups(hub.storage.misc), node(), []))
@@ -227,7 +233,7 @@ defmodule Flezha.Cluster.GroupedHashing do
     Storage.insert(misc, @group_nodes, %{})
     Storage.insert(misc, @ring_sets, MapSet.new())
 
-    register_handler(hub, Hook.pre_node_join(), :gh_join, :handle_node_join, [hub, :_])
+    register_handler(hub, Hook.post_node_join(), :gh_join, :handle_node_join, [hub, :_])
     register_handler(hub, Hook.pre_node_leave(), :gh_leave, :handle_node_leave, [hub, :_])
     register_handler(hub, Hook.coordinator_shutdown(), :gh_shutdown, :handle_shutdown, [hub])
 

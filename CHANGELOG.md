@@ -36,6 +36,16 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay stopped and started again under the same id no longer comes back
+  with its old Cell state. The runner ships each Cell's last change as it
+  drops the relay, and that change could arrive after the stop had deleted the
+  relay's files, writing them again for the next start to restore. The stop
+  now waits for the runner's answer and takes those changes in before it
+  deletes anything.
+- Controllers no longer disagree for good on which of them serve a factory. A
+  controller that joined while another changed what it serves could miss that
+  change, and relay starts it placed were then forwarded without an answer. A
+  joining controller is now sent each served set once it is in the cluster.
 - The convergence loop no longer lets heals that keep waiting fill every tick.
   Twenty or more relays it could not place, such as relays whose factory no
   runner offers, took the whole per-tick budget, so a plugin whose controller

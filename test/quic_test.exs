@@ -83,8 +83,7 @@ defmodule FlezhaQuicTest do
              relay_id,
              @quic_namespace,
              "quic_hello",
-             %{},
-             timeout: :quic
+             %{}
            ) === "quic_hello"
   end
 
@@ -97,9 +96,9 @@ defmodule FlezhaQuicTest do
       |> RelayFixture.start(@quic_namespace)
       |> RelayFixture.attach_output_msg(@quic_namespace)
 
-    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_1", %{}, timeout: :quic)
+    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_1", %{})
 
-    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_2", %{}, timeout: :quic)
+    RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_state_2", %{})
 
     {:ok, json_state} =
       RelayManager.get_cell_state(@quic_namespace, relay_id)
@@ -124,7 +123,7 @@ defmodule FlezhaQuicTest do
       |> RelayFixture.attach_output_msg(@quic_namespace)
 
     result =
-      RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_echo", %{}, timeout: :quic)
+      RelayTestHelper.send_sync_io(relay_id, @quic_namespace, "quic_echo", %{})
 
     assert result === "quic_echo"
   end

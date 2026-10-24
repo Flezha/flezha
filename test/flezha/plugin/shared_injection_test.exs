@@ -225,6 +225,11 @@ defmodule FlezhaTest.Plugin.SharedInjectionTest do
       assert WebsocketServer.connections(server) == 1
 
       unbind(other)
+      # The leave is a cast to the copy, which retargets the socket's worker:
+      # both have taken it before the next frame goes.
+      [copy] = Directory.plugin_hosts(@namespace, "mixed_feed")
+      _ = :sys.get_state(copy)
+      _ = :sys.get_state(WorkerSup.worker_pid(Websocket, {@namespace, "mixed_feed"}))
       WebsocketServer.broadcast(server, "one")
       assert {"one", _} = cast_frame()
       # The socket has injected "one" everywhere it still does, and the

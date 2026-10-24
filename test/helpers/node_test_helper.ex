@@ -21,6 +21,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Service.PluginRecords
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
+  alias ProcessHub.Service.DeclaredChildren
 
   @doc """
   The name this run's node is distributed under: `<base>@<host>` from the two
@@ -287,9 +288,11 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   A teardown: stop `peers` (`[{peer_pid, node}]`), then `stop_namespace/1`. A peer is linked to the test process,
   so it is already going down when a teardown runs, and the hub places its
   children here only after dropping it from the cluster. The stop waits until
-  every child the hub registers runs on this node: a relay stopped earlier is
-  placed again and moves onto the next test's peers, and a disable sent while
-  a peer leaves gets no answer from it and leaves its copies running.
+  every child the hub registers runs on this node, and every plugin home it
+  declares runs here again: a relay stopped earlier is placed again and moves
+  onto the next test's peers, a disable sent while a peer leaves gets no
+  answer from it and leaves its copies running, and a home restarted after
+  its disable keeps its copy dialing.
   """
   def stop_peers_and_namespace(peers, namespace) do
     for {pid, peer} <- peers, do: stop_peer_node(pid, peer)
@@ -299,12 +302,23 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       fn ->
         Enum.all?(ProcessHub.process_list(hub_id, :global), fn {_id, node_pids} ->
           Keyword.keys(node_pids) -- [node()] == []
-        end)
+        end) and plugin_homes_here?(hub_id)
       end,
       30_000
     )
 
     stop_namespace(namespace)
+  end
+
+  # A plugin home has no group, so one whose controller left runs here once the
+  # hub has placed it again.
+  defp plugin_homes_here?(hub_id) do
+    %{children: children} = DeclaredChildren.declared_children(hub_id)
+
+    Enum.all?(
+      for(%{id: {:plugin, _} = id} <- children, do: ProcessHub.child_lookup(hub_id, id)),
+      &match?({_spec, [{node, _pid}]} when node == node(), &1)
+    )
   end
 
   @doc "Disable every plugin and stop every relay in `namespace`, on every hub node."
@@ -325,7 +339,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   def await_serving(node, namespace, factory_id, timeout_ms \\ 30_000) do
     wait_until(fn -> served_alike?(namespace, node, factory_id) end, timeout_ms) ||
       ExUnit.Assertions.flunk(
-        "#{inspect(node)} never served #{factory_id} alike on every node of the #{namespace} hub"
+        "#{inspect(node)} never served #{factory_id} alike on every node of the #{namespace} " <>
+          "hub: #{inspect(Enum.zip(HubManager.get_hub_nodes(namespace, true), group_views(namespace, factory_id)))}"
       )
   end
 

@@ -8,7 +8,7 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @default_timeout_ms 2_000
+  @default_timeout_ms 10_000
   @ingest_retry_ms 50
 
   @doc """
@@ -22,10 +22,8 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
 
   @doc """
   Send `msg` to `relay_id` and block until a `{:message_forward, _}` reply
-  arrives or the timeout fires. The default per-call timeout is 2 s; QUIC
-  callers should pass `:quic` as the `timeout` opt to pick up the
-  `:quic_test_timeout_ms` Application env (default 5 s) — the QUIC stack
-  is slower than UDS on first-message paths.
+  arrives or the timeout fires, by default 10 s: a first input on a loaded
+  machine, or over QUIC, can take seconds to come back.
 
   Delivery rides `send_io_confirming/5`, never the `cast_io/4` cast. A
   relay whose runner-side bind has not finished answers a retryable
@@ -36,8 +34,7 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
 
   ## Options
 
-    * `:timeout` — `non_neg_integer()` to override the default in ms, or
-      `:quic` to read `Application.get_env(:flezha, :quic_test_timeout_ms, 5_000)`.
+    * `:timeout` — `pos_integer()` to override the default in ms.
   """
   def send_sync_io(relay_id, namespace, msg, metadata \\ %{}, opts \\ []) do
     timeout = resolve_timeout(Keyword.get(opts, :timeout))
@@ -76,9 +73,6 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
 
     if accepted?, do: :ok, else: raise("Relay never accepted the input before the timeout")
   end
-
-  defp resolve_timeout(:quic),
-    do: Application.get_env(:flezha, :quic_test_timeout_ms, 5_000)
 
   defp resolve_timeout(ms) when is_integer(ms) and ms > 0, do: ms
   defp resolve_timeout(nil), do: @default_timeout_ms

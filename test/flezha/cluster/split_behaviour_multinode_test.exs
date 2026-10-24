@@ -68,7 +68,7 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
     cut_off = running(p3, hub_id)
 
     :ok =
-      :erpc.call(p3, NodeTestHelper, :report_calls, [ControlUnit, :stop_relay_async, 2, self()])
+      :erpc.call(p3, NodeTestHelper, :report_calls, [ControlUnit, :stop_relay, 3, self()])
 
     NodeTestHelper.split([p3], [p1, p2])
 
@@ -78,7 +78,7 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
     assert wait(fn -> running(p3, hub_id) == [] end), "its relays kept running"
 
     for id <- cut_off,
-        do: assert_receive({:called, ControlUnit, :stop_relay_async, [_runner, ^id]}, 10_000)
+        do: assert_receive({:called, ControlUnit, :stop_relay, [_runner, ^id, _timeout]}, 10_000)
 
     assert wait(fn -> match?({200, %{"status" => "no_quorum"}}, healthz(p3)) end),
            "/healthz said #{inspect(healthz(p3))}"

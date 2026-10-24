@@ -750,15 +750,13 @@ defmodule Flezha.Relay.Lifecycle do
 
   defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
 
-  # A runner whose control unit has already gone holds nothing of this
-  # relay left to release, so there is nothing to tell it — and the walk
-  # must go on to the plugin table rather than halt with the subscribers'
-  # owned pids still alive.
-  defp control_unit_step({state, _reason}, _budget) do
-    case ControlUnit.stop_relay_async(state.runner_id, state.id) do
-      {:error, :no_control_unit} -> :ok
-      other -> other
-    end
+  # Awaited for half the budget: the runner ships its Cells' last changes as
+  # it removes the relay, and the relay's stop flushes them in before its files
+  # go. A runner that is gone or does not answer has nothing left to wait for,
+  # and the walk goes on to the writers and the plugin table either way.
+  defp control_unit_step({state, _reason}, budget) do
+    _answer = ControlUnit.stop_relay(state.runner_id, state.id, div(budget, 2))
+    :ok
   end
 
   # After the writers' final flush, so the last turns of a relay stopped here

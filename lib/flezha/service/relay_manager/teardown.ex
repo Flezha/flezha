@@ -44,6 +44,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
     [
       %{scope: :relay, order: 10, name: :stream_flush, run: &stream_flush_step/2},
       %{scope: :relay, order: 20, name: :hub_stop, run: &hub_stop_step/2},
+      %{scope: :relay, order: 25, name: :final_flush, run: &stream_flush_step/2},
       %{scope: :relay, order: 30, name: :state_dir, run: &state_dir_step/2},
       %{scope: :relay, order: 40, name: :quota, run: &quota_step/2},
       %{scope: :relay, order: 50, name: :announce, run: &announce_step/2},
@@ -58,8 +59,11 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   # Flush the runner's stream channels before the child is deregistered: a
   # frame already queued there is routed, never counted, so nothing the runner
-  # wrote is lost to the teardown. Bounded to 1 s, so the hub stop keeps the
-  # rest of the budget for the Overwatch's own shutdown bound.
+  # wrote is lost to the teardown. Again once the runner answered the stop:
+  # the Cells' last changes it shipped then land before the state step, so a
+  # deleted relay's files are not written again for the next start of its id.
+  # Bounded to 1 s, so the hub stop keeps the rest of the budget for the
+  # Overwatch's own shutdown bound.
   defp stream_flush_step(%{runner_id: nil}, _budget), do: :ok
 
   defp stream_flush_step(%{runner_id: runner_id}, budget) do

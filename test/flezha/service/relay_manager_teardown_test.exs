@@ -115,7 +115,7 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     credit = %{channel: self(), session: :s, wire_size: 9}
     WalWriter.append_async(writer, 0, TestHelpers.stub_header(), "x", nil, credit)
 
-    assert_receive {:DOWN, ^ref, :process, ^writer, :normal}
+    assert_receive {:DOWN, ^ref, :process, ^writer, :normal}, 5_000
     assert_receive {:credit_drained, :s, 9, ^cell_id}
     refute File.exists?(Paths.class_dir(instance))
   end

@@ -303,7 +303,10 @@ def _multi_node():
     tagged.sort()
     apart = {path for row in MULTI_NODE_ROWS for path in row}
     rows = [*MULTI_NODE_ROWS, [path for path in tagged if path not in apart]]
-    return [*(_mix_test(f"e2e-multi-node-{at}", "e2e-multi-node", "--only", "multi_node", *paths)
+    # UDS only, as the peers already are: no tier test speaks QUIC, and a QUIC port
+    # derived from a process id can meet another row's.
+    return [*(_mix_test(f"e2e-multi-node-{at}", "e2e-multi-node", "--only", "multi_node", *paths,
+                        env={"FLEZHA_TRANSPORTS": "uds"})
               for at, paths in enumerate(rows, 1)),
             {"id": "e2e-multi-node", "group": "e2e", "groups": "@e2e-multi-node"}]
 

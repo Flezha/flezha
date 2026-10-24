@@ -151,6 +151,8 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
   # One Cell at a time: the whole relay's state is too large for one read.
   defp seen_counts(relay_id), do: Map.new(@keys, &{&1, seen_count(relay_id, &1)})
 
+  # A read that fails answers its reason, so a failure tells a refused read
+  # from a Cell bound on empty state.
   defp seen_count(relay_id, key) do
     query = %{tasklet: @tasklet, cell_key: key}
 
@@ -158,7 +160,8 @@ defmodule FlezhaTest.System.BindRestoreBackpressureE2ETest do
          %{@tasklet => %{^key => %{"seen" => seen}}} <- Payloader.json_to_map(json) do
       length(seen)
     else
-      _ -> 0
+      {:error, reason} -> {:error, reason}
+      _no_seen -> 0
     end
   end
 

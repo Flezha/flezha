@@ -139,13 +139,16 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
       # Operations surface, while the turn is still in flight: it is durable and
       # marked undelivered — this is what survives the SIGKILL below.
-      pending_inbox =
+      # Iteration 2's commit marks its input consumed just after it lands.
+      inbox = fn ->
         ExUnit.CaptureIO.capture_io(fn ->
           Cli.call("Steps.inbox", Jason.encode!([relay_id]), [])
         end)
+      end
 
+      assert NodeTestHelper.wait_until(fn -> inbox.() =~ "consumed through 2" end, 10_000)
+      pending_inbox = inbox.()
       assert pending_inbox =~ "durable input log for #{relay_id}"
-      assert pending_inbox =~ "consumed through 2"
       assert pending_inbox =~ "offset=3 PENDING"
 
       sigkill(os_pid(port_a))

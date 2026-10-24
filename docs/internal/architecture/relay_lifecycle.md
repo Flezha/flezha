@@ -119,7 +119,7 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 | 5 | `:calls` | answers every caller still waiting (`Flezha.Relay.Calls.Inbound.end_all/4`) |
 | 10 | `:bind_task` | kills an in-flight bind task (`Rebind.terminate_bind_task/1`) |
 | 20 | `:class_registry` | drops the in-memory class entry |
-| 30 | `:control_unit` | tells the runner to drop the relay; a gone control unit is not an error |
+| 30 | `:control_unit` | tells the runner to drop the relay and waits up to half the budget for its answer, which comes after the Cells' last changes shipped; a gone or silent runner is not an error |
 | 35 | `:writers` | closes the class's Cell writers, flushed |
 | 37 | `:lineage` | `release_lineage/1`, after the final flush |
 | 40 | `:plugin_table` | the on-terminate hooks of a bound relay, then every subscriber; a moved relay's plugins wait out their idle stop |
@@ -130,11 +130,12 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 |---|---|---|
 | 10 | `:stream_flush` | flushes the runner's stream channels, at most 1 s |
 | 20 | `:hub_stop` | stops the child through the hub (`hub_stop_children/3`); the declared entry goes first, so no reconcile brings it back. A stop that got no answer is asked again within the budget (`Flezha.Config.Backoff.again?/4`) |
+| 25 | `:final_flush` | flushes the stream channels again, so the Cells' last changes the runner shipped as it dropped the relay land before `:state_dir`, and a deleted relay's files are not written again for the next start of its id |
 | 30 | `:state_dir` | on the node the Overwatch ran on: deletes the state, or keeps it for a rescale (`reclaim_state_dir/2`) |
 | 40 | `:quota` | gives back the relay and its Cells |
 | 50 | `:announce` | `[:flezha, :relay, :stopped]`, which controller plugins hear; `Flezha.Observability.HookSink.stopped/4` is attached to it |
 
-The cause picks the rows (`acts?/2`): `:stop` and `:complete` run all five, `:rescale` all but
+The cause picks the rows (`acts?/2`): `:stop` and `:complete` run all six, `:rescale` all but
 `:announce`, `:failed_start` only `:hub_stop`.
 
 ### `:namespace`, run by `FleetManager`'s `{:stop_namespace, _}`
