@@ -204,8 +204,8 @@ defmodule Flezha.Convergence.Planner do
   # order within it.
   defp ordered_ops(%Diff{} = d, backoff) do
     # The not-started bindings go last, so they take only the slots no repair
-    # needs: their heal is unmet, which neither moves a key nor counts toward
-    # the cap, so ahead of the rest they would hold those slots every tick.
+    # needs: the Diff already knows their heal is unmet, so even on the first
+    # tick they wait behind the rest, as `plan/3` defers every op unmet last tick.
     eviction_ops(d) ++
       reset_ops(d, backoff) ++
       wedge_ops(d, backoff) ++

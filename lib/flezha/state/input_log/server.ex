@@ -177,10 +177,8 @@ defmodule Flezha.State.InputLog.Server do
     {:noreply, write_queued_appends(state, batch)}
   end
 
-  def handle_call(:fsync, _from, state) do
-    {:reply, Syncer.call(state.syncer, &{:sync, Enum.reverse(state.owed), &1, &2}),
-     %{state | owed: [], dirty: false}}
-  end
+  def handle_call(:fsync, _from, state),
+    do: {:reply, sync_owed(state), %{state | owed: [], dirty: false}}
 
   def handle_call(:last_offset, _from, state) do
     {:reply, state.next_offset - 1, state}
@@ -361,10 +359,15 @@ defmodule Flezha.State.InputLog.Server do
   # answered before this process is gone; with no live companion, this loop
   # syncs and answers its own.
   defp settle_owed(%{syncer: syncer} = state) do
-    owed = Enum.reverse(state.owed)
-    synced? = is_pid(syncer) and Syncer.call(syncer, &{:sync, owed, &1, &2}) == :ok
-    if not synced? and :file.datasync(state.file_handle) == :ok, do: Syncer.answer(owed)
+    synced? = is_pid(syncer) and sync_owed(state) == :ok
+
+    if not synced? and :file.datasync(state.file_handle) == :ok,
+      do: Syncer.answer(Enum.reverse(state.owed))
   end
+
+  # The companion syncs and gives the owed answers, behind everything it
+  # already holds.
+  defp sync_owed(state), do: Syncer.call(state.syncer, &{:sync, Enum.reverse(state.owed), &1, &2})
 
   # ---------- Internals ----------
 
