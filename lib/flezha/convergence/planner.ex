@@ -89,11 +89,10 @@ defmodule Flezha.Convergence.Planner do
   defp within_cap(ops, max_ops, _unmet_last) when length(ops) <= max_ops, do: ops
 
   defp within_cap(ops, max_ops, unmet_last) do
-    {waiting, ready} =
-      ops |> Enum.with_index() |> Enum.split_with(&MapSet.member?(unmet_last, key(elem(&1, 0))))
-
+    indexed = Enum.with_index(ops)
+    {waiting, ready} = Enum.split_with(indexed, &MapSet.member?(unmet_last, key(elem(&1, 0))))
     kept = (ready ++ waiting) |> Enum.take(max_ops) |> MapSet.new(&elem(&1, 1))
-    for {op, i} <- Enum.with_index(ops), MapSet.member?(kept, i), do: op
+    for {op, i} <- indexed, MapSet.member?(kept, i), do: op
   end
 
   @doc "The per-tick op cap when the caller names none."
