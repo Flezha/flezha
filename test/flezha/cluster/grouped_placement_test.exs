@@ -138,7 +138,7 @@ defmodule Flezha.Cluster.GroupedPlacementTest do
            "#{@served} is still served by #{inspect(views())}"
   end
 
-  defp views, do: NodeTestHelper.group_views(@ns, @served)
+  defp views, do: Map.values(NodeTestHelper.group_views(@ns, @served))
 
   # A peer BEAM with a runner in the namespace. `serves?: false` cuts that
   # runner down to `@kept`, so the peer holds the namespace's hub without being

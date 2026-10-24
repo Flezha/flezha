@@ -340,30 +340,35 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     wait_until(fn -> served_alike?(namespace, node, factory_id) end, timeout_ms) ||
       ExUnit.Assertions.flunk(
         "#{inspect(node)} never served #{factory_id} alike on every node of the #{namespace} " <>
-          "hub: #{inspect(Enum.zip(HubManager.get_hub_nodes(namespace, true), group_views(namespace, factory_id)))}"
+          "hub: #{inspect(group_views(namespace, factory_id))}"
       )
   end
 
   defp served_alike?(namespace, node, factory_id) do
     members = GroupedHashing.group_nodes(Identificator.hub(namespace), factory_id)
 
-    node in members and Enum.all?(group_views(namespace, factory_id), &(&1 == {:ok, members}))
+    node in members and
+      Enum.all?(Map.values(group_views(namespace, factory_id)), &(&1 == {:ok, members}))
   end
 
   @doc """
   The members of `factory_id`'s group as each node of `namespace`'s hub, this
-  one included, answers from its own table: one `:erpc.multicall/5` result per
-  node. A node that cannot answer agrees with nothing.
+  one included, answers from its own table: each node's `:erpc.multicall/5`
+  result, by node. A node that cannot answer agrees with nothing.
   """
   def group_views(namespace, factory_id) do
-    namespace
-    |> HubManager.get_hub_nodes(true)
-    |> :erpc.multicall(
-      GroupedHashing,
-      :group_nodes,
-      [Identificator.hub(namespace), factory_id],
-      5_000
-    )
+    nodes = HubManager.get_hub_nodes(namespace, true)
+
+    views =
+      :erpc.multicall(
+        nodes,
+        GroupedHashing,
+        :group_nodes,
+        [Identificator.hub(namespace), factory_id],
+        5_000
+      )
+
+    Map.new(Enum.zip(nodes, views))
   end
 
   # A peer BEAM is linked to the test process, so by the time a teardown runs
