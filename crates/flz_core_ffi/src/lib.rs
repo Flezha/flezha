@@ -135,6 +135,9 @@ struct Outstanding {
 
 /// Opaque context handle.
 pub struct FlzContext {
+    /// Unique for the process's lifetime, so an error recorded on a freed
+    /// context is never read on one the allocator puts at its address.
+    id: u64,
     outstanding: DashMap<u64, Outstanding>,
     session: flz_core::session::Session,
     /// The local run this context drives and the channel its sinks release
@@ -164,8 +167,8 @@ struct LocalSession {
 
 thread_local! {
     static INIT_ERROR: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
-    /// The last failure this thread recorded, and the context it was recorded on.
-    static LAST_ERROR: std::cell::RefCell<Option<(usize, CString)>> = const { std::cell::RefCell::new(None) };
+    /// The last failure this thread recorded, and the id of the context it was recorded on.
+    static LAST_ERROR: std::cell::RefCell<Option<(u64, CString)>> = const { std::cell::RefCell::new(None) };
     static RENDERED: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -214,8 +217,7 @@ impl FlzContext {
     /// Record `error` as the context's last error; the status every failing
     /// entry point returns. The one place an [`Error`] becomes a C string.
     fn fail(&self, error: Error) -> i32 {
-        let context = self as *const Self as usize;
-        LAST_ERROR.with(|slot| *slot.borrow_mut() = Some((context, error_document(&error))));
+        LAST_ERROR.with(|slot| *slot.borrow_mut() = Some((self.id, error_document(&error))));
         FLZ_ERR
     }
 

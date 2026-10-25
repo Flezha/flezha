@@ -1,7 +1,7 @@
 //! The context's life, its error documents, and the classes it declares.
 
 use std::ffi::{c_char, CStr, CString};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use dashmap::DashMap;
@@ -29,7 +29,9 @@ pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzCont
         });
         return std::ptr::null_mut();
     }
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     Box::into_raw(Box::new(FlzContext {
+        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         outstanding: DashMap::new(),
         session: Default::default(),
         local: Mutex::new(None),
@@ -63,7 +65,7 @@ pub extern "C" fn flz_core_init_error() -> *const c_char {
 #[no_mangle]
 pub unsafe extern "C" fn flz_core_last_error(ctx: *const FlzContext) -> *const c_char {
     LAST_ERROR.with(|slot| match slot.borrow().as_ref() {
-        Some((recorded_on, document)) if !ctx.is_null() && *recorded_on == ctx as usize => {
+        Some((recorded_on, document)) if !ctx.is_null() && *recorded_on == (*ctx).id => {
             document.as_ptr()
         }
         _ => std::ptr::null(),
