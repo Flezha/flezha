@@ -204,6 +204,8 @@ fn a_timer_restored_before_the_secondary_stream_fires_once_it_is_installed() {
     core.promote_due_wakes();
     crate::state_sink::set_secondary_stream(None);
 
+    // Any thread polling the global core may be the one that promotes it.
+    spin_until("the restored timer to fire", || !slot.mailbox.is_empty());
     match slot.mailbox.pop() {
         Some(CellItem::Timer(fire)) => assert_eq!(fire.firing.scheduled_at, 1),
         _ => panic!("the restored timer did not fire after the install"),
