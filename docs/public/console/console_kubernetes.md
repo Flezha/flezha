@@ -1,7 +1,7 @@
 # The console on Kubernetes
 
 The console runs as one Deployment in the namespace `flezha`, beside the controllers that
-[Kubernetes](kubernetes.md) runs from the reference manifests. It finds them through a
+[Kubernetes](../topics/deploying/kubernetes.md) runs from the reference manifests. It finds them through a
 headless service, so a controller pod that is replaced under a new address is found again.
 [The console](console.md) explains the link and every setting used here. This page was run
 on k3s.
@@ -22,7 +22,7 @@ $ docker save flezha-console:0.1.0 | sudo k3s ctr images import -
 ## Issue the console's token
 
 > Claim the admin with the bootstrap token the controller wrote at its first start, if no one
-> has yet ([Claim the admin](authorization.md#claim-the-admin)).
+> has yet ([Claim the admin](../topics/core/authorization.md#claim-the-admin)).
 > {: .step}
 
 ```sh
@@ -66,7 +66,7 @@ $ kubectl -n flezha create secret generic flezha-console \
 
 ## The manifest
 
-`deploy/kubernetes/console.yaml` in the console's repository:
+<!-- docs-citation-record:begin -->`deploy/kubernetes/console.yaml`<!-- docs-citation-record:end --> in the console's repository:
 
 ```yaml
 # The console on Kubernetes, beside the controllers that core's deploy/kubernetes/ runs in the

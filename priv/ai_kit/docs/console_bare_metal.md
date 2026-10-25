@@ -7,7 +7,7 @@ used here.
 > #### What you need {: .tip}
 >
 > - A controller release running on this machine
->   ([Deploying a controller](deploying_a_controller.md)), version 0.1.2 or later.
+>   ([Deploying a controller](../topics/deploying/deploying_a_controller.md)), version 0.1.2 or later.
 > - Elixir 1.14 or later with Erlang/OTP, and Node.js with npm, to build the release.
 > - A Postgres database and a role for the console.
 

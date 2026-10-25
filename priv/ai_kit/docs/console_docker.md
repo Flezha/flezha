@@ -99,7 +99,7 @@ volumes:
   behind a proxy with TLS and set `PHX_HOST`, `PHX_URL_SCHEME` and `PHX_URL_PORT` to the
   address browsers use.
 - **`FLEZHA_DURABILITY_BACKEND: none`** keeps the controller's state on this machine only.
-  [Durability](durability.md) has the backends that ship it elsewhere.
+  [Durability](../topics/core/durability.md) has the backends that ship it elsewhere.
 
 > Put the secrets in `.env` beside it. `CONSOLE_TOKEN` stays empty until the controller
 > has issued one.
@@ -126,7 +126,7 @@ $ docker compose up -d controller db
 ```
 
 The controller enforces authorization, so the first admin token is claimed with the
-bootstrap token it wrote at its first start ([Claim the admin](authorization.md#claim-the-admin)).
+bootstrap token it wrote at its first start ([Claim the admin](../topics/core/authorization.md#claim-the-admin)).
 
 > Claim the admin once the controller is healthy (`docker compose ps` says so).
 > {: .step}
