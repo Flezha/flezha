@@ -428,7 +428,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
         sha = sha256(bytes)
         blob = Manifest.blob_key(ref, Manifest.file_name(sha))
 
-        with :ok <- upload_payload(state, manifest, blob, bytes) do
+        with :ok <- upload_payload(state, Manifest.blob_keys(manifest), blob, bytes) do
           shipped = %{manifest | file: %{blob: blob, size: byte_size(bytes), sha: sha}}
           commit_cut(state, ref, manifest, shipped, %{bytes: byte_size(bytes), count: 0}, -1)
         end
@@ -444,14 +444,13 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # The blob name IS the hash, so an entry already naming it means the bytes are
-  # up. The manifest write is deliberately not skipped with it: a takeover
+  # The blob name IS the hash, so a blob the entry already names means the bytes
+  # are up. The manifest write is deliberately not skipped with it: a takeover
   # changes no bytes at all, and `commit_cut` is the only place allowed to
   # conclude that a cut is unchanged — it compares the owner and the claim too.
-  defp upload_payload(_state, %Manifest{file: %{blob: blob}}, blob, _bytes), do: :ok
-
-  defp upload_payload(state, _manifest, blob, bytes),
-    do: state.backend.put(blob, bytes, state.opts)
+  defp upload_payload(state, named, blob, bytes) do
+    if blob in named, do: :ok, else: state.backend.put(blob, bytes, state.opts)
+  end
 
   # Seq-addressed artifact (Cell WAL + snapshots, task-journal, input log). The manifest is reconciled against local truth first — a rewind
   # dropped records above a seq, a compaction dropped them below one — and only
@@ -508,15 +507,15 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # baseline whose successor already subsumed it.
   defp ship_snapshots(state, ref, manifest, snapshots, local_top) do
     manifest = Manifest.prune_above(manifest, local_top)
-    # Keyed by seq to its already-shipped blob: a content-addressed name cannot
-    # be reconstructed without the bytes, so a snapshot the entry already names
-    # is carried over rather than re-derived.
+    # What the entry already names is carried over rather than re-derived: by
+    # seq, since a content-addressed name cannot be rebuilt without the bytes,
+    # and by content (`Manifest.snapshot_blob/4`), so equal bytes upload nothing.
     known = Map.new(manifest.snapshots, &{&1.seq, &1.blob})
 
     Enum.reduce_while(snapshots, {:ok, []}, fn {seq, path}, {:ok, acc} ->
       case Map.fetch(known, seq) do
         {:ok, blob} -> {:cont, {:ok, [{seq, blob} | acc]}}
-        :error -> upload_snapshot(state, ref, seq, path, acc)
+        :error -> upload_snapshot(state, ref, {seq, path}, Map.values(known), acc)
       end
     end)
     |> case do
@@ -525,12 +524,12 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  defp upload_snapshot(state, ref, seq, path, acc) do
+  defp upload_snapshot(state, ref, {seq, path}, shipped, acc) do
     case File.read(path) do
       {:ok, bytes} ->
-        blob = Manifest.blob_key(ref, Manifest.snapshot_name(seq, sha256(bytes)))
+        blob = Manifest.snapshot_blob(ref, seq, sha256(bytes), shipped)
 
-        case state.backend.put(blob, bytes, state.opts) do
+        case upload_payload(state, shipped, blob, bytes) do
           :ok -> {:cont, {:ok, [{seq, blob} | acc]}}
           {:error, _} = err -> {:halt, err}
         end

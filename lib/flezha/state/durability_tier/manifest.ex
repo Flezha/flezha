@@ -306,9 +306,19 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @spec range_name(non_neg_integer(), non_neg_integer(), non_neg_integer(), binary()) :: binary()
   def range_name(epoch, from, to, sha_hex), do: "r-#{epoch}-#{from}-#{to}-#{sha_hex}"
 
-  @doc "Name of a snapshot blob at `seq`, content-addressed for the same reason."
-  @spec snapshot_name(non_neg_integer(), binary()) :: binary()
-  def snapshot_name(seq, sha_hex), do: "s-#{seq}-#{sha_hex}"
+  @doc """
+  Blob key for snapshot bytes hashing to `sha_hex` at `seq`: the key in `shipped`
+  that already holds those bytes (its name ends with the hash), else a new one,
+  content-addressed for the same reason as `range_name/4`.
+
+  A quiet Cell's compaction re-snapshots unchanged state at a new seq, and naming
+  the shipped blob uploads nothing; hydration takes the seq from the entry.
+  """
+  @spec snapshot_blob(ref(), non_neg_integer(), binary(), [binary()]) :: binary()
+  def snapshot_blob(ref, seq, sha_hex, shipped) do
+    Enum.find(shipped, &String.ends_with?(&1, "-" <> sha_hex)) ||
+      blob_key(ref, "s-#{seq}-#{sha_hex}")
+  end
 
   @doc "Name of a whole-payload blob, content-addressed so a re-ship is idempotent."
   @spec file_name(binary()) :: binary()

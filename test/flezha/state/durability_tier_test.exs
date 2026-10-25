@@ -344,6 +344,30 @@ defmodule Flezha.State.DurabilityTierTest do
       assert seqs_in_wal(ctx.cell_id) == [4, 5]
     end
 
+    test "a quiet Cell's unchanged re-snapshot uploads no second blob", ctx do
+      ref = {:cell, ctx.cell_id}
+      File.write!(Paths.snapshot_path(ctx.cell_id, 3), "unchanged-state")
+      TestHelpers.write_wal(ctx.cell_id, 4..4)
+      assert :ok = Shipper.ship_now(ref)
+      assert [%{seq: 3, blob: shipped}] = Stub.stored_manifest(ref).snapshots
+
+      # The next compaction of the idle Cell: the same bytes at the seq of the
+      # record the last one left, and one new record above it.
+      File.rm!(Paths.snapshot_path(ctx.cell_id, 3))
+      File.write!(Paths.snapshot_path(ctx.cell_id, 4), "unchanged-state")
+      TestHelpers.write_wal(ctx.cell_id, 5..5)
+      assert :ok = Shipper.ship_now(ref)
+
+      assert [%{seq: 4, blob: ^shipped}] = Stub.stored_manifest(ref).snapshots
+      assert Enum.filter(Stub.keys(), &(&1 =~ "/s-")) == [shipped]
+
+      TestHelpers.wipe_cell(ctx.cell_id)
+      assert :ok = DurabilityTier.hydrate_relay(ctx.class)
+      assert File.read!(Paths.snapshot_path(ctx.cell_id, 4)) == "unchanged-state"
+      refute File.exists?(Paths.snapshot_path(ctx.cell_id, 3))
+      assert seqs_in_wal(ctx.cell_id) == [5]
+    end
+
     test "a correction rewind supersedes the shipped ranges above it at a higher epoch", ctx do
       assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
       assert Stub.stored_manifest({:cell, ctx.cell_id}).epoch == 0

@@ -54,18 +54,19 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
     end
   end
 
+  # Keys are relative paths, so a prefix names a directory plus a partial entry
+  # name in it: only that directory is walked, never the rest of the store.
   @impl true
   def list(prefix, opts) do
     root = root(opts)
     now = System.system_time(:millisecond)
+    {dirs, [partial]} = prefix |> String.split("/") |> Enum.split(-1)
 
     keys =
-      root
-      |> walk_files()
+      Path.join([root | dirs])
+      |> walk_files(partial)
       |> Enum.reject(&(String.ends_with?(&1, @claim_suffix) or Durable.in_progress?(&1)))
-      |> Enum.map(&Path.relative_to(&1, root))
-      |> Enum.filter(&String.starts_with?(&1, prefix))
-      |> Enum.map(&{&1, age_of(Path.join(root, &1), now)})
+      |> Enum.map(&{Path.relative_to(&1, root), age_of(&1, now)})
 
     {:ok, keys}
   rescue
@@ -117,12 +118,14 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPath do
     end
   end
 
-  defp walk_files(dir) do
+  defp walk_files(dir, partial) do
     case File.ls(dir) do
       {:ok, entries} ->
-        Enum.flat_map(entries, fn entry ->
+        entries
+        |> Enum.filter(&String.starts_with?(&1, partial))
+        |> Enum.flat_map(fn entry ->
           path = Path.join(dir, entry)
-          if File.dir?(path), do: walk_files(path), else: [path]
+          if File.dir?(path), do: walk_files(path, ""), else: [path]
         end)
 
       {:error, _} ->

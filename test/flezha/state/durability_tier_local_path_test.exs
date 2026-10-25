@@ -13,6 +13,7 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
 
   alias Flezha.State.DurabilityTier.Backend.LocalPath
   alias Flezha.State.DurabilityTier.DeclaredManifest
+  alias Flezha.State.TestHelpers
 
   use FlezhaTest.DurabilityBackendContract, backend: LocalPath
 
@@ -33,12 +34,42 @@ defmodule Flezha.State.DurabilityTier.Backend.LocalPathTest do
              ["manifest/e/cls/task/_key", "manifest/e/other/task/k"]
   end
 
+  test "list enters only the directory its prefix names", %{opts: opts, root: root} do
+    for class <- ~w(cls clsx other), task <- 1..20, key <- 1..5 do
+      :ok = LocalPath.put("manifest/c/#{class}/t#{task}/k#{key}", "m", opts)
+    end
+
+    for i <- 1..50, do: :ok = LocalPath.put("blob/c/other/t/k/s-#{i}", "b", opts)
+
+    {{:ok, whole}, whole_calls} = listing("manifest/c/cls/", opts, root)
+    assert length(whole) == 100
+    assert Enum.all?(whole, &String.starts_with?(&1, "manifest/c/cls/"))
+    assert "manifest/c/cls" in whole_calls
+    assert Enum.all?(whole_calls, &(&1 == "manifest/c/cls" or &1 =~ ~r"^manifest/c/cls/"))
+
+    # A trailing partial name is matched among the entries of its directory.
+    {{:ok, partial}, partial_calls} = listing("manifest/c/cl", opts, root)
+    assert length(partial) == 200
+    refute Enum.any?(partial, &String.starts_with?(&1, "manifest/c/other/"))
+    assert "manifest/c" in partial_calls
+    assert Enum.all?(partial_calls, &(&1 == "manifest/c" or &1 =~ ~r"^manifest/c/cls"))
+  end
+
   test "an unconditional put preserves the stored claim", %{opts: opts} do
     key = "manifest/e/cls/task/k"
 
     assert :ok = LocalPath.put_if(key, "claimed", {:claim, 3}, opts)
     assert :ok = LocalPath.put(key, "overwritten", opts)
     assert {:error, {:claim_held, 3}} = LocalPath.put_if(key, "bid", {:claim, 2}, opts)
+  end
+
+  # The keys a listing returns, and every directory it listed on the way, both
+  # relative to the root.
+  defp listing(prefix, opts, root) do
+    {result, calls} = TestHelpers.file_calls(fn -> LocalPath.list(prefix, opts) end)
+    listed = for {:list_dir, [dir]} <- calls, do: Path.relative_to(to_string(dir), root)
+
+    {with({:ok, entries} <- result, do: {:ok, Enum.map(entries, &elem(&1, 0))}), listed}
   end
 
   describe "DeclaredManifest over the resolved backend" do
