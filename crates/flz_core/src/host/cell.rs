@@ -162,13 +162,7 @@ impl TaskletDispatcher for HostDispatcher {
         if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
             bytes.timer_ops.extend(ops);
         }
-        crate::flusher::flush_one(
-            &mut **buffer,
-            &slot.cell_identity,
-            &slot.change_seq,
-            &self.facts.header(),
-            slot.keeps_state,
-        );
+        slot.drain_locked(&mut **buffer);
     }
 
     fn interval_deadline(
@@ -202,6 +196,10 @@ impl TaskletDispatcher for HostDispatcher {
 
     fn cell_label(&self) -> &str {
         &self.cell_label
+    }
+
+    fn record_header(&self) -> crate::header::HeaderTemplate {
+        self.facts.header()
     }
 
     fn event_time_of(&self, payload: &crate::cell::CellPayload) -> Option<u64> {

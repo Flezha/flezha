@@ -314,7 +314,13 @@ defmodule Flezha.Service.Steps do
     end
   end
 
-  @doc "Force a compaction of one Cell. It dispatches a `CompactCell` to the Cell's runner."
+  @doc """
+  Force a compaction of one Cell. It dispatches a `CompactCell` to the Cell's
+  runner and awaits its answer: `compaction` is `:queued`; `:deferred` when the
+  runner refused the snapshot as busy and the Watchdog asks again; `:timed_out`
+  when no answer came within `compaction_timeout_ms`; or `:failed`, with the
+  `reason`.
+  """
   @spec rotate(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb rotate(cell, caller_context),
     verb: :state_rotate,
@@ -322,9 +328,20 @@ defmodule Flezha.Service.Steps do
     as: located,
     args: [cell: @cell] do
     with {:ok, runner_id} <- Recovery.resolve_runner(located.cell_id),
-         {:ok, _ref} <- Commands.dispatch_compact_cell(runner_id, located.cell_id),
-         do: {:ok, %{cell: cell}}
+         {:ok, verdict} <- Commands.dispatch_compact_cell(runner_id, located.cell_id, await: true),
+         do: {:ok, Map.put(rotated(verdict), :cell, cell)}
   end
+
+  # The verdict as the verb answers it; the bare dispatch without a control
+  # unit answers its send reference, a compaction queued all the same.
+  defp rotated(verdict) when verdict in [:deferred, :timed_out], do: %{compaction: verdict}
+  defp rotated({:failed, %Flezha.Error{} = e}), do: rotated({:failed, "#{e.message} (#{e.code})"})
+
+  defp rotated({:failed, reason}) when is_binary(reason),
+    do: %{compaction: :failed, reason: reason}
+
+  defp rotated({:failed, reason}), do: rotated({:failed, inspect(reason)})
+  defp rotated(_queued), do: %{compaction: :queued}
 
   @doc """
   Hard-delete one Cell's persisted state. That is its WAL, snapshots and outbox

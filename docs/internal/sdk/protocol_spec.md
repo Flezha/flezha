@@ -818,7 +818,16 @@ one that predates `cells_of` answers without `cells`.
 
 `MigrationSerialization { relay_id }` serializes the instance's whole state
 (JSON shape in §3) into `raw_data`, then **removes** the instance from the
-registry so the controller can re-create it on another runner.
+registry so the controller can re-create it on another runner. Each Cell is
+serialized from the same cut as a compaction: an open checkpoint interval
+closes early and its record ships first, so the inputs the destination
+re-forwards are none the state already holds. A Cell mid-retry, still inside
+an activation at the gate wait, or facing a credit window that stays exhausted
+for that wait, is left out and logged. The controller releases the state to
+the destination only once those records are durable on it
+(`Flezha.Relay.Handover.durable_cut?/2`, within `forced_handover_grace_ms` and
+what is left of the hub's state query timeout), and hands over no state past
+that. The runner's walk shares one serializer deadline across its Cells.
 
 ### MigrationDeserialization
 
@@ -1492,14 +1501,15 @@ Issued when the Cell's un-snapshotted WAL exceeds its compaction trigger
 (`FLEZHA_COMPACT_AFTER_BYTES`, default 8 MiB, overridden per class through
 `AddRelayResponse.compact_after_bytes`), when its oldest
 un-snapshotted record is older than `FLEZHA_COMPACT_AFTER_AGE_MS` (default
-300000; `0` disables), or on `flz state rotate`. The runner drains the
-Cell's pending changes, clones `State` under the Cell's sticky CAS,
+300000; `0` disables), or on `flz state rotate`. The runner closes an open
+checkpoint interval early, into the record its due close would ship, drains
+the Cell's pending changes, clones `State` under the Cell's sticky CAS,
 serializes it, ships it as `cell_state_snapshot`, then returns
 `CompactCellResponse` as `raw_data`. `snapshot_seq` MUST be the seq the
 drained state stands at — the writer treats it as a truncation point. A Cell
-whose state still holds changes the drain cannot ship (an open checkpoint
-interval, a retried attempt's changes) MUST be refused with `state.cell_busy`
-and no snapshot; the controller asks again on its next sweep.
+whose state still holds changes the drain cannot ship (a retried attempt's
+changes) MUST be refused with `state.cell_busy` and no snapshot; the
+controller asks again on its next sweep.
 
 ### Control command `CellMailboxStatus` (controller → runner)
 

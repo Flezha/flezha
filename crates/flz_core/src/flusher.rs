@@ -114,6 +114,12 @@ pub trait FlushableBuffer: Send + Any {
     /// accumulation included, for a restore.
     fn discard_unshipped(&mut self);
 
+    /// Close an open checkpoint interval now, into the record a due close
+    /// ships: what a cut (a compaction snapshot, a handover) does first, so
+    /// the state it takes and the consumed offset the records carry name the
+    /// same inputs.
+    fn close_interval_now(&mut self);
+
     /// Nothing [`Self::discard_unshipped`] would drop: nothing flushable, no
     /// checkpoint interval open, no retried attempt's changes held, no hold
     /// kept.

@@ -114,7 +114,7 @@ The SDK SHALL acquire the Cell's sticky CAS, clone `Self::State`, release the CA
 
 The hot path SHALL pay only the brief sticky-CAS hold during the state clone — microseconds, not the seconds-to-minutes a synchronous full-state snapshot would take.
 
-A Cell whose live state holds changes no shipped record carries (an open checkpoint interval, or the changes of an attempt awaiting retry) SHALL refuse the compaction with `state.cell_busy` and ship no snapshot, whoever asked for it. The Watchdog SHALL treat that refusal as retry-later: it SHALL clear the in-flight compaction without a backoff strike, SHALL NOT count it toward the give-up, and SHALL ask again on its next sweep whatever the WAL's size or age.
+A Cell inside an open checkpoint interval SHALL close it early and ship its record before the snapshot is taken (`effectively-once-checkpoint-granularity`). A Cell whose live state holds the changes of an attempt awaiting retry SHALL refuse the compaction with `state.cell_busy` and ship no snapshot, whoever asked for it. The Watchdog SHALL treat that refusal as retry-later: it SHALL clear the in-flight compaction without a backoff strike, SHALL NOT count it toward the give-up, and SHALL ask again on its next sweep whatever the WAL's size or age.
 
 #### Scenario: Compaction triggered by size threshold
 
@@ -615,7 +615,7 @@ The agent SHALL expose a `flz state` CLI subcommand tree, using relay vocabulary
 - `flz state get <relay/tasklet/cell>` — current in-memory state of one live Cell, with the `change_seq` it was read at. Refuses a non-resident Cell naming the reason.
 - `flz state at <relay/tasklet/cell> <seq | timestamp>` — point-in-time state query per the time-travel requirement. Returns JSON-encoded state.
 - `flz state list <relay>` — for each Cell of the Relay, prints `wal_seq`, `snapshot_seq`, `wal_bytes`, `flush_latency_ms_p99`, `fsync_durability_lag_ms`. Reads `Metrics.to_map/1`.
-- `flz state rotate <relay/tasklet/cell>` — forces compaction by enqueuing the per-Cell compaction continuation on the Overwatch. Returns immediately ("compaction queued"); the snapshot completes asynchronously.
+- `flz state rotate <relay/tasklet/cell>` — forces compaction by shipping `CompactCell` to the Cell's runner and awaiting its answer: "compaction queued" when the runner took it (the snapshot completes asynchronously), "compaction refused" naming the Cell when the runner refused it as busy (the Watchdog asks again on its next sweep), "compaction timed out" when no answer came within `compaction_timeout_ms`, or "compaction failed" with the reason for a runner error or a stub reply.
 - `flz state retention <relay> <hours>` — sets `time_travel_retention_hours.<RelayClass>` in runtime config (`persistent: true`); the next retention-sweeper tick reads the new value.
 
 #### Scenario: flz state get returns the live value
@@ -636,7 +636,12 @@ The agent SHALL expose a `flz state` CLI subcommand tree, using relay vocabulary
 #### Scenario: flz state rotate triggers async compaction
 
 - **WHEN** the runner runs `flz state rotate MarketRelay/btc/OhlcTasklet/M1`
-- **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactCell` to the SDK; the resulting snapshot SHALL appear on disk within seconds, or, for a Cell that refused it as busy, on a later Watchdog sweep that finds its interval closed
+- **THEN** the agent SHALL ship `CompactCell` to the SDK, and the CLI SHALL print "compaction queued" and exit 0; the resulting snapshot SHALL appear on disk within seconds
+
+#### Scenario: flz state rotate names a refused compaction
+
+- **WHEN** the runner runs `flz state rotate` against a Cell whose runner refuses the snapshot with `state.cell_busy`
+- **THEN** the CLI SHALL print "compaction refused" naming the Cell, SHALL NOT print "compaction queued", and SHALL exit 0; the snapshot SHALL appear on a later Watchdog sweep
 
 #### Scenario: flz state retention persists across agent restart
 

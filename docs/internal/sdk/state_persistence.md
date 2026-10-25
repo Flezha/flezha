@@ -87,8 +87,9 @@ deletes its files.
 ### Compaction (`CompactCell`)
 
 Compaction is controller-driven and real on every SDK. On `CompactCell { cell_id }` the
-core, under the Cell's exclusivity gate, drains the pending flush buffer first
-(`flush_one`) so in-memory state equals the shipped WAL, then reads
+core, under the Cell's exclusivity gate, closes an open checkpoint interval early and drains
+the pending flush buffer first (`flush_one`) so in-memory state equals the shipped WAL (a Cell
+holding a retried attempt's changes is refused with `state.cell_busy`), then reads
 `snapshot_seq = change_seq - 1` — the highest seq the snapshot already folds. The controller
 truncates records with `seq > snapshot_seq` and seeds its baseline there, so stamping
 `change_seq` (the next seq to assign) would dedup-drop the next real record. The

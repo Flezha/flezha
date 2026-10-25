@@ -757,7 +757,8 @@ the typed parts are the sink and the body codec. A restore folds through
 `flz_core::restore::fold_restore` (snapshot first, then the change log) into
 a `TypedSink` that decodes or migrates each body with postcard, and
 `init_cell_with_payload` answers the terminal seq from that walk. A compaction
-is `flz_core::host::snapshot_frame(slot, header, encode_body)`: drain, read
+is `flz_core::host::snapshot_frame(slot, encode_body)`: close an open
+checkpoint interval early and drain, refusing only mid-retry, read
 `change_seq - 1`, re-state the pending timers above it, then frame the
 postcard body the typed dispatcher encodes under the state lock.
 

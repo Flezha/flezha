@@ -324,8 +324,10 @@ defmodule Flezha.State.WatchdogTest do
     cell_id = TestHelpers.sample_cell_id(key)
     deferred? = fn -> MapSet.member?(:sys.get_state(Watchdog).deferred, cell_id) end
 
-    {:ok, :dispatched} = Commands.dispatch_compact_cell(runner_id, cell_id)
-    assert wait_until(deferred?, 1_000, 1)
+    # An operator's rotate awaits the verdict; the Watchdog's own ask below
+    # inspects it off-process.
+    assert {:ok, :deferred} = Commands.dispatch_compact_cell(runner_id, cell_id, await: true)
+    assert deferred?.()
 
     :ok = Watchdog.sweep_now()
     assert_receive {:compaction_trigger, _meas, %{key: ^key, trigger: :deferred} = meta}, 1_000

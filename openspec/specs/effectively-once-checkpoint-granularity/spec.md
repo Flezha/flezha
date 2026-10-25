@@ -13,11 +13,35 @@ relay's state actually becomes kernel-visible — the checkpoint.
 ### Requirement: Consumed-offset advances only at checkpoint boundaries
 
 In checkpoint mode the Cell's durable `consumed_offset` SHALL advance only
-when the relay calls `ctx.checkpoint()`. Changes applied between checkpoints
+when an interval closes: when the relay calls `ctx.checkpoint()`, or when a
+compaction or a handover closes it early. Changes applied between closes
 SHALL be held in the Cell's flush buffer and SHALL NOT be made durable on
-their own. The record written at the checkpoint SHALL carry the interval's
+their own. The record written at the close SHALL carry the interval's
 accumulated changes and the closing input's consumed-offset as one fsynced unit
 — state and offset advance together or not at all.
+
+A compaction (`CompactCell`) and a handover (`MigrationSerialization`, and the
+graceful-shutdown state that shares its serializer) SHALL close an open
+interval early, into the record its own close would write, and SHALL ship that
+record under the Cell's gate and buffer lock before the snapshot or the
+handed-over state is taken, so the state the cut holds and the consumed offset
+the controller holds name the same inputs. For a handover, the source controller
+SHALL release the handed-over state only once those records are durable on it,
+within the forced handover grace and what is left of the hub's state query
+timeout, because the destination reads its floor from the copy it pulls next;
+past that it SHALL hand over no state, and the destination restores from that
+copy and re-forwards above its floor. A migration's walk SHALL share one
+serializer deadline across its Cells. A cut SHALL NOT wait for room in the
+controller's credit window past its deadline: the Cell is then refused as busy
+before anything is drained.
+Only those two cuts SHALL close an interval early; nothing SHALL be added to the
+per-input path for it.
+
+A Cell holding the changes of an attempt awaiting retry SHALL NOT be cut, since
+no record can carry those changes until the item resolves: a compaction SHALL
+refuse it with `state.cell_busy` and ship no snapshot, and a handover SHALL
+leave it out of the handed-over state and log it, as it leaves out a Cell still
+inside an activation at its gate wait (a retry's backoff holds the gate).
 
 A checkpoint that accumulated no changes SHALL still write its record: the
 record exists to carry the offset.
@@ -33,6 +57,39 @@ record exists to carry the offset.
 - **WHEN** the relay checkpoints after processing offset 4710
 - **THEN** one record carrying the accumulated changes and consumed-offset 4710
   is fsynced, and only then does the durable offset advance
+
+#### Scenario: A compaction closes the open interval early
+
+- **GIVEN** a Cell checkpointed at offset 4700 that processed offsets
+  4701..4703 without checkpointing
+- **WHEN** the Cell receives `CompactCell`
+- **THEN** one record carrying the 4701..4703 changes and consumed-offset 4703
+  ships before the snapshot, the snapshot holds it, and the compaction is not
+  refused
+
+#### Scenario: A deadline-only Cell under steady input compacts
+
+- **GIVEN** a Cell declaring only `max_delay_ms` whose interval is open at
+  every compaction sweep
+- **WHEN** the Watchdog asks it for a snapshot
+- **THEN** each compaction closes the interval early and writes its snapshot
+  instead of being refused
+
+#### Scenario: A handover inside an open interval counts each input once
+
+- **GIVEN** a Cell checkpointed at offset 4700 that processed offsets
+  4701..4703 without checkpointing
+- **WHEN** the relay is migrated
+- **THEN** the record carrying consumed-offset 4703 ships before the
+  handed-over state, and the destination, whichever of the state and the
+  re-forward from 4704 it takes first, holds each input once
+
+#### Scenario: A cut waits out a retried attempt
+
+- **GIVEN** a Cell holding the changes of an attempt awaiting retry
+- **WHEN** the Cell receives `CompactCell`, or its relay is migrated
+- **THEN** the compaction is refused with `state.cell_busy` and no snapshot,
+  and the handed-over state leaves the Cell out
 
 ### Requirement: Mid-interval outputs flush when they are produced
 

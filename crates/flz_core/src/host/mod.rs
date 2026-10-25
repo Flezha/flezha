@@ -43,6 +43,7 @@ pub use activation::{
 pub use build::call_end;
 pub use cell::{cell_ref_of, BytesBuffer, HostPayload, HostTaskletFacts};
 pub use commands::{apply_state_locked, restore_failed, snapshot_frame, state_json_locked};
+pub(crate) use commands::{cell_busy, ship_to_cut};
 pub use decl::{
     HostAckGranularity, HostCall, HostChannelDecl, HostChannelKind, HostClassDecl, HostClock,
     HostCodec, HostLink, HostTaskletDecl,

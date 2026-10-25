@@ -526,9 +526,15 @@ The frame SHALL carry a payload-id constant defined alongside the output's other
 - **WHEN** the SDK receives `CompactCell` for a `cell_id` matching no live Cell
 - **THEN** the handler SHALL report an error rather than answering as though compaction succeeded
 
-#### Scenario: A Cell holding unshipped changes refuses the snapshot
+#### Scenario: A Cell inside an open checkpoint interval closes it first
 
-- **GIVEN** a live Cell whose state holds changes no shipped record carries: an open checkpoint interval, or the changes of an attempt awaiting retry
+- **GIVEN** a live Cell inside an open checkpoint interval
+- **WHEN** the SDK receives `CompactCell` addressing that Cell
+- **THEN** the handler SHALL close the interval early and ship its record, then SHALL ship the snapshot at a seq at or above that record's
+
+#### Scenario: A Cell holding a retried attempt's changes refuses the snapshot
+
+- **GIVEN** a live Cell whose state holds the changes of an attempt awaiting retry, which no shipped record carries
 - **WHEN** the SDK receives `CompactCell` addressing that Cell
 - **THEN** the handler SHALL ship no snapshot and SHALL report `state.cell_busy`, a retry-later refusal
 

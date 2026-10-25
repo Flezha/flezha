@@ -361,14 +361,15 @@ guard, and emitting `[:flezha, :state, :compaction_trigger]` with `trigger: :siz
   disables). A declared correction window raises this floor to at least itself, because
   compaction truncates the history a rewind needs.
 - **Deferred** — the runner refused the Cell's last compaction, from any caller, with
-  `state.cell_busy`: its live state held changes no record carries yet (an open checkpoint
-  interval, or a retried attempt's changes). The refusal clears the in-flight entry without a
-  backoff strike, and the next sweep asks again whatever the size or age.
+  `state.cell_busy`: its live state held a retried attempt's changes, which no record can carry
+  until the item resolves, or the credit window stayed exhausted for the serializer's gate wait. The refusal clears the in-flight entry without a backoff strike, and
+  the next sweep asks again whatever the size or age. `flz state rotate` awaits the answer and
+  prints a queued, refused, timed-out or failed compaction apart.
 
 1. The controller ships `CompactCell` over the control channel.
-2. The SDK locates the live Cell, **drains its pending changes first** (so memory equals the
-   shipped WAL; a Cell whose memory still holds changes no record carries is refused, as
-   above), serializes `State` under the state lock — postcard in Rust, Kryo in Java, the
+2. The SDK locates the live Cell, **closes an open checkpoint interval early and drains its
+   pending changes first** (so memory equals the shipped WAL and the consumed offset moves past
+   every input the state holds; a Cell mid-retry is refused, as above), serializes `State` under the state lock — postcard in Rust, Kryo in Java, the
    codec the restore path decodes, never the JSON migration serializer — ships
    `cell_state_snapshot` stamped with the highest seq it folds, and answers
    `CompactCellResponse{snapshot_seq, snapshot_bytes_size}`.

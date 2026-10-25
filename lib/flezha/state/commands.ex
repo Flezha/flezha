@@ -283,11 +283,14 @@ defmodule Flezha.State.Commands do
   a `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a non-empty WAL
   is recorded as a failed handshake rather than a completion, and a
   `state.cell_busy` refusal is left to the Watchdog to ask again, whoever
-  dispatched it.
+  dispatched it. With `await: true` the reply is inspected in the caller, which
+  gets its verdict: `{:ok, :queued}`, `{:ok, :deferred}` for that refusal,
+  `{:ok, :timed_out}` for no reply within `compaction_timeout_ms`, or
+  `{:ok, {:failed, reason}}` for a runner error or a stub reply.
   """
-  @spec dispatch_compact_cell(binary(), {binary(), binary(), binary()}) ::
+  @spec dispatch_compact_cell(binary(), {binary(), binary(), binary()}, keyword()) ::
           {:ok, term()} | {:error, term()}
-  def dispatch_compact_cell(runner_id, {rc, sh, pk} = cell_id) do
+  def dispatch_compact_cell(runner_id, {rc, sh, pk} = cell_id, opts \\ []) do
     cell_id_bytes = Wire.encode_cell_id(rc, sh, pk)
 
     command =
@@ -312,7 +315,8 @@ defmodule Flezha.State.Commands do
         # Watchdog rather than left to wedge persistence.
         Watchdog.compaction_started(cell_id, runner_id)
 
-        # Inspect the confirming CompactCellResponse off the caller's process:
+        # Inspect the confirming CompactCellResponse off the caller's process,
+        # unless the caller awaits its verdict (an operator's rotate):
         # serializing a large State under the cell lock can be slow, and
         # blocking the Watchdog sweep / WalWriter baseline pull on the round-trip
         # would stall unrelated cells. The `ControlUnit` request/reply sends
@@ -320,8 +324,12 @@ defmodule Flezha.State.Commands do
         # snapshot itself rides the data stream (driving `compaction_completed`);
         # this only catches a stub reply — a snapshot the SDK never ships —
         # sooner than the timeout sweep would.
-        spawn(fn -> inspect_compact_response(runner_id, cell_id, command) end)
-        {:ok, :dispatched}
+        if Keyword.get(opts, :await, false) do
+          {:ok, inspect_compact_response(runner_id, cell_id, command)}
+        else
+          spawn(fn -> inspect_compact_response(runner_id, cell_id, command) end)
+          {:ok, :dispatched}
+        end
     end
   end
 
@@ -330,7 +338,7 @@ defmodule Flezha.State.Commands do
   # (a stub build, or a Cell the runner cannot address), never a completion —
   # record it so the strike/backoff path runs instead of waiting out the timeout.
   # Against an empty WAL there was genuinely nothing to snapshot, so it is not an
-  # error.
+  # error. Answers the verdict `dispatch_compact_cell/3` documents.
   defp inspect_compact_response(runner_id, {rc, sh, pk} = cell_id, command) do
     with {:ok, raw_data} <-
            ControlUnit.send_control_await(runner_id, command,
@@ -346,11 +354,13 @@ defmodule Flezha.State.Commands do
       )
 
       Watchdog.compaction_failed(cell_id)
+      {:failed, :no_snapshot}
     else
-      # The Cell holds changes no record carries yet (an open checkpoint
-      # interval, a retried attempt): no snapshot now, and no strike either.
+      # The Cell holds a retried attempt's changes, which no record can carry
+      # until the item resolves: no snapshot now, and no strike either.
       {:error, %Flezha.Error{code: "state.cell_busy"}} ->
         Watchdog.compaction_deferred(cell_id)
+        :deferred
 
       {:error, reason} ->
         Logger.warning(
@@ -358,10 +368,12 @@ defmodule Flezha.State.Commands do
             "cell=#{inspect(cell_id)}: #{inspect(reason)}"
         )
 
+        if reason == :timeout, do: :timed_out, else: {:failed, reason}
+
       _ ->
         # A real snapshot (non-zero seq/size) or an empty-WAL no-op: the
         # data-stream frame path handles completion.
-        :ok
+        :queued
     end
   end
 

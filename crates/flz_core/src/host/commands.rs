@@ -5,13 +5,13 @@
 //! only bodies it can decode at its own version or migrate from a named one.
 
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 use std::time::Duration;
 
 use crate::cell::CellSlot;
 use crate::error::{Code, Error};
 use crate::flusher::FlushableBuffer;
-use crate::header::{HeaderTemplate, RestoreError, SchemaDecision};
+use crate::header::{RestoreError, SchemaDecision};
 use crate::restore::{RestoreInitPayload, RestoreOutcome};
 use crate::schema::{self, TimerOp};
 use crate::timer::PendingTimers;
@@ -113,52 +113,67 @@ pub(super) fn restore_fold_exclusive(
     }
 }
 
-/// A compaction snapshot of either kind of Cell, under the cell gate: drain
-/// pending changes, read the seq, re-state the pending timer set (so
+/// Bring a Cell to a cut, under its gate: close an open checkpoint interval
+/// now and ship everything owed, so the state the cut takes and the consumed
+/// offset the controller holds name the same inputs; the buffer stays locked
+/// in the guard answered. Refused, with nothing drained, while the
+/// controller's credit window stays exhausted for `wait`, asked before the
+/// buffer lock a parked drain would hold; refused while a retried attempt
+/// holds changes no record can carry yet: a cut would hold them under the
+/// last shipped offset, and the re-run input would apply them twice.
+pub(crate) fn ship_to_cut(
+    slot: &CellSlot,
+    wait: Duration,
+) -> Result<MutexGuard<'_, Box<dyn FlushableBuffer>>, Error> {
+    if !crate::credit::global().await_room(wait) {
+        return Err(cell_busy(
+            slot,
+            "the controller's credit window stayed exhausted",
+        ));
+    }
+    let mut buffer = slot.flush_buffer.lock_recover();
+    buffer.close_interval_now();
+    slot.drain_locked(&mut **buffer);
+    if buffer.nothing_unshipped() {
+        return Ok(buffer);
+    }
+    Err(cell_busy(
+        slot,
+        "mid-retry, holding a retried attempt's changes no record carries yet",
+    ))
+}
+
+/// A Cell refused for now, naming why; the caller asks again later.
+pub(crate) fn cell_busy(slot: &CellSlot, why: &str) -> Error {
+    Error::State(Code::CellBusy.with([
+        ("cell", slot.dispatcher.cell_label().into()),
+        ("why", why.into()),
+    ]))
+}
+
+/// A compaction snapshot of either kind of Cell, under the cell gate: bring
+/// it to a cut ([`ship_to_cut`]), read the seq, re-state the pending timer set (so
 /// truncation cannot eat it), then frame the body `encode_body` gives as of
 /// that seq. `(frame, seq, body_len)`.
 pub fn snapshot_frame(
     slot: &Arc<CellSlot>,
-    header: &HeaderTemplate,
     encode_body: impl FnOnce() -> Result<Vec<u8>, Error>,
 ) -> Result<(Vec<u8>, u64, usize), Error> {
-    let flush = |buffer: &mut Box<dyn FlushableBuffer>| {
-        crate::flusher::flush_one(
-            &mut **buffer,
-            &slot.cell_identity,
-            &slot.change_seq,
-            header,
-            slot.keeps_state,
-        );
-    };
     let register_ops = crate::timer::restated(slot, &slot.timers.lock_recover()).as_register_ops();
     // One buffer lock across the drain and the seq read, so the background
     // flusher cannot assign a seq between them.
-    let mut buffer = slot.flush_buffer.lock_recover();
-    flush(&mut buffer);
-    // An open checkpoint interval or a retried attempt is in the live state
-    // but in no record: a snapshot now would hold it under the last shipped
-    // seq, and a restore would apply it twice.
-    if !buffer.nothing_unshipped() {
-        return Err(Error::State(Code::CellBusy.with([
-            ("cell", slot.dispatcher.cell_label().into()),
-            (
-                "why",
-                "mid-checkpoint or mid-retry, holding changes no record carries yet".into(),
-            ),
-        ])));
-    }
+    let mut buffer = ship_to_cut(slot, crate::command::cell_state::SERIALIZE_GATE_WAIT)?;
     let seq = slot.change_seq.load(Ordering::Acquire).saturating_sub(1);
     // What the coming truncation would delete is re-stated AFTER the seq is
     // read, landing at `snapshot_seq + 1`, which `truncate_up_to` keeps; a
     // crash between the two leaves an untruncated log holding the originals.
     if buffer.restate_above_snapshot(register_ops) {
-        flush(&mut buffer);
+        slot.drain_locked(&mut **buffer);
     }
     drop(buffer);
     let body = encode_body()?;
-    let frame =
-        crate::flusher::build_cell_frame(&slot.cell_identity, seq, &header.stamp(&body), &body);
+    let header = slot.dispatcher.record_header().stamp(&body);
+    let frame = crate::flusher::build_cell_frame(&slot.cell_identity, seq, &header, &body);
     Ok((frame, seq, body.len()))
 }
 
@@ -167,7 +182,7 @@ pub fn snapshot_frame(
 pub(super) fn snapshot_frame_crossing(
     slot: &Arc<CellSlot>,
 ) -> Result<(Vec<u8>, u64, usize), Error> {
-    snapshot_frame(slot, &host_facts(slot)?.header(), || {
+    snapshot_frame(slot, || {
         snapshot_state(
             crate::poll_core::global()
                 .host_command(slot, schema::ActivationKind::SnapshotRequest)?,

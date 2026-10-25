@@ -272,6 +272,30 @@ defmodule FlezhaTest.Relay.RebindTest do
              Overwatch.prepare_handover_state(state)
   end
 
+  # fails when: a tier relay's handover leaves before its cut's records are
+  # durable on this node, so the destination pulls a floor below the inputs the
+  # state holds; or a class whose bind re-forwards nothing waits on them too.
+  test "a handover waits on its cut only where the bind re-forwards above the Cells' floor" do
+    # An identity no writer answers for: the cut can never be shown durable.
+    moved = Jason.encode!(%{"t" => 3, "$cells" => [%{identity: [0], timers: [], next_seq: 2}]})
+
+    for {tier?, expected} <- [{true, nil}, {false, moved}] do
+      runner_id = "runner_cut_#{System.unique_integer([:positive])}"
+      state = %{running_state() | runner_id: runner_id, effectively_once: tier?}
+
+      answer_control_unit_once(runner_id, fn
+        {:send_control, {:migration_serialization, _}, _metadata} -> {:ok, moved}
+      end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {%{id: _}, ^expected} = Overwatch.prepare_handover_state(state)
+        end)
+
+      assert String.contains?(log, "the runner's cut is not durable") == tier?
+    end
+  end
+
   # fails when: a snapshot read is kept on the Overwatch, so a handover after
   # the runner dies hard ships that read and skips the pull of every change the
   # runner made after it.

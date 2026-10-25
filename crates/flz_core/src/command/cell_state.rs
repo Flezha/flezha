@@ -1,12 +1,12 @@
 //! `CellState`: an instance's state as the per-tasklet / per-Cell JSON
 //! shape, and `apply_init_values`, its inverse. The invariant: a read is
-//! taken under the cell gate and never drains — the value is the freshest
-//! and the seq it reports says which version it is.
+//! taken under the cell gate — the value is the freshest and the seq it
+//! reports says which version it is — and only a migration's drains.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
@@ -98,13 +98,19 @@ fn non_empty(s: &str) -> Option<&str> {
 /// matching activation kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatePurpose {
+    /// Each Cell waits for its gate up to [`SERIALIZE_GATE_WAIT`].
     LiveRead,
-    Migration,
+    /// Every Cell of the walk waits, for its gate, its credit and its host's
+    /// answer, only until this one deadline.
+    Migration { until: Instant },
 }
 
 /// The whole-relay walk, which cannot be refused.
 pub fn serialize_relay_state(instance: &Arc<RelayInstance>) -> Vec<u8> {
-    serialize_selected_state(instance, StateSelector::default(), StatePurpose::Migration)
+    let purpose = StatePurpose::Migration {
+        until: Instant::now() + SERIALIZE_GATE_WAIT,
+    };
+    serialize_selected_state(instance, StateSelector::default(), purpose)
         .map(|(payload, _seq)| payload)
         .unwrap_or_default()
 }
@@ -284,25 +290,35 @@ fn collect(
     }
 }
 
-/// One Cell's state and its seq, under the gate and without draining.
+/// One Cell's state and its seq, under the gate. A live read never drains;
+/// a migration ships from a cut ([`crate::host::ship_to_cut`]), so the
+/// destination's re-forward above the consumed offset folds nothing the
+/// state already holds.
 fn serialize_slot(
     tasklet_desc: &TaskletDescriptor,
     slot: &Arc<CellSlot>,
     purpose: StatePurpose,
 ) -> Result<(Value, u64), Error> {
-    // A graceful ship is inside a grace period, so it waits for a host's
-    // answer only as long as for the gate; a live read keeps the command wait.
-    let host_wait = if purpose == StatePurpose::Migration {
-        SERIALIZE_GATE_WAIT
-    } else {
-        crate::poll_core::HOST_COMMAND_TIMEOUT
+    // A graceful ship is inside a grace period, so the whole walk waits for
+    // gates, credit and hosts' answers only until its one deadline; a live
+    // read keeps the per-Cell gate wait and the command wait.
+    let (gate_wait, host_wait) = match purpose {
+        StatePurpose::Migration { until } => {
+            let left = until.saturating_duration_since(Instant::now());
+            (left, left)
+        }
+        StatePurpose::LiveRead => (SERIALIZE_GATE_WAIT, crate::poll_core::HOST_COMMAND_TIMEOUT),
     };
-    // Under the cell's handout exclusivity: a live read or a migration
-    // never observes a half-applied
-    // activation. A Cell still inside one at the gate wait has nothing
-    // newer than its last completed activation, and is omitted.
+    // Under the cell's handout exclusivity: a live read or a migration never
+    // observes a half-applied activation. A Cell still inside one at the gate
+    // wait (a retry's backoff holds the gate too) has nothing newer than its
+    // last completed activation, and is omitted.
     crate::poll_core::global()
-        .try_with_cell_exclusive(slot, SERIALIZE_GATE_WAIT, || {
+        .try_with_cell_exclusive(slot, gate_wait, || {
+            if let StatePurpose::Migration { .. } = purpose {
+                // Released before the state lock, the order a dispatch takes them in.
+                drop(crate::host::ship_to_cut(slot, host_wait)?);
+            }
             if slot.dispatcher.host_facts().is_some() {
                 return crate::host::state_json_locked(slot, host_wait);
             }
@@ -317,14 +333,8 @@ fn serialize_slot(
             Ok((value, seq))
         })
         .unwrap_or_else(|| {
-            let why = format!(
-                "inside an activation older than {}s",
-                SERIALIZE_GATE_WAIT.as_secs()
-            );
-            Err(Error::State(Code::CellBusy.with([
-                ("cell", slot.dispatcher.cell_label().into()),
-                ("why", why.into()),
-            ])))
+            let why = format!("still inside an activation after {gate_wait:?}");
+            Err(crate::host::cell_busy(slot, &why))
         })
 }
 
@@ -609,10 +619,10 @@ mod tests {
             let _ = tx.send(serialize_relay_state(&instance));
         });
         // The wedged Cell costs the gate bound; the consumer, healthy but
-        // with no poller to answer its state read, costs the host
-        // bound — the same figure, by design.
+        // with no poller to answer its state read, waits only for what is
+        // left of the walk's one deadline, not a bound of its own.
         let payload = rx
-            .recv_timeout(2 * SERIALIZE_GATE_WAIT + Duration::from_secs(2))
+            .recv_timeout(SERIALIZE_GATE_WAIT + Duration::from_secs(2))
             .expect("the ship must return within the gate bound");
         assert!(
             started.elapsed() >= SERIALIZE_GATE_WAIT,

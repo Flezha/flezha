@@ -36,6 +36,15 @@ defmodule Flezha.Service.Cli.State do
   end
 
   @doc "`flz state rotate`."
+  def rotate(%{cell: cell, compaction: :deferred}, _args, _opts),
+    do: IO.puts("compaction refused for #{cell}: busy mid-retry; the next sweep asks again")
+
+  def rotate(%{cell: cell, compaction: :timed_out}, _args, _opts),
+    do: IO.puts("compaction timed out for #{cell}: the runner did not answer")
+
+  def rotate(%{cell: cell, compaction: :failed, reason: reason}, _args, _opts),
+    do: IO.puts("compaction failed for #{cell}: #{reason}")
+
   def rotate(%{cell: cell}, _args, _opts), do: IO.puts("compaction queued for #{cell}")
 
   @doc "`flz state delete`."

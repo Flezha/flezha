@@ -357,6 +357,18 @@ impl CellSlot {
             || (self.flusher_entry_id.is_some() && offset.is_some())
     }
 
+    /// Drain this Cell's flush buffer, whose lock the caller holds, under its
+    /// own identity, seq and record header.
+    pub fn drain_locked(&self, buffer: &mut dyn crate::flusher::FlushableBuffer) {
+        crate::flusher::flush_one(
+            buffer,
+            &self.cell_identity,
+            &self.change_seq,
+            &self.dispatcher.record_header(),
+            self.keeps_state,
+        );
+    }
+
     /// Drop what the flush buffer has not shipped: a restore re-seats the
     /// Cell on a past in which none of it was applied.
     pub fn discard_unshipped(&self) {
@@ -467,6 +479,9 @@ pub trait TaskletDispatcher: Send + Sync + 'static {
 
     /// `instance/tasklet/key`, the string the `flz.cell` stamp carries.
     fn cell_label(&self) -> &str;
+
+    /// The header this Cell's records are stamped with.
+    fn record_header(&self) -> crate::header::HeaderTemplate;
 
     /// The payload's event time, `None` unless the clock is event time;
     /// how the drain sorts a replayed slice by a key only the author's

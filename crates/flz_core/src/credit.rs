@@ -170,6 +170,26 @@ impl CreditWindow {
         }
     }
 
+    /// Wait at most `wait` for the window to have room, or for there to be no
+    /// window; whether it has. A cut asks this before it drains under the
+    /// Cell's gate, so a stalled window refuses the cut rather than parking it.
+    pub fn await_room(&self, wait: Duration) -> bool {
+        let deadline = Instant::now() + wait;
+        let mut st = self.state.lock().expect("credit window mutex poisoned");
+        while st.session.is_some() && st.available <= 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            st = self
+                .cond
+                .wait_timeout(st, left.min(park_interval()))
+                .expect("credit window mutex poisoned")
+                .0;
+        }
+        true
+    }
+
     #[cfg(test)]
     pub fn current_session(&self) -> Option<String> {
         self.state
@@ -251,6 +271,27 @@ mod tests {
             .expect("grant must unpark the sender");
         sender.join().unwrap();
         assert_eq!(w.available_bytes(), 40 - 60 + 60);
+    }
+
+    // fails when: a cut under a Cell's gate parks on an exhausted window with
+    // no bound, holding the gate after the controller gave up on the reply.
+    #[test]
+    fn a_room_wait_is_bounded_and_ends_on_a_grant() {
+        let w = Arc::new(CreditWindow::new());
+        assert!(w.await_room(Duration::ZERO), "no window, always room");
+        w.arm("s1".to_string(), 100);
+        w.acquire(100);
+        assert!(
+            !w.await_room(Duration::from_millis(20)),
+            "an exhausted window answers no within the bound"
+        );
+
+        let waiter = {
+            let w = Arc::clone(&w);
+            thread::spawn(move || w.await_room(Duration::from_secs(5)))
+        };
+        w.grant("s1", 10);
+        assert!(waiter.join().unwrap(), "a grant gives room");
     }
 
     #[test]

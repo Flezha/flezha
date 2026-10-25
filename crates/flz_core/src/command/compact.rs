@@ -1,7 +1,8 @@
 //! Inbound `CompactCell`: controller → SDK ask-for-snapshot.
 //!
-//! Locates the live `CellSlot` addressed by `cell_id`, drains its
-//! pending changes, encodes its state (a typed Cell's with **postcard**, the
+//! Locates the live `CellSlot` addressed by `cell_id`, closes an open
+//! checkpoint interval early and drains its pending changes (refusing a Cell
+//! mid-retry as busy), encodes its state (a typed Cell's with **postcard**, the
 //! codec its restore decodes; a host-run Cell's by its host), and
 //! ships it as a `cell_state_snapshot` data frame stamped with the seq the
 //! snapshot already contains. It then answers `CompactCellResponse` with

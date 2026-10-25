@@ -216,6 +216,9 @@ What follows from that:
   state behind it is never lost (`crates/flz_core/src/effect.rs`).
 - **A restore drops the open interval.** Its changes were never acknowledged,
   and the inputs behind them are re-sent from the input log.
+- **A compaction or a move closes the interval early.** Its record ships before
+  the snapshot or the handed-over state is taken, so neither holds an input the
+  input log would send again.
 - **The stall watchdog skips the class.** For an ordinary class, "wrote before
   and silent since" is a dead feed; for this one it is a normal interval
   (`Flezha.State.Watchdog`).

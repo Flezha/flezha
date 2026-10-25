@@ -14,12 +14,17 @@ defmodule Flezha.Relay.Handover do
   """
 
   alias Flezha.Config
+  alias Flezha.Config.Durations
   alias Flezha.Relay.Calls.Inbound
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
+  alias Flezha.Relay.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Service.HubManager
+  alias Flezha.State.TaskJournal.Records
   alias Flezha.State.WalWriter
   alias Flezha.State.WriterRegistry
 
@@ -39,10 +44,15 @@ defmodule Flezha.Relay.Handover do
   """
   @spec prepare(Overwatch.t()) :: {map(), binary() | nil}
   def prepare(%Overwatch{} = state) do
+    # The hub takes this answer only within its state query timeout, so the
+    # serialize and the wait for its cut share that one budget.
+    budget = HubManager.migration_strategy().state_query_timeout
+    deadline = System.monotonic_time(:millisecond) + budget
+
     serialize_data =
       case serialize_relay_sdk(state.runner_id, state.id) do
         nil -> state.snapshot
-        data -> data
+        data -> await_cut(state, data, deadline)
       end
 
     handover = %{
@@ -194,6 +204,81 @@ defmodule Flezha.Relay.Handover do
       {:ok, snapshot} -> snapshot
       {:error, _reason} -> nil
     end
+  end
+
+  # The destination pulls this node's copy of the state only once the handover
+  # state is out, so for a class whose bind re-forwards above its Cells' floor
+  # the state leaves only when every record the runner shipped up to its cut
+  # (an early-closed checkpoint interval's among them) is durable here. Past
+  # the grace nothing is handed over: the destination's bind restores from the
+  # disk it pulled and re-forwards the tail above that floor, which is exact.
+  # The wait ends by the hub's deadline too, if that comes first.
+  defp await_cut(%Overwatch{} = state, data, deadline) do
+    class = Overwatch.relay_class(state)
+    left = max(deadline - System.monotonic_time(:millisecond), 0)
+    grace = min(Durations.get(:forced_handover_grace_ms), left)
+
+    if Replay.awaited_restore?(state) and ClassRegistry.persistent?(class) and
+         not durable_cut?(data, grace) do
+      Logger.warning("[handover] #{state.id}: the runner's cut is not durable within the grace")
+      nil
+    else
+      data
+    end
+  end
+
+  @doc """
+  Whether every Cell a moved state names (its `$cells`, each with the `next_seq`
+  after the last record its runner shipped) has that record durable on this
+  node within `grace_ms`. A writer that refuses the wait, or cannot be reached,
+  answers no.
+  """
+  @spec durable_cut?(binary(), non_neg_integer()) :: boolean()
+  def durable_cut?(data, grace_ms) do
+    deadline = System.monotonic_time(:millisecond) + grace_ms
+
+    data
+    |> moved_cells()
+    |> Enum.reduce_while({:ok, :gen_server.reqids_new()}, fn {cell_id, seq}, {:ok, reqids} ->
+      case Records.await_record_async(cell_id, seq, reqids, cell_id) do
+        {:ok, reqids} -> {:cont, {:ok, reqids}}
+        {:error, _unreachable} -> {:halt, {:abandon, reqids}}
+      end
+    end)
+    |> case do
+      {:ok, reqids} -> all_durable?(reqids, deadline)
+      {:abandon, reqids} -> abandon(reqids)
+    end
+  end
+
+  # `{cell_id, last_seq}` for each moved Cell that shipped a record.
+  defp moved_cells(data) do
+    case Jason.decode(data) do
+      {:ok, %{"$cells" => cells}} when is_list(cells) ->
+        for %{"identity" => identity, "next_seq" => next} <- cells,
+            is_list(identity) and is_integer(next) and next > 0,
+            do: {:erlang.list_to_binary(identity), next - 1}
+
+      _no_moved_cells ->
+        []
+    end
+  end
+
+  defp all_durable?(reqids, deadline) do
+    case :gen_server.receive_response(reqids, {:abs, deadline}, true) do
+      :no_request -> true
+      {{:reply, {:ok, _seq}}, _cell_id, reqids} -> all_durable?(reqids, deadline)
+      {_refused_or_down, _cell_id, reqids} -> abandon(reqids)
+      :timeout -> abandon(reqids)
+    end
+  end
+
+  # A wait given up is demonitored, so a late answer never reaches this process.
+  defp abandon(reqids) do
+    for {request, _cell_id} <- :gen_server.reqids_to_list(reqids),
+        do: Process.demonitor(request, [:flush])
+
+    false
   end
 
   defp serialize_relay_sdk(runner_id, relay_id) do
