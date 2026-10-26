@@ -843,6 +843,14 @@
          outcome: :failure,
          meaning: "A turn of a steps relay failed and became a dead letter; the relay carries on."
        ]},
+    [:flezha, :stream, :channel_down] =>
+      {:flezha_stream, :channel_down, :event,
+       [
+         label: "Channel died",
+         outcome: :failure,
+         meaning:
+           "A runner stream's channel process died; its replacement asks the runner for new streams."
+       ]},
     [:flezha, :stream, :drop] =>
       {:flezha_stream, :drop, :metric,
        [
@@ -996,6 +1004,7 @@
     [:flezha, :steps, :suspended] => {:flezha_health, :suspended, :event},
     [:flezha, :steps, :turn_dead_lettered] =>
       {:flezha_steps, :turns_dead_lettered_total, :metric},
+    [:flezha, :stream, :channel_down] => {:flezha_stream, :channel_down, :event},
     [:flezha, :stream, :drop] => {:flezha_stream, :drop, :metric},
     [:flezha, :stream, :fanout_warning] => {:flezha_stream, :fanout_warning, :event},
     [:flezha, :transport, :connect_rejected] => {:flezha_health, :connect_rejected, :event}
@@ -2083,6 +2092,14 @@
       kinds: [:event, :metric],
       name: :flezha_stream,
       signals: [
+        %{
+          description:
+            "A runner stream's channel process died; its replacement asks the runner for new streams.",
+          kind: :event,
+          label: "Channel died",
+          name: :channel_down,
+          outcome: :failure
+        },
         %{
           description: "A message for a relay was dropped because the relay had no open stream.",
           kind: :metric,

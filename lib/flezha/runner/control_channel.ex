@@ -11,8 +11,10 @@ defmodule Flezha.Runner.ControlChannel do
   `Flezha.Runner.ControlChannel.Commits` rather than journaled inline.
 
   It also repairs the session's data plane: a data channel that loses its stream
-  asks for a rebind, one runs at a time, and the loss after the session's rebind
-  budget (`@rebinds`) ends it, so a data plane that cannot be bound is reclaimed.
+  asks for a rebind, as does one that died and came back unbound (it announces
+  itself, `data_channel_up/3`), one runs at a time, and the loss after the
+  session's rebind budget (`@rebinds`) ends it, so a data plane that cannot be
+  bound is reclaimed.
 
   Invariant: this process is the only writer of control frames on the stream,
   which is what makes a reference id enough to pair a response with its
@@ -22,15 +24,19 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Identificator
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Gate
+  alias Flezha.Runner.StreamChannel.Records
   alias Flezha.SDK.SafeCall
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
 
   require Logger
+  require StreamChannel
 
   use GenServer
   use Flezha.Process.Timer, keys: [:liveness]
@@ -124,6 +130,19 @@ defmodule Flezha.Runner.ControlChannel do
   def rebind_data_streams(runner_id),
     do: GenServer.cast(Identificator.control_channel(runner_id), :rebind_data_streams)
 
+  @doc """
+  Announce the calling data channel, started under `name`, to `runner_id`'s
+  session. `returned?` says it replaced a channel that died, which is repaired
+  as a lost stream is (see the moduledoc).
+  """
+  @spec data_channel_up(binary(), GenServer.name(), boolean()) :: :ok
+  def data_channel_up(runner_id, name, returned?) do
+    GenServer.cast(
+      Identificator.control_channel(runner_id),
+      {:data_channel_up, name, self(), returned?}
+    )
+  end
+
   @doc "One controller-initiated request as the `ControlFrame` a runner reads."
   @spec encode_request(binary(), tuple()) :: binary()
   def encode_request(reference_id, command) do
@@ -146,6 +165,8 @@ defmodule Flezha.Runner.ControlChannel do
        last_seen: System.monotonic_time(:millisecond),
        rebinding?: false,
        rebinds: 0,
+       # A returned channel announced itself while a rebind ran.
+       rebind_owed?: false,
        send_gate_raised?: false,
        waiters: %{send_gate: MapSet.new()},
        timers: Flezha.Process.Timer.new()
@@ -256,6 +277,22 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, %{state | rebinding?: true, rebinds: state.rebinds + 1}}
   end
 
+  # A channel's binding and routes die with its process, its replacement starts
+  # unbound, and a runner opens data streams only when asked. So a returned
+  # channel is handled as its stream closing: the runner's relays are flagged
+  # and it is asked for a fresh pair set. A killed channel cannot ask; its
+  # replacement is the first process that can.
+  def handle_cast({:data_channel_up, name, pid, returned?}, state) do
+    Process.monitor(pid, tag: {:data_channel_down, name})
+
+    if returned? and not Marks.runner_retiring?(state.runner_id) do
+      Records.emit_output_stall(state.runner_id, ClassRegistry.running(state.identity))
+      rebind_for_returned(state)
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_cast(:close, state) do
     if state.stream_ref, do: TStream.close(state.stream_ref)
     handle_connection_closed(%{state | stream_ref: nil}, "closed by the controller")
@@ -323,12 +360,12 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   # A refused rebind, whose reason the control unit logged, is asked for again,
-  # and the budget bounds the asking.
-  def handle_info({:rebind_answered, {:ok, _}}, state),
+  # as is one a returned channel is still owed; the budget bounds the asking.
+  def handle_info({:rebind_answered, {:ok, _}}, %{rebind_owed?: false} = state),
     do: {:noreply, %{state | rebinding?: false}}
 
-  def handle_info({:rebind_answered, _refused}, state),
-    do: handle_cast(:rebind_data_streams, %{state | rebinding?: false})
+  def handle_info({:rebind_answered, _answer}, state),
+    do: handle_cast(:rebind_data_streams, %{state | rebinding?: false, rebind_owed?: false})
 
   # A request `Requests` resolved off this process; writing it is this
   # process's job, because it is the only writer of control frames.
@@ -362,6 +399,17 @@ defmodule Flezha.Runner.ControlChannel do
     end
   end
 
+  # A data channel's exit. A shutdown is its session's own, or its supervisor's
+  # restart; any other exit, the heap cap's kill among them, is reported here,
+  # because the dying process reports nothing itself.
+  @impl true
+  def handle_info({{:data_channel_down, name}, _ref, :process, _pid, reason}, state) do
+    unless StreamChannel.shutdown?(reason),
+      do: report_channel_down(state.runner_id, name, reason)
+
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info(msg, state) do
     Logger.warning("Unexpected message at control channel: #{inspect(msg)}")
@@ -387,6 +435,31 @@ defmodule Flezha.Runner.ControlChannel do
     GenServer.cast(FleetManager, {:runner_disconnected, state.namespace, state.runner_id})
 
     {:noreply, wake_gate_waiters(state, :closed)}
+  end
+
+  # A rebind already running may have bound its fresh streams before the
+  # returned channel existed, so the channel is owed one of its own after it.
+  defp rebind_for_returned(%{rebinding?: true} = state),
+    do: {:noreply, %{state | rebind_owed?: true}}
+
+  defp rebind_for_returned(state), do: handle_cast(:rebind_data_streams, state)
+
+  defp report_channel_down(runner_id, name, reason) do
+    cause =
+      if reason == :killed,
+        do: "killed: past FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES or by hand",
+        else: "crashed"
+
+    Logger.warning(
+      "[control_channel] #{runner_id} data channel #{inspect(name)} died (#{cause}, " <>
+        "reason #{inspect(reason, limit: 5)}); its replacement asks for a rebind"
+    )
+
+    :telemetry.execute(
+      [:flezha, :stream, :channel_down],
+      %{count: 1},
+      %{runner_id: runner_id, channel: name, reason: reason}
+    )
   end
 
   defp wake_gate_waiters(state, result) do

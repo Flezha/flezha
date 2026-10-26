@@ -222,6 +222,11 @@ defmodule Flezha.Config.Keys do
     # an update does not evict one. `0` disables the hold.
     {:runner_removal_grace_ms, :ms, 30_000, key: true, env: "FLEZHA_RUNNER_REMOVAL_GRACE_MS"},
     {:bind_restore_concurrency, :positive_int, 16, key: true},
+    # The heap, mailbox included, one runner data channel may hold before the
+    # runtime kills it; its replacement is rebound as a lost stream is. A
+    # last-resort valve, off (`0`) unless set.
+    {:stream_channel_max_heap_bytes, :int, 0,
+     key: true, env: "FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES"},
     # The fairness cap on runner selection, as a percentage of the fair share of
     # the candidate set. At `100` the cap is exactly the fair share and the
     # spread is even at every relay count; a value high enough that no

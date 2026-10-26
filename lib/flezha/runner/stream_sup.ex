@@ -8,7 +8,8 @@ defmodule Flezha.Runner.StreamSup do
   that has to reach them all derive the same set.
 
   Invariant: the pool is fixed at start and `:one_for_one` — a channel that
-  crashes comes back under the same name, unbound.
+  crashes comes back under the same name, unbound, and its session's
+  `ControlChannel` has the runner bind it again.
   """
 
   alias Flezha.Identificator

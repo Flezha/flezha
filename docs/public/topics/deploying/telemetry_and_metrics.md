@@ -139,6 +139,7 @@ Compiling 34 files (.ex)
 | `flezha_runner` | `runner_readmitted` | event |  | An operator let a dropped runner connect again. |
 | `flezha_schedule` | `spawn_failed` | event |  | A schedule came due, but its relay failed to start. |
 | `flezha_steps` | `turns_dead_lettered_total` | metric | `flezha_steps_turns_dead_lettered_total` | A turn of a steps relay failed and became a dead letter; the relay carries on. |
+| `flezha_stream` | `channel_down` | event |  | A runner stream's channel process died; its replacement asks the runner for new streams. |
 | `flezha_stream` | `drop` | metric | `flezha_stream_drop` | A message for a relay was dropped because the relay had no open stream. |
 | `flezha_stream` | `fanout_warning` | event |  | A stream found more than one process serving one relay. |
 <!-- bridge-signals:end -->

@@ -39,7 +39,7 @@ The Rust SDK's `command_add_relay` handler SHALL be idempotent: an `AddRelay` fo
 
 ### Requirement: An outbound input frame is sent by its caller from the channel's published binding
 
-`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel terminates. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every relay on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]`, so a stall on an unbound stream stays observable. An unbound channel SHALL be rebound by the acceptor when the SDK opens a fresh data stream for that runner, and by nothing else: no convergence heal primitive rebinds a data stream, so the sender's refusal is a report, not a request for a repair that is already under way.
+`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel shuts down; a channel that crashes leaves it published unbound. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every relay on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]`, so a stall on an unbound stream stays observable. An unbound channel SHALL be rebound by the acceptor when the SDK opens a fresh data stream for that runner, and by nothing else: no convergence heal primitive rebinds a data stream, so the sender's refusal is a report, not a request for a repair that is already under way.
 
 #### Scenario: A bound frame leaves from the caller
 - **GIVEN** a `StreamChannel` bound to `stream_ref_1`
@@ -57,7 +57,26 @@ The Rust SDK's `command_add_relay` handler SHALL be idempotent: an `AddRelay` fo
 
 #### Scenario: A terminated channel's binding is gone
 - **WHEN** a `StreamChannel` terminates
-- **THEN** its published binding is erased and a sender using its name answers `{:error, :no_stream}` rather than pushing on a stale ref
+- **THEN** its published binding is erased on a shutdown, or left unbound after a crash, and a sender using its name answers `{:error, :no_stream}` rather than pushing on a stale ref
+
+### Requirement: A data channel that dies SHALL be repaired as a closed stream is
+
+A `Flezha.Runner.StreamChannel` that exits for any reason SHALL leave no runner stream behind it: it SHALL close its stream on `terminate/2`, and a replacement that finds a predecessor's stream still published (a killed process runs no `terminate/2`) SHALL close that stream before publishing itself unbound. A channel that crashes SHALL leave its published entry unbound and only a shutdown SHALL erase it, so an entry found at init means the predecessor died. Every channel SHALL announce itself to its session's `Flezha.Runner.ControlChannel` at init, saying whether it found such an entry; for a returned channel, unless the runner is retiring, the control channel SHALL emit `[:flezha, :state, :output_stall]` for every relay the runner's identity owns on this node and SHALL ask the runner for a fresh pair set through the same rebind a closed stream asks for, under the same session budget. A returned channel announced while a rebind runs SHALL be owed one more rebind once that one answers. A channel exit other than a shutdown SHALL be logged in one line by the control channel and SHALL emit `[:flezha, :stream, :channel_down]` with the runner, the channel name and the exit reason. The channel MAY be capped by `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES`, off (`0`) by default: past it the runtime kills the channel, and the kill is repaired and reported as above.
+
+#### Scenario: A killed bound channel is rebound
+- **GIVEN** a bound `StreamChannel` of a live runner session carrying relay inputs
+- **WHEN** the channel process is killed
+- **THEN** its stream is closed, its replacement starts unbound, the control channel logs the death and emits `[:flezha, :stream, :channel_down]` with reason `:killed`, flags the runner's relays with `output_stall` and asks the runner for a fresh pair set, and the replacement is bound again by the acceptor
+
+#### Scenario: The heap cap is set only when configured
+- **WHEN** `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES` is positive
+- **THEN** every `StreamChannel` runs with that `max_heap_size`, set to kill without the runtime's own report
+- **AND** with `0`, the default, no `max_heap_size` is set
+
+#### Scenario: A channel that returns during a rebind is rebound after it
+- **GIVEN** a rebind of the runner's data plane is running
+- **WHEN** a killed channel's replacement announces itself
+- **THEN** once the running rebind answers, the control channel asks the runner for another fresh pair set
 
 ### Requirement: Rust SDK command decode SHALL treat a clean peer close as a transport event, not a panic
 

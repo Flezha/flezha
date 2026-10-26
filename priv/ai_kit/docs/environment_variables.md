@@ -106,6 +106,7 @@ Notes on the area's variables:
 - `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS`: How long a controller-initiated disconnect stays marked, so the close it produces is reported as expected rather than as an incident. A runner id is reused across reconnects, so the mark expires: past this window a close is diagnosed as unexpected again.
 - `FLEZHA_GROUP_WITHDRAW_GRACE_MS`: How long this controller keeps declaring a factory to the namespace hub after its last runner for it goes. A runner back inside the grace moves no relay; past it the hub reassigns them to a controller that still runs the factory. A disconnect the controller asked for skips the grace.
 - `FLEZHA_PLACEMENT_LOAD_CAP_PERCENT`: The fairness cap on runner selection, as a percentage of the candidate set's fair share. At `100` the cap is exactly the fair share, so a namespace holding fewer relays than it has runners still uses all of them; a value high enough that no candidate reaches the cap is plain rendezvous hashing.
+- `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES`: A last-resort valve for a runner that sends faster than the controller takes its frames in: the memory one runner data channel may hold, the messages waiting in its mailbox included, before the runtime kills it. The killed channel's replacement is repaired as a closed stream is: the runner is asked for fresh streams (in practice it often reconnects its whole session), the relays on it are flagged for the convergence loop, and inputs not yet applied are sent again from the input log. What it costs: every frame waiting in the channel is dropped and recovered only by that replay, which can apply an input twice, and it bounds the channel alone, not the relays and logs behind it, so a sustained flood still fills the controller's memory. The kill is logged in one line and emits `[:flezha, :stream, :channel_down]`. Default: `0` (off).
 - `FLEZHA_MIGRATION_MAX_DEFER_MS`: Default: unset → the graceful-shutdown timeout (derived).
 - `FLEZHA_AUTO_RESTORE_ENABLED`: True only for `true`/`1`.
 - `FLEZHA_CALL_PENDING_MAX`: The answers one callee relay owes to the callers waiting on it, outside callers and relays alike. A call past it is refused `call.busy` before anything is ingested; a relay's own outbound calls never count against it, its own or a callee's.
@@ -305,6 +306,7 @@ skipped as a block.
 | `FLEZHA_STATE_DIR` | path | `storage/app/state` |
 | `FLEZHA_STEPS_ACK_TIMEOUT_MS` | ms | `30000` |
 | `FLEZHA_STEPS_RETENTION_HOURS` | int | `72` |
+| `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES` | int | `0` |
 | `FLEZHA_TRANSPORT` | one of `uds`, `quic` | `uds` |
 | `FLEZHA_TRANSPORTS` | list of one of `uds`, `quic` | derived |
 | `FLEZHA_TRANSPORT_AUTH` | bool | `true` |

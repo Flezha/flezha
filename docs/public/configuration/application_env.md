@@ -57,6 +57,7 @@ setting has one layer: there is no per-class map over a class's own value.
 - `:listener_release_check_ms`: How long a listener waits after its plugin was released before it asks the registry whether the relay moved, ended or had the listener disabled, and between asks.
 - `:bind_restore_concurrency`: How many of a class's Cells a bind restores at once.
 - `:placement_load_cap_percent`: The fairness cap on runner selection, as a percentage of the fair share.
+- `:stream_channel_max_heap_bytes`: The memory one runner data channel may hold before the runtime kills it; see `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES`.
 - `:placement_load_refresh_ms`: How long the per-runner relay count a placement reads may go without being rebuilt from the hub registry.
 
 ## Resilience and convergence
@@ -301,6 +302,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:static_nodes` | list of atom | `""` |
 | `:stop_release_timeout_ms` | ms | `15000` |
 | `:stream_bind_wait_ms` | ms | `30000` |
+| `:stream_channel_max_heap_bytes` | int | `0` |
 | `:testnet_enabled` | bool | `false` |
 | `:testnet_ws_port` | int | `4500` |
 | `:time_travel_retention_check_interval_ms` | ms | `60000` |

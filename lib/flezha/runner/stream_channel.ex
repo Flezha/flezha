@@ -9,10 +9,11 @@ defmodule Flezha.Runner.StreamChannel do
   ownership check, the durable-record fan-out and the credit handshake).
 
   Invariant: the published stream ref lives in a `:persistent_term` under this
-  module's name, written at init, bind, close and release only — `io_in/3` reads it
+  module's name, written at init, bind, close, release and a crash only — `io_in/3` reads it
   without a call, so a frame never queues behind this process.
   """
 
+  alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Process.Watch
   alias Flezha.Runner.ControlChannel
@@ -44,6 +45,11 @@ defmodule Flezha.Runner.StreamChannel do
     "compensation_done",
     "park_payload"
   ]
+
+  @doc "Whether `reason` ends a channel by request (its session or supervisor), not by a fault."
+  defguard shutdown?(reason)
+           when reason in [:normal, :shutdown] or
+                  (is_tuple(reason) and tuple_size(reason) == 2 and elem(reason, 0) == :shutdown)
 
   @doc """
   Send one input frame on `channel`'s stream from the calling process — the
@@ -111,8 +117,11 @@ defmodule Flezha.Runner.StreamChannel do
     # Trapped so a session's shutdown runs `terminate/2`: a handle left in the
     # persistent_term pins its listener's descriptors for the node's lifetime.
     Process.flag(:trap_exit, true)
+    cap_heap(Config.get(:stream_channel_max_heap_bytes))
     liveness_ref = LivenessCounters.register_channel(runner_id, name)
+    returned? = predecessor_died?(name)
     publish_stream(name, nil, liveness_ref)
+    ControlChannel.data_channel_up(runner_id, name, returned?)
 
     {
       :ok,
@@ -157,6 +166,37 @@ defmodule Flezha.Runner.StreamChannel do
       |> arm_io_liveness_check()
     }
   end
+
+  # The safety valve on a mailbox that outgrows memory: past the cap the runtime
+  # kills this process, and its replacement is healed as a lost stream is
+  # (`ControlChannel.data_channel_up/3`), which also reports the kill in one
+  # line, so the runtime's own multi-line report is off. `0` turns it off.
+  defp cap_heap(bytes) when bytes > 0 do
+    words = div(bytes, :erlang.system_info(:wordsize))
+    Process.flag(:max_heap_size, %{size: words, kill: true, error_logger: false})
+  end
+
+  defp cap_heap(_off), do: :ok
+
+  # An entry under this name outlives only a channel that died: a crashed one
+  # leaves it unbound (`terminate/2`), a killed one with its stream still
+  # published, which is closed here so the runner's side ends now rather than
+  # whenever the last copy of the handle is collected. A shutdown erases it.
+  defp predecessor_died?(name) do
+    case :persistent_term.get({__MODULE__, name}, nil) do
+      {orphan, _liveness_ref} ->
+        close_stream(orphan)
+        true
+
+      nil ->
+        false
+    end
+  end
+
+  # Unit tests bind stand-ins (atoms) that no NIF accepts; a real handle is a
+  # reference, and only a handle has anything to close.
+  defp close_stream(ref) when is_reference(ref), do: TStream.close(ref)
+  defp close_stream(_not_a_handle), do: :ok
 
   # Mirror one heartbeat-metadata integer into its liveness slot. A key the
   # runner did not send leaves the slot at zero, which is what an SDK without
@@ -280,7 +320,7 @@ defmodule Flezha.Runner.StreamChannel do
   def handle_call(:release_stream, _from, %{stream_ref: nil} = state), do: {:reply, :ok, state}
 
   def handle_call(:release_stream, _from, state) do
-    TStream.close(state.stream_ref)
+    close_stream(state.stream_ref)
     {:reply, :ok, unbind(state)}
   end
 
@@ -433,7 +473,7 @@ defmodule Flezha.Runner.StreamChannel do
           "runner=#{inspect(state.runner_id)} relays=#{inspect(Map.keys(state.relay_mapping))}"
       )
 
-      Records.emit_output_stall(state.runner_id, state.relay_mapping)
+      Records.emit_output_stall(state.runner_id, Map.keys(state.relay_mapping))
     end
 
     {:noreply, state}
@@ -525,7 +565,7 @@ defmodule Flezha.Runner.StreamChannel do
       # Emit output_stall immediately for every relay in the mapping so the
       # convergence Loop triggers a rebind tick rather than waiting for the
       # Watchdog's 60s grace period to detect the dead socket.
-      Records.emit_output_stall(state.runner_id, state.relay_mapping)
+      Records.emit_output_stall(state.runner_id, Map.keys(state.relay_mapping))
       ControlChannel.rebind_data_streams(state.runner_id)
     end
 
@@ -589,8 +629,13 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   @impl true
-  def terminate(_reason, state) do
-    _ = :persistent_term.erase({__MODULE__, state.name})
+  def terminate(reason, state) do
+    close_stream(state.stream_ref)
+
+    if shutdown?(reason),
+      do: :persistent_term.erase({__MODULE__, state.name}),
+      else: publish_stream(state.name, nil, state.liveness_ref)
+
     :ok
   end
 end

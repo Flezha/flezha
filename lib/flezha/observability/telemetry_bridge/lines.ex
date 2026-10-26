@@ -303,6 +303,11 @@ defmodule Flezha.Observability.TelemetryBridge.Lines do
       {:relays, "Runner streams",
        "The streams that carry messages between runners and their relays.",
        [
+         {[:flezha, :stream, :channel_down], :channel_down, :event,
+          label: "Channel died",
+          outcome: :failure,
+          meaning:
+            "A runner stream's channel process died; its replacement asks the runner for new streams."},
          {[:flezha, :stream, :drop], :drop, :metric,
           label: "Dropped",
           outcome: :failure,

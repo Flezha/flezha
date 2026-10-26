@@ -551,14 +551,19 @@ defmodule Flezha.Relay.ClassRegistry do
     end
   end
 
-  @doc "Every class whose Overwatch is alive on this node, sorted."
-  @spec running() :: [binary()]
-  def running() do
+  @doc """
+  Every class whose Overwatch is alive on this node, sorted; given an `owner`,
+  only the classes that identity owns.
+  """
+  @spec running(binary() | :any) :: [binary()]
+  def running(owner \\ :any) do
+    owned_by = if owner == :any, do: :_, else: owner
+
     if :ets.whereis(@table) == :undefined do
       []
     else
       @table
-      |> :ets.select([{{{:"$1", :overwatch}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+      |> :ets.select([{{{:"$1", :overwatch}, :"$2", owned_by}, [], [{{:"$1", :"$2"}}]}])
       |> Enum.flat_map(fn {class, pid} -> if Process.alive?(pid), do: [class], else: [] end)
       |> Enum.sort()
     end

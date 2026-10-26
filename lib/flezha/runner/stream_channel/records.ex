@@ -271,12 +271,12 @@ defmodule Flezha.Runner.StreamChannel.Records do
     :refused
   end
 
-  # Emit `output_stall` for each mapped relay, naming the runner whose
-  # stream stalled: the stall is about that binding, and the loop drops it once
-  # the relay is bound elsewhere. A sleeping instance is not mapped to any
-  # runner, so it is never flagged.
-  def emit_output_stall(runner_id, relay_mapping) do
-    for {relay_id, _} <- relay_mapping do
+  # Emit `output_stall` for each relay a lost or silent stream carried, naming
+  # the runner whose stream stalled: the stall is about that binding, and the
+  # loop drops it once the relay is bound elsewhere. A sleeping instance is not
+  # mapped to any runner, so it is never flagged.
+  def emit_output_stall(runner_id, relay_ids) do
+    for relay_id <- relay_ids do
       :telemetry.execute(
         [:flezha, :state, :output_stall],
         %{count: 1},

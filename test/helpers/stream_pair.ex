@@ -38,8 +38,9 @@ defmodule FlezhaTest.Helper.StreamPair do
 
   @doc """
   A peer dialling the UDS socket at `path`. Its frames reach the calling
-  process as `{:flz_data, 0, payload_id, message, metadata}`, and it closes
-  when the calling process exits.
+  process as `{:flz_data, 0, payload_id, message, metadata}`, the controller
+  closing the stream as `{:stream_pair_closed, socket}`, and it closes when the
+  calling process exits.
   """
   @spec peer(Path.t()) :: port()
   def peer(path) do
@@ -71,7 +72,7 @@ defmodule FlezhaTest.Helper.StreamPair do
         read(socket, owner, rest)
 
       {:tcp_closed, ^socket} ->
-        :ok
+        send(owner, {:stream_pair_closed, socket})
     end
   end
 end
