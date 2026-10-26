@@ -165,9 +165,9 @@ group SHALL ask its hub for a reconcile round, which waits for neither
 
 ### Requirement: A returning node's first reconcile round waits until the node serves a group
 
-When a peer still holds a row for it, a node's first reconcile round after its coordinator
-starts SHALL start no declared child until this node serves a group, waiting at most the
-round's `pre_recovery_replay` budget (`reconcile_interval_ms`) less one poll. Past that
+A node's first reconcile round after its coordinator starts SHALL start no declared child,
+while a peer still holds a row for the node, until this node serves a group, waiting at most
+the round's `pre_recovery_replay` budget (`reconcile_interval_ms`) less one poll. Past that
 bound it SHALL place the children as it would have without the wait. A node no peer holds a
 row for, alone or on a cold start of the whole cluster, SHALL NOT wait. The wait SHALL run
 outside the hub's coordinator, so the node's own declaration lands while it waits.

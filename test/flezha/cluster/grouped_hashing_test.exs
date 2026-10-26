@@ -14,6 +14,7 @@ defmodule Flezha.Cluster.GroupedHashingTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Cluster.GroupedHashing
+  alias Flezha.Config.Durations
   alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Constant.StorageKey
@@ -177,37 +178,41 @@ defmodule Flezha.Cluster.GroupedHashingTest do
     test "one pass per announcement, however many groups it names", %{hub: hub} do
       serve(hub, @a, Enum.map(1..100, &"group_#{&1}"))
 
+      run_recheck(hub)
       assert_receive :pre_redistribution, 1_000
       refute_receive :pre_redistribution, 200
     end
 
     test "an announcement that moves no member set starts no pass", %{hub: hub} do
       serve(hub, @a, ["report"])
+      run_recheck(hub)
       assert_receive :pre_redistribution, 1_000
 
       serve(hub, @a, ["report"])
-      refute_receive :pre_redistribution, 200
+      refute_recheck()
     end
 
     test "a local change starts one pass, and repeating it starts none", %{hub: hub} do
       GroupedHashing.apply_local_change(hub, ["report"], [])
+      run_recheck(hub)
       assert_receive :pre_redistribution, 1_000
 
       GroupedHashing.apply_local_change(hub, ["report"], [])
-      refute_receive :pre_redistribution, 200
+      refute_recheck()
     end
 
-    test "a node leaving is dropped from every group without a pass of its own", %{hub: hub} do
+    test "changes landing together get one pass, and a node leaving none", %{hub: hub} do
       serve(hub, @a, ["report"])
       serve(hub, @b, ["report"])
+      run_recheck(hub)
       assert_receive :pre_redistribution, 1_000
-      assert_receive :pre_redistribution, 1_000
+      refute_recheck()
 
       GroupedHashing.handle_node_leave(hub, %{node: @a})
 
       assert GroupedHashing.group_nodes(hub.hub_id, "report") == [@b]
       assert GroupedHashing.served_groups(hub.hub_id, @a) == []
-      refute_receive :pre_redistribution, 200
+      refute_recheck()
     end
 
     test "an announcement lost on the way is repaired by the next one", %{hub: hub} do
@@ -392,6 +397,18 @@ defmodule Flezha.Cluster.GroupedHashingTest do
 
   # The pass runs off the coordinator, so the hook it dispatches is what a test
   # can wait on.
+  # This process stands in for the coordinator, which runs a table change's
+  # re-check once the burst it coalesces has had its window.
+  defp run_recheck(hub) do
+    assert_receive {:post_action_callback, GroupedHashing, :run_recheck, args}, 1_000
+    apply(GroupedHashing, :run_recheck, [hub | args])
+  end
+
+  defp refute_recheck do
+    refute_receive {:post_action_callback, GroupedHashing, :run_recheck, _args},
+                   Durations.get(:grouped_hashing_recheck_window_ms) * 2
+  end
+
   defp watch_redistribution(hub) do
     test = self()
 

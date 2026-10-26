@@ -3646,7 +3646,7 @@
     "no_pending_swap", "no_producer", "no_runner_id", "no_stream", "no_subscription_source", "no_such_factory", "no_target_nodes",
     "no_topic_in_response", "not_a_regular_file", "not_a_target", "not_adopted", "not_an_ed25519_private_key",
     "not_an_object", "not_grouped_hashing",
-    "not_in_manifest", "not_pem", "not_reusable", "not_running", "not_seq_addressed", "not_snapshotted",
+    "not_in_manifest", "not_pem", "not_reusable", "not_running", "not_seq_addressed", "not_serving", "not_snapshotted",
     "not_whole_payload", "nothing_to_correct", "overwatch_down", "part_ahead_of_progress", "partial", "pem_decode_failed",
     "permanent", "ping_failed", "precondition_failed", "process_not_found", "progress_ahead",
     "progress_corrupt", "progress_unreadable", "queue_full", "raised", "record_append_failed",

@@ -111,8 +111,25 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
   @spec kill_hub(atom()) :: pid()
   def kill_hub(hub_id) do
     pid = hub_pid(hub_id)
-    Process.exit(pid, :kill)
+    # Killing only the top lets its children die after the hub supervisor has
+    # already tried to restart the tree under their names. So the supervisor
+    # waits while every process of the tree dies at once, as in a node crash.
+    :ok = :sys.suspend(HubManager)
+    tree = tree_pids(pid)
+    downs = Enum.map(tree, &Process.monitor/1)
+    Enum.each(tree, &Process.exit(&1, :kill))
+    Enum.each(downs, fn ref -> receive do: ({:DOWN, ^ref, :process, _, _} -> :ok) end)
+    :ok = :sys.resume(HubManager)
     pid
+  end
+
+  defp tree_pids(sup) do
+    children =
+      for {_id, child, type, _modules} <- Supervisor.which_children(sup),
+          is_pid(child),
+          do: if(type == :supervisor, do: tree_pids(child), else: [child])
+
+    [sup | List.flatten(children)]
   end
 
   @doc "The pid of `hub_id`'s tree on this node, or `nil`."

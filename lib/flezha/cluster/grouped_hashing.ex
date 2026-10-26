@@ -86,9 +86,6 @@ defmodule Flezha.Cluster.GroupedHashing do
   @ring_sets :grouped_hashing_ring_sets
   @restart_pending :grouped_hashing_restart_pending
   @recheck_pending :grouped_hashing_recheck_pending
-  # A burst of table changes (every peer answering a restart or a join) is
-  # given this long to land, then gets one redistribution pass.
-  @recheck_window_ms 250
 
   # Long enough to cover a start request's whole round trip, short enough that a
   # child whose start never registered a row does not keep an entry for the life
@@ -481,7 +478,7 @@ defmodule Flezha.Cluster.GroupedHashing do
     unless Storage.get(hub.storage.misc, @recheck_pending) == self() do
       Storage.insert(hub.storage.misc, @recheck_pending, self())
       callback = {:post_action_callback, __MODULE__, :run_recheck, []}
-      Process.send_after(self(), callback, @recheck_window_ms)
+      Process.send_after(self(), callback, Durations.get(:grouped_hashing_recheck_window_ms))
     end
 
     :ok

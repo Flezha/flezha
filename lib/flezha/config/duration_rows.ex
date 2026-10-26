@@ -177,6 +177,9 @@ defmodule Flezha.Config.DurationRows do
     # long it asks the peers whether they kept one for it.
     {:process_hub_own_row_poll_ms, :ms, 100, []},
     {:process_hub_peer_ask_ms, :ms, 1_000, []},
+    # How long a burst of group-table changes (every peer answering a restart
+    # or a join) is given to land before it gets one redistribution pass.
+    {:grouped_hashing_recheck_window_ms, :ms, 250, []},
     {:route_call_timeout_ms, :ms, 30_000, []},
     {:stream_bind_wait_ms, :ms, 30_000, key: true},
 
