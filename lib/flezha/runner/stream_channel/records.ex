@@ -285,6 +285,11 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
+  # `emit_output_stall/2` for every relay running here that `identity` owns:
+  # what a channel that died carried, whose own route cache died with it.
+  def emit_owned_output_stall(runner_id, identity),
+    do: emit_output_stall(runner_id, ClassRegistry.running(identity))
+
   # Persistence frames are handed to the per-cell WalWriter via a
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes
   # snapshots (an fsync) in its own process, so disk/recovery latency never

@@ -123,47 +123,48 @@ defmodule Flezha.Runner.StreamChannel do
     publish_stream(name, nil, liveness_ref)
     ControlChannel.data_channel_up(runner_id, name, returned?)
 
-    {
-      :ok,
-      %{
-        # The session's proven namespace, which a relay with no ownership
-        # record on this node is judged against.
-        namespace: namespace,
-        runner_id: runner_id,
-        # The stable identity this session presented, which a relay's
-        # ownership record is judged against.
-        identity: Marks.identity_of(runner_id),
-        type: type,
-        stream_ref: nil,
-        relay_mapping: %{},
-        # Every pid `relay_mapping` caches, keyed by pid so a `:DOWN`
-        # resolves in one lookup: `%{pid => {monitor_ref, MapSet of the
-        # relay ids naming it}}`. Written only by `Records.put_route/3`,
-        # `Records.drop_route/2` and `Records.forget_pid/2`.
-        route_monitors: Watch.new(),
-        name: name,
-        last_seen: System.monotonic_time(:millisecond),
-        liveness_ref: liveness_ref,
-        # Processed-prefix markers of this stream awaiting their writers'
-        # fsync (`Flezha.Runner.StreamChannel.Prefix`).
-        prefix: Prefix.new(),
-        # Credit-grant session for this state stream, encoded in the shape:
-        # `nil` (no offer yet) -> `{:offered, %CreditLedger{}}` (handshake
-        # in flight) -> `%CreditLedger{}` (credit-speaking) or `:legacy`
-        # (pre-credit SDK / nack — terminal for the attach).
-        credit: nil,
-        # Takeover fence: once true (a newest-wins takeover unbound this
-        # session), durable-write forwards are refused at this binding.
-        # Terminal — the session is evicted right after, never re-bound.
-        fenced?: false,
-        # Processes owed word of an event they are held on: `:bind` (this
-        # channel has no stream yet) and `:send_gate` (its send buffer is over
-        # the mark). Each set is cleared by the event that serves it, so
-        # neither outlives the window it exists for.
-        waiters: %{bind: MapSet.new(), send_gate: MapSet.new()},
-        timers: Flezha.Process.Timer.new()
-      }
-      |> arm_io_liveness_check()
+    {:ok,
+     initial_state(namespace, runner_id, type, name, liveness_ref) |> arm_io_liveness_check()}
+  end
+
+  defp initial_state(namespace, runner_id, type, name, liveness_ref) do
+    %{
+      # The session's proven namespace, which a relay with no ownership
+      # record on this node is judged against.
+      namespace: namespace,
+      runner_id: runner_id,
+      # The stable identity this session presented, which a relay's
+      # ownership record is judged against.
+      identity: Marks.identity_of(runner_id),
+      type: type,
+      stream_ref: nil,
+      relay_mapping: %{},
+      # Every pid `relay_mapping` caches, keyed by pid so a `:DOWN`
+      # resolves in one lookup: `%{pid => {monitor_ref, MapSet of the
+      # relay ids naming it}}`. Written only by `Records.put_route/3`,
+      # `Records.drop_route/2` and `Records.forget_pid/2`.
+      route_monitors: Watch.new(),
+      name: name,
+      last_seen: System.monotonic_time(:millisecond),
+      liveness_ref: liveness_ref,
+      # Processed-prefix markers of this stream awaiting their writers'
+      # fsync (`Flezha.Runner.StreamChannel.Prefix`).
+      prefix: Prefix.new(),
+      # Credit-grant session for this state stream, encoded in the shape:
+      # `nil` (no offer yet) -> `{:offered, %CreditLedger{}}` (handshake
+      # in flight) -> `%CreditLedger{}` (credit-speaking) or `:legacy`
+      # (pre-credit SDK / nack — terminal for the attach).
+      credit: nil,
+      # Takeover fence: once true (a newest-wins takeover unbound this
+      # session), durable-write forwards are refused at this binding.
+      # Terminal — the session is evicted right after, never re-bound.
+      fenced?: false,
+      # Processes owed word of an event they are held on: `:bind` (this
+      # channel has no stream yet) and `:send_gate` (its send buffer is over
+      # the mark). Each set is cleared by the event that serves it, so
+      # neither outlives the window it exists for.
+      waiters: %{bind: MapSet.new(), send_gate: MapSet.new()},
+      timers: Flezha.Process.Timer.new()
     }
   end
 

@@ -15,6 +15,7 @@ defmodule FlezhaTest.System.StreamChannelKillE2ETest do
 
   use FlezhaTest.SystemCase, capability: :dynamic_cell
 
+  import ExUnit.CaptureLog
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   require Flezha.Relay.Ingest.Verdict
@@ -56,10 +57,17 @@ defmodule FlezhaTest.System.StreamChannelKillE2ETest do
     assert wait_until(fn -> seen(relay_id) >= div(@inputs, 4) end, 30_000)
 
     killed = GenServer.whereis(channel)
-    Process.exit(killed, :kill)
 
-    assert wait_until(fn -> rebound?(channel, killed) end, @rebind_ms),
-           "the channel's replacement was not bound again within #{@rebind_ms} ms"
+    log =
+      capture_log(fn ->
+        Process.exit(killed, :kill)
+
+        assert wait_until(fn -> rebound?(channel, killed) end, @rebind_ms),
+               "the channel's replacement was not bound again within #{@rebind_ms} ms"
+      end)
+
+    assert log =~ "Child #{inspect(channel)} of Supervisor"
+    assert log =~ "** (exit) killed"
 
     acked = Task.await(sender, @test_timeout)
 

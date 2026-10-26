@@ -24,7 +24,7 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Identificator
-  alias Flezha.Relay.ClassRegistry
+  alias Flezha.Process.Watch
   alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
@@ -167,6 +167,8 @@ defmodule Flezha.Runner.ControlChannel do
        rebinds: 0,
        # A returned channel announced itself while a rebind ran.
        rebind_owed?: false,
+       # Every data channel that announced itself, tagged with its name.
+       data_channels: Watch.new(),
        send_gate_raised?: false,
        waiters: %{send_gate: MapSet.new()},
        timers: Flezha.Process.Timer.new()
@@ -283,10 +285,10 @@ defmodule Flezha.Runner.ControlChannel do
   # and it is asked for a fresh pair set. A killed channel cannot ask; its
   # replacement is the first process that can.
   def handle_cast({:data_channel_up, name, pid, returned?}, state) do
-    Process.monitor(pid, tag: {:data_channel_down, name})
+    state = %{state | data_channels: Watch.watch(state.data_channels, pid, name)}
 
     if returned? and not Marks.runner_retiring?(state.runner_id) do
-      Records.emit_output_stall(state.runner_id, ClassRegistry.running(state.identity))
+      Records.emit_owned_output_stall(state.runner_id, state.identity)
       rebind_for_returned(state)
     else
       {:noreply, state}
@@ -403,11 +405,13 @@ defmodule Flezha.Runner.ControlChannel do
   # restart; any other exit, the heap cap's kill among them, is reported here,
   # because the dying process reports nothing itself.
   @impl true
-  def handle_info({{:data_channel_down, name}, _ref, :process, _pid, reason}, state) do
-    unless StreamChannel.shutdown?(reason),
-      do: report_channel_down(state.runner_id, name, reason)
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    {names, data_channels} = Watch.down(state.data_channels, ref)
 
-    {:noreply, state}
+    if is_list(names) and not StreamChannel.shutdown?(reason),
+      do: Enum.each(names, &report_channel_down(state.runner_id, &1, reason))
+
+    {:noreply, %{state | data_channels: data_channels}}
   end
 
   @impl true

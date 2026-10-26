@@ -25,6 +25,7 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamPool
   alias Flezha.Runner.StreamSup
+  alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.StreamPair
   alias FlezhaTest.Helper.Telemetry
 
@@ -34,6 +35,9 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
 
   setup do
     FlezhaTest.Case.install([:env])
+    # The session reports a channel's death as a warning, below the test
+    # config's primary `:error` gate, which no capture handler sees past.
+    on_exit(NodeTestHelper.override_log_level(:warning))
     runner_id = "restart_#{System.unique_integer([:positive])}"
     test_pid = self()
 
@@ -76,9 +80,13 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
         assert_killed_and_rebound(name, ctx.runner_id)
       end)
 
-    assert log =~
-             "data channel #{inspect(name)} died (killed: past " <>
-               "FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES or by hand"
+    assert [_line] =
+             Regex.scan(
+               ~r/data channel #{Regex.escape(inspect(name))} died \(killed: past FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES or by hand/,
+               log
+             )
+
+    assert_restart_reported(log, name, "killed")
 
     assert_receive {:stream_pair_closed, _socket}, @bound_ms
 
@@ -110,6 +118,9 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
       end)
 
     assert log =~ "data channel #{inspect(name)} died (crashed, reason :crashed_in_test)"
+    {:via, Registry, registered} = name
+    assert log =~ "GenServer #{inspect(registered)} terminating\n** (stop) :crashed_in_test"
+    assert_restart_reported(log, name, ":crashed_in_test")
     assert_receive {:stream_pair_closed, _socket}, @bound_ms
   end
 
@@ -155,6 +166,7 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
 
     assert [_line] = Regex.scan(~r/data channel .* died \(killed/, log)
     refute log =~ "maximum heap size reached"
+    assert_restart_reported(log, name, "killed")
     assert GenServer.whereis(name) not in [nil, capped]
   end
 
@@ -196,6 +208,13 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
   defp assert_killed_and_rebound(name, runner_id) do
     assert_receive {:channel_down, %{count: 1}, %{channel: ^name, reason: :killed}}, @bound_ms
     assert_receive {:rebind, ^runner_id}, @bound_ms
+  end
+
+  # The supervisor's own report of the restart, which the runtime logs for any
+  # exit that is not a shutdown.
+  defp assert_restart_reported(log, name, exit) do
+    assert log =~ "Child #{inspect(name)} of Supervisor"
+    assert log =~ "** (exit) #{exit}"
   end
 
   # `start_pool/1` with its first channel bound to a real stream.
