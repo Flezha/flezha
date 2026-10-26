@@ -128,6 +128,8 @@ defmodule Flezha.Config.DurationRows do
      key: {:migration_consent, :consent_timeout_ms}, env: "FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS"},
     {:migration_retry_interval_ms, :ms, 2_000,
      key: {:migration_consent, :retry_interval_ms}, env: "FLEZHA_MIGRATION_RETRY_INTERVAL_MS"},
+    # How long the hub waits for a moving relay's handover state.
+    {:migration_state_query_ms, :ms, 5_000, []},
     {:relay_call_timeout_ms, :ms, 1_000, []},
     # What an outside caller waits past its call's deadline, so the callee's
     # own `call.timeout` always reaches it first.

@@ -276,6 +276,7 @@ defmodule FlezhaTest.Relay.RebindTest do
   # durable on this node, so the destination pulls a floor below the inputs the
   # state holds; or a class whose bind re-forwards nothing waits on them too.
   test "a handover waits on its cut only where the bind re-forwards above the Cells' floor" do
+    on_exit(NodeTestHelper.override_log_level(:warning))
     # An identity no writer answers for: the cut can never be shown durable.
     moved = Jason.encode!(%{"t" => 3, "$cells" => [%{identity: [0], timers: [], next_seq: 2}]})
 

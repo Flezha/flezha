@@ -440,6 +440,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   def migration_strategy do
     %ProcessHub.Strategy.Migration.HotSwap{
       handover: true,
+      state_query_timeout: Durations.get(:migration_state_query_ms),
       consent_settings: consent_settings()
     }
   end

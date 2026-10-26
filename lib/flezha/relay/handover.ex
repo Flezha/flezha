@@ -23,9 +23,8 @@ defmodule Flezha.Relay.Handover do
   alias Flezha.Relay.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
-  alias Flezha.Service.HubManager
-  alias Flezha.State.TaskJournal.Records
   alias Flezha.State.WalWriter
+  alias Flezha.State.Wire
   alias Flezha.State.WriterRegistry
 
   require Logger
@@ -46,8 +45,7 @@ defmodule Flezha.Relay.Handover do
   def prepare(%Overwatch{} = state) do
     # The hub takes this answer only within its state query timeout, so the
     # serialize and the wait for its cut share that one budget.
-    budget = HubManager.migration_strategy().state_query_timeout
-    deadline = System.monotonic_time(:millisecond) + budget
+    deadline = System.monotonic_time(:millisecond) + Durations.get(:migration_state_query_ms)
 
     serialize_data =
       case serialize_relay_sdk(state.runner_id, state.id) do
@@ -240,9 +238,13 @@ defmodule Flezha.Relay.Handover do
     data
     |> moved_cells()
     |> Enum.reduce_while({:ok, :gen_server.reqids_new()}, fn {cell_id, seq}, {:ok, reqids} ->
-      case Records.await_record_async(cell_id, seq, reqids, cell_id) do
-        {:ok, reqids} -> {:cont, {:ok, reqids}}
-        {:error, _unreachable} -> {:halt, {:abandon, reqids}}
+      # No writer is started for the wait: a no only costs the live state,
+      # as the destination then restores from the disk it pulls.
+      with {:ok, cell} <- Wire.decode_cell_id(cell_id),
+           {:ok, writer} <- WriterRegistry.lookup(cell) do
+        {:cont, {:ok, WalWriter.await_durable_async(writer, seq, reqids, cell_id)}}
+      else
+        _unreachable -> {:halt, {:abandon, reqids}}
       end
     end)
     |> case do
