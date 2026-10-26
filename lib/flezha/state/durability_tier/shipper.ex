@@ -24,20 +24,24 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   alias Flezha.Config.Backoff
   alias Flezha.SDK.SafeCall
   alias Flezha.State.{DurabilityTier, Lineage, Ref}
-  alias Flezha.State.DurabilityTier.{Artifact, Manifest}
+  alias Flezha.State.DurabilityTier.{Artifact, Manifest, ShipStatus}
   alias Flezha.State.DurabilityTier.Backend.Config, as: BackendConfig
 
-  @table :flezha_durability_status
+  # Every this-many sweeps offers every reference, whatever its files say.
+  @full_sweep_every 10
 
   # `queued` dedups the queue and `manifests` caches the last entry written per
-  # reference; everything else about a reference's schedule — superseded,
-  # retry deadline, pending age — lives in the status row, which is one record
-  # readable from any process.
+  # reference; `seen` holds the file fingerprint each reference had when the
+  # sweep last offered it, and whether a ship has landed it since. Everything
+  # else about a reference's schedule — superseded, retry deadline, pending
+  # age — lives in the status row, which is one record readable from any process.
   defstruct backend: nil,
             opts: [],
             queue: :queue.new(),
             queued: MapSet.new(),
             manifests: %{},
+            seen: %{},
+            sweeps: 0,
             writer: nil,
             adopted: MapSet.new(),
             releasing: MapSet.new(),
@@ -101,7 +105,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @spec gc() :: {:ok, non_neg_integer()} | {:error, term()}
   def gc(), do: call(:gc)
 
-  @doc "Run one sweep synchronously. Used by tests."
+  @doc "Run one sweep over every reference, changed or not, synchronously. Used by tests."
   @spec sweep_now() :: :ok | {:error, term()}
   def sweep_now(), do: call(:sweep_now)
 
@@ -114,30 +118,9 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @spec caught_up([Manifest.ref()]) :: [Manifest.ref()]
   def caught_up(refs), do: with({:error, _} <- call({:caught_up, refs}), do: [])
 
-  @doc """
-  Per-reference shipping state, straight out of ETS. Readable from any process
-  and while the shipper is busy — which is what makes it safe for `/healthz`.
-  Each row adds `retry_in_ms`, how long until a pending retry (`nil` when none
-  is pending), so a reader on another node never compares this node's
-  monotonic `retry_after_ms` with its own clock.
-  """
+  @doc "Per-reference shipping state (`Flezha.State.DurabilityTier.ShipStatus.all/0`)."
   @spec status() :: [map()]
-  def status() do
-    case :ets.whereis(@table) do
-      :undefined ->
-        []
-
-      _ ->
-        now = System.monotonic_time(:millisecond)
-
-        @table
-        |> :ets.select([{{:_, :"$1"}, [], [:"$1"]}])
-        |> Enum.map(&Map.put(&1, :retry_in_ms, retry_in(&1, now)))
-    end
-  end
-
-  defp retry_in(%{retry_after_ms: at}, now) when is_integer(at), do: max(at - now, 0)
-  defp retry_in(_entry, _now), do: nil
+  def status(), do: ShipStatus.all()
 
   # ---------- GenServer ----------
 
@@ -148,7 +131,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
         :ignore
 
       {module, opts} ->
-        ensure_table()
+        ShipStatus.ensure_table()
 
         # Read once and held: a writer identity that changed mid-lifetime would
         # split one node's lineage in two and make it bid against itself.
@@ -168,7 +151,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   def handle_cast({:enqueue, ref}, state), do: {:noreply, push(state, ref)}
 
   def handle_cast({:end_wait, ref}, state) do
-    if status_of(ref).superseded_by, do: not_owed(ref)
+    if ShipStatus.get(ref).superseded_by, do: ShipStatus.not_owed(ref)
     {:noreply, state}
   end
 
@@ -178,7 +161,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # make it extend a claim another writer has since moved past.
   def handle_cast({:adopt, state_key}, state) do
     refs = DurabilityTier.refs_of_state_key(state_key)
-    Enum.each(refs, &clear_supersession/1)
+    Enum.each(refs, &ShipStatus.clear_supersession/1)
 
     state = %{
       state
@@ -207,13 +190,13 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @impl true
   def handle_call({:ship_now, ref}, _from, state) do
     {result, state} =
-      if status_of(ref).superseded_by,
+      if ShipStatus.get(ref).superseded_by,
         do: {{:error, :superseded}, state},
         else: ship(state, ref)
 
     # A caller withholding an acknowledgement on this ship is behind however
     # the lineage moved, so a refusal keeps its RPO clock running.
-    if match?({:error, _}, result), do: mark_pending(ref)
+    if match?({:error, _}, result), do: ShipStatus.mark_pending(ref)
     {:reply, result, state}
   end
 
@@ -227,7 +210,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   def handle_call({:caught_up, refs}, _from, state) do
     landed =
       Enum.filter(refs, fn ref ->
-        case status_of(ref) do
+        case ShipStatus.get(ref) do
           %{superseded_by: holder} when holder != nil -> true
           %{pending_since_ms: nil, last_shipped_ms: at} -> at != nil
           _pending -> false
@@ -240,7 +223,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # Sweep AND drain, so the caller has a real barrier: the queue is empty when
   # this returns, and the `:drain` already sent finds nothing to do.
   def handle_call(:sweep_now, _from, state) do
-    {:reply, :ok, state |> sweep() |> drain_all()}
+    {:reply, :ok, state |> sweep(:full) |> drain_all()}
   end
 
   @impl true
@@ -275,12 +258,12 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # sweep re-offers every unshipped reference, so without this it would
   # jump the backoff ladder and hammer a failing backend once per sweep.
   defp push(state, ref) do
-    status = status_of(ref)
+    status = ShipStatus.get(ref)
 
     if status.superseded_by != nil or MapSet.member?(state.queued, ref) or cooling_off?(status) do
       state
     else
-      mark_pending(ref)
+      ShipStatus.mark_pending(ref)
       # One `:drain` is in flight while the queue holds anything: a push into an
       # empty queue sends it, and each drained ship sends the next.
       if :queue.is_empty(state.queue), do: send(self(), :drain)
@@ -312,10 +295,41 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   # Every reference with local durable state, once a period: what ships a
   # `durable: local` Cell's, journal's and input log's progress, and what marks
-  # it owed for the RPO alarm. An unchanged cut writes nothing (`commit_cut/6`),
-  # and an unchanged whole payload costs one hash.
-  defp sweep(state),
-    do: Enum.reduce(DurabilityTier.all_refs(state.writer), state, &push(&2, &1))
+  # it owed for the RPO alarm. A reference whose files have not changed since a
+  # ship landed it costs a few stats and is not offered, so a quiet one is never
+  # marked owed; every `@full_sweep_every`-th sweep offers all of them.
+  defp sweep(state, mode \\ :changed) do
+    full? = mode == :full or rem(state.sweeps, @full_sweep_every) == 0
+    refs = DurabilityTier.all_refs(state.writer)
+    seen = if full?, do: Map.take(state.seen, refs), else: state.seen
+    state = %{state | sweeps: state.sweeps + 1, seen: seen}
+    Enum.reduce(refs, state, &offer(&2, &1, full?))
+  end
+
+  defp offer(state, ref, full?) do
+    fingerprint = Ref.fingerprint(ref)
+
+    case state.seen do
+      %{^ref => {^fingerprint, :landed}} when not full? -> state
+      seen -> push(%{state | seen: Map.put(seen, ref, {fingerprint, :offered})}, ref)
+    end
+  end
+
+  # A ship that leaves nothing owed lands the fingerprint the sweep offered;
+  # a failed one makes the next sweep offer the reference again.
+  defp note_landed(state, ref, :ok) do
+    case state.seen do
+      %{^ref => {fingerprint, :offered}} ->
+        if owed?(ref),
+          do: state,
+          else: %{state | seen: Map.put(state.seen, ref, {fingerprint, :landed})}
+
+      _ ->
+        state
+    end
+  end
+
+  defp note_landed(state, ref, _error), do: %{state | seen: Map.delete(state.seen, ref)}
 
   # ---------- ship ----------
 
@@ -327,11 +341,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     {result, state} =
       case entitled?(state, ref) do
         {:no, holder} -> {{:error, {:superseded, holder}}, supersede(state, ref, holder)}
-        :wait -> {{:error, :not_adopted}, tap(state, fn _ -> not_owed(ref) end)}
+        :wait -> {{:error, :not_adopted}, tap(state, fn _ -> ShipStatus.not_owed(ref) end)}
         :yes -> ship_and_record(state, ref)
       end
 
-    {result, settle_release(state, Ref.state_key(ref))}
+    {result, state |> note_landed(ref, result) |> settle_release(Ref.state_key(ref))}
   end
 
   # A reference is owed while it has unshipped progress and nobody else holds
@@ -344,7 +358,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   end
 
   defp owed?(ref),
-    do: match?(%{pending_since_ms: at, superseded_by: nil} when at != nil, status_of(ref))
+    do: match?(%{pending_since_ms: at, superseded_by: nil} when at != nil, ShipStatus.get(ref))
 
   defp withdraw(state, state_key) do
     %{
@@ -357,11 +371,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   defp ship_and_record(state, ref) do
     case do_ship(state, ref) do
       {:ok, manifest, caught_up?} ->
-        record_success(ref, caught_up?)
+        ShipStatus.record_success(ref, caught_up?)
         {:ok, %{state | manifests: Map.put(state.manifests, ref, manifest)}}
 
       :nothing_to_ship ->
-        record_success(ref, true)
+        ShipStatus.record_success(ref, true)
         {:ok, state}
 
       # The backend answers with the counter it holds, because a store must
@@ -597,10 +611,10 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # ---------- failure handling ----------
 
   defp retry_later(state, ref, reason) do
-    attempt = status_of(ref).failures + 1
+    attempt = ShipStatus.get(ref).failures + 1
     delay = Backoff.arm(:durability_ship, attempt, ref)
     Process.send_after(self(), {:retry, ref}, delay)
-    record_failure(ref, reason, attempt, delay)
+    ShipStatus.record_failure(ref, reason, attempt, delay)
     emit(:ship_failed, %{attempt: attempt, backoff_ms: delay}, ref, %{reason: inspect(reason)})
     state
   end
@@ -615,7 +629,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # that still has the only other copy.
   defp supersede(state, ref, holder) do
     emit(:claim_superseded, %{}, ref, %{holder: inspect(holder)})
-    record_superseded(ref, holder)
+    ShipStatus.record_superseded(ref, holder)
     state
   end
 
@@ -688,99 +702,6 @@ defmodule Flezha.State.DurabilityTier.Shipper do
       end
 
     for {key, age} <- entries, age >= min_age, not MapSet.member?(live, key), do: key
-  end
-
-  # ---------- status table ----------
-
-  defp ensure_table() do
-    case :ets.whereis(@table) do
-      :undefined -> :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
-      _ -> @table
-    end
-  end
-
-  defp mark_pending(ref) do
-    now = System.system_time(:millisecond)
-
-    update_status(ref, fn entry ->
-      %{entry | pending_since_ms: entry.pending_since_ms || now}
-    end)
-  end
-
-  defp record_success(ref, caught_up?) do
-    now = System.system_time(:millisecond)
-
-    update_status(ref, fn entry ->
-      %{
-        entry
-        | last_shipped_ms: now,
-          pending_since_ms: if(caught_up?, do: nil, else: entry.pending_since_ms || now),
-          failures: Backoff.reset(:durability_ship, ref),
-          retry_after_ms: nil,
-          last_error: nil
-      }
-    end)
-  end
-
-  defp record_failure(ref, reason, attempt, delay) do
-    update_status(ref, fn entry ->
-      %{
-        entry
-        | failures: attempt,
-          retry_after_ms: System.monotonic_time(:millisecond) + delay,
-          last_error: inspect(reason),
-          pending_since_ms: entry.pending_since_ms || System.system_time(:millisecond)
-      }
-    end)
-  end
-
-  defp record_superseded(ref, holder) do
-    update_status(ref, fn entry ->
-      %{
-        entry
-        | superseded_by: holder,
-          pending_since_ms: nil,
-          retry_after_ms: nil,
-          last_error: nil
-      }
-    end)
-  end
-
-  defp not_owed(ref), do: update_status(ref, &%{&1 | pending_since_ms: nil})
-
-  defp clear_supersession(ref) do
-    update_status(ref, &%{&1 | superseded_by: nil})
-  end
-
-  defp update_status(ref, fun) do
-    ensure_table()
-    :ets.insert(@table, {ref, fun.(status_of(ref))})
-    :ok
-  end
-
-  defp status_of(ref) do
-    case :ets.whereis(@table) do
-      :undefined ->
-        blank_status(ref)
-
-      _ ->
-        case :ets.lookup(@table, ref) do
-          [{^ref, entry}] -> entry
-          [] -> blank_status(ref)
-        end
-    end
-  end
-
-  defp blank_status(ref) do
-    %{
-      ref: ref,
-      last_shipped_ms: nil,
-      pending_since_ms: nil,
-      failures: 0,
-      retry_after_ms: nil,
-      superseded_by: nil,
-      last_error: nil
-    }
   end
 
   # ---------- helpers ----------

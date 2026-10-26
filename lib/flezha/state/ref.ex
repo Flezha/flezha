@@ -115,6 +115,32 @@ defmodule Flezha.State.Ref do
   def holds?({_root, names}, _wal_path), do: names != []
   def holds?(nil, wal_path), do: non_empty?(wal_path)
 
+  @doc """
+  A digest of the identity, size and times of every local file of `ref`, from
+  stats alone: it changes whenever one of them is written, replaced, added or
+  removed.
+  """
+  @spec fingerprint(t()) :: binary()
+  def fingerprint(ref) do
+    paths =
+      case payload_files(ref) do
+        {root, names} -> Enum.map(names, &Path.join(root, &1))
+        nil -> files(ref)
+      end
+
+    paths |> Enum.map(&file_stat/1) |> :erlang.term_to_binary() |> :erlang.md5()
+  end
+
+  defp file_stat(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{inode: inode, size: size, mtime: mtime, ctime: ctime}} ->
+        {path, inode, size, mtime, ctime}
+
+      {:error, reason} ->
+        {path, reason}
+    end
+  end
+
   defp non_empty?(nil), do: false
   defp non_empty?(path), do: match?({:ok, %{size: size}} when size > 0, File.stat(path))
 end
