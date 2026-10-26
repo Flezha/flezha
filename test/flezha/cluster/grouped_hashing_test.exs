@@ -344,7 +344,8 @@ defmodule Flezha.Cluster.GroupedHashingTest do
     hub = %ProcessHub.Hub{
       hub_id: hub_id,
       procs: %{task_sup: task_sup, system_registry: registry, worker_queue: worker_queue},
-      storage: %{misc: misc, hook: hook}
+      storage: %{misc: misc, hook: hook},
+      recovery_config: %{reconcile_interval_ms: 30_000}
     }
 
     GroupedHashing.init(%GroupedHashing{}, hub)

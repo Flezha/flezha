@@ -36,7 +36,12 @@ is declared at once. A factory the controller stops serving is withdrawn after
 coordinator alone restarted (ProcessHub's `coordinator_restarted` hook): its table starts empty,
 never from a saved copy. Once the fleet manager has declared the set again
 (`Announce.redeclare/2`), or after at most five seconds, the node sends that row to every peer,
-which replaces the old one and answers with its own (`GroupedHashing.handle_restart/1`).
+which replaces the old one and answers with its own (`GroupedHashing.handle_restart/1`). A hub
+that starts afresh, after a crash too, sends a joining peer no empty row until the fleet manager
+declares one or the reconcile interval passes, so the peers keep its old row and place its relays
+back on it. A start that reaches it first finds no node to run on and is refused with ProcessHub's
+`:no_target_nodes`, which the caller reads as `relay.factory_unserved`. A row still empty at that
+bound is sent then, an empty set, so the peers drop what they kept and take its relays over.
 
 ### Which controller runs a relay: the hub
 
@@ -128,7 +133,10 @@ node is not the leader of the declared list.
 Each hub's orphan reconcile (ProcessHub's recovery rounds, configured by
 `HubManager.Lifecycle.auto_recovery_config/0`) starts a declared child that runs nowhere and stops
 a running child whose declared entry was removed; an undeclared child is stopped only after two
-rounds agree.
+rounds agree. When a peer kept a row for it, a node's first round starts nothing until this
+node serves a factory, at most the reconcile interval (`GroupedHashing.handle_first_round/1`), so
+a restarted controller's relays are placed back on it rather than on the peers already serving
+their factories; on a cold start no peer kept one and nothing waits.
 
 ## Deciders that can act on one child at once
 

@@ -307,13 +307,13 @@ The gate SHALL be one seam that every hub-creating path waits on, and no path SH
 
 ### Requirement: Boot ordering is gated on recovery completion, not on the replay hook
 
-Registry-dependent services SHALL gate their readiness on `HubManager.await_recovery_complete/1` rather than on the `pre_recovery_replay` hook doing the waiting. `Flezha.Runner.FleetManager.init/1` and the convergence `Loop` SHALL block on `await_recovery_complete` before serving registry-dependent work. The `pre_recovery_replay` hook handler is consequently a thin telemetry forwarder (it emits `[:flezha, :boot, :pre_recovery_replay]` and returns; it does NOT poll FleetManager and there is no `:pre_replay_fleet_wait_ms` budget), because the upstream ProcessHub recovery-marker gate queues cluster events until the cluster is formed.
+Registry-dependent services SHALL gate their readiness on `HubManager.await_recovery_complete/1` rather than on the `pre_recovery_replay` hook doing the waiting. `Flezha.Runner.FleetManager.init/1` and the convergence `Loop` SHALL block on `await_recovery_complete` before serving registry-dependent work. `Flezha.Boot.RecoveryHooks`' `pre_recovery_replay` handler is consequently a thin telemetry forwarder (it emits `[:flezha, :boot, :pre_recovery_replay]` and returns; it does NOT poll FleetManager and there is no `:pre_replay_fleet_wait_ms` budget), because the upstream ProcessHub recovery-marker gate queues cluster events until the cluster is formed. The distribution strategy's own handler on the same hook SHALL hold only a clustered node's first round, until the node serves a factory and at most `:process_hub_reconcile_interval_ms` (`grouped-hashing-distribution`).
 
 #### Scenario: a registry consumer waits for recovery before serving
 - **GIVEN** a controller boot where a hub must replay its durable registry
 - **WHEN** `FleetManager.init/1` runs
 - **THEN** it calls `HubManager.await_recovery_complete/1` and proceeds only once every hub reaches `:normal`/`:skipped` (or the bounded timeout elapses)
-- **AND** the `pre_recovery_replay` hook itself only forwards telemetry and does not block on the fleet.
+- **AND** `Flezha.Boot.RecoveryHooks`' `pre_recovery_replay` handler only forwards telemetry and does not block on the fleet.
 
 ### Requirement: The auto-restore kill-switch tolerates a non-boolean value
 

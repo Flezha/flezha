@@ -25,6 +25,11 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
     def held(pid), do: GenServer.call(pid, :held)
 
     @impl true
+    def init({:notify, pid, value}) do
+      send(pid, {:child_started, value, node()})
+      {:ok, value}
+    end
+
     def init(value), do: {:ok, value}
 
     @impl true
@@ -43,7 +48,8 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
 
   Its id is deliberately off the `<namespace>_hub` convention, so every
   relay-oriented walker in the controller ignores it. `:sync_interval` sets the
-  PubSub sync tick, which also opens reconcile rounds.
+  PubSub sync tick, which also opens reconcile rounds; `:reconcile_interval`
+  sets `:reconcile_interval_ms`, which is also the first round's hook budget.
   """
   @spec start_hub(atom(), keyword()) :: {:ok, pid()} | {:error, term()}
   def start_hub(hub_id, opts \\ []) do
@@ -51,7 +57,11 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
     # declared child of a group nobody serves waits for.
     recovery =
       if Keyword.get(opts, :reconcile, false),
-        do: [reconcile_grace_ms: 1_000, reconcile_interval_ms: 1_000, cluster_settle_ms: 500],
+        do: [
+          reconcile_grace_ms: 1_000,
+          reconcile_interval_ms: Keyword.get(opts, :reconcile_interval, 1_000),
+          cluster_settle_ms: 500
+        ],
         else: false
 
     spec =
@@ -91,6 +101,27 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
 
   defp registry_path(hub_id) do
     Path.join([Layout.dir(:process_hub), Atom.to_string(hub_id), Layout.hub_registry_file()])
+  end
+
+  @doc """
+  Kill `hub_id`'s whole tree on this node, as a crash takes it: no leave is
+  announced, its children die, its files stay, and the hub supervisor starts it
+  afresh. Answers the pid that was killed.
+  """
+  @spec kill_hub(atom()) :: pid()
+  def kill_hub(hub_id) do
+    pid = hub_pid(hub_id)
+    Process.exit(pid, :kill)
+    pid
+  end
+
+  @doc "The pid of `hub_id`'s tree on this node, or `nil`."
+  @spec hub_pid(atom()) :: pid() | nil
+  def hub_pid(hub_id) do
+    Enum.find_value(Supervisor.which_children(HubManager), fn
+      {^hub_id, pid, _type, _modules} when is_pid(pid) -> pid
+      _child -> nil
+    end)
   end
 
   @doc "Declare `groups` served by this node on `hub_id`."

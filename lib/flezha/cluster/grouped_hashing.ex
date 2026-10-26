@@ -25,7 +25,12 @@ defmodule Flezha.Cluster.GroupedHashing do
       saved one. Its owner declares its set again, and only then does the node
       send that row to every peer, which replaces the old one and answers with
       its own, so the node never re-checks its children against a table that
-      lacks its own row.
+      lacks its own row. A node whose hub started afresh, after a crash
+      included, sends no empty row to a joining peer until its owner declares
+      or `:reconcile_interval_ms` passes, so its peers keep the row they hold
+      for it and place its children on it, where a start it can place nowhere
+      is refused with `:no_target_nodes`, rather than on themselves. A row
+      still empty at that bound is sent then, so the peers drop theirs.
       `distribution_signature/2` covers the table, so two nodes that disagree
       take the full validation path rather than the start fast path.
     * **One ring per member set.** Groups served by the same nodes share a ring,
@@ -35,6 +40,15 @@ defmodule Flezha.Cluster.GroupedHashing do
     * **A table change re-checks the local children** through the same
       redistribution pass a drain runs, so a child that no longer belongs here
       moves through ProcessHub's migration-consent gate with its handover.
+    * **A node's first reconcile round waits until the node serves a group.**
+      A node that has just started serves nothing until its owner declares its
+      set, and a declared child placed before then lands on whichever peers
+      serve its group, never back on the node that ran it. When a peer kept a
+      row for this node, the round's blocking `pre_recovery_replay` hook holds
+      it until this node's row is written, at most the hook's budget
+      (`:reconcile_interval_ms`) less one poll; past that it places as it would
+      have. A node no peer remembers, alone or on a cold start of the whole
+      cluster, is not held.
     * **A group nobody serves holds its children where they run.**
       `belongs_to/4` answers the nodes the child is registered on, so every
       migration strategy sees "where it is is where it belongs" and moves
@@ -49,6 +63,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   """
 
   alias Flezha.Config.Durations
+  alias Flezha.Process.Poll
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
@@ -193,7 +208,13 @@ defmodule Flezha.Cluster.GroupedHashing do
   """
   @spec handle_node_join(ProcessHub.Hub.t(), %{node: node()}) :: :ok
   def handle_node_join(hub, %{node: joining}) do
-    cast_announcement(hub, joining, own_groups(hub), :apply_announcement)
+    # Until its owner declares, an empty row says nothing: sent, it would erase
+    # the row the joining node holds for this one.
+    case {own_groups(hub), Storage.get(hub.storage.misc, @restart_pending)} do
+      {[], pending} when pending != nil -> :ok
+      {groups, _pending} -> cast_announcement(hub, joining, groups, :apply_announcement)
+    end
+
     # The hub's node set is one of the member sets rings are cached for.
     prune_rings(hub, group_nodes_map(hub.storage.misc))
 
@@ -224,11 +245,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   """
   @spec handle_restart(ProcessHub.Hub.t()) :: :ok
   def handle_restart(hub) do
-    Storage.insert(hub.storage.misc, @restart_pending, true)
-    callback = {:post_action_callback, __MODULE__, :finish_restart, []}
-    Process.send_after(self(), callback, Durations.get(:process_hub_restart_declare_ms))
-
-    :ok
+    await_declaration(hub, :restart, :declared, Durations.get(:process_hub_restart_declare_ms))
   end
 
   @doc """
@@ -241,14 +258,68 @@ defmodule Flezha.Cluster.GroupedHashing do
 
   @doc false
   # Sends every peer this node's row once after a restart: each replaces what it
-  # held for this node and answers with its own row.
-  def finish_restart(hub) do
-    if Storage.get(hub.storage.misc, @restart_pending) do
-      Storage.remove(hub.storage.misc, @restart_pending)
-      announce(hub, own_groups(hub), :apply_restart_announcement)
+  # held for this node and answers with its own row. A hub that started afresh
+  # ends its wait only at its bound, since the declaration that counts there
+  # comes from runners still reconnecting and announces itself when it lands;
+  # at the bound only a row still empty is sent, which drops whatever a peer
+  # kept for this node and changes nothing on the others.
+  def finish_restart(hub, reason \\ :declared) do
+    case {Storage.get(hub.storage.misc, @restart_pending), reason} do
+      {nil, _reason} ->
+        :ok
+
+      {:fresh, :declared} ->
+        :ok
+
+      {:fresh, :bound} ->
+        Storage.remove(hub.storage.misc, @restart_pending)
+        if own_groups(hub) == [], do: announce(hub, [], :apply_announcement)
+
+      {:restart, _reason} ->
+        Storage.remove(hub.storage.misc, @restart_pending)
+        announce(hub, own_groups(hub), :apply_restart_announcement)
     end
 
     :ok
+  end
+
+  @doc """
+  Holds the first reconcile round of a node returning to a running hub, one
+  whose row a peer kept, before it starts any declared child, until this node
+  serves a group, at most the hook's budget less one poll.
+
+  A node no peer remembers, as on a cold start of the whole cluster, is not
+  held: its runners may wait for it to be ready. Runs in the round's hook
+  worker, never the coordinator, so the declaration it waits for lands
+  meanwhile.
+  """
+  @spec handle_first_round(ProcessHub.Hub.t()) :: :ok
+  def handle_first_round(hub) do
+    if remembered_by_peer?(hub) do
+      poll = Durations.get(:process_hub_own_row_poll_ms)
+
+      deadline =
+        System.monotonic_time(:millisecond) + hub.recovery_config.reconcile_interval_ms - poll
+
+      _ =
+        Poll.until(deadline, poll, fn ->
+          if own_groups(hub) == [], do: {:error, :not_serving}, else: {:ok, :serving}
+        end)
+    end
+
+    :ok
+  end
+
+  # Asked of every peer at once and bounded, so a slow peer only shortens the
+  # answer to "not remembered".
+  defp remembered_by_peer?(hub) do
+    ask = Durations.get(:process_hub_peer_ask_ms)
+
+    own_groups(hub) == [] and
+      hub.storage.misc
+      |> Cluster.nodes()
+      |> :erpc.multicall(__MODULE__, :served_groups, [hub.hub_id, node()], ask)
+      |> Enum.any?(&match?({:ok, [_ | _]}, &1))
   end
 
   @doc """
@@ -290,11 +361,13 @@ defmodule Flezha.Cluster.GroupedHashing do
     Storage.insert(misc, @node_groups, %{})
     Storage.insert(misc, @group_nodes, %{})
     Storage.insert(misc, @ring_sets, MapSet.new())
+    hold_fresh_row(hub)
 
     register_handler(hub, Hook.post_node_join(), :gh_join, :handle_node_join, [hub, :_])
     register_handler(hub, Hook.pre_node_leave(), :gh_leave, :handle_node_leave, [hub, :_])
     register_handler(hub, Hook.coordinator_shutdown(), :gh_shutdown, :handle_shutdown, [hub])
     register_handler(hub, Hook.coordinator_restarted(), :gh_restart, :handle_restart, [hub])
+    register_handler(hub, Hook.pre_recovery_replay(), :gh_first_round, :handle_first_round, [hub])
 
     register_handler(hub, Hook.pre_children_start(), :gh_children_start, :handle_children_start, [
       hub,
@@ -433,6 +506,26 @@ defmodule Flezha.Cluster.GroupedHashing do
       a: args,
       p: 100
     })
+  end
+
+  # A node whose hub has just started serves nothing until its owner declares.
+  # Its peers keep the row they hold for it meanwhile, so the children that ran
+  # here are not placed elsewhere, at most the first reconcile round's budget.
+  defp hold_fresh_row(hub),
+    do: await_declaration(hub, :fresh, :bound, hub.recovery_config.reconcile_interval_ms)
+
+  # Marks this node's row as awaiting its owner's declaration and arms the
+  # bound after which `finish_restart/2` sends it whatever it holds.
+  defp await_declaration(hub, kind, reason, bound_ms) do
+    Storage.insert(hub.storage.misc, @restart_pending, kind)
+
+    Process.send_after(
+      self(),
+      {:post_action_callback, __MODULE__, :finish_restart, [reason]},
+      bound_ms
+    )
+
+    :ok
   end
 
   defp node_groups(misc), do: Storage.get(misc, @node_groups) || %{}

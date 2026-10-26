@@ -60,6 +60,14 @@ v0.1.0-alpha.1 pre-release.
   kept running. The start answers once the relay's own controller registered
   it, before the others have heard of it; a controller that does not know the
   relay now asks the others before it answers not found.
+- A controller that restarts into a running cluster gets its relays back
+  instead of seeing them started on a peer. Its first recovery round could run
+  before its own runners reconnected and place them on the peers already
+  serving their factories, or the peers started them themselves as it rejoined,
+  so a workflow could run its steps twice. The peers now keep its factories
+  for it and its first recovery round waits for one of its own runners, both
+  for at most `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS`; a start that reaches
+  it first answers `relay.factory_unserved`.
 - A `flz` verb called over Erlang distribution from another node writes its
   refusal to that node's stderr, beside its answer. It went to the
   controller's log, so the caller saw only the exit code.

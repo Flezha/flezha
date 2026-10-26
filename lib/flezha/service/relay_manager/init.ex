@@ -421,7 +421,7 @@ defmodule Flezha.Service.RelayManager.Init do
         )
 
         _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start, overwatch: pid)
-        {:error, start_failure(relay.id, {:relay_exited, reason})}
+        {:error, start_failure(relay, {:relay_exited, reason})}
     end
 
     case SafeCall.bounded(
@@ -441,7 +441,7 @@ defmodule Flezha.Service.RelayManager.Init do
 
       {:error, reason} ->
         _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start, overwatch: pid)
-        {:error, start_failure(relay.id, reason)}
+        {:error, start_failure(relay, reason)}
 
       answered ->
         answered
@@ -467,27 +467,32 @@ defmodule Flezha.Service.RelayManager.Init do
       )
 
       _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start)
-      {:error, start_failure(relay.id, reason)}
+      {:error, start_failure(relay, reason)}
     end
   end
 
   defp settle_claim(exist?, namespace, relay, reason) do
     if claim_loss?(reason),
       do: claim_lost(exist?, namespace, relay.id),
-      else: {:error, start_failure(relay.id, reason)}
+      else: {:error, start_failure(relay, reason)}
   end
 
   # A failure the runner already answered with its own error is that error, as
   # is a hub without quorum or with no controller serving the factory yet; both
-  # pass, so a caller may retry. Anything else is the cause the start stopped
-  # at, kept for the details.
-  defp start_failure(_relay_id, %Flezha.Error{} = error), do: error
-  defp start_failure(_relay_id, :no_quorum), do: :no_quorum
+  # pass, so a caller may retry. A start the hub could place on no controller
+  # is the second: a controller back from a crash keeps its factories on its
+  # peers and can place their relays nowhere until its own runners declare
+  # them. Anything else is the cause the start stopped at, kept for the details.
+  defp start_failure(_relay, %Flezha.Error{} = error), do: error
+  defp start_failure(_relay, :no_quorum), do: :no_quorum
 
-  defp start_failure(relay_id, {:no_group_members, factories}),
-    do: {:no_group_members, relay_id, factories}
+  defp start_failure(relay, {:no_group_members, factories}),
+    do: {:no_group_members, relay.id, factories}
 
-  defp start_failure(relay_id, reason), do: {:start_failed, relay_id, reason}
+  defp start_failure(%{factory_id: factory} = relay, :no_target_nodes) when factory != nil,
+    do: {:no_group_members, relay.id, [factory]}
+
+  defp start_failure(relay, reason), do: {:start_failed, relay.id, reason}
 
   # The registry refused the id: a live instance already holds it. Taking the
   # failure path on that verdict would stop the id — killing the winner — which

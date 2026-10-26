@@ -173,6 +173,10 @@ defmodule Flezha.Config.DurationRows do
     # before it sends peers whatever row it holds, so a lost declaration delays
     # the rebuild rather than stopping it.
     {:process_hub_restart_declare_ms, :ms, 5_000, []},
+    # How often a held first reconcile round looks for this node's row, and how
+    # long it asks the peers whether they kept one for it.
+    {:process_hub_own_row_poll_ms, :ms, 100, []},
+    {:process_hub_peer_ask_ms, :ms, 1_000, []},
     {:route_call_timeout_ms, :ms, 30_000, []},
     {:stream_bind_wait_ms, :ms, 30_000, key: true},
 

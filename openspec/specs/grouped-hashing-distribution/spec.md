@@ -63,6 +63,14 @@ connected runners can run again. Once that declaration is made, or after at most
 seconds, the node SHALL send its row to every peer; each peer SHALL replace the row it held
 for that node with it and SHALL send the node its own row.
 
+A node whose hub started afresh, a crashed node included, SHALL send no empty row to a
+joining peer until its owner declares a set or `reconcile_interval_ms` passes, so each peer
+SHALL keep the row it held for that node and SHALL place that node's children on it rather
+than on another node. A start that node can place on no node SHALL be refused at once with
+`:no_target_nodes`, and the controller SHALL answer a relay start refused that way with
+`relay.factory_unserved`. A row still empty at the bound SHALL then be sent, so each peer
+drops the row it kept and places that node's children as without it.
+
 `distribution_signature/2` SHALL differ between two nodes whose group tables differ.
 
 #### Scenario: Serving a group moves its children to the new node with their state
@@ -94,6 +102,20 @@ for that node with it and SHALL send the node its own row.
 - **AND** `b`'s table lists `a` for `"local"`
 - **WHEN** `b` serves `"report"` again
 - **THEN** a `"report"` child started from `a` runs on `b`
+
+#### Scenario: A survivor keeps a crashed node's children for it
+
+- **GIVEN** `a` and `b` serve `"report"` and declared children of `"report"` run on `b`
+- **WHEN** `b`'s hub dies without a leave and starts afresh, serving nothing yet
+- **THEN** `a`'s reconcile rounds start none of those children on `a`
+- **WHEN** `b` serves `"report"` again
+- **THEN** each of those children runs on `b`
+
+#### Scenario: A crashed node that never serves again gives its children up
+
+- **GIVEN** `a` and `b` serve `"report"` and declared children of `"report"` run on `b`
+- **WHEN** `b`'s hub dies without a leave, starts afresh and never serves `"report"`
+- **THEN** once `reconcile_interval_ms` has passed, those children run on `a`
 
 #### Scenario: A joining node learns the table
 
@@ -140,6 +162,24 @@ group SHALL ask its hub for a reconcile round, which waits for neither
 - **THEN** a reconcile round runs within a few seconds, without waiting for the reconcile
   interval or the sync tick
 - **AND** the child runs on `a` with the metadata it was declared with
+
+### Requirement: A returning node's first reconcile round waits until the node serves a group
+
+When a peer still holds a row for it, a node's first reconcile round after its coordinator
+starts SHALL start no declared child until this node serves a group, waiting at most the
+round's `pre_recovery_replay` budget (`reconcile_interval_ms`) less one poll. Past that
+bound it SHALL place the children as it would have without the wait. A node no peer holds a
+row for, alone or on a cold start of the whole cluster, SHALL NOT wait. The wait SHALL run
+outside the hub's coordinator, so the node's own declaration lands while it waits.
+
+#### Scenario: A restarted node's declared child comes back to it
+
+- **GIVEN** a durable child of group `"report"` with no registry row and running nowhere,
+  in a hub of `a` and `b` where `b` still holds a row for `a` and neither serves `"report"`
+- **WHEN** the coordinator of `a`'s hub restarts and its first round reaches its starts
+- **THEN** the round starts nothing while `a` serves nothing
+- **WHEN** `a` calls `serve_groups(hub, ["report"])`
+- **THEN** that first round starts the child, and it runs on `a`
 
 ### Requirement: A strategy learns from a start request before the request is validated
 

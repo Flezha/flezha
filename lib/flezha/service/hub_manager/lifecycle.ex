@@ -333,7 +333,9 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     # `:recovering`, which holds readiness, until its first round; that opens
     # once the settle window has passed and every connected peer has sent its
     # registry, and the grace only caps a peer that never does. No runner is
-    # waited for: an orphan placed first is held unbound until the rebind.
+    # waited for, so an orphan placed first is held unbound until the rebind;
+    # only a node returning to a running cluster holds its first round's starts
+    # until it serves a factory (`GroupedHashing.handle_first_round/1`).
     if Rows.durable_starts?() do
       [
         reconcile_grace_ms: Durations.get(:process_hub_reconcile_grace_ms),
