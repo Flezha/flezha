@@ -358,10 +358,14 @@ option ([Controller environment variables](../../configuration/environment_varia
 
 With a backend, immutable copies (snapshots, log bundles, journal suffixes, the
 input log, the registry, parked dead-letter records, the authorization and
-schedule stores) are shipped at boundaries that exist anyway (a checkpoint,
-a compaction, a workflow step, a park or a drop) plus a backstop timer,
-`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, 30 s. The manifest is written last, so a
-half-finished upload is invisible to recovery. A controller that starts on an
+schedule stores) are shipped at once after a compaction, a registry change, a
+park or a drop, and otherwise every `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` (30 s),
+when each copy that changed since its last ship goes up. At `local` the copy is
+then about one interval behind, and one still behind after
+`FLEZHA_DURABILITY_RPO_TARGET_MS` (120 s) raises the RPO alarm on `/healthz` and
+`flz controller status`; a `remote` class ships before each acknowledgement
+instead. The manifest is written last, so a half-finished upload is invisible
+to recovery. A controller that starts on an
 empty disk fetches the copy and carries on from it. When a relay moves back
 to a controller that kept an older copy, the copies are compared by lineage
 first: an incoming copy that continued the kept one, or is unrelated to it,

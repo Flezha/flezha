@@ -934,12 +934,23 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     # the start — which is also what makes two shippers in one BEAM distinct
     # writers at all, since they share a `node()`.
     Application.put_env(:flezha, :durability_writer_id, writer)
-    {:ok, pid} = GenServer.start(Shipper, [])
+    # Supervised, so it stops before the shipper that started first and owns the
+    # status table: an `on_exit` stop runs only after that owner is gone, and a
+    # drain still in flight would write to a deleted table. Temporary, since a
+    # restart would read the writer id after it went back.
+    pid =
+      start_supervised!(
+        Supervisor.child_spec(Shipper,
+          id: make_ref(),
+          start: {GenServer, :start_link, [Shipper, []]},
+          restart: :temporary
+        )
+      )
+
     # Force the initial-sweep continue to finish before the id goes back.
     _ = :sys.get_state(pid)
     Application.delete_env(:flezha, :durability_writer_id)
     Application.put_env(:flezha, :state_root, own_root)
-    on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 

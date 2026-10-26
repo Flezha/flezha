@@ -327,7 +327,9 @@ interval's changes in one record. Emits still flush as they happen, unless
 `outputs: at_checkpoint` holds them for the checkpoint record, which needs
 `max_delay_ms` so a quiet cell does not hold an output for ever. `every: n`
 closes the interval after `n` inputs. A parked input closes the interval, so a
-replay starts after the poison. Recovery restores the last checkpoint and
+replay starts after the poison. A compaction or a move of the relay closes it
+early, so the snapshot or the moved state never holds an input the log sends
+again. Recovery restores the last checkpoint and
 replays the inputs after it. The interval sizes the input log's retention, the
 work after a crash and how often source credit comes back: a relay that
 never checkpoints stops trimming its log and eventually stalls its own source.
