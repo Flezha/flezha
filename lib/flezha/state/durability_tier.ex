@@ -8,11 +8,13 @@ defmodule Flezha.State.DurabilityTier do
   acknowledgement on local fsync alone, one at `durable: remote` also on the
   ship of what that acknowledgement covers (`commit_sync/1`); shipping neither
   mutates nor deletes a local file, and turning the tier off is a complete
-  rollback. What ships are immutable artifacts at boundaries that
-  already exist: snapshots, WAL record bundles, task-journal suffixes, the
-  durable input log, the registry cspec, parked DLQ records, the control-plane
-  registries. The per-cell manifest is written last, so a torn upload is
-  invisible to recovery.
+  rollback. What ships are immutable artifacts: snapshots, WAL record bundles,
+  task-journal suffixes, the durable input log, the registry cspec, parked DLQ
+  records, the control-plane registries. A compaction, a park and a registry
+  write ship at once; every other change reaches the backend on the shipper's
+  sweep, once per `durability_ship_interval_ms`, so nothing per message or per
+  commit asks for a ship. The per-cell manifest is written last, so a torn
+  upload is invisible to recovery.
 
   Every trigger, recovery and status function is a no-op while `backend: :none`,
   under which `children/0` starts nothing. An unset or unrecognised
@@ -97,7 +99,7 @@ defmodule Flezha.State.DurabilityTier do
 
   Shipping alone must never be enough to claim one: a migration leaves the
   source node holding a full copy of the state (`WalTransfer.pull_relay/3`
-  copies, and nothing deletes the source), so its backstop sweep would
+  copies, and nothing deletes the source), so its sweep would
   otherwise bid the lineage back and fence the node that actually runs the
   relay now.
   """
@@ -289,8 +291,8 @@ defmodule Flezha.State.DurabilityTier do
   references `Paths.durable_refs/1` names (its Cells, a steps relay's journal,
   its input log) that hold local state, and its dead-letter trees.
 
-  A relay can occupy two state keys — see `refs_of_relay/1`, which is
-  what anything holding a relay id should call.
+  A relay can occupy two state keys: its instance id, which keys the
+  task-journal, and its resolved class, which keys the Cells and input log.
   """
   @spec refs_of_state_key(binary()) :: [Artifact.ref()]
   def refs_of_state_key(state_key) when is_binary(state_key) do
@@ -300,7 +302,7 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Every shippable reference this node holds, as `writer` would ship them — the
-  backstop sweep's input, and the one place "what is shippable" is answered for
+  sweep's input, and the one place "what is shippable" is answered for
   the whole node.
 
   The writer is a parameter because the cspec's identity includes it: two
@@ -320,64 +322,11 @@ defmodule Flezha.State.DurabilityTier do
   end
 
   @doc """
-  Every shippable reference of one relay, across BOTH identities it is
-  stored under — its instance id, which keys the task-journal, and its
-  resolved class, which keys the Cells and input log (for a steps relay the two
-  are one key).
-
-  Anything holding a relay id and wanting its whole durable identity goes
-  through here; `refs_of/1` answers the narrower question about one state key.
-  """
-  @spec refs_of_relay(binary()) :: [Artifact.ref()]
-  def refs_of_relay(relay_id) when is_binary(relay_id) do
-    relay_id
-    |> ClassRegistry.state_keys()
-    |> Enum.flat_map(&refs_of_state_key/1)
-    |> Enum.uniq()
-  end
-
-  @doc """
   A compaction landed: the snapshot is on disk and the WAL below it is gone, so
   the shipped set moves from record bundles to a baseline.
   """
   @spec on_compaction_completed(tuple()) :: :ok
   def on_compaction_completed({_, _, _} = cell_id), do: ship({:cell, cell_id})
-
-  @doc """
-  An effect record just became durable and dispatched. Ships only for a
-  checkpoint-ack class, where an integer `consumed_offset` marks an interval
-  close — the exact cut whose state and source position are consistent. Every
-  other class reaches the tier through compaction, a commit barrier, or the
-  backstop sweep.
-  """
-  @spec on_effect_flushed(tuple(), integer() | nil) :: :ok
-  def on_effect_flushed({relay_class, _, _} = cell_id, consumed_offset)
-      when is_integer(consumed_offset) do
-    if enabled?() and ClassRegistry.ack_checkpoint?(relay_class) do
-      ship({:cell, cell_id})
-
-      # The input log rides the same cut. Shipping the state without it would
-      # leave a hydrated Cell holding a consumed floor and nothing to replay
-      # from — the inputs after the cut would be gone, and the next one would
-      # land below the floor and be skipped as already consumed.
-      ship({:input_log, relay_class})
-    end
-
-    :ok
-  end
-
-  def on_effect_flushed(_cell_id, _consumed_offset), do: :ok
-
-  @doc """
-  A steps instance committed a task or an iteration: its journal suffix, and
-  the input log holding what it has not consumed, are the artifacts that must
-  reach the remote store for the instance to resume elsewhere.
-  """
-  @spec on_steps_commit(binary()) :: :ok
-  def on_steps_commit(relay_id) when is_binary(relay_id) do
-    if enabled?(), do: Enum.each(refs_of_relay(relay_id), &Shipper.enqueue/1)
-    :ok
-  end
 
   @doc "The registry cspec changed — what relays exist, and how they are configured."
   @spec ship_cspec(atom() | binary()) :: :ok
@@ -441,8 +390,12 @@ defmodule Flezha.State.DurabilityTier do
   # `:ok` having never sent the Cell state the guarantee is about. A flow Cell
   # ships its input log first, so the floor its records carry never lands
   # remotely ahead of the inputs above it.
-  defp commit_target(relay_id) when is_binary(relay_id),
-    do: {relay_id, refs_of_relay(relay_id)}
+  defp commit_target(relay_id) when is_binary(relay_id) do
+    refs =
+      relay_id |> ClassRegistry.state_keys() |> Enum.flat_map(&refs_of_state_key/1) |> Enum.uniq()
+
+    {relay_id, refs}
+  end
 
   defp commit_target({:effects_log, relay_class} = ref), do: {relay_class, [ref]}
 

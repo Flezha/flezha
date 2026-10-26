@@ -117,11 +117,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     local_cell = {local_rc, "task", "k1"}
     on_exit(fn -> with {:ok, w} <- Supervisor.lookup(local_cell), do: WalWriter.close(w) end)
 
-    Application.put_env(
-      :flezha,
-      :durability_tier,
-      Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
-    )
+    Stub.set_rpo_target(1)
 
     ref = {:cell, ctx.cell_id}
 
@@ -527,11 +523,7 @@ defmodule Flezha.State.RemoteFlowCommitTest do
   end
 
   test "a gated ship refused as superseded keeps the RPO alarm running", ctx do
-    Application.put_env(
-      :flezha,
-      :durability_tier,
-      Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
-    )
+    Stub.set_rpo_target(1)
 
     # Another controller took the Cell's lineage, and the relay left this one.
     Shipper.release(ctx.rc, :moved)

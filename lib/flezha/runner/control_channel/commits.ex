@@ -303,10 +303,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
       reference_id
     )
 
-    if is_nil(error) do
-      commit.post.()
-      DurabilityTier.on_steps_commit(commit.relay_id)
-    end
+    if is_nil(error), do: commit.post.()
 
     state
   end

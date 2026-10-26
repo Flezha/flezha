@@ -571,11 +571,7 @@ defmodule Flezha.State.WatchdogTest do
 
     DurabilityBackendStub.install()
 
-    Application.put_env(
-      :flezha,
-      :durability_tier,
-      Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
-    )
+    DurabilityBackendStub.set_rpo_target(1)
 
     on_exit(&DurabilityBackendStub.uninstall/0)
 

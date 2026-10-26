@@ -570,7 +570,7 @@ defmodule Flezha.Dlq.Store do
   end
 
   # An emptied set's directory is what keeps it in the durability tier's
-  # backstop sweep, so it goes only once the tier has nothing left to ship for
+  # sweep, so it goes only once the tier has nothing left to ship for
   # it. A restart before the empty set landed would otherwise leave the remote
   # entry naming resolved records, and the relay's next bind would hydrate them.
   defp release_empty(sets) do

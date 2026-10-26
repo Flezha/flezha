@@ -582,7 +582,7 @@ defmodule Flezha.State.Paths do
   @doc """
   Relay classes holding durable state on this node — the on-disk answer to
   "which relays are here at all", shared by the retention sweep, the remote
-  durability tier's backstop, and `all_cells/0`.
+  durability tier's ship sweep, and `all_cells/0`.
 
   The tree is `<root>/<namespace>/<class>/`, so classes are the second level;
   class-level sidecars (`kind`, `input.log`, the declaration files) are regular

@@ -11,7 +11,7 @@ A backend SHALL implement exactly the blob-level contract — `put`, `get`, `lis
 - **THEN** it implements only the five blob operations and the tier's shipping, manifest, and recovery behavior work against it unchanged
 
 ### Requirement: Shipped artifact scope covers the relay's full durable identity
-The tier SHALL ship every durable artifact a relay needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a steps instance's post-start input is the same input log a flow relay on the effectively-once tier ships, and a steps relay's commit SHALL enqueue it for shipping with the journal suffix.
+The tier SHALL ship every durable artifact a relay needs to resurrect elsewhere: its Cell WALs and snapshots, its task-journal, its durable input log, and the registry cspec. There SHALL be no separate inbox artifact: a steps instance's post-start input is the same input log a flow relay on the effectively-once tier ships, and it SHALL ship with the journal suffix: in the same sweep, or in the barrier's ship for a `durable: remote` class.
 
 A relay's artifacts SHALL be located through both of the identities it is stored under, its instance id, which keys the task-journal, and its resolved relay class, which keys the Cells and the input log. Where the two differ, a request naming one SHALL NOT silently return only the artifacts stored under it; in particular a synchronous-durability barrier SHALL NOT report success having shipped neither the Cell state nor the input log, and the per-class synchronous-durability gate SHALL resolve for a caller holding either identity.
 
@@ -19,11 +19,11 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 
 #### Scenario: The log a cut resumes from ships with the cut
 - **WHEN** an effectively-once relay closes a checkpoint interval
-- **THEN** both the Cell's state cut and the input log covering its consumed offset are shipped, so a hydrated Cell has a log to replay from
+- **THEN** the next sweep ships both the Cell's state cut and the input log covering its consumed offset, so a hydrated Cell has a log to replay from
 
 #### Scenario: A steps relay's input ships with its commit
 - **WHEN** a durable steps instance commits an iteration
-- **THEN** its journal suffix and its input log are enqueued for shipping, and a controller hydrating the instance finds the input the instance has not consumed in that log
+- **THEN** the next sweep ships its journal suffix and its input log, and a controller hydrating the instance finds the input the instance has not consumed in that log
 
 #### Scenario: A relay's existence survives with its state
 - **WHEN** a controller boots with an empty state directory against a backend holding shipped artifacts
@@ -41,20 +41,20 @@ The registry cspec SHALL be stored per writing controller rather than under one 
 - **WHEN** two controllers in one namespace each ship their own registry cspec replica
 - **THEN** both are stored without either overwriting the other, and a cold controller hydrates exactly one of them
 
-### Requirement: Shipping triggers reuse existing boundaries plus an RPO backstop
-The tier SHALL ship at existing boundaries — compaction completion, checkpoint-interval close, and steps relay TaskCommit/IterCommit barriers — and SHALL additionally run a periodic backstop sweep every `ship_interval_ms` (default 30 000) that ships unshipped record ranges for cells that reached no other boundary. A steps relay barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the relay's full artifact set; no boundary snapshot is requested at an iteration commit, so a steps relay Cell's snapshot ships when the Watchdog's compaction lands, as a flow relay Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
+### Requirement: Shipping triggers are a periodic sweep plus compaction
+The tier SHALL ship at compaction completion and SHALL run a periodic sweep every `ship_interval_ms` (default 30 000) that ships every reference whose local copy advanced since its last ship: a Cell's record ranges, a steps relay's journal suffix and the input log. For a class that is not `durable: remote`, a checkpoint-interval close and a steps relay TaskCommit/IterCommit barrier SHALL NOT ask for a ship: nothing per input and nothing per commit SHALL reach the shipper, and its remote copy SHALL be at most one sweep period plus one pass over the shipper's queue behind. A `durable: remote` steps relay barrier's ship SHALL cover the Cell records the journal entry names as well as the journal suffix, through the relay's full artifact set, before the barrier is acknowledged; no boundary snapshot is requested at an iteration commit, so a steps relay Cell's snapshot ships when the Watchdog's compaction lands, as a flow relay Cell's does. Shipping SHALL be per-cell and uncoordinated: no cross-cell barrier or alignment.
 
 #### Scenario: Compaction snapshot ships
 - **WHEN** a compaction completes for a cell
 - **THEN** the snapshot and the segments it supersedes are reflected in a new shipped manifest entry for that cell
 
-#### Scenario: A stage barrier ships the records it names
-- **WHEN** a durable steps relay's `task_committed` entry naming a Cell record at seq 5 is acked
-- **THEN** that Cell's range through seq 5 and the journal suffix are enqueued for shipping together
+#### Scenario: A stage barrier's records ship on the next sweep
+- **WHEN** a durable steps relay of a class that is not `durable: remote` acks `task_committed` entries naming a Cell record at seq 5
+- **THEN** the commits send the shipper nothing, and the next sweep ships that Cell's range through seq 5 and the journal suffix
 
-#### Scenario: Quiet cell is bounded by the backstop
-- **WHEN** a cell has unshipped record ranges and hits no compaction, checkpoint, or barrier for `ship_interval_ms`
-- **THEN** the backstop sweep ships those ranges within one sweep period
+#### Scenario: An advanced cell is bounded by the sweep
+- **WHEN** a cell has unshipped record ranges and hits no compaction for `ship_interval_ms`
+- **THEN** the sweep ships those ranges within one sweep period
 
 ### Requirement: Manifest-last atomicity with epoch supersession
 For every ship, artifact blobs SHALL be uploaded before the per-cell manifest entry, and the manifest entry SHALL be written last via a conditional write. Manifest entries SHALL be epoch-stamped: an entry at a higher epoch supersedes overlapping seq ranges from lower epochs, and recovery SHALL follow the highest-epoch consistent chain. Recovery SHALL read only the manifest; blobs not referenced by a live manifest chain SHALL be invisible to recovery and eligible for garbage collection, and GC SHALL never delete a manifest-referenced artifact.
@@ -145,7 +145,7 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 
 #### Scenario: A controller that lost a relay cannot take its lineage back
 - **WHEN** a relay migrates to another controller, which adopts it and ships, while the source controller still holds every local file
-- **THEN** the source controller's backstop sweep does not reclaim the lineage, and the manifest continues to name the adopting controller
+- **THEN** the source controller's sweep does not reclaim the lineage, and the manifest continues to name the adopting controller
 
 #### Scenario: A relay stopped on a controller ships its last turns first
 - **WHEN** a relay is stopped on the controller it moved to before that controller's claim on a reference landed
@@ -153,7 +153,7 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 
 #### Scenario: A controller the relay left cannot claim a reference it never shipped
 - **WHEN** a relay leaves a controller that ran it, which holds a reference it never shipped, and the controller the relay moved to ships that reference
-- **THEN** the left controller's backstop sweep does not claim the reference, and the manifest continues to name the controller the relay moved to
+- **THEN** the left controller's sweep does not claim the reference, and the manifest continues to name the controller the relay moved to
 
 #### Scenario: A controller the relay moves back to ships again
 - **WHEN** a relay moves back to a controller that shipped its lineage before the relay moved away, and the other controller has since claimed it
@@ -168,7 +168,7 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 - **THEN** it stops shipping that reference and reports no RPO breach for it, so a migration does not latch a permanent alarm
 
 #### Scenario: A controller a relay is moving from does not bid during the move
-- **WHEN** a relay's handover has been prepared on the controller it leaves, the controller it moves to has claimed a reference, and the leaving controller's backstop sweep reaches a reference it never shipped before its process ends
+- **WHEN** a relay's handover has been prepared on the controller it leaves, the controller it moves to has claimed a reference, and the leaving controller's sweep reaches a reference it never shipped before its process ends
 - **THEN** the leaving controller SHALL NOT bid for it, and the manifest SHALL keep naming the controller the relay moves to
 
 #### Scenario: A controller whose lineage was continued cannot claim it back
@@ -182,7 +182,7 @@ Taking over a reference's lineage SHALL require that the relay runs on the contr
 - **THEN** the left controller's sweep SHALL NOT extend the entry with those turns, and the controller the relay moved to SHALL claim it from the cut the entry held
 
 ### Requirement: RPO breach is loud
-The tier SHALL track per-cell time since last successful ship against the RPO target and SHALL emit an alarm-grade telemetry event when breached, surfaced in `flz controller status` and `/healthz`. A shipping stall SHALL never be observable only by inspecting the backend.
+The tier SHALL track per-cell time since last successful ship against the RPO target and SHALL emit an alarm-grade telemetry event when breached, surfaced in `flz controller status` and `/healthz`. A cell's lag SHALL count from the sweep that first found it owed and SHALL be readable without asking the shipper, so a busy shipper cannot hide it. A shipping stall SHALL never be observable only by inspecting the backend.
 
 #### Scenario: Stalled shipper alarms
 - **WHEN** shipping for a cell fails past the RPO target while local writes continue

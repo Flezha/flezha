@@ -101,7 +101,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @spec gc() :: {:ok, non_neg_integer()} | {:error, term()}
   def gc(), do: call(:gc)
 
-  @doc "Run one backstop sweep synchronously. Used by tests."
+  @doc "Run one sweep synchronously. Used by tests."
   @spec sweep_now() :: :ok | {:error, term()}
   def sweep_now(), do: call(:sweep_now)
 
@@ -238,8 +238,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   end
 
   # Sweep AND drain, so the caller has a real barrier: the queue is empty when
-  # this returns. The async `:drain` messages the sweep queued then find nothing
-  # to do.
+  # this returns, and the `:drain` already sent finds nothing to do.
   def handle_call(:sweep_now, _from, state) do
     {:reply, :ok, state |> sweep() |> drain_all()}
   end
@@ -247,8 +246,12 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   @impl true
   def handle_info(:drain, state) do
     case drain_one(state) do
-      :empty -> {:noreply, state}
-      {:ok, state} -> {:noreply, drain_soon(state)}
+      :empty ->
+        {:noreply, state}
+
+      {:ok, state} ->
+        unless :queue.is_empty(state.queue), do: send(self(), :drain)
+        {:noreply, state}
     end
   end
 
@@ -269,7 +272,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # ---------- queue ----------
 
   # The retry deadline is consulted here, not only by the retry timer: the
-  # backstop sweep re-offers every unshipped reference, so without this it would
+  # sweep re-offers every unshipped reference, so without this it would
   # jump the backoff ladder and hammer a failing backend once per sweep.
   defp push(state, ref) do
     status = status_of(ref)
@@ -278,22 +281,15 @@ defmodule Flezha.State.DurabilityTier.Shipper do
       state
     else
       mark_pending(ref)
-
-      drain_soon(%{
-        state
-        | queue: :queue.in(ref, state.queue),
-          queued: MapSet.put(state.queued, ref)
-      })
+      # One `:drain` is in flight while the queue holds anything: a push into an
+      # empty queue sends it, and each drained ship sends the next.
+      if :queue.is_empty(state.queue), do: send(self(), :drain)
+      %{state | queue: :queue.in(ref, state.queue), queued: MapSet.put(state.queued, ref)}
     end
   end
 
   defp cooling_off?(%{retry_after_ms: nil}), do: false
   defp cooling_off?(%{retry_after_ms: at}), do: System.monotonic_time(:millisecond) < at
-
-  defp drain_soon(state) do
-    unless :queue.is_empty(state.queue), do: send(self(), :drain)
-    state
-  end
 
   defp drain_one(state) do
     case :queue.out(state.queue) do
@@ -314,11 +310,10 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  # The backstop: every reference with local durable state, so a cell that
-  # reaches no compaction, checkpoint or commit boundary is still bounded by one
-  # sweep period. The whole-payload artifacts — the cspec, the parked failures,
-  # the control-plane stores — ride the same sweep: they change rarely, and a
-  # re-ship whose content is unchanged costs one hash.
+  # Every reference with local durable state, once a period: what ships a
+  # `durable: local` Cell's, journal's and input log's progress, and what marks
+  # it owed for the RPO alarm. An unchanged cut writes nothing (`commit_cut/6`),
+  # and an unchanged whole payload costs one hash.
   defp sweep(state),
     do: Enum.reduce(DurabilityTier.all_refs(state.writer), state, &push(&2, &1))
 
@@ -475,7 +470,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   end
 
   # The manifest write is skipped when the cut is unchanged: a quiet cell
-  # reached by every backstop sweep must not rewrite its entry forever, and a
+  # reached by every sweep must not rewrite its entry forever, and a
   # skipped write is still fully caught up.
   defp commit_cut(state, ref, previous, shipped, records, local_top) do
     caught_up? = Manifest.shipped_through(shipped) >= local_top

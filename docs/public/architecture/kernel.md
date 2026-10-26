@@ -324,11 +324,12 @@ flowchart LR
     M -.->|"recovery reads the manifest, then the normal restore"| local
 ```
 
-- **Ship points.** A compaction produces a snapshot to ship; a checkpoint closes a flow
-  interval; `TaskCommit` and `IterCommit` close a steps stage and iteration. A timer
-  (`ship_interval_ms`, 30 s by default) covers cells that reach none of them. Each cell's
-  effect record already binds its state to its offset, so each cell's shipped copy is
-  consistent on its own.
+- **Ship points.** A sweep every `ship_interval_ms` (30 s by default) ships each cell, journal
+  and input log that changed since its last ship; a compaction's snapshot, a parked dead
+  letter and a registry change ship at once; a `durable: remote` class ships each commit
+  point before it is acknowledged. A checkpoint or a `TaskCommit`/`IterCommit` of any other
+  class asks for no ship. Each cell's effect record already binds its state to its offset,
+  so each cell's shipped copy is consistent on its own.
 - **Manifest last.** Files go up first, under content-addressed names; the manifest entry naming
   them is written last. A torn upload leaves files recovery never reads, and a periodic sweep
   removes them. Recovery reads the manifest and then runs the ordinary restore; there is no

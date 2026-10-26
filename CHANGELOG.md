@@ -39,6 +39,14 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- With a durability backend, a busy controller's remote copy no longer falls
+  minutes behind while `/healthz` reports no lag. Every workflow step and
+  checkpoint asked for a ship of each file its relay held, and under load
+  those requests queued faster than they shipped, holding the periodic ship
+  and the RPO alarm behind them. A `durable: local` relay's changes now ship
+  on the periodic ship alone (`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, 30 s), so
+  its copy is about one interval behind, and a copy behind past the RPO target
+  shows on `/healthz` and `flz controller status`.
 - A `flz` verb called over Erlang distribution from another node writes its
   refusal to that node's stderr, beside its answer. It went to the
   controller's log, so the caller saw only the exit code.

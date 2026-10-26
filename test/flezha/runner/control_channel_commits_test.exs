@@ -22,7 +22,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   alias Flezha.Runner.{ControlChannel, ControlUnit}
   alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.State.Wire
-  alias Flezha.State.DurabilityTier.Manifest
+  alias Flezha.State.DurabilityTier.{Manifest, Shipper}
   alias Flezha.State.{InputLog, Paths, TaskJournal, TestHelpers}
   alias Flezha.State.InputLog.Sweep
   alias Flezha.State.WalWriter
@@ -312,7 +312,7 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   describe "synchronous remote durability" do
     setup do
       Stub.install()
-      {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
+      {:ok, _pid} = start_supervised(Shipper)
       :ok
     end
 
@@ -377,6 +377,34 @@ defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
 
       assert {:task_commit_response, %RunnerCommands.TaskCommitResponse{error: nil}} =
                decode_reply(reply).command
+    end
+
+    # Each commit used to list the relay's references and cast one ship request
+    # per reference, so a busy relay flooded the shipper's mailbox and its sweep
+    # and RPO marks waited behind the flood.
+    test "a local class's commits send the shipper nothing: its sweep ships them" do
+      inst = claimed("opc_local_#{System.unique_integer([:positive])}")
+      for k <- 1..3, do: TestHelpers.write_wal({inst, "TaskA", "s#{k}"}, 0..1)
+      {control_channel, stream_ref} = start_control_channel("local")
+      shipper = Process.whereis(Shipper)
+      :ok = :sys.suspend(shipper)
+      seg = Wire.encode_cell_id(inst, "TaskA", "s0")
+
+      for idx <- 0..4 do
+        payload = build_task_commit_payload(inst, idx, [seg], [], "ref-local-#{idx}")
+        send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+        assert_receive {:test_writer_called, ^stream_ref, _reply}, 2_000
+      end
+
+      settle(control_channel, [journal(inst)])
+      {:messages, queued} = Process.info(shipper, :messages)
+      assert Enum.filter(queued, &match?({:"$gen_cast", {:enqueue, _}}, &1)) == []
+
+      :ok = :sys.resume(shipper)
+      assert :ok = Shipper.sweep_now()
+
+      assert {:ok, _blob} =
+               Stub.get(Manifest.key({:cell, {inst, inst, Paths.journal_cell_key()}}), [])
     end
   end
 

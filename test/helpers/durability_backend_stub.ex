@@ -126,6 +126,12 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   @doc "Every subsequent operation fails with `{:error, :backend_down}` until re-enabled."
   def set_down(down?), do: control(:down, down?)
 
+  @doc "Make the RPO target `ms`, so a case reaches a breach without waiting for the real one."
+  def set_rpo_target(ms) do
+    env = Application.get_env(:flezha, :durability_tier)
+    Application.put_env(:flezha, :durability_tier, Keyword.put(env, :rpo_target_ms, ms))
+  end
+
   @doc """
   Refuse the next manifest write. Models the one crash window the manifest-last
   ordering exists for: blobs are up, the entry naming them is not.

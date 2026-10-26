@@ -263,27 +263,44 @@ defmodule Flezha.State.DurabilityTierTest do
       TestHelpers.close_input_log(ctx.class)
     end
 
-    test "a steps relay's commit ships its input log beside its journal", ctx do
+    test "the sweep ships a steps relay's input log beside its journal", ctx do
       # A steps keys its journal, Cells and input log by its instance id, so
-      # the commit's refs name all three under the one key.
+      # the sweep finds all three under the one key.
       instance = ctx.class
       journal = Paths.journal_id(instance)
       TestHelpers.write_wal(journal, 0..1)
       File.write!(Paths.input_log_path(instance), TestHelpers.wal_records(0..2))
 
       assert {:cell, journal} in DurabilityTier.refs_of_state_key(instance)
-      assert :ok = DurabilityTier.on_steps_commit(instance)
+      assert :ok = Shipper.sweep_now()
 
-      assert NodeTestHelper.wait_until(
-               fn ->
-                 keys = Stub.keys()
+      keys = Stub.keys()
+      assert Manifest.key({:input_log, instance}) in keys
+      assert Manifest.key({:cell, journal}) in keys
+    end
 
-                 Manifest.key({:input_log, instance}) in keys and
-                   Manifest.key({:cell, journal}) in keys
-               end,
-               2_000
-             ),
-             "the commit enqueued its journal and its input log"
+    # The sweep is the only ship trigger a `durable: local` Cell has, so it must
+    # not queue one `:drain` per reference: a mailbox that long kept the next
+    # sweep and every RPO mark waiting behind it.
+    test "a sweep keeps one drain queued, not one per owed reference", ctx do
+      others = for k <- 2..5, do: {ctx.class, "task", "k#{k}"}
+      Enum.each(others, &TestHelpers.write_wal(&1, 0..4))
+      :ok = Shipper.sweep_now()
+      Enum.each([ctx.cell_id | others], &TestHelpers.append_wal(&1, 5..6))
+      Stub.hold_manifests(self())
+      shipper = Process.whereis(Shipper)
+
+      send(shipper, :sweep_tick)
+      assert_receive {:manifest_held, _key, ^shipper}, 2_000
+      {:messages, queued} = Process.info(shipper, :messages)
+      assert Enum.count(queued, &(&1 == :drain)) == 0
+
+      Stub.hold_manifests(nil)
+      Stub.release_manifest(shipper)
+      assert :ok = Shipper.sweep_now()
+
+      for cell <- [ctx.cell_id | others],
+          do: assert(Manifest.shipped_through(Stub.stored_manifest({:cell, cell})) == 6)
     end
 
     test "a hydrated task-journal seeds its instance's floor in the input log", ctx do
@@ -573,11 +590,7 @@ defmodule Flezha.State.DurabilityTierTest do
     test "losing a claim does not leave a permanent RPO breach behind", ctx do
       ref = {:cell, ctx.cell_id}
 
-      Application.put_env(
-        :flezha,
-        :durability_tier,
-        Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
-      )
+      Stub.set_rpo_target(1)
 
       # Unshipped local progress, so the reference is genuinely pending...
       TestHelpers.append_wal(ctx.cell_id, 4..5)
@@ -641,11 +654,7 @@ defmodule Flezha.State.DurabilityTierTest do
     test "an RPO breach is reported once the target is exceeded", ctx do
       ref = {:cell, ctx.cell_id}
 
-      Application.put_env(
-        :flezha,
-        :durability_tier,
-        Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
-      )
+      Stub.set_rpo_target(1)
 
       TestHelpers.append_wal(ctx.cell_id, 4..5)
       Stub.set_down(true)
@@ -664,6 +673,27 @@ defmodule Flezha.State.DurabilityTierTest do
       Stub.set_down(false)
       assert :ok = Shipper.ship_now(ref)
       assert DurabilityTier.breaches() == []
+    end
+
+    # No commit asks for a ship any more, so the sweep is what must find the
+    # lag: the Cell that advanced breaches, the one that did not stays quiet.
+    test "the sweep alone reports a Cell it could not ship past the target", ctx do
+      ref = {:cell, ctx.cell_id}
+      quiet = {ctx.class, "task", "k2"}
+      TestHelpers.write_wal(quiet, 0..1)
+      :ok = Shipper.sweep_now()
+
+      Stub.set_rpo_target(1)
+
+      TestHelpers.append_wal(ctx.cell_id, 4..5)
+      Stub.set_down(true)
+      assert :ok = Shipper.sweep_now()
+      await_next_millisecond()
+
+      breached = Map.new(DurabilityTier.breaches(), &{&1.ref, &1.lag_ms})
+      assert breached[ref] >= 1
+      refute Map.has_key?(breached, {:cell, quiet})
+      assert %{pending_since_ms: nil} = status_of({:cell, quiet})
     end
   end
 

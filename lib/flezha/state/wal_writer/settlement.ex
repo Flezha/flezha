@@ -24,7 +24,7 @@ defmodule Flezha.State.WalWriter.Settlement do
   alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.Lookup
   alias Flezha.State.Wire
-  alias Flezha.State.{DurabilityTier, InputLog, Lineage, Outbox, Paths}
+  alias Flezha.State.{InputLog, Lineage, Outbox, Paths}
   alias Flezha.Process.Timer
   alias Flezha.State.WalWriter.State
 
@@ -243,14 +243,6 @@ defmodule Flezha.State.WalWriter.Settlement do
           attempts: dlq.attempts
         })
     end
-
-    # An integer offset on a checkpoint-ack class means an interval just closed:
-    # state and source position are consistent at exactly this cut, which is the
-    # cut the remote durability tier wants. Every other class reaches the tier
-    # through compaction, a commit barrier, or the backstop sweep; a Cell behind
-    # the remote gate shipped this cut before it was dispatched.
-    if is_nil(state.remote),
-      do: DurabilityTier.on_effect_flushed(state.cell_id, entry.consumed_offset)
   end
 
   @doc """

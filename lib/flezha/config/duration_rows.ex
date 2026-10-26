@@ -286,7 +286,7 @@ defmodule Flezha.Config.DurationRows do
     {:durability_rpo_target_ms, :ms, 120_000,
      key: {:durability_tier, :rpo_target_ms}, env: "FLEZHA_DURABILITY_RPO_TARGET_MS", min: 1},
     {:durability_ship_call_ms, :ms, nil, derived: {:headroom, :sdk_commit_ack_ms, -5_000}},
-    # The backstop sweep: how stale a quiet cell's remote copy may get.
+    # The ship sweep: how stale a `durable: local` reference's remote copy may get.
     {:durability_ship_interval_ms, :ms, 30_000,
      key: {:durability_tier, :ship_interval_ms}, env: "FLEZHA_DURABILITY_SHIP_INTERVAL_MS", min: 1},
     # The first wait before a failed ship is tried again; it doubles from here.
