@@ -123,6 +123,9 @@ defmodule Flezha.Config.DurationRows do
     {:hub_declared_mutate_ms, :ms, 5_000, []},
     {:hub_declared_mutate_rpc_ms, :ms, nil, derived: {:headroom, :hub_declared_mutate_ms, 500}},
     {:hub_start_child_ms, :ms, 15_000, key: true},
+    # How long a relay stop that finds no row in this node's copy of the hub
+    # waits for the other members to say where the relay runs.
+    {:hub_peer_lookup_ms, :ms, 2_000, []},
     {:migrate_timeout_ms, :ms, 2_000, key: true},
     {:migration_consent_timeout_ms, :ms, 5_000,
      key: {:migration_consent, :consent_timeout_ms}, env: "FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS"},

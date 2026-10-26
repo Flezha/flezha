@@ -9,6 +9,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Config.Backoff
+  alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Process.Hub
   alias Flezha.Runner.ControlUnit
@@ -325,8 +326,27 @@ defmodule Flezha.Service.RelayManager.Teardown do
   defp stop_pid(namespace, relay_id, _cause, overwatch) do
     case RelayManager.get_relay_pid(namespace, relay_id) do
       {:error, {:relay_not_found, _, _}} when is_pid(overwatch) -> {:ok, overwatch}
+      {:error, {:relay_not_found, _, _}} = missing -> peer_pid(namespace, relay_id, missing)
       found_or_error -> found_or_error
     end
+  end
+
+  # A start answers once the relay's own node registered it, before this
+  # node's copy of the hub has the row: the other members are asked in one
+  # bounded call, and only a miss on all of them is final.
+  defp peer_pid(namespace, relay_id, missing) do
+    namespace
+    |> HubManager.get_hub_nodes()
+    |> :erpc.multicall(
+      HubManager,
+      :get_pid,
+      [namespace, relay_id],
+      Durations.get(:hub_peer_lookup_ms)
+    )
+    |> Enum.find_value(missing, fn
+      {:ok, {:ok, pid}} -> {:ok, pid}
+      _miss -> nil
+    end)
   end
 
   defp stop_facts(_namespace, _relay_id, nil, _cause), do: {nil, 0}

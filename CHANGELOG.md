@@ -55,6 +55,11 @@ v0.1.0-alpha.1 pre-release.
   restarts for any other reason rebuilds the table from the runners connected
   now and from its peers. A start that lands before the table is back answers
   `relay.factory_unserved`, which may be retried.
+- A relay stopped from another controller right after its start answered is
+  stopped, instead of the stop answering `relay_not_found` while the relay
+  kept running. The start answers once the relay's own controller registered
+  it, before the others have heard of it; a controller that does not know the
+  relay now asks the others before it answers not found.
 - A `flz` verb called over Erlang distribution from another node writes its
   refusal to that node's stderr, beside its answer. It went to the
   controller's log, so the caller saw only the exit code.

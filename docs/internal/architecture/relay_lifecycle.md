@@ -138,6 +138,10 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 The cause picks the rows (`acts?/2`): `:stop` and `:complete` run all six, `:rescale` all but
 `:announce`, `:failed_start` only `:hub_stop`.
 
+The walk starts from the relay's pid in this node's copy of the hub. A start answers before every
+copy has the row, so a miss there asks the other members in one call bounded by
+`:hub_peer_lookup_ms`, and the stop answers `relay_not_found` only when none of them has it.
+
 ### `:namespace`, run by `FleetManager`'s `{:stop_namespace, _}`
 
 | Order | Row | Module | Does |

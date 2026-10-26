@@ -187,6 +187,45 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     refute File.dir?(Paths.class_dir(task_id))
   end
 
+  # A start answers once the relay's own node registered it, before this node's
+  # copy of the hub has the row. The other members are stood in for by this
+  # node: a lookup from the test process is this node's miss, a lookup from the
+  # remote-call process is the member that holds the row.
+  test "a stop whose row has not reached this node stops the relay a member holds" do
+    test_pid = self()
+    task_id = unique_id()
+    {:ok, stub} = start_stub(%{builder: %{run: :flow}})
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
+
+    HubManager
+    |> stub(:get_pid, fn @namespace, ^task_id ->
+      if self() == test_pid,
+        do: {:error, {:relay_not_found, @namespace, task_id}},
+        else: {:ok, stub}
+    end)
+    |> stub(:get_hub_nodes, fn @namespace -> [node()] end)
+
+    Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+    stub_hub_stop(test_pid, task_id)
+
+    assert :ok = RelayManager.stop_relay(@namespace, task_id)
+    assert_received {:cause, :stop}
+    assert_receive {:hub_stop, ^task_id}, 500
+  end
+
+  test "a stop no member finds the relay for answers relay_not_found" do
+    task_id = unique_id()
+
+    HubManager
+    |> stub(:get_pid, fn @namespace, ^task_id ->
+      {:error, {:relay_not_found, @namespace, task_id}}
+    end)
+    |> stub(:get_hub_nodes, fn @namespace -> [node()] end)
+
+    assert {:error, {:relay_not_found, @namespace, ^task_id}} =
+             RelayManager.stop_relay(@namespace, task_id)
+  end
+
   # A wedged Overwatch still has a runner and Cells on its registry row; the hard
   # stop must flush that runner and give back the Cells its start allocated.
   test "a stop whose Overwatch times out takes its runner and Cells from the row" do
