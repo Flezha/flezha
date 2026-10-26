@@ -17,7 +17,7 @@ defmodule Flezha.Runner.FleetManager.Announce do
   Desired-state diff, not refcounts: a group stays published while ANY runner on
   this node still backs it. A crashed fleet manager's `:pg` memberships are
   cleaned by that scope's monitors, and a hub's group table dies with the hub,
-  which is why `forget/2` exists.
+  which is why `redeclare/2` exists.
 
   The two group channels answer deliberately different questions. The directory
   advertises what a runner here ADVERTISES, so a routed start reaches this node
@@ -72,11 +72,17 @@ defmodule Flezha.Runner.FleetManager.Announce do
   end
 
   @doc """
-  Forget what this node declared to `namespace`'s hub, so the next sync declares
-  it again. A hub's group table dies with the hub.
+  Declare to `namespace`'s hub, from scratch, what this node can place: its
+  group table died with the hub, or with its coordinator alone. The hub is then
+  told the declaration is on its way, which ends a restarted coordinator's wait
+  for it.
   """
-  @spec forget(map(), String.t()) :: map()
-  def forget(state, namespace), do: put_announced(state, namespace, MapSet.new())
+  @spec redeclare(map(), String.t()) :: map()
+  def redeclare(state, namespace) do
+    state = state |> put_announced(namespace, MapSet.new()) |> sync()
+    _ = GroupedHashing.restart_declared(Identificator.hub(namespace))
+    state
+  end
 
   # Every fleet mutation ends here, so the per-namespace `:runners` quota
   # counter is DERIVED from the live session map rather than incremented and

@@ -478,10 +478,15 @@ defmodule Flezha.Service.RelayManager.Init do
   end
 
   # A failure the runner already answered with its own error is that error, as
-  # is a hub without quorum; anything else is the cause the start stopped at,
-  # kept for the details.
+  # is a hub without quorum or with no controller serving the factory yet; both
+  # pass, so a caller may retry. Anything else is the cause the start stopped
+  # at, kept for the details.
   defp start_failure(_relay_id, %Flezha.Error{} = error), do: error
   defp start_failure(_relay_id, :no_quorum), do: :no_quorum
+
+  defp start_failure(relay_id, {:no_group_members, factories}),
+    do: {:no_group_members, relay_id, factories}
+
   defp start_failure(relay_id, reason), do: {:start_failed, relay_id, reason}
 
   # The registry refused the id: a live instance already holds it. Taking the

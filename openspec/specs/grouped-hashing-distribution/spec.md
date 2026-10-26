@@ -57,6 +57,12 @@ A node joining the hub SHALL be sent the served set of every node already in it.
 that leaves the hub, and a node whose hub stops while the node keeps running, SHALL be
 removed from every group on every remaining node.
 
+A node whose hub coordinator is restarted inside a running hub SHALL start from an empty
+table and never from a saved one, and the controller SHALL declare the factories its
+connected runners can run again. Once that declaration is made, or after at most five
+seconds, the node SHALL send its row to every peer; each peer SHALL replace the row it held
+for that node with it and SHALL send the node its own row.
+
 `distribution_signature/2` SHALL differ between two nodes whose group tables differ.
 
 #### Scenario: Serving a group moves its children to the new node with their state
@@ -80,6 +86,15 @@ removed from every group on every remaining node.
 - **THEN** `a`'s table lists `a` alone for `"echo"`
 - **AND** every `"echo"` child runs on `a`
 
+#### Scenario: A restarted coordinator rebuilds the table
+
+- **GIVEN** `a` serves `"local"` and `b` serves `"report"`
+- **WHEN** the coordinator of `b`'s hub is killed and its hub restarts it
+- **THEN** `a`'s table lists no node for `"report"`
+- **AND** `b`'s table lists `a` for `"local"`
+- **WHEN** `b` serves `"report"` again
+- **THEN** a `"report"` child started from `a` runs on `b`
+
 #### Scenario: A joining node learns the table
 
 - **GIVEN** `b` serves `"report"`
@@ -96,6 +111,8 @@ grouped child, through the hub's migration strategy.
 
 A start naming a group with no serving node SHALL be refused with
 `{:error, {:no_group_members, groups}}` and SHALL start none of the request's children.
+The controller SHALL answer such a relay start with `relay.factory_unserved`, of class
+`unavailable`, so the caller may retry.
 A declared child in that position SHALL remain declared. A node that starts serving a
 group SHALL ask its hub for a reconcile round, which waits for neither
 `reconcile_interval_ms` nor the sync tick, and that round SHALL start the child.

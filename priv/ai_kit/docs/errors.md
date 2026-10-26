@@ -500,6 +500,7 @@ SDK raises or returns its one error type carrying them.
 | `relay.factory_run_undeclared` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is served only by runners that announce no run for it, or a run that is neither flow nor steps, and such a runner is never placed on |  |
 | `relay.factory_run_unserved` | unavailable | 7 | factory '{factory}' in namespace '{namespace}' is established as {run}, and every runner serving it announces the other run |  |
 | `relay.factory_unknown` | not_found | 5 | no runner in namespace '{namespace}' serves factory '{factory}' | `flz runner list --namespace {namespace}` |
+| `relay.factory_unserved` | unavailable | 7 | relay '{relay}' was not started: no controller serves factory {factories} yet; try again once a runner of it is connected |  |
 | `relay.first_message_not_text` | invalid | 2 | a first message and its channel must be text |  |
 | `relay.group_base_taken` | conflict | 6 | '{relay}' names a partition group of {members} live members; start it with --partitions {partitions} to converge it, or stop the group first |  |
 | `relay.group_id_too_long` | invalid | 2 | group id '{relay}' is too long for {partitions} partitions: the member suffix leaves at most {max} bytes for it |  |

@@ -166,6 +166,10 @@ defmodule Flezha.Config.DurationRows do
      key: true, env: "FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS"},
     {:process_hub_reconcile_interval_ms, :ms, 30_000,
      key: true, env: "FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS"},
+    # How long a restarted hub coordinator waits for its owner's declaration
+    # before it sends peers whatever row it holds, so a lost declaration delays
+    # the rebuild rather than stopping it.
+    {:process_hub_restart_declare_ms, :ms, 5_000, []},
     {:route_call_timeout_ms, :ms, 30_000, []},
     {:stream_bind_wait_ms, :ms, 30_000, key: true},
 

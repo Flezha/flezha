@@ -991,6 +991,14 @@
         {"tag": "factory_language_unserved", "args": ["namespace", "factory", "language"]}
       ]
     },
+    "relay.factory_unserved": {
+      "class": "unavailable",
+      "message": "relay '{relay}' was not started: no controller serves factory {factories} yet; try again once a runner of it is connected",
+      "details": ["relay", "factories"],
+      "reasons": [
+        {"tag": "no_group_members", "args": ["relay", "factories"]}
+      ]
+    },
     "relay.factory_mismatch": {
       "class": "conflict",
       "message": "'{relay}' in namespace '{namespace}' is a relay of factory '{actual}', not of '{factory}', so a call to factory '{factory}' cannot reach it",

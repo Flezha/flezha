@@ -116,6 +116,9 @@ defmodule Flezha.Process.SeamTest do
       # holds the cancel the table's teardown calls over that same table
       "lib/flezha/plugin/extension/table/subscription.ex",
       "lib/flezha/plugin/extension/table/health.ex",
+      # a send-later into the ProcessHub coordinator a hook runs in: the hub's
+      # process and its own callback message, never cancelled, nothing kept
+      "lib/flezha/cluster/grouped_hashing.ex",
       # a per-batch dispatch timer held in the batch, a per-caller block timer
       # whose message names the caller, and the linger timer read per record
       "plugins/flezha_kafka_plugin/lib/flezha_kafka/producer_worker/window.ex",

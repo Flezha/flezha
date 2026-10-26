@@ -268,6 +268,33 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
            "the declared child waited for a later round after its group gained a member"
   end
 
+  # Fails when: a peer keeps the restarted node's old row, or the restarted
+  # node never hears the rows of the peers that kept running.
+  test "a restarted coordinator starts empty, its old row is replaced and the peers' rows come back",
+       %{hub_id: hub_id, peer: peer} do
+    :ok = Helper.serve(hub_id, ["local"])
+    :ok = on(peer, :serve, [hub_id, ["report"]])
+    assert wait(fn -> Helper.group_nodes(hub_id, "report") == [peer] end)
+    assert wait(fn -> on(peer, :group_nodes, [hub_id, "local"]) == [node()] end)
+
+    # Killed, so no leave reaches this node: only the restart can clear the row.
+    old = :erpc.call(peer, Process, :whereis, [hub_id])
+    true = :erpc.call(peer, Process, :exit, [old, :kill])
+
+    assert wait(fn -> :erpc.call(peer, Process, :whereis, [hub_id]) not in [nil, old] end)
+    # Answers once the new coordinator's post-init setup ran: its table was
+    # written empty and the restart hook has fired.
+    _ = :erpc.call(peer, :sys, :get_state, [hub_id])
+
+    assert wait(fn -> Helper.group_nodes(hub_id, "report") == [] end)
+    assert wait(fn -> on(peer, :group_nodes, [hub_id, "local"]) == [node()] end)
+
+    # Nothing re-declares on a bare hub; the owner does, and starts place again.
+    :ok = on(peer, :serve, [hub_id, ["report"]])
+    assert wait(fn -> Helper.group_nodes(hub_id, "report") == [peer] end)
+    assert Helper.start_child(hub_id, "after_restart", "report", :kept) == {:ok, peer}
+  end
+
   defp on(peer, fun, args), do: :erpc.call(peer, Helper, fun, args, 60_000)
 
   defp wait(predicate), do: NodeTestHelper.wait_until(predicate, 60_000)

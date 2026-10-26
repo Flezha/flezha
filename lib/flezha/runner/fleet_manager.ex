@@ -330,8 +330,9 @@ defmodule Flezha.Runner.FleetManager do
 
   @doc """
   Declare again, to `namespace`'s freshly started hub, which of its factories
-  this node's fleet can run. A hub's group table dies with the hub, so a
-  restarted one holds nothing this controller declared before it.
+  this node's fleet can run. A hub's group table dies with the hub, and with
+  its coordinator when that alone restarts, so either holds nothing this
+  controller declared before.
   """
   @spec hub_started(String.t()) :: :ok
   def hub_started(namespace), do: GenServer.cast(__MODULE__, {:hub_started, namespace})
@@ -677,7 +678,7 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_cast({:hub_started, namespace}, state) do
-    {:noreply, state |> Announce.forget(namespace) |> Announce.sync()}
+    {:noreply, Announce.redeclare(state, namespace)}
   end
 
   def handle_cast({:reclaim_vacant_hub, namespace}, state),

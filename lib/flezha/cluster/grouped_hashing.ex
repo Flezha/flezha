@@ -21,6 +21,11 @@ defmodule Flezha.Cluster.GroupedHashing do
       that node. A change sends the owner's WHOLE set to every peer hub, so an
       announcement is idempotent and a later one repairs a lost earlier one. A
       joining node is sent every node's row; a leaving node's row is dropped.
+      A node whose coordinator restarted starts from an empty table, never a
+      saved one. Its owner declares its set again, and only then does the node
+      send that row to every peer, which replaces the old one and answers with
+      its own, so the node never re-checks its children against a table that
+      lacks its own row.
       `distribution_signature/2` covers the table, so two nodes that disagree
       take the full validation path rather than the start fast path.
     * **One ring per member set.** Groups served by the same nodes share a ring,
@@ -43,6 +48,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   exists.
   """
 
+  alias Flezha.Config.Durations
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.HookManager
@@ -63,6 +69,11 @@ defmodule Flezha.Cluster.GroupedHashing do
   @node_groups :grouped_hashing_node_groups
   @group_nodes :grouped_hashing_group_nodes
   @ring_sets :grouped_hashing_ring_sets
+  @restart_pending :grouped_hashing_restart_pending
+  @recheck_pending :grouped_hashing_recheck_pending
+  # A burst of table changes (every peer answering a restart or a join) is
+  # given this long to land, then gets one redistribution pass.
+  @recheck_window_ms 250
 
   # Long enough to cover a start request's whole round trip, short enough that a
   # child whose start never registered a row does not keep an entry for the life
@@ -117,16 +128,18 @@ defmodule Flezha.Cluster.GroupedHashing do
   # answers `nil` here and refuses the declaration.
   defp misc(hub_id), do: :persistent_term.get({__MODULE__, hub_id}, nil)
 
-  defp change(hub_id, add, remove) do
+  defp change(hub_id, add, remove), do: in_coordinator(hub_id, :apply_local_change, [add, remove])
+
+  # A cast, so a caller never waits on the coordinator. A hub that dies before
+  # it lands takes its whole table with it, and the caller re-declares from
+  # scratch when the hub starts again.
+  defp in_coordinator(hub_id, fun, args) do
     case misc(hub_id) do
       nil ->
         {:error, :not_grouped_hashing}
 
       _misc ->
-        # A cast, so a declaration never waits on the coordinator. A hub that
-        # dies before it lands takes its whole table with it, and the caller
-        # re-declares from scratch when the hub starts again.
-        GenServer.cast(hub_id, {:exec_cast, {__MODULE__, :apply_local_change, [add, remove]}})
+        GenServer.cast(hub_id, {:exec_cast, {__MODULE__, fun, args}})
         :ok
     end
   end
@@ -139,13 +152,13 @@ defmodule Flezha.Cluster.GroupedHashing do
   # Reached through the coordinator's `exec_cast`, which serializes every write
   # to this node's row and makes "read the current set, then change it" safe.
   def apply_local_change(hub, add, remove) do
-    current = MapSet.new(Map.get(node_groups(hub.storage.misc), node(), []))
+    current = MapSet.new(own_groups(hub))
     next = current |> MapSet.union(MapSet.new(add)) |> MapSet.difference(MapSet.new(remove))
 
     unless MapSet.equal?(next, current) do
       groups = MapSet.to_list(next)
       put_node_groups(hub, node(), groups)
-      announce(hub, groups)
+      announce(hub, groups, :apply_announcement)
       recheck(hub)
       # A declared child the last reconcile round refused for want of a member
       # can start now, without waiting for the reconcile interval.
@@ -163,6 +176,14 @@ defmodule Flezha.Cluster.GroupedHashing do
     :ok
   end
 
+  @doc false
+  # A restarted peer's set replaces the row held for it, and is answered with
+  # this node's own row as a joining node is.
+  def apply_restart_announcement(hub, from_node, groups) do
+    apply_announcement(hub, from_node, groups)
+    handle_node_join(hub, %{node: from_node})
+  end
+
   @doc """
   Sends the joining node this node's served set.
 
@@ -172,7 +193,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   """
   @spec handle_node_join(ProcessHub.Hub.t(), %{node: node()}) :: :ok
   def handle_node_join(hub, %{node: joining}) do
-    cast_announcement(hub, joining, Map.get(node_groups(hub.storage.misc), node(), []))
+    cast_announcement(hub, joining, own_groups(hub), :apply_announcement)
     # The hub's node set is one of the member sets rings are cached for.
     prune_rings(hub, group_nodes_map(hub.storage.misc))
 
@@ -189,6 +210,43 @@ defmodule Flezha.Cluster.GroupedHashing do
   @spec handle_node_leave(ProcessHub.Hub.t(), %{node: node()}) :: :ok
   def handle_node_leave(hub, %{node: leaving}) do
     put_node_groups(hub, leaving, [])
+
+    :ok
+  end
+
+  @doc """
+  Waits, after its hub's coordinator restarted, for the owner to declare this
+  node's set again (`restart_declared/1`), at most `process_hub_restart_declare_ms`.
+
+  `init/2` has just written an empty table. Announcing that empty row now would
+  have the peers' answers re-check this node's children against a table that
+  lacks its own row.
+  """
+  @spec handle_restart(ProcessHub.Hub.t()) :: :ok
+  def handle_restart(hub) do
+    Storage.insert(hub.storage.misc, @restart_pending, true)
+    callback = {:post_action_callback, __MODULE__, :finish_restart, []}
+    Process.send_after(self(), callback, Durations.get(:process_hub_restart_declare_ms))
+
+    :ok
+  end
+
+  @doc """
+  Tells `hub_id` its owner has declared this node's set after a coordinator
+  restart. Queued behind that declaration when sent from the same process.
+  A no-op on a hub that did not restart.
+  """
+  @spec restart_declared(atom()) :: :ok | {:error, :not_grouped_hashing}
+  def restart_declared(hub_id), do: in_coordinator(hub_id, :finish_restart, [])
+
+  @doc false
+  # Sends every peer this node's row once after a restart: each replaces what it
+  # held for this node and answers with its own row.
+  def finish_restart(hub) do
+    if Storage.get(hub.storage.misc, @restart_pending) do
+      Storage.remove(hub.storage.misc, @restart_pending)
+      announce(hub, own_groups(hub), :apply_restart_announcement)
+    end
 
     :ok
   end
@@ -236,6 +294,7 @@ defmodule Flezha.Cluster.GroupedHashing do
     register_handler(hub, Hook.post_node_join(), :gh_join, :handle_node_join, [hub, :_])
     register_handler(hub, Hook.pre_node_leave(), :gh_leave, :handle_node_leave, [hub, :_])
     register_handler(hub, Hook.coordinator_shutdown(), :gh_shutdown, :handle_shutdown, [hub])
+    register_handler(hub, Hook.coordinator_restarted(), :gh_restart, :handle_restart, [hub])
 
     register_handler(hub, Hook.pre_children_start(), :gh_children_start, :handle_children_start, [
       hub,
@@ -328,24 +387,37 @@ defmodule Flezha.Cluster.GroupedHashing do
     |> Map.new(fn {group, nodes} -> {group, Enum.sort(nodes)} end)
   end
 
-  defp announce(hub, groups) do
+  defp announce(hub, groups, apply) do
     hub.storage.misc
     |> Cluster.nodes()
-    |> Enum.each(&cast_announcement(hub, &1, groups))
+    |> Enum.each(&cast_announcement(hub, &1, groups, apply))
   end
 
-  defp cast_announcement(hub, peer, groups) do
-    GenServer.cast(
-      {hub.hub_id, peer},
-      {:exec_cast, {__MODULE__, :apply_announcement, [node(), groups]}}
-    )
+  defp cast_announcement(hub, peer, groups, apply) do
+    GenServer.cast({hub.hub_id, peer}, {:exec_cast, {__MODULE__, apply, [node(), groups]}})
   end
 
   # The pass a drain runs after taking itself out of the distribution: every
   # local child is recomputed and whatever no longer belongs here moves through
   # the migration strategy, consent and handover included. Off the coordinator,
   # so a table write never waits on a migration.
+  #
+  # Runs in the coordinator. The pending mark names the coordinator that armed
+  # it, so one restarted before its pass ran arms a new one.
   defp recheck(hub) do
+    unless Storage.get(hub.storage.misc, @recheck_pending) == self() do
+      Storage.insert(hub.storage.misc, @recheck_pending, self())
+      callback = {:post_action_callback, __MODULE__, :run_recheck, []}
+      Process.send_after(self(), callback, @recheck_window_ms)
+    end
+
+    :ok
+  end
+
+  @doc false
+  def run_recheck(hub) do
+    Storage.remove(hub.storage.misc, @recheck_pending)
+
     Task.Supervisor.start_child(hub.procs.task_sup, fn ->
       NodeUp.handle(%NodeUp{joined_nodes: [], hub: hub})
     end)
@@ -364,6 +436,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   end
 
   defp node_groups(misc), do: Storage.get(misc, @node_groups) || %{}
+  defp own_groups(hub), do: Map.get(node_groups(hub.storage.misc), node(), [])
   defp group_nodes_map(misc), do: Storage.get(misc, @group_nodes) || %{}
   defp hub_nodes(misc), do: misc |> Cluster.nodes([:include_local]) |> Enum.sort()
 

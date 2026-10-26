@@ -32,7 +32,11 @@ each hub the factories this controller can place, read by
 factory, narrowed by the attributes a placement must match (`placeable_runners/3`). An addition
 is declared at once. A factory the controller stops serving is withdrawn after
 `group_withdraw_grace_ms`, or at once when the controller asked for the disconnect
-(`Announce.withdraw/3`). A hub that starts is declared from scratch.
+(`Announce.withdraw/3`). A hub that starts is declared from scratch, and so is one whose
+coordinator alone restarted (ProcessHub's `coordinator_restarted` hook): its table starts empty,
+never from a saved copy. Once the fleet manager has declared the set again
+(`Announce.redeclare/2`), or after at most five seconds, the node sends that row to every peer,
+which replaces the old one and answers with its own (`GroupedHashing.handle_restart/1`).
 
 ### Which controller runs a relay: the hub
 
@@ -42,7 +46,8 @@ a placement decision is never rewritten); the child is placed on a hash ring ove
 `GroupedHashing.group_nodes/2`, the nodes serving that factory. When no node serves the group,
 the child stays on the nodes it is registered on. A child without a group, a plugin home, is
 placed on a ring over every node of the hub. A start naming a group nobody serves is refused
-with `{:no_group_members, _}` (`children_init/4`). A change of the table re-runs the hub's
+with `{:no_group_members, _}` (`children_init/4`), which the caller reads as
+`relay.factory_unserved`, a retryable error. A change of the table re-runs the hub's
 node-up redistribution (`recheck/1`).
 
 ### Which runner a relay binds

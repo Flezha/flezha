@@ -910,8 +910,11 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
   alias Flezha.Cluster.GroupedHashing
   alias Flezha.Identificator
   alias Flezha.Process.Timer
+  alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.RelayManager.Init
   alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -1005,6 +1008,64 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
     :ok = FleetStateHelper.disconnected(ns, "r1")
 
     assert declared(hub_id, [])
+  end
+
+  # Fails when: a coordinator its hub restarts keeps the empty group table its
+  # init wrote, so every start of the namespace's factories is refused.
+  test "a restarted coordinator has the factories declared again, and a start is admitted",
+       %{namespace: ns, hub_id: hub_id} do
+    FleetStateHelper.seed(ns, %{"r1" => ["alpha", "beta"]})
+    FleetStateHelper.sync(ns, "r1", ["alpha", "beta"])
+    assert declared(hub_id, ["alpha", "beta"])
+
+    old = Process.whereis(hub_id)
+    Process.exit(old, :kill)
+
+    assert NodeTestHelper.wait_until(
+             fn -> Process.whereis(hub_id) not in [nil, old] end,
+             5_000
+           )
+
+    # Answers once the new coordinator's post-init setup ran: its table was
+    # written empty and the restart hook has fired.
+    :sys.get_state(hub_id)
+
+    assert declared(hub_id, ["alpha", "beta"])
+    assert GroupedHashing.group_nodes(hub_id, "alpha") == [node()]
+
+    assert GroupedHashing.children_init(
+             %GroupedHashing{},
+             ProcessHub.Hub.get(hub_id),
+             [%{id: "restart_probe"}],
+             metadata: %{group: "alpha"}
+           ) == :ok
+  end
+
+  # Fails when: a start the hub's table cannot place yet, as while a restarted
+  # coordinator's rows come back, is answered as a final internal failure.
+  test "a start no controller in the hub's table serves answers a retryable error",
+       %{namespace: ns, hub_id: hub_id} do
+    FleetStateHelper.seed(ns, %{"r1" => ["alpha"]})
+    FleetStateHelper.sync(ns, "r1", ["alpha"])
+    assert declared(hub_id, ["alpha"])
+
+    # The table loses the row while the fleet still advertises the factory.
+    :ok = GroupedHashing.unserve_groups(hub_id, ["alpha"])
+    assert declared(hub_id, [])
+
+    id = "unplaced_#{System.unique_integer([:positive])}"
+    relay = %Builder{id: id, factory_id: "alpha"}
+
+    assert {:error, {:no_group_members, ^id, ["alpha"]} = reason} =
+             Init.init_relay(
+               &RelayManager.exist?/2,
+               ns,
+               relay,
+               false
+             )
+
+    assert %Flezha.Error{code: "relay.factory_unserved", class: :unavailable} =
+             Flezha.Error.from_reason(reason, nil)
   end
 
   defp declared(hub_id, groups) do

@@ -13,6 +13,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Identificator
   alias Flezha.Layout.Table, as: Layout
   alias Flezha.Process.Hub
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager.Lifecycle
   alias Flezha.Service.HubManager.Placement
   alias Flezha.Service.HubManager.Rows
@@ -298,31 +299,44 @@ defmodule Flezha.Service.HubManager do
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: Durations.get(:hub_cross_node_request_ms),
       nodedown_grace_period: Durations.get(:process_hub_nodedown_grace_ms),
-      hooks:
-        Map.merge(
-          %{
-            Hook.child_data_alter() => [
-              %HookManager{
-                id: Hook.child_data_alter(),
-                m: __MODULE__,
-                f: :alter_child_data,
-                a: [hub_id, :_]
-              }
-            ],
-            Hook.child_registered() => [
-              %HookManager{
-                id: :flezha_registry_written,
-                m: __MODULE__,
-                f: :hook_registry_written,
-                a: [hub_id, :_]
-              }
-            ],
-            Hook.child_unregistered() => [registry_unbound_hook(hub_id)],
-            Hook.post_node_leave() => [registry_unbound_hook(hub_id)]
-          },
-          Snapshot.hook_handlers(hub_id)
-        )
+      hooks: hooks(namespace, hub_id)
     })
+  end
+
+  defp hooks(namespace, hub_id) do
+    Map.merge(
+      %{
+        Hook.child_data_alter() => [
+          %HookManager{
+            id: Hook.child_data_alter(),
+            m: __MODULE__,
+            f: :alter_child_data,
+            a: [hub_id, :_]
+          }
+        ],
+        Hook.child_registered() => [
+          %HookManager{
+            id: :flezha_registry_written,
+            m: __MODULE__,
+            f: :hook_registry_written,
+            a: [hub_id, :_]
+          }
+        ],
+        Hook.child_unregistered() => [registry_unbound_hook(hub_id)],
+        Hook.post_node_leave() => [registry_unbound_hook(hub_id)],
+        # A restarted coordinator starts with an empty group table; this
+        # node declares its factories again from the runners connected now.
+        Hook.coordinator_restarted() => [
+          %HookManager{
+            id: :flezha_hub_restarted,
+            m: FleetManager,
+            f: :hub_started,
+            a: [namespace]
+          }
+        ]
+      },
+      Snapshot.hook_handlers(hub_id)
+    )
   end
 
   defp registry_unbound_hook(hub_id),

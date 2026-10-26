@@ -47,6 +47,14 @@ v0.1.0-alpha.1 pre-release.
   on the periodic ship alone (`FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, 30 s), so
   its copy is about one interval behind, and a copy behind past the RPO target
   shows on `/healthz` and `flz controller status`.
+- A network partition that heals no longer leaves a namespace unable to start
+  relays. A controller's hub could crash as the partition healed and come back
+  with an empty table of which controllers run which factory, while its peers
+  kept the old rows, so starts were refused until the controller restarted.
+  The hub no longer crashes on a peer that is slow to read, and a hub that
+  restarts for any other reason rebuilds the table from the runners connected
+  now and from its peers. A start that lands before the table is back answers
+  `relay.factory_unserved`, which may be retried.
 - A `flz` verb called over Erlang distribution from another node writes its
   refusal to that node's stderr, beside its answer. It went to the
   controller's log, so the caller saw only the exit code.
