@@ -3,13 +3,15 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
   `FLEZHA_SPLIT_BEHAVIOUR` and its parameters become one ProcessHub partition
   tolerance strategy for every hub, a setting that cannot work is refused with
   the variable's name, and a hub without quorum answers starts and stops with
-  `no_quorum`.
+  `no_quorum`. `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS`, the wait before a split
+  or a failure moves anything, reaches every namespace hub.
   """
 
   # async: false: writes Application env; starts and stops the schedule hub.
 
   use FlezhaTest.Case, fixtures: [:env], async: false
 
+  alias Flezha.Config.Keys
   alias Flezha.Schedule.Hub, as: ScheduleHub
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.Schedule
@@ -75,6 +77,24 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
       hub = ProcessHub.Hub.get(HubManager.schedule_hub_id())
       stored = ProcessHub.Service.Storage.get(hub.storage.misc, :partition_tolerance_strategy)
       assert %DynamicQuorum{quorum_size: 51} = stored
+    end
+  end
+
+  describe "the failure grace" do
+    test "every namespace hub takes the failure grace, 30 s unless set; 0 turns it off" do
+      namespace = "nodedown-grace-test"
+      on_exit(fn -> HubManager.stop_hub(namespace) end)
+      assert Keys.fetch!(:process_hub_nodedown_grace_ms).default == 30_000
+
+      for grace <- [30_000, 0] do
+        Application.put_env(:flezha, :process_hub_nodedown_grace_ms, grace)
+        {:ok, _pid} = HubManager.start_hub(namespace)
+
+        hub = ProcessHub.Hub.get(Flezha.Identificator.hub(namespace))
+        assert ProcessHub.Service.Storage.get(hub.storage.misc, :nodedown_grace_period) == grace
+
+        HubManager.stop_hub(namespace)
+      end
     end
   end
 

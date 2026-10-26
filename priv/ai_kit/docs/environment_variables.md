@@ -73,6 +73,7 @@ Notes on the area's variables:
 - `FLEZHA_QUORUM_NODES`: `static`: the quorum, in controllers (required). `dynamic`: how many controllers a controller that knows no cluster waits for before it runs relays.
 - `FLEZHA_QUORUM_PERCENT`: `dynamic`: the share of the cluster, 51 to 100, that must survive a sudden loss.
 - `FLEZHA_QUORUM_WINDOW_MS`: `dynamic`: how long a lost controller counts as a sudden loss; rounded up to whole seconds.
+- `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS`: How long a controller that failed (killed, crashed, cut off) keeps its relays before its peers take them over; a graceful stop or drain never waits ([a controller that fails](../topics/core/durability.md#a-controller-that-fails)). `0` moves them as soon as the loss is confirmed. Default: `30000` (`0` in test).
 
 ## State, WAL and durability
 
@@ -280,6 +281,7 @@ skipped as a block.
 | `FLEZHA_PLUGIN_ROOT` | path | `storage/app/plugins` |
 | `FLEZHA_PLUGIN_TRUSTED_KEYS` | PEM file paths | `""` |
 | `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS` | ms | `2000` |
+| `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS` | ms | `30000` |
 | `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | ms | `45000` |
 | `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | ms | `30000` |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | path | `storage/app/process_hub` |

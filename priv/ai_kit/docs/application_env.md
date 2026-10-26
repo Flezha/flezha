@@ -270,6 +270,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:post_hooks` | term | `[]` |
 | `:pre_hooks` | term | `[]` |
 | `:process_hub_cluster_settle_ms` | ms | `2000` |
+| `:process_hub_nodedown_grace_ms` | ms | `30000` |
 | `:process_hub_reconcile_grace_ms` | ms | `45000` |
 | `:process_hub_reconcile_interval_ms` | ms | `30000` |
 | `:process_hub_registry_root` | path | `storage/app/process_hub` |

@@ -156,6 +156,12 @@ defmodule Flezha.Config.DurationRows do
     {:partition_quiesce_timeout_ms, :ms, 30_000, []},
     {:process_hub_cluster_settle_ms, :ms, 2_000,
      key: true, env: "FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS"},
+    # How long a controller that failed keeps its relays before its peers take
+    # them over; `0` moves them as soon as the loss is confirmed. A graceful
+    # stop or drain never waits. `0` in test, so a suite that kills a peer
+    # sees it replaced at once unless it sets the grace itself.
+    {:process_hub_nodedown_grace_ms, :ms, 30_000,
+     key: true, env: "FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS", env_default: [test: 0]},
     {:process_hub_reconcile_grace_ms, :ms, 45_000,
      key: true, env: "FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS"},
     {:process_hub_reconcile_interval_ms, :ms, 30_000,

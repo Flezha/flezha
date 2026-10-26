@@ -297,6 +297,7 @@ defmodule Flezha.Service.HubManager do
       # Relay startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: Durations.get(:hub_cross_node_request_ms),
+      nodedown_grace_period: Durations.get(:process_hub_nodedown_grace_ms),
       hooks:
         Map.merge(
           %{

@@ -24,7 +24,7 @@ reach an output plugin:
 | `durable` | Where the work is kept | After a runner or controller crash | After the controller's disk is lost | Flow, `exactly: at_least_once` (default) | Flow, `exactly: effectively_once` |
 | --- | --- | --- | --- | --- | --- |
 | `false` | the runner's memory only | the work starts over | lost | a value can reach an output plugin again | refused: the tier needs a disk (`topology.effectively_once_without_persistence`) |
-| `local` (default) | the controller's disk | carries on | lost, unless a copy was shipped | a value sent just before a crash can reach an output plugin again | once at a conforming output plugin: outputs wait until the change behind them is on disk |
+| `local` (default) | the controller's disk | carries on; a controller that stays away past the [failure grace](#a-controller-that-fails) loses the work since the last ship, or up to everything without a backend | lost, unless a copy was shipped | a value sent just before a crash can reach an output plugin again | once at a conforming output plugin: outputs wait until the change behind them is on disk |
 | `remote` | the controller's disk, and a remote copy that each commit point waits for | carries on | carries on from the copy | as for `local` | as for `local`, and nothing acknowledged is lost with the disk |
 
 A workflow has no duplicate rule to choose: its outputs are released only when
@@ -53,10 +53,12 @@ is no ship, so at `local` the disk is the only copy.
 | one runner killed under load | the last few changes may be lost | at-least-once | no drain; the relay rebinds and restores from the controller's log, which may lag the last changes |
 | every runner killed at once | the last few changes may be lost | at-least-once | the same restore, with no live copy anywhere |
 | a runner runs out of memory, its container or node dies | the last few changes may be lost | at-least-once | as a kill: no drain runs |
-| a controller restarts gracefully, with a live peer | no loss | at-least-once | the new instance syncs the registry from the peer; runners stay connected |
+| a controller restarts gracefully, with a live peer | no loss | at-least-once | the new instance syncs the registry from the peer; runners stay connected. A graceful stop or drain never waits for the [failure grace](#a-controller-that-fails): its relays move at once |
+| a controller fails (killed, crashed, cut off) and is back within the failure grace | no loss | at-least-once | its relays stay placed on it for `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS` (30 s); inputs sent to them meanwhile are refused and retried by the sender; it restores them from its own disk |
+| a controller fails and stays away past the failure grace | the work since the last ship, at most the RPO target; up to everything without a backend | at-least-once | its peers take its relays over from the shipped copy ([below](#a-controller-that-fails)) |
 | the only controller restarts | no loss | at-least-once | the first recovery round replays the relay list from disk; `/healthz` says `recovering` until relays are bound ([`running_and_testing.md`](running_and_testing.md#after-a-controller-restart)) |
 | the whole cluster starts cold | recovered from the durable registry | none in flight | disk is the only record |
-| a relay moves to a controller with no copy of its log, runner alive | no loss | at-least-once | with the remote tier the copy is fetched; without it, the runner is asked for a full snapshot, which becomes the new baseline |
+| a relay moves to a controller with no copy of its log (a drain, a node joining), runner alive | no loss | at-least-once | with the remote tier the copy is fetched; without it, the runner is asked for a full snapshot, which becomes the new baseline. A failed controller's relays are the two rows above |
 | a node rejoins a live cluster | synced from peers; its own copy is kept | none in flight | nothing is missing, so nothing starts |
 | a Kafka broker is down, runners alive | no loss | buffered, resumes | the producer reconnects and drains |
 | sustained overload: changes outpace disk syncs | no loss | at-least-once | a runner may have 16 MiB of unsynced changes in flight; past that it waits, it does not drop. A shed emits `[:flezha, :state, :credit_anomaly]` |
@@ -69,6 +71,25 @@ is no ship, so at `local` the disk is the only copy.
 | a failed turn of a `keep_progress` session (durable) | no loss: the turn's message is parked | the turn's outputs stay out; its undos run | the message is parked before the iteration is recorded as dead-lettered; a crash parks it at most once |
 | a workflow killed in the middle of an undo (durable) | the undo resumes | none | done undos are skipped, the rest run |
 | a poison message, failing every attempt | no loss | the cell continues | it is parked in the dead-letter queue before the cell moves on ([below](#the-dead-letter-queue)) |
+
+### A controller that fails
+
+A controller that is killed, crashes or loses its network keeps its relays for
+the failure grace, `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS` (30 000; `0` turns it
+off). Meanwhile its peers start none of them: an input sent to one is refused
+as unreachable and the sender retries it, and a relay start placed on that
+controller fails the same way. A fire-and-forget input sent meanwhile has
+nobody to refuse it and is lost. Back within the grace, the controller restores
+its relays from its own disk and nothing acknowledged is lost. With
+`FLEZHA_AUTO_RESTORE_ENABLED` off, a controller that restarted rather than
+reconnected ends its grace on return: its relays move as below, then back.
+
+Past the grace, its peers take its relays over. With a durability backend each
+starts from its last shipped copy, so the work since that ship is lost, at most
+the RPO target. Without one, a relay starts from whatever older copy the peer
+still holds, or empty: the loss can be everything. A network split that lasts
+longer than the grace then follows `FLEZHA_SPLIT_BEHAVIOUR`. A graceful stop, a
+drain and a rolling restart never wait for the grace.
 
 ### Why output can get ahead of state
 

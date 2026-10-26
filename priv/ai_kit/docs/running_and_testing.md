@@ -680,6 +680,7 @@ boot await: recovering; unmet: durable_registry_loaded
 - `FLEZHA_AUTO_RESTORE_ENABLED`: Only `true` or `1` enable it; off, nothing is written to the registry and relays must be started again after each boot.
 - `FLEZHA_PROCESS_HUB_CLUSTER_SETTLE_MS`: How long a starting hub waits for peers before treating itself as alone; `0` when the cluster forms before the application starts.
 - `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS`: The longest a peer that never answers can hold a hub in `recovering`.
+- `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS`: How long a controller that failed keeps its relays before its peers take them over ([a controller that fails](durability.md#a-controller-that-fails)); `0` moves them at once.
 - `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS`: At most one later recovery round per this interval.
 - `FLEZHA_BOOT_REPLAY_TIMEOUT_MS`: How long a connecting runner is given while the cluster forms.
 - `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`: Where the registry lives; must be persistent storage.
@@ -708,8 +709,11 @@ bypassed the id claim, and it logs at `error`.
 ## Choosing a split behaviour
 
 When the network between controllers breaks, each side sees the other side's
-controllers go away. `FLEZHA_SPLIT_BEHAVIOUR` decides what the two sides do,
-for the relays of every namespace and for the schedules:
+controllers go away. For the first `FLEZHA_PROCESS_HUB_NODEDOWN_GRACE_MS`
+neither side takes over the other's relays
+([a controller that fails](durability.md#a-controller-that-fails)). After that,
+`FLEZHA_SPLIT_BEHAVIOUR` decides what the two sides do, for the relays of every
+namespace and for the schedules:
 
 | Behaviour | Which side keeps running | Settings |
 | --- | --- | --- |
