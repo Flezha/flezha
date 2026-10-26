@@ -45,7 +45,7 @@ defmodule Flezha.Relay.Overwatch do
   require Logger
 
   use GenServer
-  use Flezha.Process.Timer, keys: [:wake, :correction, :call]
+  use Flezha.Process.Timer, keys: [:wake, :correction, :call, :handover]
   use ProcessHub.Strategy.Migration.HotSwap
   use ProcessHub.Strategy.Migration.ColdSwap, declare_behaviour: false
   use ProcessHub.Strategy.Migration.MigrationConsent
@@ -628,8 +628,12 @@ defmodule Flezha.Relay.Overwatch do
     keys = Map.keys(state.calls.rows) ++ Map.keys(state.calls.out)
     state = Enum.reduce(keys, state, &cancel_timer(&2, {:call, &1}))
 
-    {:noreply, %{state | calls: Inbound.depart(state.calls), handed_over?: true, cause: :move}}
+    state = %{state | calls: Inbound.depart(state.calls), handed_over?: true, cause: :move}
+    {:noreply, Handover.await_replacement(state)}
   end
+
+  def handle_info(:handover_abandoned, %__MODULE__{} = state),
+    do: Handover.abandoned(timer_fired(state, :handover))
 
   @impl true
   def handle_info({:extension_timer, name, plugin_id}, %__MODULE__{} = state) do

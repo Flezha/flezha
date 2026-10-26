@@ -48,6 +48,13 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay whose move between controllers was never finished no longer keeps
+  confirming input it does not run. Once a move takes a relay's state its
+  runner drops the relay, and when the hub went down before finishing the
+  move, the relay stayed without it and the healthy runners were restarted
+  as wedged. A relay no replacement took over within 30 s now binds to its
+  runner again and restores from its saved state; one whose replacement runs
+  all the same stops.
 - With a durability backend, a busy controller's remote copy no longer falls
   minutes behind while `/healthz` reports no lag. Every workflow step and
   checkpoint asked for a ship of each file its relay held, and under load

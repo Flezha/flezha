@@ -19,6 +19,7 @@ defmodule FlezhaTest.Relay.RebindTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
   alias Flezha.Process.Hub
+  alias Flezha.Process.Timer
   alias Flezha.Service.{PluginManager, RelayManager}
   alias Flezha.State.{Outbox, WriterRegistry}
   alias FlezhaTest.Helper.NodeTestHelper
@@ -263,6 +264,49 @@ defmodule FlezhaTest.Relay.RebindTest do
 
     assert Rebind.session_replaced(state, "runner_x", "runner_b", :restarted) == state
     assert Rebind.session_replaced(restarted, "runner_a", "runner_c", :restarted) == restarted
+  end
+
+  # fails when: a relay whose move the hub never finished (it went down after
+  # taking the state) stays without its runner instance, confirming input it
+  # never runs; or it binds again while a replacement runs.
+  test "a move nobody finished gives the relay back, unless a replacement runs" do
+    test_pid = self()
+
+    Application.put_env(:flezha, :overwatch_ping_fn, fn runner_id ->
+      send(test_pid, {:pinged, runner_id})
+      {:error, :no_control_unit}
+    end)
+
+    state = running_state()
+    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
+    on_exit(fn -> ClassRegistry.delete(state.id) end)
+
+    {:noreply, handed} = Overwatch.handle_info(:calls_handed_over, state)
+    assert handed.handed_over? and Timer.armed?(handed.timers, :handover)
+
+    stub(ProcessHub, :is_alive?, fn _hub_id -> true end)
+    replacement = spawn_link(&NodeTestHelper.park/0)
+    rows = [{node(), self()}, {node(), replacement}]
+    stub(ProcessHub, :child_lookup, fn _hub_id, _id -> {%{}, rows} end)
+    assert {:stop, :shutdown, _} = Overwatch.handle_info(:handover_abandoned, handed)
+
+    stub(ProcessHub, :child_lookup, fn _hub_id, _id -> {%{}, [{node(), self()}]} end)
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:noreply, %Overwatch{bind_task: %{pid: task}} = back} =
+               Overwatch.handle_info(:handover_abandoned, handed)
+
+      refute back.handed_over?
+      send(test_pid, {:take_back, task})
+    end)
+
+    assert_receive {:take_back, task}
+    assert_receive {:bind_task_result, ^task, {:halt, _, {:ping_failed, :no_control_unit}}}, 2_000
+    assert_received {:pinged, "runner_a"}
+
+    stub(ProcessHub, :is_alive?, fn _hub_id -> false end)
+    assert {:noreply, asked_again} = Overwatch.handle_info(:handover_abandoned, handed)
+    assert asked_again.handed_over? and Timer.armed?(asked_again.timers, :handover)
   end
 
   # fails when: a handover away from a runner that is gone stops shipping the

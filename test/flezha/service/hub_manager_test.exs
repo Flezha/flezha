@@ -201,6 +201,7 @@ defmodule Flezha.Service.HubManagerTest do
         assert %{__struct__: ^kind, handover: true} = strategy
         assert strategy.consent_settings == HubManager.consent_settings()
         assert strategy.state_query_timeout == Durations.get(:migration_state_query_ms)
+        assert strategy.state_ttl == Durations.get(:migration_state_ttl_ms)
       end
     end
 

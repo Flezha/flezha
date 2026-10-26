@@ -18,11 +18,13 @@ defmodule Flezha.Relay.Handover do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Process.Hub
+  alias Flezha.Process.Timer
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
+  alias Flezha.Relay.Rebind
   alias Flezha.Relay.Replay
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.ControlUnit
@@ -62,6 +64,61 @@ defmodule Flezha.Relay.Handover do
     Lifecycle.release_lineage(%Overwatch{state | cause: :move})
     send(self(), :calls_handed_over)
     {handover, serialize_data}
+  end
+
+  @doc """
+  Bound the move this process handed its state to: past the hub's state TTL no
+  replacement can be given that state, and `abandoned/1` runs.
+  """
+  @spec await_replacement(Overwatch.t()) :: Overwatch.t()
+  def await_replacement(%Overwatch{} = state) do
+    ttl = Durations.get(:migration_state_ttl_ms)
+    %Overwatch{state | timers: Timer.arm(state.timers, :handover, ttl, :handover_abandoned)}
+  end
+
+  @doc """
+  The move that took this relay's state did not end this process within the
+  state TTL, so the hub went down before finishing it. A replacement that runs
+  all the same takes over and this process stops as the hub would have stopped
+  it. With none, the relay takes itself back: its runner dropped the instance
+  when the state was read, so it binds afresh, restoring its Cells from this
+  node's records and forwarding again the input they have not consumed. A hub
+  that cannot be asked is asked again one TTL later.
+  """
+  @spec abandoned(Overwatch.t()) :: {:noreply, Overwatch.t()} | {:stop, :shutdown, Overwatch.t()}
+  def abandoned(%Overwatch{} = state) do
+    case replacement(state) do
+      :running -> {:stop, :shutdown, state}
+      :none -> {:noreply, take_back(state)}
+      :unknown -> {:noreply, await_replacement(state)}
+    end
+  end
+
+  defp replacement(%Overwatch{} = state) do
+    state.namespace
+    |> Identificator.hub()
+    |> Hub.with_live(:unknown, fn hub_id ->
+      case ProcessHub.child_lookup(hub_id, state.id) do
+        {_spec, node_pids} ->
+          if Enum.any?(Hub.on_live_nodes(node_pids), &another_running?/1),
+            do: :running,
+            else: :none
+
+        nil ->
+          :none
+      end
+    end)
+  end
+
+  defp another_running?({_node, pid} = entry), do: pid != self() and Hub.running?(entry)
+
+  defp take_back(%Overwatch{} = state) do
+    Logger.warning("[handover] #{state.id}: no replacement took the relay over; taking it back")
+    back = %Overwatch{state | handed_over?: false, cause: nil}
+
+    if is_binary(back.runner_id) and is_nil(back.bind_task),
+      do: Rebind.start_bind(back, back.runner_id, nil),
+      else: back
   end
 
   # A cold move stops this process after the hub took its state, and input

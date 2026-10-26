@@ -498,6 +498,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     struct(Hub.strategy(NamespaceStore.migration(namespace)),
       handover: true,
       state_query_timeout: Durations.get(:migration_state_query_ms),
+      state_ttl: Durations.get(:migration_state_ttl_ms),
       consent_settings: consent_settings()
     )
   end

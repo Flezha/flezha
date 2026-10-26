@@ -14,7 +14,7 @@ existing record, refuse any other value with the verb's argument error, and be a
 When a namespace's hub starts on a controller, it SHALL take the migration strategy the
 namespace's setting names: `ProcessHub.Strategy.Migration.ColdSwap` for `cold`,
 `ProcessHub.Strategy.Migration.HotSwap` for `hot`, both with handover enabled, the configured
-state query timeout and the consent settings. A running hub SHALL keep the strategy it started
+state query timeout, the configured state TTL and the consent settings. A running hub SHALL keep the strategy it started
 with; a changed setting SHALL take effect at that hub's next start. Relay Overwatches and
 plugin homes SHALL accept the handover of either strategy, so moves between hubs started under
 different settings deliver their state.
@@ -130,6 +130,26 @@ otherwise, so the sender never sends again an input the relay will apply.
 
 - **WHEN** a call reaches a relay whose source stopped and whose destination has not started
 - **THEN** it answers `call.unavailable`
+
+### Requirement: A relay whose move is never finished takes itself back
+
+An Overwatch whose handover state the hub took SHALL wait one state TTL for the hub to end it.
+Past that, when another running copy of the relay is registered, it SHALL stop as moved; when
+none is, it SHALL bind again to its runner, which dropped the relay's instance when the state
+was read, restoring its Cells and forwarding again the input they have not consumed; when the
+hub cannot be asked, it SHALL ask again one state TTL later.
+
+#### Scenario: A move the hub never finishes is undone
+
+- **GIVEN** a relay whose handover state the hub took
+- **WHEN** the hub goes down before starting a replacement, and the state TTL passes
+- **THEN** the relay binds again to its runner and processes input again
+
+#### Scenario: A started replacement keeps the relay
+
+- **GIVEN** a relay whose handover state the hub took
+- **WHEN** the hub starts the replacement and goes down before stopping the old copy, and the state TTL passes
+- **THEN** the old copy stops and the replacement keeps running
 
 ### Requirement: A single plugin opens its new connection before the old one closes in a cold move
 
