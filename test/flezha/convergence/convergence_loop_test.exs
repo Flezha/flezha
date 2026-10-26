@@ -556,9 +556,10 @@ defmodule Flezha.Convergence.LoopTest do
       relay = %{id: "eth_feed", factory_id: "f"}
       stub(HubManager, :declared_relay, fn "ns", "eth_feed" -> {:ok, relay} end)
       expect(RelayManager, :start_relay, fn "ns", ^relay -> {:ok, %{relay_id: "eth_feed"}} end)
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
       log =
-        capture_log(fn ->
+        capture_log([level: :warning], fn ->
           assert Heal.execute(%{
                    primitive: :start_relay,
                    namespace: :ns,

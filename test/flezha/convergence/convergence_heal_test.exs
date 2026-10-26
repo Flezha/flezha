@@ -289,9 +289,9 @@ defmodule Flezha.Convergence.HealTest do
     end
 
     test "a deleted/unknown primitive is no longer dispatchable" do
-      # `start_relay`, `replay_state`, `compact_wal` were never planned and
-      # did nothing — they are gone, not silent no-ops.
-      for primitive <- [:start_relay, :replay_state, :compact_wal] do
+      # `replay_state` and `compact_wal` were never planned and did nothing:
+      # they are gone, not silent no-ops.
+      for primitive <- [:replay_state, :compact_wal] do
         op = %{primitive: primitive, namespace: nil, target: :noop, args: %{}}
         assert Heal.execute(op) == :error
       end
