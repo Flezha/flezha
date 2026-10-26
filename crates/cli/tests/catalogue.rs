@@ -56,6 +56,7 @@ const INVOCATIONS: &[&[&str]] = &[
     &["role", "list"],
     &["token", "revoke", "abcdef12"],
     &["namespace", "set-quota", "ns", "--Xmax_relays=4"],
+    &["namespace", "set-migration", "ns", "hot"],
     &["token", "list"],
     &["role", "unbind", "p"],
     &["auth", "whoami"],

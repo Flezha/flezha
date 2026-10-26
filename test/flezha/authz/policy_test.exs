@@ -32,6 +32,8 @@ defmodule Flezha.AuthZ.PolicyTest do
       assert Policy.grants?(:admin, :"controller.stop")
       assert Policy.grants?(:admin, :"authz.token_issue")
       assert Policy.grants?(:admin, :"authz.namespace_create")
+      assert Policy.grants?(:admin, :"authz.namespace_set_migration")
+      refute Policy.grants?(:ops, :"authz.namespace_set_migration")
       assert Policy.grants?(:admin, :"state.retention")
       refute Policy.grants?(:ops, :"state.retention")
     end
@@ -148,6 +150,7 @@ defmodule Flezha.AuthZ.PolicyTest do
 
   test "cross_namespace_admin_action?/1 covers auth-state mutations" do
     assert Policy.cross_namespace_admin_action?(:"authz.namespace_create")
+    assert Policy.cross_namespace_admin_action?(:"authz.namespace_set_migration")
     assert Policy.cross_namespace_admin_action?(:"authz.token_issue")
     refute Policy.cross_namespace_admin_action?(:"relay.start")
     refute Policy.cross_namespace_admin_action?(:"audit.read")

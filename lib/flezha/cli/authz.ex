@@ -72,8 +72,13 @@ defmodule Flezha.Service.Cli.Authz do
   def get(entry, _args, _opts), do: print_namespace(entry)
 
   @doc "`flz namespace set-quota`."
-  def set_quotas(entry, _args, _opts) do
-    IO.puts("namespace #{entry.name} quotas updated")
+  def set_quotas(entry, _args, _opts), do: updated(entry, "quotas")
+
+  @doc "`flz namespace set-migration`."
+  def set_migration(entry, _args, _opts), do: updated(entry, "migration")
+
+  defp updated(entry, setting) do
+    IO.puts("namespace #{entry.name} #{setting} updated")
     print_namespace(entry)
   end
 
@@ -89,6 +94,7 @@ defmodule Flezha.Service.Cli.Authz do
 
   defp print_namespace(entry) do
     IO.puts("namespace: #{entry.name}")
+    IO.puts("migration: #{entry.migration}")
     IO.puts("quotas:")
 
     entry.quotas

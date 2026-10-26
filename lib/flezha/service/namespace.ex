@@ -169,6 +169,22 @@ defmodule Flezha.Service.Namespace do
   end
 
   @doc """
+  Set how the namespace's hub moves its relays, `cold` or `hot`.
+
+  `cold` stops a relay before it starts elsewhere; `hot` starts the new copy
+  first. A controller's hub takes the setting at its next start.
+  """
+  @spec set_migration(String.t(), atom(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb set_migration(name, migration, caller_context) when is_binary(name),
+    verb: :namespace_set_migration,
+    args: [
+      name: @name,
+      migration: [type: :enum, values: NamespaceStore.migrations(), doc: "`cold` or `hot`."]
+    ] do
+    NamespaceStore.set_migration(name, migration)
+  end
+
+  @doc """
   Claim the first admin with the one-time bootstrap token. Answers the principal
   bound as `admin@_system` and, when one was minted for it, its token, shown
   this once.

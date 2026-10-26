@@ -418,6 +418,17 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
       end)
 
     assert show_out =~ "namespace: render-ns"
+    assert show_out =~ "migration: cold"
+
+    migration_out =
+      capture_io(fn ->
+        Cli.call("Namespace.set_migration", Jason.encode!(["render-ns", "hot"]),
+          token: admin_token
+        )
+      end)
+
+    assert migration_out =~ "namespace render-ns migration updated"
+    assert migration_out =~ "migration: hot"
 
     set_out =
       capture_io(fn ->

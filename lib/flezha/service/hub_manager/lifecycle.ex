@@ -8,6 +8,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   nothing else reaches `drain_hub/2`.
   """
 
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Boot.RecoveryHooks
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Orchestrator
@@ -25,6 +26,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias Flezha.Service.HubManager.Rows
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
+  alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
@@ -33,6 +36,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   require Logger
 
   @behaviour Flezha.Shutdown.Step
+
+  @drain_delivered :flezha_drain_delivered
 
   # A force pass fires AT the drain deadline and its handover is async, so this
   # window is carved out of the drain timeout to let it land.
@@ -258,15 +263,18 @@ defmodule Flezha.Service.HubManager.Lifecycle do
 
   @doc """
   Migrate every locally-hosted relay of `namespace` to a peer controller
-  through the migration-consent gate (live HotSwap handover), then wait for the
-  local children, and the plugin copies they left retiring, to actually be
-  gone.
+  through the migration-consent gate and the namespace's migration strategy,
+  then wait for the local children, and the plugin copies they left retiring,
+  to actually be gone, and for each moved child to have arrived.
 
   The wait is load-bearing: `Migration.drain/2` returns once the deferred list
-  is empty, but the migration start requests are async and HotSwap stops a
-  local child only AFTER the remote start succeeds. Locally-empty is the
-  completion signal — acting on `drain/2`'s return alone kills mid-flight
-  handovers — and it is read from the children's own exits, never polled.
+  is empty, but the migration start requests are async. A hot swap stops a
+  local child only AFTER the remote start succeeds; a cold swap stops it first,
+  and its new process then reads its handover from this node's hub and pulls
+  the relay's durable files from this node. So the drain also waits for each
+  child's handover to be delivered and for its new process to have run its
+  arrival. Both waits are read from the children's exits and the hub's
+  deliveries, never polled.
   `:budget_ms` is required and bounds the whole call: the caller always hands
   the drain its slice of the one shutdown budget. `:handover_grace_ms` is
   carved off it so the deadline force pass can land before the caller moves on.
@@ -282,22 +290,69 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     deadline = System.monotonic_time(:millisecond) + budget
 
     Rows.with_live_hub(namespace, {:error, :no_target_nodes}, fn hub_id ->
-      result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
-      with {:ok, _} <- result, do: await_local_children_gone(namespace, deadline)
-      result
+      local = Rows.local_children(namespace, :all)
+      handler = %HookManager{id: @drain_delivered, m: Kernel, f: :send, a: [self(), :_]}
+      :ok = ProcessHub.register_hook_handlers(hub_id, Hook.handover_delivered(), [handler])
+
+      try do
+        result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
+
+        with {:ok, _} <- result,
+             :ok <- await_local_children_gone(local, namespace, deadline),
+             do: await_arrivals(namespace, Enum.map(local, &elem(&1, 0)), deadline)
+
+        result
+      after
+        ProcessHub.cancel_hook_handlers(hub_id, Hook.handover_delivered(), [@drain_delivered])
+      end
     end)
   catch
     kind, reason -> {:error, {kind, reason}}
   end
 
-  # Monitor every local child and wait for each exit, then for the plugin
-  # copies those children left retiring: a moved `single` plugin's hand-over
-  # ends when its old copy closes, after the new one opened. The node is
-  # quiesced, so none is started meanwhile. Answers `:deadline` with the
-  # monitors flushed when the budget runs out first.
-  defp await_local_children_gone(namespace, deadline) do
-    monitors =
-      for {_child_id, pid} <- Rows.local_children(namespace, :all), do: Process.monitor(pid)
+  # Each delivery names the children whose handover reached their new process
+  # on `target_node`. One call to each new process returns once its arrival,
+  # which pulls the relay's files from this node, has run.
+  defp await_arrivals(_namespace, [], _deadline), do: :ok
+
+  defp await_arrivals(namespace, waiting, deadline) do
+    receive do
+      %{child_ids: delivered, target_node: target} ->
+        settle(target, namespace, delivered, deadline)
+        await_arrivals(namespace, waiting -- delivered, deadline)
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) -> :deadline
+    end
+  end
+
+  # A target that went away or answers late holds the drain no longer.
+  defp settle(target, namespace, child_ids, deadline) do
+    left = max(deadline - System.monotonic_time(:millisecond), 1)
+    :erpc.call(target, __MODULE__, :arrived, [namespace, child_ids, left], left)
+  catch
+    _kind, _reason -> :ok
+  end
+
+  @doc false
+  # On a drain's target: answers once each of `child_ids`' local processes has
+  # taken every message sent to it before, its start's continuation included.
+  def arrived(namespace, child_ids, timeout) do
+    for {child_id, pid} <- Rows.local_children(namespace, :all), child_id in child_ids do
+      :sys.get_state(pid, timeout)
+    end
+
+    :ok
+  catch
+    :exit, _gone_or_slow -> :ok
+  end
+
+  # Monitor every child local when the drain began and wait for each exit,
+  # then for the plugin copies those children left retiring: a moved `single`
+  # plugin's hand-over ends when its old copy closes, after the new one opened.
+  # The node is quiesced, so none is started meanwhile. Answers `:deadline`
+  # with the monitors flushed when the budget runs out first.
+  defp await_local_children_gone(local, namespace, deadline) do
+    monitors = for {_child_id, pid} <- local, do: Process.monitor(pid)
 
     with :ok <- await_downs(monitors, deadline),
          do:
@@ -439,12 +494,12 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   defp refuse(name, why), do: raise(ArgumentError, "#{Keys.fetch!(name).env} #{why}")
 
   @doc false
-  def migration_strategy do
-    %ProcessHub.Strategy.Migration.HotSwap{
+  def migration_strategy(namespace) do
+    struct(Hub.strategy(NamespaceStore.migration(namespace)),
       handover: true,
       state_query_timeout: Durations.get(:migration_state_query_ms),
       consent_settings: consent_settings()
-    }
+    )
   end
 
   # `max_defer_ms` nil = derive from the shutdown budget, so a deferring

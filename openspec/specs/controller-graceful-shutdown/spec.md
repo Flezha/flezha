@@ -10,11 +10,13 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 **Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.RelayManager.start_relay/2` returns `{:error, :shutting_down}` and `Flezha.Runner.FleetManager` rejects new runner connect attempts with a structured error, and SHALL declare `{:node_draining, deadline}` to the convergence loop. Already-running Relays and already-connected runners SHALL NOT be affected by this phase. Once quiesced, the node SHALL refuse relay starts and runner connects until it stops, including after the coordinator has reached `:done`.
 
-**Drain** SHALL migrate locally hosted Relays to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub through the one seam `Flezha.Service.HubManager.drain_hub/2` — reachable from `lib/flezha/shutdown/` only — concurrently via a steps relay `Task.async_stream` over the namespace list, where `remaining_budget` is derived downward from the configured shutdown timeout (timeout minus elapsed minus slack, floored at a small positive minimum; per hub minus the handover grace). `drain/2` redistributes each local child through the migration-consent gate (live HotSwap handover) and force-migrates whatever is still deferred at its deadline. The drain is the one remedy-shaped action outside the convergence primitives: an administration verb the loop is told about and never chooses. While the `{:node_draining, _}` fact stands the convergence Planner SHALL plan no op that places onto this node and no `publish_binding` for a local row, so the loop cannot fight the drain. Per-hub outcomes SHALL be folded as follows:
+**Drain** SHALL migrate locally hosted Relays to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub through the one seam `Flezha.Service.HubManager.drain_hub/2` — reachable from `lib/flezha/shutdown/` only — concurrently via a steps relay `Task.async_stream` over the namespace list, where `remaining_budget` is derived downward from the configured shutdown timeout (timeout minus elapsed minus slack, floored at a small positive minimum; per hub minus the handover grace). `drain/2` redistributes each local child through the migration-consent gate with the handover of its namespace's migration strategy (a cold swap stops the Relay before the peer starts it, a hot swap starts the peer first) and force-migrates whatever is still deferred at its deadline. The drain is the one remedy-shaped action outside the convergence primitives: an administration verb the loop is told about and never chooses. While the `{:node_draining, _}` fact stands the convergence Planner SHALL plan no op that places onto this node and no `publish_binding` for a local row, so the loop cannot fight the drain. Per-hub outcomes SHALL be folded as follows:
 
 - `{:ok, %{migrated: m, forced: f}}` — counted into the drain outcome; `f > 0` SHALL be logged at WARNING but does not change the overall result.
 - `{:error, :no_target_nodes}` — the solo-node path: log `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot` and proceed (local Relays terminate when the finalise walk's `:hubs` row stops the hub supervisor, after the `:fsync` row, and their WAL writers sync in their own terminate).
 - `{:error, :partitioned | :locked | :draining}` — log at WARNING with the reason and degrade that hub to the no-peer behaviour; shutdown SHALL NOT wedge on a drain precondition.
+
+Each hub's drain call SHALL return only once every child that was local when it began is gone from this node and has arrived on its target: its handover delivered and its new process past its start, which pulls the relay's durable files from this node. A cold swap stops the local child before its new copy starts, so the children's exits alone do not show that a move finished.
 
 Only **after** every hub's drain call has returned (or the shutdown timeout fired) SHALL the finalise walk's `:hubs` row stop the hub supervisor, after the flush and the audit close. The coordinator SHALL emit `[:flezha, :shutdown, :drain_progress]` once per completed hub with `%{migrated: integer(), forced: integer(), remaining_hubs: integer(), elapsed_ms: integer()}`.
 
@@ -28,7 +30,14 @@ Quiesce and drain SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` (
 
 - **GIVEN** a controller hosting two Relays (`relay-a` and `relay-b`) with a peer node `controller-2` in the namespace hub
 - **WHEN** a user calls `Flezha.Shutdown.Coordinator.shutdown(:cli, [])`
-- **THEN** the coordinator logs `[shutdown] phase=quiesce`, transitions through `quiesce → drain → finalise`, calls `Migration.drain/2` on the namespace hub **before** stopping the hub supervisor, both Relays migrate to `controller-2` through live HotSwap handover (their processes were alive when handover state was prepared), a `:drain_progress` event reports `%{migrated: 2, forced: 0, ...}`, the hub supervisor stops only afterwards, and the call returns `:ok`
+- **THEN** the coordinator logs `[shutdown] phase=quiesce`, transitions through `quiesce → drain → finalise`, calls `Migration.drain/2` on the namespace hub **before** stopping the hub supervisor, both Relays migrate to `controller-2` through their namespace's handover (their processes were alive when handover state was prepared), a `:drain_progress` event reports `%{migrated: 2, forced: 0, ...}`, the hub supervisor stops only afterwards, and the call returns `:ok`
+
+#### Scenario: A cold drain ends only after its relays arrived
+
+- **GIVEN** a draining controller hosting a relay in a cold namespace whose class keeps nothing on disk
+- **WHEN** the drain moves it to a peer
+- **THEN** the drain returns only after the peer's Overwatch received the handover and ran its start
+- **AND** the relay arrives with the state its runner held
 
 #### Scenario: Busy relay defers, then migrates within the drain window
 
@@ -172,7 +181,7 @@ When `:flezha, :graceful_shutdown_enabled` is `false`, or the coordinator cannot
 
 - **GIVEN** a controller running as a release with two locally hosted Relays and an available peer
 - **WHEN** a user runs `bin/flezha stop` (which issues `:init.stop()` to the running BEAM)
-- **THEN** `Application.prep_stop/1` is called, which calls `Coordinator.shutdown(:prep_stop)`; the coordinator drains both Relays via HotSwap; `prep_stop/1` returns and the BEAM completes its supervision-tree shutdown — exit status 0 with both Relays running on the peer
+- **THEN** `Application.prep_stop/1` is called, which calls `Coordinator.shutdown(:prep_stop)`; the coordinator drains both Relays to the peer; `prep_stop/1` returns and the BEAM completes its supervision-tree shutdown — exit status 0 with both Relays running on the peer
 
 #### Scenario: prep_stop honours the kill-switch fall-through
 

@@ -93,6 +93,7 @@ defmodule Flezha.AuthZ.Policy do
     :"authz.namespace_create",
     :"authz.namespace_delete",
     :"authz.namespace_set_quota",
+    :"authz.namespace_set_migration",
     :"authz.role_bind",
     :"authz.role_unbind"
   ]
@@ -154,6 +155,8 @@ defmodule Flezha.AuthZ.Policy do
       :"authz.namespace_create",
       :"authz.namespace_delete",
       :"authz.namespace_set_quota",
+      :"authz.namespace_set_migration",
+      :"authz.namespace_set_migration",
       :"authz.role_bind",
       :"authz.role_unbind",
       :"authz.token_issue",

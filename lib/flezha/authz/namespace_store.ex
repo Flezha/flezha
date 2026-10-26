@@ -2,9 +2,10 @@ defmodule Flezha.AuthZ.NamespaceStore do
   @moduledoc """
   Durable namespace catalog backed by `<auth_dir>/namespaces.dets`.
 
-  Each row stores `{name, quotas, created_at, created_by_principal}`.
+  Each row stores `{name, quotas, migration, created_at, created_by_principal}`.
   An ETS read cache fronts the DETS table for hot-path quota
-  lookups.
+  lookups. `migration` names how the namespace's hub moves its relays, `:cold`
+  or `:hot`; a row written before the field existed reads `:cold`.
 
   The system namespace `_system` is seeded on first open when the
   catalog is empty.
@@ -26,9 +27,14 @@ defmodule Flezha.AuthZ.NamespaceStore do
   @type entry :: %{
           required(:name) => binary(),
           required(:quotas) => Namespace.quotas(),
+          required(:migration) => migration(),
           required(:created_at) => integer(),
           required(:created_by_principal) => binary() | nil
         }
+
+  @type migration :: :cold | :hot
+
+  @migrations [:cold, :hot]
 
   ## ----- Public API -----
 
@@ -55,15 +61,34 @@ defmodule Flezha.AuthZ.NamespaceStore do
   end
 
   @spec get(binary()) :: {:ok, entry()} | :error
-  def get(name) when is_binary(name), do: DetsStore.cache_lookup(@cache, name)
+  def get(name) when is_binary(name) do
+    with {:ok, entry} <- DetsStore.cache_lookup(@cache, name), do: {:ok, with_defaults(entry)}
+  end
 
   @spec list() :: [entry()]
-  def list(), do: DetsStore.cache_values(@cache)
+  def list(), do: Enum.map(DetsStore.cache_values(@cache), &with_defaults/1)
 
   @spec set_quotas(binary(), map()) :: {:ok, entry()} | {:error, term()}
   def set_quotas(name, overrides) when is_binary(name) and is_map(overrides) do
     with {:ok, quotas} <- build_full_quotas(name, overrides) do
-      Replica.published(call({:set_quotas, name, quotas}), __MODULE__, name)
+      Replica.published(call({:set, name, :quotas, quotas}), __MODULE__, name)
+    end
+  end
+
+  @doc "The ways a namespace's hub can move its relays."
+  @spec migrations() :: [migration()]
+  def migrations(), do: @migrations
+
+  @spec set_migration(binary(), migration()) :: {:ok, entry()} | {:error, term()}
+  def set_migration(name, migration) when is_binary(name) and migration in @migrations,
+    do: Replica.published(call({:set, name, :migration, migration}), __MODULE__, name)
+
+  @doc "How `name`'s hub moves its relays; `:cold` for a namespace with no record."
+  @spec migration(binary()) :: migration()
+  def migration(name) when is_binary(name) do
+    case get(name) do
+      {:ok, entry} -> entry.migration
+      :error -> :cold
     end
   end
 
@@ -88,12 +113,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
 
   @impl true
   def handle_call({:create, name, quotas, by}, _from, state) do
-    entry = %{
-      name: name,
-      quotas: quotas,
-      created_at: System.system_time(:second),
-      created_by_principal: by
-    }
+    entry = new_entry(name, quotas, by)
 
     case DetsStore.fetch(@table, name) do
       :error ->
@@ -119,10 +139,10 @@ defmodule Flezha.AuthZ.NamespaceStore do
     end
   end
 
-  def handle_call({:set_quotas, name, quotas}, _from, state) do
+  def handle_call({:set, name, field, value}, _from, state) do
     case DetsStore.fetch(@table, name) do
       {:ok, entry} ->
-        updated = %{entry | quotas: quotas}
+        updated = entry |> with_defaults() |> Map.put(field, value)
         :ok = Replica.put(__MODULE__, name, updated)
         {:reply, {:ok, updated}, state}
 
@@ -142,20 +162,24 @@ defmodule Flezha.AuthZ.NamespaceStore do
     case DetsStore.fetch(@table, system) do
       :error ->
         {:ok, quotas} = build_full_quotas(system, %{})
-
-        entry = %{
-          name: system,
-          quotas: quotas,
-          created_at: System.system_time(:second),
-          created_by_principal: nil
-        }
-
-        :ok = DetsStore.put(@table, @cache, system, entry)
+        :ok = DetsStore.put(@table, @cache, system, new_entry(system, quotas, nil))
 
       _ ->
         :ok
     end
   end
+
+  defp new_entry(name, quotas, by) do
+    %{
+      name: name,
+      quotas: quotas,
+      migration: :cold,
+      created_at: System.system_time(:second),
+      created_by_principal: by
+    }
+  end
+
+  defp with_defaults(entry), do: Map.put_new(entry, :migration, :cold)
 
   # Quota precedence: defaults < config-file overrides for this
   # namespace < user-supplied overrides at create / set-quota time.

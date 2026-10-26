@@ -31,7 +31,7 @@ The Controller SHALL hold the authoritative placement table. Runners SHALL regis
 
 #### Scenario: Each Relay runs on exactly one Runner at a time
 - **WHEN** a Relay is placed on Runner A
-- **THEN** ProcessHub SHALL ensure no concurrent `AddRelay` for the same `relay_id` is issued to any other Runner; migrations SHALL go through the documented HotSwap-with-handover path
+- **THEN** ProcessHub SHALL ensure no concurrent `AddRelay` for the same `relay_id` is issued to any other Runner; migrations SHALL go through the namespace's migration strategy with handover: a cold swap, which stops the relay on the old Runner's controller before it starts elsewhere, unless the namespace chooses a hot swap
 
 ### Requirement: Per-Cell mailbox is bounded with declared capacity
 Each CellSlot's mailbox SHALL have a fixed capacity declared at relay startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the relay is started.

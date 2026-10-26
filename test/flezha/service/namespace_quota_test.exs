@@ -2,7 +2,8 @@ defmodule Flezha.Service.NamespaceQuotaTest do
   @moduledoc """
   A quota override names a quota field, as text or as an atom, resolved
   against the default quotas' own keys: any other name is refused naming it,
-  and a ceiling that is not a whole number names its field.
+  and a ceiling that is not a whole number names its field. The migration
+  setting takes `cold` or `hot` and refuses any other word, keeping the record.
   """
   # async: false: the auth stores are node-global singletons.
   use FlezhaTest.Case,
@@ -10,9 +11,30 @@ defmodule Flezha.Service.NamespaceQuotaTest do
     async: false
 
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.Service.Admin
   alias Flezha.Service.Namespace
 
   @context %{source: :cli}
+
+  # Fails when: the setting takes a word outside cold and hot, or a refusal
+  # still changes the record.
+  test "set_migration takes cold or hot, refuses anything else, and show reports it" do
+    assert {:ok, %{migration: :cold}} = Namespace.create("moves-ns", [], @context)
+
+    assert {:ok, %{migration: :hot}} =
+             Admin.run("Namespace.set_migration", ~s(["moves-ns", "hot"]), @context, :given)
+
+    assert {:error, %Flezha.Error{code: "usage.unknown_word"}} =
+             Admin.run("Namespace.set_migration", ~s(["moves-ns", "warm"]), @context, :given)
+
+    assert {:ok, %{migration: :hot}} = Namespace.get("moves-ns", @context)
+
+    assert {:ok, %{migration: :cold}} =
+             Admin.run("Namespace.set_migration", ~s(["moves-ns", "cold"]), @context, :given)
+
+    assert {:error, %Flezha.Error{code: "namespace.not_found"}} =
+             Admin.run("Namespace.set_migration", ~s(["no-such-ns", "hot"]), @context, :given)
+  end
 
   # Fails when: a quota field is any atom the node knows.
   test "a word that is no quota field is refused, as text and as an atom" do

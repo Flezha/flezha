@@ -355,8 +355,11 @@ three phases:
    node stops, a relay start there answers `shutting_down` and new runner
    connections are refused. Running relays and connected runners are not
    touched.
-2. **Drain.** Each relay it hosts moves to a peer controller while it is
-   still alive, namespace by namespace, concurrently. A relay in the
+2. **Drain.** Each relay it hosts moves to a peer controller, namespace by
+   namespace, concurrently, the way its namespace moves relays (by
+   [cold swap](../core/namespaces.md#how-its-relays-move) unless it chooses
+   hot), and the drain ends once each moved relay has arrived on its peer and
+   copied its saved state from this controller. A relay in the
    middle of critical work can defer its move (below); whatever still defers at
    the deadline is moved by force. With no peer to move to, nothing moves, and
    the next boot restores the relays from disk
@@ -487,6 +490,10 @@ each phase boundary also logs a `[shutdown] ...` line:
   it.
 - **One disk is one copy.** Without a durability backend, losing the disk
   loses the state ([`durability.md`](../core/durability.md)).
+- **Upgrade every controller together** to the release that moves relays by
+  cold swap by default: an older controller neither learns where a moved relay
+  came from nor takes a cold move's handover, so a relay moved onto it arrives
+  without its state.
 - **Every boot refusal**, what it means and its fix, plus a controller that
   will not stop:
   [`../../troubleshooting/controller_will_not_start.md`](../../troubleshooting/controller_will_not_start.md).

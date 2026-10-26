@@ -8,9 +8,10 @@ defmodule Flezha.Plugin.Home do
   relays run (`Flezha.Plugin.Shared`). A `single` plugin's one copy runs
   beside this home: started with it, stopped after the idle stop while no
   relay joins it, and started again by the next one that does. On a move
-  the hub starts the new home, and with it the new copy, before it hands the
-  subscribed relays over, and the old copy stops once the new one runs, so
-  the new connection opens before the old one closes.
+  the old copy outlives its home, which a cold swap stops first: while relays
+  are subscribed it keeps running until the new home's copy has its upstream
+  open, so the new connection opens before the old one closes, and a copy
+  nobody reads stops at once.
 
   A controller plugin has no relay to start its copies, so the home of one
   without `single` places them: when it starts, and on every join or leave in
@@ -21,6 +22,7 @@ defmodule Flezha.Plugin.Home do
 
   use GenServer
   use ProcessHub.Strategy.Migration.HotSwap
+  use ProcessHub.Strategy.Migration.ColdSwap, declare_behaviour: false
 
   alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations

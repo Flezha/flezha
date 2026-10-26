@@ -1,14 +1,22 @@
 defmodule FlezhaTest.Handover do
+  @moduledoc """
+  Relays moving between controllers on a drain: by cold swap, the default, the
+  source stops before the destination starts and the destination restores
+  from the copy it pulls; in a namespace set to hot, the destination starts
+  first and takes the state live.
+  """
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Service.RelayManager
   alias Flezha.State.Commands
   alias Flezha.State.TestHelpers
+  alias Flezha.State.WriterRegistry
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
   alias ProcessHub.Constant.Hook
+  alias ProcessHub.Service.HookManager
 
   use ExUnit.Case
   use Flezha.Constant
@@ -16,6 +24,9 @@ defmodule FlezhaTest.Handover do
   @default_namespace "default"
 
   @test_store_input_factory "store_input"
+
+  # A peer whose `default` hub moves its relays by hot swap.
+  @hot [migrations: [{"default", :hot}]]
 
   setup _context do
     # Restore now rehydrates a relay from its WAL on (re)bind, so leftover
@@ -29,7 +40,7 @@ defmodule FlezhaTest.Handover do
   @tag :multi_node
   @tag :drain_migration
   test "graceful shutdown drains a relay to a peer through live handover" do
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node1)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node1, @hot)
 
     relay_id = start_relay_on_peer(peer_node, "drain_mig")
     RelayTestHelper.send_sync_io(relay_id, @default_namespace, "before_drain", %{})
@@ -50,9 +61,7 @@ defmodule FlezhaTest.Handover do
     # converges just after, so poll for it.
     assert arrived?(relay_id), "expected live HotSwap handover, not a WAL cold restore"
 
-    {:ok, json_state} = RelayManager.get_cell_state(@default_namespace, relay_id)
-    state = Payloader.json_to_map(json_state)
-    assert "before_drain" in get_in(state, ["store_input_tasklet", "text_inputs"])
+    assert "before_drain" in text_inputs(relay_id)
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -63,7 +72,7 @@ defmodule FlezhaTest.Handover do
   @tag :multi_node
   @tag :drain_migration_calls
   test "a caller waiting on a relay that drains to a peer is answered from there" do
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_calls_node)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_calls_node, @hot)
     relay_id = start_relay_on_peer(peer_node, "drain_call")
     {:ok, source} = RelayManager.get_relay_pid(@default_namespace, relay_id)
 
@@ -112,7 +121,7 @@ defmodule FlezhaTest.Handover do
   @tag :multi_node
   @tag :drain_migration_forced
   test "a deferring relay is force-migrated at the drain deadline without wedging" do
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node2)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node2, @hot)
     relay_id = deferring_relay_on(peer_node)
 
     # The shortest budget that still leaves the drain its one-second floor of
@@ -135,10 +144,8 @@ defmodule FlezhaTest.Handover do
            "the relay must become addressable at its new home after the forced handover"
 
     RelayTestHelper.send_sync_io(relay_id, @default_namespace, "after_force", %{})
-    {:ok, json_state} = RelayManager.get_cell_state(@default_namespace, relay_id)
-    state = Payloader.json_to_map(json_state)
-    assert "seed" in get_in(state, ["store_input_tasklet", "text_inputs"])
-    assert "after_force" in get_in(state, ["store_input_tasklet", "text_inputs"])
+    assert "seed" in text_inputs(relay_id)
+    assert "after_force" in text_inputs(relay_id)
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -153,7 +160,7 @@ defmodule FlezhaTest.Handover do
   test "a pending timer survives a live move, a compaction there and a restore" do
     # The peer's runner inherits it: a session closes 30 s after its input.
     System.put_env("TIMER_TEST_TIMEOUT_MS", "30000")
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_timer_node)
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_timer_node, @hot)
     System.delete_env("TIMER_TEST_TIMEOUT_MS")
     op = RelayFixture.start_on(peer_node, "drain_timer", "session_timeout")
     idle = RelayFixture.start_on(peer_node, "drain_timer_idle", "session_timeout")
@@ -184,6 +191,181 @@ defmodule FlezhaTest.Handover do
            "the destination's bind did not restore the moved Cell's timer"
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: a cold drain lets the relay run on two controllers at once,
+  # binds here without the state the source flushed as it stopped, or loses an
+  # input a confirming sender was told was taken.
+  @tag :multi_node
+  @tag :cold_drain
+  test "a cold drain stops the relay before it starts here and loses no confirmed input" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cold_drain_node)
+    relay_id = start_relay_on_peer(peer_node, "cold_drain")
+    {:ok, source} = RelayManager.get_relay_pid(@default_namespace, relay_id)
+    watch_arrival(relay_id, peer_node, source)
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "before_drain", %{})
+    feeder = start_feeder(relay_id, &"fed_#{&1}")
+
+    assert :ok = shutdown_peer(peer_node, 30_000)
+
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
+                    %{namespace: @default_namespace}},
+                   10_000
+
+    assert m.migrated >= 1
+    assert_receive {:arriving, ^relay_id, source_alive?, open_writers}, 10_000
+    refute source_alive?, "the destination started while the source Overwatch ran"
+    assert open_writers == [], "the source's writers were open as the destination started"
+    assert landed_here?(relay_id)
+
+    sent = stop_feeder(feeder, 5)
+    # A taken input reaches the state once its runner has run it.
+    NodeTestHelper.wait_until(fn -> sent -- text_inputs(relay_id) == [] end, 10_000)
+    inputs = text_inputs(relay_id)
+    assert "before_drain" in inputs
+    assert sent -- inputs == [], "confirmed inputs lost in the move: #{inspect(sent -- inputs)}"
+
+    assert {:ok, %{arrived_via_hotswap?: false}} =
+             RelayManager.get_overwatch_state(@default_namespace, relay_id)
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: a cold move of a class that keeps nothing on disk ships no
+  # in-band state, so the relay arrives empty.
+  @tag :multi_node
+  @tag :cold_drain_memory
+  test "a cold drain carries the state of a class that keeps none on disk" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cold_memory_node)
+    relay_id = RelayFixture.start_on(peer_node, "cold_memory", "persistence_off_counter")
+    for n <- ["3", "4"], do: confirm(relay_id, n)
+
+    assert :ok = shutdown_peer(peer_node, 30_000)
+    assert arrived?(relay_id), "the in-band state did not reach the destination's runner"
+
+    # Read off the runner: the controller refuses a live read of a class that
+    # keeps nothing on disk.
+    {:ok, %{runner_id: runner}} = RelayManager.get_overwatch_state(@default_namespace, relay_id)
+    assert Flezha.Relay.Handover.create_snapshot(relay_id, runner) =~ ~s("value":7)
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: an effectively-once relay moved cold drops or applies twice a
+  # record its confirming source sent around the move.
+  @tag :multi_node
+  @tag :cold_drain_effectively_once
+  test "an effectively-once relay fed throughout a cold move applies every record once" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cold_once_node)
+    relay_id = RelayFixture.start_on(peer_node, "cold_once", "tier_store")
+
+    RelayFixture.attach_output_msg({:ok, %{relay_id: relay_id}}, @default_namespace, %{
+      include_metadata: true
+    })
+
+    feeder = start_feeder(relay_id, &"k#{&1}:v#{&1}")
+
+    assert :ok = shutdown_peer(peer_node, 30_000)
+    assert landed_here?(relay_id)
+    sent = stop_feeder(feeder, 5)
+    keys = Enum.map(sent, &(&1 |> String.split(":") |> hd()))
+
+    assert NodeTestHelper.wait_until(
+             fn ->
+               keys -- Map.keys(TierE2EHarness.changelog(TierE2EHarness.peek_outputs())) == []
+             end,
+             30_000
+           ),
+           "a confirmed record never produced its output"
+
+    twice =
+      TierE2EHarness.drain_outputs()
+      |> Enum.group_by(fn {_msg, md} -> md["flz.key"] end, fn {_msg, md} -> md end)
+      |> Enum.filter(fn {_key, mds} -> length(Enum.uniq_by(mds, & &1["flz.seq"])) != 1 end)
+
+    assert twice == [], "applied more than once: #{inspect(twice)}"
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # Called from inside this node's hub as it starts `relay_id`, before the
+  # Overwatch starts: whether the source still runs, and its writers still open.
+  def report_arrival(child_data, test_pid, relay_id, peer, source) do
+    if child_data.child_spec.id == relay_id do
+      alive? = :erpc.call(peer, Process, :alive?, [source])
+      writers = :erpc.call(peer, WriterRegistry, :live_writers, [relay_id])
+      send(test_pid, {:arriving, relay_id, alive?, writers})
+    end
+
+    child_data
+  catch
+    kind, reason ->
+      send(test_pid, {:arriving, relay_id, {kind, reason}, :unknown})
+      child_data
+  end
+
+  defp watch_arrival(relay_id, peer, source) do
+    hub_id = Identificator.hub(@default_namespace)
+
+    handler = %HookManager{
+      id: "arrival_watch",
+      m: __MODULE__,
+      f: :report_arrival,
+      a: [:_, self(), relay_id, peer, source]
+    }
+
+    ProcessHub.register_hook_handlers(hub_id, Hook.child_data_alter(), [handler])
+
+    on_exit(fn ->
+      ProcessHub.cancel_hook_handlers(hub_id, Hook.child_data_alter(), ["arrival_watch"])
+    end)
+  end
+
+  # Sends `input.(1)`, `input.(2)`, ... as a confirming source does, each
+  # again until the relay takes it, until told to stop. Each send waits for its
+  # answer, so one is sent again only when no relay could take it.
+  defp start_feeder(relay_id, input), do: Task.async(fn -> feed(relay_id, input, 1, []) end)
+
+  defp feed(relay_id, input, n, sent) do
+    receive do
+      {:stop_after, more} when more > 0 ->
+        send(self(), {:stop_after, more - 1})
+        confirm(relay_id, input.(n))
+        feed(relay_id, input, n + 1, [input.(n) | sent])
+
+      {:stop_after, 0} ->
+        Enum.reverse(sent)
+    after
+      0 ->
+        confirm(relay_id, input.(n))
+        feed(relay_id, input, n + 1, [input.(n) | sent])
+    end
+  end
+
+  # Stops the feeder once it sent `more` inputs after the move.
+  defp stop_feeder(feeder, more) do
+    send(feeder.pid, {:stop_after, more})
+    Task.await(feeder, 60_000)
+  end
+
+  defp confirm(relay_id, input) do
+    deadline = System.monotonic_time(:millisecond) + 30_000
+    RelayTestHelper.send_confirmed(relay_id, @default_namespace, input, %{}, deadline)
+  end
+
+  defp landed_here?(relay_id) do
+    NodeTestHelper.wait_until(
+      fn ->
+        match?(
+          {:ok, pid} when node(pid) == node(),
+          RelayManager.get_relay_pid(@default_namespace, relay_id)
+        )
+      end,
+      10_000
+    )
+  end
+
+  defp text_inputs(relay_id) do
+    {:ok, json} = RelayManager.get_cell_state(@default_namespace, relay_id)
+    get_in(Payloader.json_to_map(json), ["store_input_tasklet", "text_inputs"])
   end
 
   # Whether the relay was handed over live to this controller, polled: the

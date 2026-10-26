@@ -41,6 +41,7 @@ defmodule Flezha.AuthZ.Action do
     :"authz.namespace_list",
     :"authz.namespace_show",
     :"authz.namespace_set_quota",
+    :"authz.namespace_set_migration",
     :"authz.role_bind",
     :"authz.role_unbind",
     :"authz.role_list",

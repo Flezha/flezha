@@ -72,6 +72,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:create, ["ns_surface", []]},
       {:delete, ["ns_surface"]},
       {:set_quotas, ["default", %{}]},
+      {:set_migration, ["default", :cold]},
       {:whoami, []},
       {:bootstrap, ["token"]},
       {:issue_token, ["p", "default", "admin", []]},

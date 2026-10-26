@@ -244,6 +244,8 @@ defmodule FlezhaTest.Plugin.SharedMultinodeTest do
     refute_receive {:ingested, _, "one-frame"}, 300
     assert WebsocketServer.open(server) == 1
 
+    # The home moves cold: its old copy still outlives it until the new opens.
+    assert :erpc.call(p1, HubManager, :migration, [@namespace]) == :cold
     leave(ctx.peers, p1)
     assert opened_before_closing(first), "the new connection did not open before the old closed"
     assert NodeTestHelper.wait_until(fn -> home_node(name) != p1 end, 10_000)

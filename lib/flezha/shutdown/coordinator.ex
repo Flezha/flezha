@@ -12,8 +12,8 @@ defmodule Flezha.Shutdown.Coordinator do
     locally-hosted Relays to peers while they are still alive —
     `ProcessHub.Service.Migration.drain/2` per running namespace hub, through
     the one drain seam, redistributes each child through the migration-consent
-    gate (live HotSwap handover) and force-migrates what still defers at the
-    deadline. Solo nodes (`{:error, :no_target_nodes}`) skip the migration
+    gate with its namespace's migration strategy, force-migrates what still
+    defers at the deadline, and waits until each moved child has arrived. Solo nodes (`{:error, :no_target_nodes}`) skip the migration
     wait; other drain preconditions degrade to the same path rather than
     wedging shutdown.
   - **Finalise** is the rest of the `:node` walk, the rows from order 20:

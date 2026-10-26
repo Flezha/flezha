@@ -17,6 +17,8 @@ defmodule FlezhaTest.Relay.RebindTest do
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Rebind
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Runner.ControlUnit
+  alias Flezha.Process.Hub
   alias Flezha.Service.{PluginManager, RelayManager}
   alias Flezha.State.{Outbox, WriterRegistry}
   alias FlezhaTest.Helper.NodeTestHelper
@@ -266,6 +268,7 @@ defmodule FlezhaTest.Relay.RebindTest do
   # fails when: a handover away from a runner that is gone stops shipping the
   # final state that runner handed over, before any other runner took over.
   test "a handover away from a gone runner ships the snapshot no runner has taken over" do
+    stub(Hub, :migration, fn _hub_id -> :hot end)
     state = %{running_state() | snapshot: "final_state_of_runner_a"}
 
     assert {%{id: _}, "final_state_of_runner_a"} =
@@ -276,6 +279,7 @@ defmodule FlezhaTest.Relay.RebindTest do
   # durable on this node, so the destination pulls a floor below the inputs the
   # state holds; or a class whose bind re-forwards nothing waits on them too.
   test "a handover waits on its cut only where the bind re-forwards above the Cells' floor" do
+    stub(Hub, :migration, fn _hub_id -> :hot end)
     on_exit(NodeTestHelper.override_log_level(:warning))
     # An identity no writer answers for: the cut can never be shown durable.
     moved = Jason.encode!(%{"t" => 3, "$cells" => [%{identity: [0], timers: [], next_seq: 2}]})
@@ -297,10 +301,32 @@ defmodule FlezhaTest.Relay.RebindTest do
     end
   end
 
+  # fails when: a cold move of a persistent class ships state taken before the
+  # source stopped, which the destination would apply over the newer copy it
+  # pulls; or a class with nothing on disk loses the only copy it has.
+  test "a cold move ships the runner's state only for a class that keeps none on disk" do
+    stub(Hub, :migration, fn _hub_id -> :cold end)
+    test_pid = self()
+
+    stub(ControlUnit, :send_control_await, fn _runner, request ->
+      send(test_pid, {:asked, request})
+      {:ok, "sdk-state"}
+    end)
+
+    state = %{running_state() | snapshot: "final_state_of_runner_a"}
+    assert {%{id: _}, nil} = Overwatch.prepare_handover_state(state)
+    refute_received {:asked, _}
+
+    stub(ClassRegistry, :persistent?, fn _class -> false end)
+    assert {%{id: _}, "sdk-state"} = Overwatch.prepare_handover_state(state)
+    assert_received {:asked, {:migration_serialization, _}}
+  end
+
   # fails when: a snapshot read is kept on the Overwatch, so a handover after
   # the runner dies hard ships that read and skips the pull of every change the
   # runner made after it.
   test "a snapshot read is not kept for a later handover" do
+    stub(Hub, :migration, fn _hub_id -> :hot end)
     runner_id = "runner_read_#{System.unique_integer([:positive])}"
     state = %{running_state() | runner_id: runner_id}
 

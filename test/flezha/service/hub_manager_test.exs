@@ -18,14 +18,21 @@ defmodule Flezha.Service.HubManagerTest do
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
 
   use FlezhaTest.Case,
-    fixtures: [:env, {:tmp_dir, base: Path.expand("storage/tmp")}],
+    fixtures: [
+      :env,
+      {:tmp_dir, base: Path.expand("storage/tmp")},
+      {:auth_stores, prefix: "flz_hub_manager", enabled: false}
+    ],
     async: false
 
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Config.Durations
   alias Flezha.Relay.Builder
   alias Flezha.Plugin
   alias Flezha.Service.HubManager
+  alias FlezhaTest.Helper.HubRegistryTestHelper
   alias ProcessHub.Service.Recovery, as: HubRecovery
+  alias ProcessHub.Strategy.Migration.{ColdSwap, HotSwap}
   alias ProcessHub.Storage.RemoteManifest
 
   @namespace "default"
@@ -153,7 +160,7 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "consent_settings/0" do
+  describe "consent_settings/0 and the migration strategy" do
     test "defaults derive max_defer_time from the graceful-shutdown budget" do
       Application.delete_env(:flezha, :migration_consent)
       Application.put_env(:flezha, :graceful_shutdown_timeout_ms, 60_000)
@@ -178,10 +185,45 @@ defmodule Flezha.Service.HubManagerTest do
       assert settings.max_defer_time == 10_000
     end
 
-    test "the hub strategy carries the resolved consent settings" do
-      strategy = HubManager.migration_strategy()
-      assert %ProcessHub.Strategy.Migration.HotSwap{handover: true} = strategy
-      assert strategy.consent_settings == HubManager.consent_settings()
+    # Fails when: a namespace's hub does not take the strategy its setting
+    # names, or one of them loses the handover or the consent settings.
+    test "the hub strategy follows the namespace's migration setting" do
+      {:ok, _} = NamespaceStore.create("migr-cold")
+      {:ok, _} = NamespaceStore.create("migr-hot")
+      {:ok, _} = NamespaceStore.set_migration("migr-hot", :hot)
+
+      for {namespace, kind} <- [
+            {"migr-unrecorded", ColdSwap},
+            {"migr-cold", ColdSwap},
+            {"migr-hot", HotSwap}
+          ] do
+        strategy = HubManager.migration_strategy(namespace)
+        assert %{__struct__: ^kind, handover: true} = strategy
+        assert strategy.consent_settings == HubManager.consent_settings()
+        assert strategy.state_query_timeout == Durations.get(:migration_state_query_ms)
+      end
+    end
+
+    # Fails when: a running hub's moves follow the namespace record rather than
+    # the strategy the hub started with.
+    test "a running hub keeps its strategy until its next start" do
+      namespace = "migr-running"
+      {:ok, _} = NamespaceStore.create(namespace)
+      on_exit(fn -> HubManager.stop_hub(namespace) end)
+
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(namespace)
+      assert HubManager.migration(namespace) == :cold
+
+      {:ok, _} = NamespaceStore.set_migration(namespace, :hot)
+      assert HubManager.migration(namespace) == :cold
+
+      :ok = HubManager.stop_hub(namespace)
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(namespace)
+      assert HubManager.migration(namespace) == :hot
+    end
+
+    test "a namespace without a running hub reads cold" do
+      assert HubManager.migration("migr-no-hub") == :cold
     end
   end
 
@@ -304,7 +346,32 @@ defmodule Flezha.Service.HubManagerTest do
       assert restored.shutdown > Durations.get(:stop_process_budget_ms)
       assert restored.shutdown < Durations.get(:stop_release_timeout_ms) - 1_000
     end
+
+    # Fails when: a moved relay does not learn the node it left, so a cold move
+    # binds without pulling the state the source just flushed.
+    test "a migrated relay carries the node it left as its state source" do
+      stored = cspec({@namespace, relay_builder([])})
+      moved = %{child_spec: stored, metadata: %{}, migration: true, migrated_from: :a@host}
+
+      assert source_node(HubManager.alter_child_data(:ignored_hub_id, moved)) == :a@host
+    end
+
+    test "a fresh start, a move from this node and a plugin home get no source" do
+      stored = cspec({@namespace, relay_builder([])})
+      fresh = %{child_spec: stored, metadata: %{}}
+      here = Map.merge(fresh, %{migration: true, migrated_from: node()})
+
+      assert source_node(HubManager.alter_child_data(:ignored_hub_id, fresh)) == nil
+      assert source_node(HubManager.alter_child_data(:ignored_hub_id, here)) == nil
+
+      home = %{child_spec: cspec({@namespace, nil, plugin("p")}), metadata: %{}}
+      moved_home = Map.merge(home, %{migration: true, migrated_from: :a@host})
+      assert HubManager.alter_child_data(:ignored_hub_id, moved_home) == moved_home
+    end
   end
+
+  defp source_node(%{child_spec: %{start: {_m, _f, [{_ns, _runner, relay}]}}}),
+    do: Keyword.get(relay.opts, :state_source_node)
 
   describe "auto_recovery_config/0" do
     test "every key we advertise is one upstream reads, and every value is in range" do

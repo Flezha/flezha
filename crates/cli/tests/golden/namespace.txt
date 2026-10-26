@@ -4,12 +4,15 @@ USAGE:
     flz namespace <COMMAND>
 
 COMMANDS:
-    list       The namespaces in the durable catalog the caller may be shown.
-    create     Create a namespace.
-    delete     Delete a namespace and the quota counters keyed on it.
-    show       One namespace record.
-    set-quota  Replace the namespace's quota overrides.
-    help       Show this help message.
+    list           The namespaces in the durable catalog the caller may be
+                   shown.
+    create         Create a namespace.
+    delete         Delete a namespace and the quota counters keyed on it.
+    show           One namespace record.
+    set-quota      Replace the namespace's quota overrides.
+    set-migration  Set how the namespace's hub moves its relays, `cold` or
+                   `hot`.
+    help           Show this help message.
 
 create and set-quota take each quota as --X<quota>=<value>.
 

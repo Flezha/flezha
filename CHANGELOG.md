@@ -8,6 +8,15 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- Relays move between controllers by cold swap by default: a relay stops on the
+  controller it leaves before it starts on the new one, which copies its saved
+  state first, so only one copy ever runs. During the move the relay answers
+  nothing; a sender that waits for the answer sends again, and input sent
+  without waiting is lost, as in a crash. A namespace that needs the relay to
+  keep answering while it moves sets `flz namespace set-migration <name> hot`,
+  and `flz namespace show` reports the setting
+  ([Namespaces](docs/public/topics/core/namespaces.md#how-its-relays-move)).
+  Upgrade every controller together to this release.
 - The console is now named Flezha Console, in the `flezha_console` repository.
   The build setting that points at a console checkout is `FLEZHA_CONSOLE_PATH`,
   which replaces `FLEZHA_UI_PATH`.

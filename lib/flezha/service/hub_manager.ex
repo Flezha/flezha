@@ -49,7 +49,7 @@ defmodule Flezha.Service.HubManager do
   defdelegate live_pid(arg1), to: Hub
   defdelegate local_children(arg1, arg2), to: Rows
   @doc false
-  defdelegate migration_strategy(), to: Lifecycle
+  defdelegate migration_strategy(namespace), to: Lifecycle
   defdelegate quorum(hub_id), to: Lifecycle
   defdelegate relay_bindings(arg1), to: Rows
   defdelegate declared_bindings(arg1), to: Rows
@@ -279,6 +279,13 @@ defmodule Flezha.Service.HubManager do
     Supervisor.init([], strategy: :one_for_one)
   end
 
+  @doc """
+  How `namespace`'s running hub moves its relays: the strategy it started with,
+  which a changed namespace setting does not alter until the hub restarts.
+  """
+  @spec migration(binary()) :: Hub.migration()
+  def migration(namespace), do: Hub.migration(Identificator.hub(namespace))
+
   defp process_hub(namespace) do
     hub_id = Identificator.hub(namespace)
 
@@ -292,7 +299,7 @@ defmodule Flezha.Service.HubManager do
       # controller that can run it. A relay with no factory has no group
       # and is hashed over every controller in the hub.
       distribution_strategy: %GroupedHashing{},
-      migration_strategy: Lifecycle.migration_strategy(),
+      migration_strategy: Lifecycle.migration_strategy(namespace),
       registry_backend: Lifecycle.registry_backend_config(hub_id),
       auto_recovery: Lifecycle.auto_recovery_config(),
       # Relay startup involves multiple GenServer hops and socket communication

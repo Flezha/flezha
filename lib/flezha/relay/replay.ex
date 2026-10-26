@@ -175,17 +175,16 @@ defmodule Flezha.Relay.Replay do
   @doc """
   The relay an arriving instance binds with, once its durable state is the
   newest copy there is (`Flezha.State.Adoption.adopt_newest/3`): the copy on
-  the node it moves from, which is the one the hub still names while a move
-  starts its destination or the `:state_source_node` a partition rescale
-  stamped on a new member, else the backend's. Runs on arrival, before
-  anything below reads or opens the state. A source whose copy did not land
-  stays on the relay as `:state_source_node`; any other is dropped. `hub_pid`
-  is the hub's answer for the instance, `owner` the Overwatch.
+  the node its `:state_source_node` names, which the hub stamps on a moved
+  relay and a partition rescale on a new member, else the backend's. Runs on
+  arrival, before anything below reads or opens the state. A source whose copy
+  did not land stays on the relay as `:state_source_node`; any other is
+  dropped. `owner` is the Overwatch.
   """
-  @spec adopt_moved_state(Overwatch.t(), Flezha.Relay.Builder.t(), term(), pid()) ::
+  @spec adopt_moved_state(Overwatch.t(), Flezha.Relay.Builder.t(), pid()) ::
           Flezha.Relay.Builder.t()
-  def adopt_moved_state(%Overwatch{} = state, relay, hub_pid, owner \\ self()) do
-    source = moved_from(hub_pid) || foreign_state_source(relay.opts) || :backend
+  def adopt_moved_state(%Overwatch{} = state, relay, owner \\ self()) do
+    source = foreign_state_source(relay.opts) || :backend
     relay = drop_source(relay)
 
     case {Adoption.adopt_newest(Overwatch.relay_class(state), source, owner), source} do
@@ -196,7 +195,7 @@ defmodule Flezha.Relay.Replay do
 
   @doc """
   What a bind adopts before the runner starts: while this node holds nothing of a
-  persistent class, `adopt_moved_state/4` again; else only what this controller
+  persistent class, `adopt_moved_state/3` again; else only what this controller
   shipped and lost since, so a lost Cell never ships a cut over its own.
   """
   @spec adopt_unlanded_state(Overwatch.t(), Flezha.Relay.Builder.t(), pid()) ::
@@ -206,15 +205,12 @@ defmodule Flezha.Relay.Replay do
 
     cond do
       not ClassRegistry.persistent?(class) -> relay
-      Paths.durable_refs(class) == [] -> adopt_moved_state(state, relay, nil, owner)
+      Paths.durable_refs(class) == [] -> adopt_moved_state(state, relay, owner)
       true -> with :ok <- DurabilityTier.hydrate_relay(class, :own), do: drop_source(relay)
     end
   end
 
   defp drop_source(relay), do: %{relay | opts: Keyword.delete(relay.opts, :state_source_node)}
-
-  defp moved_from({:ok, pid}) when is_pid(pid) and node(pid) != node(), do: {:node, node(pid)}
-  defp moved_from(_here_or_nowhere), do: nil
 
   # `:state_source_node` names the node a relay's durable state was last
   # assembled on. Only a foreign one means anything — a local value is already

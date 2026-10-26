@@ -207,7 +207,7 @@ The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across re
 - **WHEN** the agent receives `RunnerShutdownNotification{relay_id: "p1", ...}`
 - **AND** `Identificator.overwatch("p1")` resolves to `:undefined`
 - **THEN** the agent SHALL log a warning naming `p1` and SHALL still emit `RunnerShutdownAck{relay_id: "p1"}` so the SDK can proceed to exit
-- **AND** the destination agent's Overwatch already received the latest state via HotSwap handover, so no functional loss
+- **AND** the destination agent's Overwatch already holds the latest state from the move (its in-band handover, or for a persistent class moved cold, the copy it pulled), so no functional loss
 
 #### Scenario: A notification for another runner's relay is acked and applied to nothing
 - **GIVEN** relay `p1` bound to runner A's stable identity and a second session B in the namespace

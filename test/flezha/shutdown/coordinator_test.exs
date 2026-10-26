@@ -34,6 +34,10 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     reset_coordinator!()
     # A finished shutdown keeps admission closed, so no test may leave one behind.
     on_exit(&reset_coordinator!/0)
+    # The hubs here are stand-ins: a drain's wait for the moved children's
+    # deliveries registers on none.
+    stub(ProcessHub, :register_hook_handlers, fn _hub, _hook, _handlers -> :ok end)
+    stub(ProcessHub, :cancel_hook_handlers, fn _hub, _hook, _ids -> :ok end)
     :ok
   end
 

@@ -176,6 +176,7 @@ defmodule Flezha.Service.AdminTest do
       assert Session.runner_caller_context(@ns).roles == [:spawner]
 
       assert denied?(door("Namespace.set_quotas", ~s([{"max_relays": 1}])))
+      assert denied?(door("Namespace.set_migration", ~s(["hot"])))
 
       # Deleting a namespace is not reachable over a connection at all.
       assert {:error, %Flezha.Error{code: "control.unknown_function"}} =

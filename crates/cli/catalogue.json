@@ -617,6 +617,31 @@
       ]
     },
     {
+      "name": "Namespace.set_migration",
+      "doc": "Set how the namespace's hub moves its relays, `cold` or `hot`.",
+      "action": "authz.namespace_set_migration",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "migration",
+          "type": "enum",
+          "required": true,
+          "values": [
+            "cold",
+            "hot"
+          ],
+          "doc": "`cold` or `hot`."
+        }
+      ]
+    },
+    {
       "name": "Namespace.set_quotas",
       "doc": "Replace the namespace's quota overrides.",
       "action": "authz.namespace_set_quota",

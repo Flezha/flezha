@@ -101,8 +101,7 @@ defmodule Flezha.Relay.Lifecycle do
     class = Overwatch.relay_class(state)
     # A move brings the source's journal, input log and Cells over before
     # anything below reads them.
-    relay =
-      Replay.adopt_moved_state(state, relay, HubManager.get_pid(state.namespace, state.id))
+    relay = Replay.adopt_moved_state(state, relay)
 
     state = %Overwatch{state | builder: relay}
 
@@ -703,6 +702,7 @@ defmodule Flezha.Relay.Lifecycle do
       %{scope: :process, order: 10, name: :bind_task, run: &bind_task_step/2},
       %{scope: :process, order: 20, name: :class_registry, run: &class_registry_step/2},
       %{scope: :process, order: 30, name: :control_unit, run: &control_unit_step/2},
+      %{scope: :process, order: 33, name: :journal, run: &journal_step/2},
       %{scope: :process, order: 35, name: :writers, run: &writers_step/2},
       %{scope: :process, order: 37, name: :lineage, run: &lineage_step/2},
       %{scope: :process, order: 40, name: :plugin_table, run: &plugin_table_step/2}
@@ -745,6 +745,9 @@ defmodule Flezha.Relay.Lifecycle do
   # The runner has been told to drop the relay, so it is no longer bound
   # here: its writers close, flushed, and its files stay. A relay that
   # moved away leaves nothing open for its return to find (`Flezha.State.Adoption`).
+  # Before the writers close: the log still answers the appends in flight.
+  defp journal_step({state, _reason}, budget), do: Ingest.settle_journaling(state, budget)
+
   defp writers_step({state, _reason}, _budget),
     do: RelayManager.close_writers(Overwatch.relay_class(state))
 

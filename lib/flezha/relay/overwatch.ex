@@ -47,6 +47,7 @@ defmodule Flezha.Relay.Overwatch do
   use GenServer
   use Flezha.Process.Timer, keys: [:wake, :correction, :call]
   use ProcessHub.Strategy.Migration.HotSwap
+  use ProcessHub.Strategy.Migration.ColdSwap, declare_behaviour: false
   use ProcessHub.Strategy.Migration.MigrationConsent
 
   use Flezha.Plugin.Host,
@@ -129,7 +130,7 @@ defmodule Flezha.Relay.Overwatch do
     # The outside callers waiting on this relay for an answer; each row's
     # deadline is armed under the timer family `:call`.
     calls: %Inbound{},
-    # Whether this process handed its state to a HotSwap target: it ends as a
+    # Whether this process handed its state to a move's target: it ends as a
     # move, whether or not the relay has a declared entry.
     handed_over?: false,
     # Whether a `:once` or `:chained` steps instance has taken its one

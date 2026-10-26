@@ -110,7 +110,8 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
 
   def attach_output_msg(
         {:ok, %{relay_id: cid}} = start_res,
-        namespace \\ @default_namespace
+        namespace \\ @default_namespace,
+        opts \\ %{}
       ) do
     plugin_id = cid <> "_output_msg_handler"
 
@@ -122,7 +123,7 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
           namespace: namespace,
           relay_id: cid,
           provider: Flezha.Plugin.Provider.BeamMsgForward,
-          opts: %{recv_pid: self()},
+          opts: Map.put(opts, :recv_pid, self()),
           hooks: [{:on_output, []}]
         }
       )

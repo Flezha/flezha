@@ -153,6 +153,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz namespace delete <name>` | Delete a namespace and the quota counters keyed on it. |
 | `flz namespace show <name>` | One namespace record. |
 | `flz namespace set-quota <name> [X<key>=<value> ...] [--<key> <value> ...]` | Replace the namespace's quota overrides. |
+| `flz namespace set-migration <name> <cold\|hot>` | Set how the namespace's hub moves its relays, `cold` or `hot`. |
 <!-- flz-reference:end -->
 
 ## [`flz auth`](access_commands.md#flz-auth)

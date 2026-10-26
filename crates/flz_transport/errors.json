@@ -855,7 +855,7 @@
       "hint": "flz namespace list",
       "details": ["namespace"],
       "reasons": [
-        {"tag": "not_found", "at": ["authz.namespace_delete", "authz.namespace_show", "authz.namespace_set_quota"], "args": ["namespace"]},
+        {"tag": "not_found", "at": ["authz.namespace_delete", "authz.namespace_show", "authz.namespace_set_quota", "authz.namespace_set_migration"], "args": ["namespace"]},
         {"tag": "namespace_unknown", "at": ["runner.connect"], "args": ["namespace"]}
       ]
     },

@@ -13,7 +13,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   use Mimic
   import FlezhaTest.Helper.MimicGlobal
 
-  alias Flezha.Relay.{Overwatch, Plugins}
+  alias Flezha.Relay.{Ingest, Overwatch, Plugins}
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
   alias Flezha.Service.{Relay, RelayManager}
@@ -86,6 +86,54 @@ defmodule FlezhaTest.Relay.IngestTest do
     {:ok, host} = start_supervised({Host, state(instance_id()) |> with_filter("drop-me")})
 
     assert {:ok, :absorbed} = PluginHost.inject(host, "drop-me now", %{}, :verdict, 1_000)
+  end
+
+  # fails when: an input sent while a relay runs nowhere (a cold move's gap) is
+  # counted as taken by a sender that waits for the answer, which would then
+  # move its position past it; or a fire-and-forget send raises.
+  test "a stopped Overwatch takes nothing, and a sender that waits learns so" do
+    {:ok, host} = start_supervised({Host, state(instance_id())})
+    :ok = stop_supervised(Host)
+    refute Process.alive?(host)
+
+    assert {:error, {:unreachable, _}} = PluginHost.inject(host, "v", %{}, :verdict, 1_000)
+    assert {:noproc, _} = catch_exit(PluginHost.inject(host, "c", %{}, :confirming, 1_000))
+
+    assert {:error, %Flezha.Error{code: "call.unavailable"}} =
+             PluginHost.inject(host, "k", %{}, :call, 1_000)
+
+    assert :ok = PluginHost.inject(host, "f", %{}, :fire_and_forget)
+  end
+
+  # fails when: an instance that ends with appends in flight leaves their
+  # senders to learn nothing, so each sends again an input its log already took.
+  test "an ending instance answers every sender its log is still journaling" do
+    echo = spawn_link(&echo/0)
+    gone = spawn(fn -> :ok end)
+    ref = Process.monitor(gone)
+    assert_receive {:DOWN, ^ref, _, _, _}
+    [taken, refused, lost] = for _ <- 1..3, do: make_ref()
+
+    reqids =
+      [{echo, {:ok, 7}, taken}, {echo, {:error, :disk}, refused}, {gone, :none, lost}]
+      |> Enum.reduce(:gen_server.reqids_new(), fn {log, answer, tag}, reqids ->
+        label = {{:ingest, {self(), tag}}, {"x", %{}}, 0}
+        :gen_server.send_request(log, answer, label, reqids)
+      end)
+
+    id = instance_id()
+    assert :ok = Ingest.settle_journaling(%{state(id) | journal_reqids: reqids}, 1_000)
+    assert_received {^taken, :ok}
+    assert_received {^refused, {:error, {:input_refused, ^id}}}
+    assert_received {^lost, {:error, {:input_refused, ^id}}}
+  end
+
+  defp echo do
+    receive do
+      {:"$gen_call", from, answer} -> GenServer.reply(from, answer)
+    end
+
+    echo()
   end
 
   describe "the keys only the controller sets" do

@@ -86,12 +86,15 @@ on the effectively-once tier writes.
 ## Cross-controller transfer
 
 `state_root` is node-local and never assumed shared, so durable state pins a Relay to the
-controller whose disk holds it. A HotSwap handover normally carries state in-band, but
-`Flezha.Relay.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) sources it from
-the runner, so a migration triggered by that runner's death (the hub's own redistribution, after
-a controller loses its last runner for a factory and withdraws it) ships an empty payload. The handover stamps `source_node`; on an
-empty payload the destination runs `WalTransfer.pull_relay/3` against that node before the
-ordinary replay. The pull carries every durable file of the instance, one reference at a time:
+controller whose disk holds it. A move's handover carries state in-band only where the disk
+cannot: `Flezha.Relay.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) ships
+none in a cold move of a class that keeps state on disk, whose source stops and flushes before
+the destination starts, and it sources the state from the runner otherwise, so a migration
+triggered by that runner's death (the hub's own redistribution, after a controller loses its
+last runner for a factory and withdraws it) ships an empty payload. The hub names the node a
+moved child left (`migrated_from`), which `HubManager.Placement.alter_child_data/2` writes into
+the relay's opts as `:state_source_node`; the destination runs `WalTransfer.pull_relay/3`
+against that node before the ordinary replay, for hot and cold moves alike. The pull carries every durable file of the instance, one reference at a time:
 each Cell's file set (`{:cell, cell_id}`), a steps relay's journal under its reserved identity, and
 the instance's input log (`{:input_log, class}`), because a journal without its log would seed
 the floor in an empty offset space. `Flezha.State.Adoption` runs it once, as the relay arrives

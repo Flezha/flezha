@@ -44,7 +44,7 @@ A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: w
 
 - **GIVEN** a flow Overwatch with no correction pending and no pending outbox, awake, whether or not its class can sleep
 - **WHEN** it is asked for migration consent
-- **THEN** it returns `:ready` and migrates through the regular HotSwap handover path with no deferral
+- **THEN** it returns `:ready` and migrates through the regular handover path of its namespace's migration strategy with no deferral
 
 ### Requirement: Overwatch SHALL signal early migration readiness at its existing safe barriers
 
@@ -64,7 +64,7 @@ A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: w
 
 ### Requirement: HubManager SHALL enable consent with settings derived from the shutdown budget
 
-The `HotSwap` migration strategy in `Flezha.Service.HubManager` SHALL carry `consent_settings` with defaults `consent_timeout: 5_000`, `retry_interval: 2_000`, and `max_defer_time` equal to the resolved `:graceful_shutdown_timeout_ms` (60 000 default). Each value SHALL be overridable via runtime config/env: `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS`, `FLEZHA_MIGRATION_RETRY_INTERVAL_MS`, `FLEZHA_MIGRATION_MAX_DEFER_MS`.
+The migration strategy `Flezha.Service.HubManager` gives every namespace hub, `ColdSwap` or `HotSwap` as the namespace's `migration` setting names, SHALL carry `consent_settings` with defaults `consent_timeout: 5_000`, `retry_interval: 2_000`, and `max_defer_time` equal to the resolved `:graceful_shutdown_timeout_ms` (60 000 default). Each value SHALL be overridable via runtime config/env: `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS`, `FLEZHA_MIGRATION_RETRY_INTERVAL_MS`, `FLEZHA_MIGRATION_MAX_DEFER_MS`.
 
 #### Scenario: Defaults bound deferral by the shutdown window
 
@@ -80,7 +80,7 @@ The `HotSwap` migration strategy in `Flezha.Service.HubManager` SHALL carry `con
 
 ### Requirement: Forced migration SHALL land on the existing recovery paths with a consistent SDK protocol
 
-A deferred Overwatch that reaches `max_defer_time` (or the drain deadline) SHALL be force-migrated through the existing best-effort HotSwap handover. After a forced migration: a flow instance SHALL resync via the existing `RestoreInitState`/baseline-pull path; a durable steps instance SHALL resume from its task-journal fold (committed tasks skipped, the uncommitted task re-run); an SDK driver blocked on a `TaskCommit`/`IterCommit` ack whose controller-side Overwatch has left SHALL hit the existing ≤30 s ack timeout → terminal error → compensation, after which convergence re-places the instance. No new wire message SHALL be introduced.
+A deferred Overwatch that reaches `max_defer_time` (or the drain deadline) SHALL be force-migrated through the best-effort handover of its namespace's migration strategy. After a forced migration: a flow instance SHALL resync via the existing `RestoreInitState`/baseline-pull path; a durable steps instance SHALL resume from its task-journal fold (committed tasks skipped, the uncommitted task re-run); an SDK driver blocked on a `TaskCommit`/`IterCommit` ack whose controller-side Overwatch has left SHALL hit the existing ≤30 s ack timeout → terminal error → compensation, after which convergence re-places the instance. No new wire message SHALL be introduced.
 
 #### Scenario: Forced migration of a busy steps relay resumes from the journal
 

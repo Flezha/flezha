@@ -40,7 +40,7 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
     timeout = resolve_timeout(Keyword.get(opts, :timeout))
     deadline = System.monotonic_time(:millisecond) + timeout
 
-    ingest_until_accepted(relay_id, namespace, msg, metadata, deadline)
+    send_confirmed(relay_id, namespace, msg, metadata, deadline)
 
     receive do
       {:message_forward, reply} -> reply
@@ -50,7 +50,12 @@ defmodule FlezhaTest.Helper.RelayTestHelper do
     end
   end
 
-  defp ingest_until_accepted(relay_id, namespace, msg, metadata, deadline) do
+  @doc """
+  Send `msg` to `relay_id` as a confirming source does, again until the relay
+  takes it or `deadline` (monotonic ms) passes. Each send waits for its answer
+  up to the deadline, so it is sent again only when no relay could take it.
+  """
+  def send_confirmed(relay_id, namespace, msg, metadata, deadline) do
     accepted? =
       NodeTestHelper.wait_until(
         fn ->

@@ -26,7 +26,7 @@ callbacks route; the work is in the module that owns the phase:
 | `Flezha.Relay.Lifecycle` | the first bind (`bind_continue/3`, `complete_init/5`), the halt (`halt/2`), the `:process` walk (`terminate/2`, `shutdown_steps/0`), `departure/1`, `release_lineage/1` |
 | `Flezha.Relay.Rebind` | every later bind, run in a task linked to the Overwatch (`start_bind/3`, `bind_task_reported/2`, `apply_bind_result/2`, `bind_task_exited/2`, `terminate_bind_task/1`), the loop's `{:rebind, target}` (`rebind/2`), a runner's new session (`session_replaced/4`) |
 | `Flezha.Relay.Suspend` | sleep and wake (`suspend_at/3`, `enter_suspended/2`, `evict_runner/2`, `wake/2`, `wake_deadline/1`, `rehydrate_if_pending/1`, `runner_available/1`), and a steps loop's rewind (`rewind_to/2`) |
-| `Flezha.Relay.Handover` | a live move between controllers: `prepare/1` on the source, `absorb/2` on the destination, `consent/1` |
+| `Flezha.Relay.Handover` | a move between controllers, by the namespace hub's strategy (cold swap: the source stops before the destination starts; hot swap: the destination starts first): `prepare/1` on the source, which ships no state in a cold move of a class that keeps it on disk, `absorb/2` on the destination, `consent/1` |
 | `Flezha.Service.RelayManager.Teardown` | the `:relay` walk of a stop (`stop_relay/3`, `request_stop/2`) and the `:namespace` walk's relay row (`stop_all/2`) |
 | `Flezha.Service.RelayManager.Admission`, `Flezha.Service.RelayManager.Init` | the `:start` walk's rows |
 
@@ -120,6 +120,7 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 | 10 | `:bind_task` | kills an in-flight bind task (`Rebind.terminate_bind_task/1`) |
 | 20 | `:class_registry` | drops the in-memory class entry |
 | 30 | `:control_unit` | tells the runner to drop the relay and waits up to half the budget for its answer, which comes after the Cells' last changes shipped; a gone or silent runner is not an error |
+| 33 | `:journal` | answers each sender whose input the log is still journaling (`Ingest.settle_journaling/2`): taken when the log took it, since the next bind re-forwards it, so a confirming sender never sends it twice |
 | 35 | `:writers` | closes the class's Cell writers, flushed |
 | 37 | `:lineage` | `release_lineage/1`, after the final flush |
 | 40 | `:plugin_table` | the on-terminate hooks of a bound relay, then every subscriber; a moved relay's plugins wait out their idle stop |

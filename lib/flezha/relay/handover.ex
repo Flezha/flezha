@@ -4,9 +4,10 @@ defmodule Flezha.Relay.Handover do
   arriving one applies, and when either may happen at all.
 
   The SDK's serialized state travels, and it comes from the **runner**, so a
-  migration caused by that runner's death ships nothing. The source
-  controller's disk then holds the only surviving state, which the destination
-  already pulled at its start (`Replay.adopt_moved_state/4`), before it bound.
+  migration caused by that runner's death ships nothing, and neither does a
+  cold move of a class that keeps its state on disk. The source controller's
+  disk then holds the state, which the destination pulled at its start
+  (`Replay.adopt_moved_state/3`), before it bound.
 
   Consent is the other half: a migration mid-correction, mid-iteration, or with
   an outbox still owing output would strand work on the departing node, so those
@@ -15,6 +16,8 @@ defmodule Flezha.Relay.Handover do
 
   alias Flezha.Config
   alias Flezha.Config.Durations
+  alias Flezha.Identificator
+  alias Flezha.Process.Hub
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
@@ -46,12 +49,7 @@ defmodule Flezha.Relay.Handover do
     # The hub takes this answer only within its state query timeout, so the
     # serialize and the wait for its cut share that one budget.
     deadline = System.monotonic_time(:millisecond) + Durations.get(:migration_state_query_ms)
-
-    serialize_data =
-      case serialize_relay_sdk(state.runner_id, state.id) do
-        nil -> state.snapshot
-        data -> await_cut(state, data, deadline)
-      end
+    serialize_data = in_band_state(state, deadline)
 
     handover = %{
       id: state.id,
@@ -64,6 +62,22 @@ defmodule Flezha.Relay.Handover do
     Lifecycle.release_lineage(%Overwatch{state | cause: :move})
     send(self(), :calls_handed_over)
     {handover, serialize_data}
+  end
+
+  # A cold move stops this process after the hub took its state, and input
+  # taken in between reaches the Cells' records but not that state. For a
+  # persistent class the destination therefore restores from the copy it pulls
+  # once this process has stopped and flushed, and nothing travels in-band.
+  defp in_band_state(%Overwatch{} = state, deadline) do
+    if Hub.migration(Identificator.hub(state.namespace)) == :cold and
+         ClassRegistry.persistent?(Overwatch.relay_class(state)) do
+      nil
+    else
+      case serialize_relay_sdk(state.runner_id, state.id) do
+        nil -> state.snapshot
+        data -> await_cut(state, data, deadline)
+      end
+    end
   end
 
   @doc """

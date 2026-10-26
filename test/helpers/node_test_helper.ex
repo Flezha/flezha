@@ -9,6 +9,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   import ExUnit.Assertions, only: [assert: 2]
 
+  alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Cluster.GroupedHashing
   alias Flezha.Config
   alias Flezha.Config.Environment
@@ -217,6 +218,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
     end
 
+    # Namespace records the peer holds before its hubs start, so each hub takes
+    # the migration strategy its record names: `migrations: [{"default", :hot}]`.
+    for {namespace, migration} <- Keyword.get(opts, :migrations, []) do
+      :ok = :erpc.call(node_name, __MODULE__, :put_migration, [namespace, migration])
+    end
+
     # Start the flezha application on the peer node.
     :erpc.call(node_name, Application, :ensure_all_started, [:flezha], @peer_boot_timeout_ms)
 
@@ -229,6 +236,25 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     ])
 
     {peer_pid, node_name}
+  end
+
+  @doc false
+  # Runs on a peer before its application starts. The suite's controllers run
+  # no namespace catalog, so the peer opens one of its own under its state root.
+  def put_migration(namespace, migration) do
+    if Process.whereis(NamespaceStore) == nil do
+      auth_dir = Path.join(Config.get(:state_root), "auth")
+      File.mkdir_p!(auth_dir)
+      File.chmod!(auth_dir, 0o700)
+      config = Keyword.put(Application.get_env(:flezha, :authn_authz, []), :auth_dir, auth_dir)
+      Application.put_env(:flezha, :authn_authz, config)
+      {:ok, store} = NamespaceStore.start_link([])
+      Process.unlink(store)
+    end
+
+    with {:error, {:namespace_exists, _}} <- NamespaceStore.create(namespace), do: :ok
+    {:ok, %{migration: ^migration}} = NamespaceStore.set_migration(namespace, migration)
+    :ok
   end
 
   defp copy_env(node_name, app) do

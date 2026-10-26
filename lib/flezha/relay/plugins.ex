@@ -419,7 +419,7 @@ defmodule Flezha.Relay.Plugins do
   re-subscribed by `prepare/2`, and a restart-driven start builds that cspec
   from the hub's declared set. That is
   independent of the per-Cell state restore, which rehydrates SDK-side
-  WAL/snapshot state through the data plane. A HotSwap migration is handled in
+  WAL/snapshot state through the data plane. A move's handover is handled in
   `Flezha.Relay.Handover` and never reaches here.
   """
   @spec resolve_init_state(Overwatch.t(), map()) ::

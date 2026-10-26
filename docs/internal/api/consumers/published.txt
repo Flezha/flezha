@@ -69,6 +69,7 @@ Flezha.Service.Namespace.quota/3
 Flezha.Service.Namespace.quota_kinds/1
 Flezha.Service.Namespace.revoke_token/2
 Flezha.Service.Namespace.roles/2
+Flezha.Service.Namespace.set_migration/3
 Flezha.Service.Namespace.set_quotas/3
 Flezha.Service.Namespace.tokens/1
 Flezha.Service.Namespace.unbind_role/3

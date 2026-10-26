@@ -66,6 +66,7 @@ defmodule Flezha.Service.Cli do
     "Namespace.issue_token" => &Authz.issue_token/3,
     "Namespace.list_roles" => &Authz.list_roles/3,
     "Namespace.revoke_token" => &Authz.revoke_token/3,
+    "Namespace.set_migration" => &Authz.set_migration/3,
     "Namespace.set_quotas" => &Authz.set_quotas/3,
     "Namespace.tokens" => &Authz.tokens/3,
     "Namespace.unbind_role" => &Authz.unbind_role/3,

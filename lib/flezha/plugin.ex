@@ -363,7 +363,7 @@ defmodule Flezha.Plugin do
   @doc """
   Strip transient fields that cannot be persisted across a BEAM
   restart, returning a value safe to embed in any persistence layer
-  (HotSwap handover state, ProcessHub child-spec, DETS, ...).
+  (a move's handover state, ProcessHub child-spec, DETS, ...).
 
   Every field on `%Flezha.Plugin{}` itself is inert data, so what this drops is
   the provider's own: an option row declared `transient: true` is held in memory

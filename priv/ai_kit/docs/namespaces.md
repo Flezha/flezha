@@ -70,6 +70,7 @@ $ flz namespace create trading
 ```output
 namespace trading created
 namespace: trading
+migration: cold
 quotas:
   max_cells_per_relay: 1024
   max_mailbox_bytes_total: 268435456
@@ -261,6 +262,7 @@ $ flz namespace set-quota trading --Xmax_runners=4
 ```output
 namespace trading quotas updated
 namespace: trading
+migration: cold
 quotas:
   max_cells_per_relay: 1024
   max_mailbox_bytes_total: 268435456
@@ -275,6 +277,48 @@ negative value (`namespace.invalid_quota_value`). A change applies to the next
 start or connect, not to what is already running. Quotas can also be set in
 the controller's application env, as per-namespace overrides under
 `config :flezha, :authn_authz, namespaces: %{"team-orders" => %{max_relays: 50}}`.
+
+## How its relays move
+
+A relay moves to another controller when a controller joins, drains or stops
+serving the relay's factory. Each namespace chooses how, with its `migration`
+setting:
+
+- **`cold`**, the default: the relay stops on the controller it leaves, then
+  starts on the new one, which copies the relay's saved state from the old
+  controller before it takes input. Only one copy of the relay runs at any
+  time. While it moves, which takes about as long as a restart plus that copy,
+  the relay answers nothing. A sender that waits for the answer (a call, a
+  confirming source such as Kafka, and every input of an effectively-once
+  relay) sends again and loses nothing; an input sent without waiting for an
+  answer is lost, as in a crash.
+- **`hot`**: the new copy starts and takes the relay's state while the old one
+  still runs, and the old one stops once the new one is registered. The relay
+  keeps answering during the move, but for that stretch two copies run, and
+  input the old copy takes after its state was handed over can be lost.
+
+```sh
+$ flz namespace set-migration trading hot
+```
+
+```output
+namespace trading migration updated
+namespace: trading
+migration: hot
+quotas:
+  max_cells_per_relay: 1024
+  max_mailbox_bytes_total: 268435456
+  max_message_rate_per_second: 100000
+  max_relays: 100
+  max_runners: 4
+  max_state_bytes: 107374182400
+```
+
+Any value other than `cold` or `hot` is refused. A namespace without a record,
+such as `default` before anyone creates it, moves cold. The setting takes
+effect on each controller when the namespace's hub next starts there, normally
+at that controller's next restart; until then it keeps moving relays the way
+it started with.
 
 ## Delete a namespace
 

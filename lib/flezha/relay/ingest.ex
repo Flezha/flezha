@@ -260,6 +260,39 @@ defmodule Flezha.Relay.Ingest do
     end
   end
 
+  @doc """
+  Answer, as this instance ends, every sender whose input the log is still
+  journaling, within `budget_ms`. An input the log took is answered taken:
+  it waits in the log, and the relay's next bind, here or on the controller it
+  moves to, re-forwards it, so its sender must not send it again. One the log
+  refused is refused. A sender the log has not answered by then learns
+  nothing and sends again, as for any instance that ends.
+  """
+  @spec settle_journaling(Overwatch.t(), non_neg_integer()) :: :ok
+  def settle_journaling(%Overwatch{} = state, budget_ms) do
+    deadline = System.monotonic_time(:millisecond) + budget_ms
+    settle_journaling(state, state.journal_reqids, deadline)
+  end
+
+  defp settle_journaling(state, reqids, deadline) do
+    case :gen_server.receive_response(reqids, {:abs, deadline}, true) do
+      {{:reply, reply}, {reply_to, payload, _retries}, reqids} ->
+        owe(state, reply_to, told(state, reply_to, kept(state, journaled(state, payload, reply))))
+        settle_journaling(state, reqids, deadline)
+
+      {{:error, _log_gone}, {reply_to, _payload, _retries}, reqids} ->
+        owe(state, reply_to, told(state, reply_to, {:error, :refused}))
+        settle_journaling(state, reqids, deadline)
+
+      _none_left_or_late ->
+        :ok
+    end
+  end
+
+  # A journaled payload is kept in the log, never forwarded from here.
+  defp kept(_state, {_message, _metadata}), do: :ok
+  defp kept(state, absorbed_or_refused), do: verdict(state, absorbed_or_refused)
+
   # Durable ingest point — the one place an inbound payload is made durable
   # BEFORE it is forwarded, asynchronously, for an instance with durable input
   # (`durable-input-log`): a flow relay on the effectively-once tier or a durable

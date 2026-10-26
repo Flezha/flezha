@@ -631,7 +631,12 @@ the controller reports `recovering`: `/healthz` says so, and `flz boot await`,
 `/readyz` and the image's healthcheck answer not ready. They turn ready by
 themselves, with no restart. The round waits for peers, not for runners: a
 relay started before its runner connects waits unbound, and is bound when a
-runner offering its factory arrives.
+runner offering its factory arrives. One exception: a controller returning to a
+running cluster, whose peers kept its factories, starts no relay in that first
+round until one of its own runners has connected, for at most
+`FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` (30 seconds), so its relays come back
+to it rather than to a peer. A cold start of the whole cluster waits for no
+runner.
 
 A namespace whose hub was torn down is given one again on the next start
 while the namespace exists; `flz namespace delete <name>` is what makes a stop

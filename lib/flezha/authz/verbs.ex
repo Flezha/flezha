@@ -112,6 +112,12 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:after, :namespace_service},
       target: [:_, :quotas]
     ],
+    namespace_set_migration: [
+      action: :"authz.namespace_set_migration",
+      scope: {:argument, 1},
+      audit: {:after, :namespace_service},
+      target: [:_, :migration]
+    ],
     namespace_show: [action: :"authz.namespace_show", scope: {:argument, 1}],
     namespace_list: [action: :"authz.namespace_list", scope: :system],
     namespace_roles: [action: :"authz.role_list", scope: {:argument, 1}],

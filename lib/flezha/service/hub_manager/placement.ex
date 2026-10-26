@@ -139,12 +139,21 @@ defmodule Flezha.Service.HubManager.Placement do
   # resolves the runner (`Lifecycle.bind/3` ignores this one), and the
   # convergence loop re-publishes a row whose tag differs from the binding.
   defp place_child(child_data, %{start: {m, f, _args}}, {namespace, recorded_runner, relay}) do
+    relay = with_source(relay, Map.get(child_data, :migrated_from))
+
     child_data
     |> put_in([:child_spec, :start], {m, f, [{namespace, recorded_runner, relay}]})
     |> update_in([:child_spec], &Init.with_shutdown/1)
     |> put_in([:metadata, :tag], recorded_runner)
     |> stamp_group(Map.get(relay, :factory_id))
   end
+
+  # A moved relay pulls its durable files from the node it left, which the hub
+  # names on a migrating child (`Flezha.Relay.Replay.adopt_moved_state/3`).
+  defp with_source(relay, from) when is_atom(from) and not is_nil(from) and from != node(),
+    do: %{relay | opts: Keyword.put(relay.opts, :state_source_node, from)}
+
+  defp with_source(relay, _fresh_or_local), do: relay
 
   # The hub places a relay among the controllers serving its factory, and
   # reads that factory from the `:group` key of its row. A row written before

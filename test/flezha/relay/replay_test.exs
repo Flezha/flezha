@@ -54,9 +54,9 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     scanned
   end
 
-  defp adopt(relay_id, opts, hub_answer \\ :error) do
+  defp adopt(relay_id, opts) do
     builder = %Builder{id: relay_id, factory_id: "candles", run: :flow, opts: opts}
-    Replay.adopt_moved_state(%{state(relay_id) | builder: builder}, builder, hub_answer)
+    Replay.adopt_moved_state(%{state(relay_id) | builder: builder}, builder)
   end
 
   @peer :"peer@127.0.0.1"

@@ -17,7 +17,7 @@ defmodule Flezha.State.Adoption do
   the next arrival finishes, or an unmarked set-aside copy it puts back. Nothing is replaced
   while another relay bound on this node owns the class.
 
-  It runs on arrival (`Flezha.Relay.Replay.adopt_moved_state/4`) and, while
+  It runs on arrival (`Flezha.Relay.Replay.adopt_moved_state/3`) and, while
   the class holds nothing, again before the runner starts; the class's writers
   close before its copy is set aside.
   """

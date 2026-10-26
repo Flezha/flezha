@@ -243,6 +243,44 @@ defmodule Flezha.AuthZ.StoresTest do
 
       assert {:error, :cannot_delete_system_namespace} = NamespaceStore.delete("_system")
     end
+
+    # Fails when: the migration setting is not on the record, does not survive
+    # a write, or a row written before it existed does not read cold.
+    test "migration: cold on create, set and kept, cold for a row without it" do
+      {:ok, _} = NamespaceStore.start_link([])
+
+      assert {:ok, %{migration: :cold}} = NamespaceStore.create("team-moves")
+      assert NamespaceStore.migration("team-moves") == :cold
+      assert {:ok, %{migration: :hot}} = NamespaceStore.set_migration("team-moves", :hot)
+      assert {:ok, %{migration: :hot}} = NamespaceStore.get("team-moves")
+      assert {:ok, %{migration: :hot}} = NamespaceStore.set_quotas("team-moves", %{max_relays: 3})
+      assert NamespaceStore.migration("team-moves") == :hot
+      assert {:error, {:not_found, "nowhere"}} = NamespaceStore.set_migration("nowhere", :hot)
+      assert NamespaceStore.migration("nowhere") == :cold
+
+      {:ok, %{migration: :cold} = system} = NamespaceStore.get("_system")
+      older = Map.delete(%{system | name: "team-older"}, :migration)
+      stamp = {System.os_time(:microsecond), :elsewhere@host}
+      :ok = Flezha.AuthZ.Replica.accept(NamespaceStore, [{"team-older", older, stamp}])
+
+      assert {:ok, %{migration: :cold}} = NamespaceStore.get("team-older")
+      assert Enum.find(NamespaceStore.list(), &(&1.name == "team-older")).migration == :cold
+      assert {:ok, %{migration: :hot}} = NamespaceStore.set_migration("team-older", :hot)
+    end
+
+    # Fails when: a replica drops the field a peer's write carries.
+    test "a replica takes the migration a peer wrote" do
+      {:ok, _} = NamespaceStore.start_link([])
+      {:ok, entry} = NamespaceStore.create("team-peer")
+      stamp = {System.os_time(:microsecond) + 60_000_000, :elsewhere@host}
+
+      :ok =
+        Flezha.AuthZ.Replica.accept(NamespaceStore, [
+          {"team-peer", %{entry | migration: :hot}, stamp}
+        ])
+
+      assert NamespaceStore.migration("team-peer") == :hot
+    end
   end
 
   describe "TokenStore" do

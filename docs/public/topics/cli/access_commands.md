@@ -12,7 +12,7 @@ How `flz` reaches the controller, its options and its exit codes are on the
 
 ## `flz namespace`
 
-Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas. Explained in [`namespaces.md`](../core/namespaces.md).
+Creates and deletes namespaces, the separate areas relays and runners work in, and sets their quotas and how their relays move between controllers. Explained in [`namespaces.md`](../core/namespaces.md).
 
 `flz namespace help` prints the group's verbs, and the [command
 reference](command_reference.md) lists each with its usage line.
@@ -24,6 +24,7 @@ $ flz namespace create trading
 ```output
 namespace trading created
 namespace: trading
+migration: cold
 quotas:
   max_cells_per_relay: 1024
   max_mailbox_bytes_total: 268435456

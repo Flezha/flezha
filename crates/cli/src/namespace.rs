@@ -24,6 +24,12 @@ pub(crate) const TABLE: Command = Command {
             .open()
             .sending(&[Arg::Positionals, Arg::Settings])
             .calls(&["Namespace.set_quotas"]),
+        Verb::door("set-migration")
+            .taking(&[
+                Positional::required("<name>"),
+                Positional::required("<cold|hot>"),
+            ])
+            .calls(&["Namespace.set_migration"]),
     ],
     missing: Missing::Refuse,
     unknown_prints_help: false,

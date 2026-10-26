@@ -413,7 +413,7 @@ defmodule FlezhaTest.State.WalTransferTest do
 
       log =
         capture_log(fn ->
-          rebound = Replay.adopt_moved_state(state, relay, :undefined)
+          rebound = Replay.adopt_moved_state(state, relay)
           refute File.exists?(Paths.wal_path(cell_id))
           # The source answers again; the relay's next bind on this node.
           stub(WalTransfer, :pull_relay, &call_original(WalTransfer, :pull_relay, [&1, &2]))
@@ -437,7 +437,7 @@ defmodule FlezhaTest.State.WalTransferTest do
       state = %Overwatch{id: class, builder: relay}
       on_exit(NodeTestHelper.override_log_level(:warning))
 
-      {rebound, _log} = with_log(fn -> Replay.adopt_moved_state(state, relay, :undefined) end)
+      {rebound, _log} = with_log(fn -> Replay.adopt_moved_state(state, relay) end)
       TestHelpers.write_wal(cell_id, 0..1, "turn")
       turns = File.read!(Paths.wal_path(cell_id))
       stub(WalTransfer, :pull_relay, &call_original(WalTransfer, :pull_relay, [&1, &2]))

@@ -28,7 +28,15 @@ const COMMANDS: &[(&str, &[&str])] = &[
     ),
     (
         "namespace",
-        &["list", "create", "delete", "show", "set-quota", "help"],
+        &[
+            "list",
+            "create",
+            "delete",
+            "show",
+            "set-quota",
+            "set-migration",
+            "help",
+        ],
     ),
     (
         "runner",

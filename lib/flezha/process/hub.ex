@@ -12,8 +12,34 @@ defmodule Flezha.Process.Hub do
   """
 
   alias Flezha.Config.Durations
+  alias ProcessHub.Constant.StorageKey
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Strategy.Migration.{ColdSwap, HotSwap}
 
   @type hub_id :: atom()
+  @type migration :: :cold | :hot
+
+  # A namespace's `migration` setting and the hub strategy it names.
+  @strategies %{cold: ColdSwap, hot: HotSwap}
+
+  @doc "The migration strategy module `migration` names."
+  @spec strategy(migration()) :: module()
+  def strategy(migration), do: Map.fetch!(@strategies, migration)
+
+  @doc """
+  How `hub_id`'s running hub moves its children: the strategy it started
+  with, `:cold` for a hub that is not running.
+  """
+  @spec migration(hub_id()) :: migration()
+  def migration(hub_id) do
+    with_live(hub_id, :cold, fn hub_id ->
+      with hub when hub != nil <- ProcessHub.Hub.get(hub_id),
+           %{__struct__: module} <- Storage.get(hub.storage.misc, StorageKey.strmigr()),
+           {migration, ^module} <- Enum.find(@strategies, &(elem(&1, 1) == module)),
+           do: migration,
+           else: (_cold -> :cold)
+    end)
+  end
 
   @doc "True while `hub_id`'s coordinator is registered."
   @spec alive?(hub_id()) :: boolean()
