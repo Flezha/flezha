@@ -294,6 +294,12 @@ defmodule Flezha.Convergence.Loop do
     state
   end
 
+  # Every namespace once after a start; then those whose rows lost a node.
+  defp unplaced_watch(%State{unplaced_scanned?: false}), do: :all
+
+  defp unplaced_watch(%State{facts: facts}),
+    do: MapSet.new(Facts.targets(facts, :registry_unbound))
+
   # Everything whose result a heal decision consumes, in the order it is
   # consumed. Returns the tick's intent and reality so the report pass reads the
   # same two snapshots the heals were planned against.
@@ -304,9 +310,22 @@ defmodule Flezha.Convergence.Loop do
     state = Progress.classify(Liveness.classify(state), started_at)
 
     intent = Intent.declared()
-    {unplaced, unplaced_since} = Intent.detect_unplaced(intent, state.unplaced_since, started_at)
-    reality = Map.put(Probe.snapshot(), :unplaced, unplaced)
-    state = %{state | no_quorum: no_quorum_namespaces(), unplaced_since: unplaced_since}
+
+    {unplaced, unplaced_since} =
+      Intent.detect_unplaced(intent, state.unplaced_since, started_at, unplaced_watch(state))
+
+    reality =
+      Map.merge(Probe.snapshot(), %{
+        unplaced: unplaced,
+        unplaced_pending: MapSet.new(Map.keys(unplaced_since), &elem(&1, 0))
+      })
+
+    state = %{
+      state
+      | no_quorum: no_quorum_namespaces(),
+        unplaced_since: unplaced_since,
+        unplaced_scanned?: true
+    }
 
     # Facts the probe shows repaired leave the map and release their ladder
     # BEFORE the plan, so a rung never fires for a fault already gone.

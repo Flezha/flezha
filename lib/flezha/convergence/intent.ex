@@ -149,22 +149,32 @@ defmodule Flezha.Convergence.Intent do
   by a state directory, is never named; under the auto-restore kill-switch the
   intent is what runs, so none is. A hub that cannot be read names none of its
   relays, and a failure answers `{[], since}`.
+
+  Only the namespaces in `watched` (`:all` for every one) and those with a
+  relay already waiting are read, and only the hub's first member
+  (`HubManager.leads?/1`) is answered the relays past the grace, so one node
+  starts each.
   """
-  @spec detect_unplaced(t(), %{{atom(), binary()} => integer()}, integer()) ::
+  @spec detect_unplaced(t(), %{{atom(), binary()} => integer()}, integer(), MapSet.t() | :all) ::
           {[{atom(), binary()}], %{{atom(), binary()} => integer()}}
-  def detect_unplaced(%__MODULE__{relays: relays}, since, now) do
+  def detect_unplaced(%__MODULE__{relays: relays}, since, now, watched) do
+    waiting = MapSet.new(Map.keys(since), &elem(&1, 0))
+
     placed =
       for namespace <- Enum.uniq(Enum.map(relays, & &1.namespace)),
+          watched == :all or namespace in watched or namespace in waiting,
           into: %{},
           do: {namespace, HubManager.placed_relay_ids(namespace, :unreadable)}
 
     unplaced =
       for %{namespace: ns, relay_id: id} <- relays,
-          (ids = placed[ns]) != :unreadable,
+          (ids = Map.get(placed, ns, :unreadable)) != :unreadable,
           not MapSet.member?(ids, id),
           do: {ns, id}
 
-    outlived_grace(unplaced, since, now)
+    {due, since} = outlived_grace(unplaced, since, now)
+    leads = due |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.filter(&HubManager.leads?/1)
+    {Enum.filter(due, &(elem(&1, 0) in leads)), since}
   catch
     _, _ -> {[], since}
   end

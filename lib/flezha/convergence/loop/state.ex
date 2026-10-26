@@ -76,6 +76,9 @@ defmodule Flezha.Convergence.Loop.State do
             # {namespace, relay_id} => monotonic ms a declared relay was first
             # seen running nowhere; past the unmet-intent grace the Diff names it.
             unplaced_since: %{},
+            # Whether one placement scan has read every namespace since the
+            # loop started; later ones read only those a fact names.
+            unplaced_scanned?: false,
             # {state-root mtime, first-level dir listing} cache.
             evidence_cache: nil,
             # Monotonic ms when `bound < intended` first held; nil while met or

@@ -502,30 +502,50 @@ defmodule Flezha.Convergence.LoopTest do
 
     test "a declared relay no member holds is named once it outlives the unmet-intent grace" do
       stub(HubManager, :placed_relay_ids, fn :ns, :unreadable -> MapSet.new(["btc_feed"]) end)
+      stub(HubManager, :leads?, fn :ns -> true end)
       grace = Flezha.Config.Durations.get(:convergence_unmet_intent_grace_ms)
       intent = declared(["btc_feed", "eth_feed"])
 
-      assert {[], since} = Intent.detect_unplaced(intent, %{}, 0)
+      assert {[], since} = Intent.detect_unplaced(intent, %{}, 0, :all)
       assert since == %{{:ns, "eth_feed"} => 0}
-      assert {[], ^since} = Intent.detect_unplaced(intent, since, grace)
-      assert {[{:ns, "eth_feed"}], ^since} = Intent.detect_unplaced(intent, since, grace + 1)
+      assert {[], ^since} = Intent.detect_unplaced(intent, since, grace, MapSet.new())
+
+      assert {[{:ns, "eth_feed"}], ^since} =
+               Intent.detect_unplaced(intent, since, grace + 1, MapSet.new())
+
+      # Only the hub's first member is answered the relay; the others keep its clock.
+      stub(HubManager, :leads?, fn :ns -> false end)
+      assert {[], ^since} = Intent.detect_unplaced(intent, since, grace + 1, MapSet.new())
 
       # Placed again clears its clock.
       stub(HubManager, :placed_relay_ids, fn :ns, :unreadable -> MapSet.new(["eth_feed"]) end)
-      assert {[], %{{:ns, "btc_feed"} => _}} = Intent.detect_unplaced(intent, since, grace + 2)
+
+      assert {[], %{{:ns, "btc_feed"} => _}} =
+               Intent.detect_unplaced(intent, since, grace + 2, MapSet.new([:ns]))
+    end
+
+    test "a namespace no fact names and no relay waits in is not read" do
+      reject(&HubManager.placed_relay_ids/2)
+
+      assert {[], %{}} =
+               Intent.detect_unplaced(declared(["eth_feed"]), %{}, 0, MapSet.new([:other]))
     end
 
     test "a hub that cannot be read names none of its relays" do
       stub(HubManager, :placed_relay_ids, fn :ns, :unreadable -> :unreadable end)
 
-      assert {[], %{}} = Intent.detect_unplaced(declared(["eth_feed"]), %{}, 0)
+      assert {[], %{}} = Intent.detect_unplaced(declared(["eth_feed"]), %{}, 0, :all)
     end
 
     test "a row bound to a hub member counts as placed, connected or held in a grace" do
       pid = self()
       hub_id = Flezha.Identificator.hub("ns")
       stub(ProcessHub, :is_alive?, fn ^hub_id -> true end)
-      stub(ProcessHub, :nodes, fn ^hub_id, [:include_local] -> [node(), :held@gone] end)
+      stub(ProcessHub.Hub, :get, fn ^hub_id -> %{storage: %{misc: :misc}} end)
+
+      stub(ProcessHub.Service.Cluster, :nodes, fn :misc, [:include_local] ->
+        [node(), :held@gone]
+      end)
 
       stub(ProcessHub, :process_list, fn ^hub_id, :global ->
         [

@@ -19,6 +19,7 @@ defmodule Flezha.Service.HubManager.Rows do
   alias Flezha.Plugin
   alias Flezha.Process.Cspec
   alias Flezha.Process.Hub
+  alias ProcessHub.Service.Cluster
   alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.ProcessRegistry
 
@@ -73,8 +74,21 @@ defmodule Flezha.Service.HubManager.Rows do
 
   def get_hub_nodes(namespace, include_local \\ false) do
     opts = if include_local, do: [:include_local], else: []
-    with_live_hub(namespace, [], fn hub_id -> ProcessHub.nodes(hub_id, opts) end)
+    with_live_hub(namespace, [], &members(&1, opts))
   end
+
+  @doc """
+  Whether this node is the first of the namespace's hub members by name: the
+  one that acts for the whole namespace where every member sees the same
+  thing. `false` when the hub cannot be read.
+  """
+  @spec leads?(binary() | atom()) :: boolean()
+  def leads?(namespace),
+    do: with_live_hub(namespace, false, &(Enum.min(members(&1, [:include_local])) == node()))
+
+  # The coordinator answers the same read; taken from the hub's storage, so
+  # a busy coordinator never holds up the caller.
+  defp members(hub_id, opts), do: Cluster.nodes(ProcessHub.Hub.get(hub_id).storage.misc, opts)
 
   # `Lookup` answers in the three atoms every resolver shares; this is the
   # boundary where a hub read becomes the reason a caller is answered with,
@@ -109,7 +123,7 @@ defmodule Flezha.Service.HubManager.Rows do
   @spec placed_relay_ids(binary() | atom(), term()) :: MapSet.t() | term()
   def placed_relay_ids(namespace, unreadable) do
     with_live_hub(namespace, unreadable, fn hub_id ->
-      members = MapSet.new(ProcessHub.nodes(hub_id, [:include_local]))
+      members = MapSet.new(members(hub_id, [:include_local]))
 
       for {relay_id, node_pids} <- ProcessHub.process_list(hub_id, :global),
           is_binary(relay_id),

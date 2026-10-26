@@ -40,8 +40,10 @@ defmodule Flezha.Service.HubManager do
   defdelegate get_hub_nodes(arg1, arg2 \\ false), to: Rows
   defdelegate get_pid(arg1, arg2), to: Rows
   defdelegate get_registry(arg1), to: Rows
+  defdelegate hook_registry_unbound(arg1, arg2), to: Placement
   defdelegate hook_registry_written(arg1, arg2), to: Placement
   defdelegate hub_alive?(arg1), to: Rows
+  defdelegate leads?(arg1), to: Rows
   defdelegate live_node(arg1), to: Rows
   defdelegate live_pid(arg1), to: Hub
   defdelegate local_children(arg1, arg2), to: Rows
@@ -313,12 +315,22 @@ defmodule Flezha.Service.HubManager do
                 f: :hook_registry_written,
                 a: [hub_id, :_]
               }
-            ]
+            ],
+            Hook.child_unregistered() => [registry_unbound_hook(hub_id)],
+            Hook.post_node_leave() => [registry_unbound_hook(hub_id)]
           },
           Snapshot.hook_handlers(hub_id)
         )
     })
   end
+
+  defp registry_unbound_hook(hub_id),
+    do: %HookManager{
+      id: :flezha_registry_unbound,
+      m: __MODULE__,
+      f: :hook_registry_unbound,
+      a: [hub_id, :_]
+    }
 
   # Transient uniqueness arbiter for cron schedules: `Singularity` gives one
   # schedule process cluster-wide per name. Durability belongs to

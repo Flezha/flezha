@@ -89,6 +89,14 @@ defmodule Flezha.Service.HubManager.Placement do
   # A plugin child has no binding for the loop to read.
   def hook_registry_written(hub_id, _plugin_child), do: DurabilityTier.ship_cspec(hub_id)
 
+  @doc """
+  Hub-wide `child_unregistered` and `post_node_leave` handler: a relay of the
+  namespace may run nowhere now, so the convergence loop's next tick checks
+  the namespace's placement (`Flezha.Convergence.Intent.detect_unplaced/4`).
+  """
+  def hook_registry_unbound(hub_id, _hook_data),
+    do: Facts.declare({:registry_unbound, Identificator.namespace_from_hub(hub_id), %{}})
+
   @doc "The owning runner recorded on `relay_id`'s durable row, or `nil`."
   def relay_runner_tag(namespace, relay_id) do
     Rows.with_live_hub(namespace, nil, fn hub_id ->

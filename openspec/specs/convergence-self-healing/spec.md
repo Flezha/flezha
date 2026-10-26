@@ -533,7 +533,11 @@ Every path that starts or binds a relay — the ProcessHub orphan reconcile, the
 
 #### Scenario: A declared relay that runs nowhere past the grace is started
 - **WHEN** a relay stays declared while no hub member holds it for longer than `convergence_unmet_intent_grace_ms`
-- **THEN** the Planner plans `start_relay` for it and `Heal` starts it through `RelayManager.start_relay`
+- **THEN** the Planner of the hub's first member by name plans `start_relay` for it and `Heal` starts it through `RelayManager.start_relay`; no other member plans it
+
+#### Scenario: Placement is read only where a relay may have lost its node
+- **WHEN** the Loop has read every namespace's placement once since it started
+- **THEN** it reads a namespace's placement again only after a registry row there lost a node or a hub member left, and keeps reading it while a relay of it waits out the grace
 
 #### Scenario: A stopped relay is never started by the loop
 - **WHEN** a stop removes a relay's declared entry and leaves its state directory

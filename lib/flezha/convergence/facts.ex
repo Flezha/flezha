@@ -108,6 +108,16 @@ defmodule Flezha.Convergence.Facts do
       grace: true,
       tick: :next
     },
+    # A row lost its last node or a member left: the namespace's placement is
+    # scanned until no relay of it waits out the unmet-intent grace.
+    registry_unbound: %{
+      holds: true,
+      diff: :unplaced_relays,
+      reason: nil,
+      reset: :inline,
+      grace: false,
+      tick: :next
+    },
     node_draining: %{
       holds: true,
       diff: :draining,
@@ -361,6 +371,9 @@ defmodule Flezha.Convergence.Facts do
       writers -> not MapSet.member?(writers, cell_id)
     end
   end
+
+  defp repaired?(:registry_unbound, namespace, _args, reality),
+    do: not MapSet.member?(Map.get(reality, :unplaced_pending, MapSet.new()), namespace)
 
   defp repaired?(_kind, _target, _args, _reality), do: false
 
