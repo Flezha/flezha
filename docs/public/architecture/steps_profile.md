@@ -155,8 +155,11 @@ once.
 
 The runner does not block on the acknowledgement; its arrival releases the tasklet's values. One
 not received within 30 s (`FLEZHA_STEPS_ACK_TIMEOUT_MS`) is sent again under the same identity,
-up to three sends in all. A refusal or the last timeout fails the stage and starts the undo: a
-step whose durability the controller will not confirm has not happened.
+up to three sends in all. One the controller refuses because it could not confirm a record it names
+durable (`commit.record_not_durable`, as can happen just after the relay moved) is sent
+again the same way after a back-off of about one second, then two, within the same three sends.
+Any other refusal, that refusal on the last send, or the last timeout fails the stage and starts
+the undo: a step whose durability the controller will not confirm has not happened.
 
 A class with `durable: remote` raises the bar one step: the controller ships the journal entry
 to the [remote tier](kernel.md#the-remote-tier) and waits for the backend before it answers,

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use flz_transport::transport::FlezhaStream;
 
-use super::commit::BARRIER_SENDS;
+use super::commit::{BARRIER_SENDS, RECORD_NOT_DURABLE};
 use super::compensation::{CellRun, RecordSpan, StageRecord};
 use super::run::Decide;
 use super::spec::Chain;
@@ -21,6 +21,7 @@ use crate::channel::ChannelId;
 use crate::relay::instance::RelayInstance;
 use crate::relay::Deadline;
 use crate::timer::{TimerFire, TimerFiring, TimerKind, TimerOp};
+use crate::FlezhaError;
 
 pub(crate) type Value = Arc<dyn Any + Send + Sync>;
 
@@ -508,16 +509,18 @@ impl BarrierFor {
     }
 
     /// The controller refused barrier `id`, whose entry and ack wait are
-    /// still on the sheet. An undo's entry with sends left goes out again,
-    /// its send re-arming the wait in place; any other refusal ends the wait,
-    /// drops the entry and fails the barrier.
-    pub(super) fn on_refusal(self, d: &mut Decide<'_, '_, '_>, id: u64, error: String) {
+    /// still on the sheet. With sends left, an undo's entry goes out again at
+    /// once, its send re-arming the wait in place, and any barrier whose
+    /// records were not durable in time goes out again after a back-off. Any
+    /// other refusal ends the wait, drops the entry and fails the barrier.
+    pub(super) fn on_refusal(self, d: &mut Decide<'_, '_, '_>, id: u64, refusal: FlezhaError) {
         match self {
-            BarrierFor::Undo if d.resend_refused(id) => {}
+            BarrierFor::Undo if d.resend(id) => {}
+            _ if refusal.code == RECORD_NOT_DURABLE && d.resend_after(id, &refusal) => {}
             target => {
                 d.disarm(Deadline::Ack(id));
                 d.s.barriers.remove(&id);
-                target.failed(d, error);
+                target.failed(d, refusal.text());
             }
         }
     }
@@ -576,15 +579,20 @@ pub(crate) struct Barrier {
 }
 
 impl Barrier {
-    /// The stored command for one more send under the same reference id,
-    /// counted, while [`BARRIER_SENDS`] are not used up.
+    /// Whether a stored command is left to send once more under the same
+    /// reference id: [`BARRIER_SENDS`] are not used up.
+    pub(crate) fn can_resend(&self) -> bool {
+        self.sends < BARRIER_SENDS && self.command.is_some()
+    }
+
+    /// The stored command for one more send, counted, while
+    /// [`Self::can_resend`].
     pub(crate) fn resend(&mut self) -> Option<crate::pb::command_request::Command> {
-        if self.sends >= BARRIER_SENDS {
+        if !self.can_resend() {
             return None;
         }
-        let command = self.command.clone()?;
         self.sends += 1;
-        Some(command)
+        self.command.clone()
     }
 }
 

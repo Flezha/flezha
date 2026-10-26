@@ -5,7 +5,7 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 ## Requirements
 ### Requirement: Single convergence loop owns all self-healing decisions
 
-The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_relay`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an administration verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
+The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`), and every remedy MUST be one of its declared primitives — `rebind_relay`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`, `reset_control_channel`, `publish_binding`, `start_relay` — planned by the Planner and executed by `Heal.execute/1`. No module other than the Loop emits heal actions. Watchdog, FleetManager, HubManager, Healthz, StreamChannel, the Overwatch's bind, the WAL admission, the extension table and the registry hooks each record a fact and declare it through `Loop.declare/1`; none of them decide what to fix, none carry a retry ladder, counter or clock of its own, and none invoke a remedy entry point directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself — neither for an output stall nor for a compaction give-up — and the WAL admission SHALL NOT resync a seq gap itself. The one remedy-shaped action outside the primitives is the node drain of a graceful shutdown: an administration verb the loop is told about (`{:node_draining, deadline}`) and never chooses, reached through `HubManager.drain_hub/2` from `lib/flezha/shutdown/` only.
 
 #### Scenario: stall is observed in one place, decision happens in another
 - **GIVEN** the State Watchdog detects output stall for relay `btc_feed` tasklet 0
@@ -521,7 +521,7 @@ Every path that starts or binds a relay — the ProcessHub orphan reconcile, the
 
 ### Requirement: Convergence cooperates with reconcile rounds instead of racing them
 
-`Flezha.Convergence.Loop` SHALL consume `reconcile_round` completion events (the hook fires at round completion, carrying `started`/`duplicates`/`elapsed_ms`): a round reporting `started > 0` SHALL trigger an immediate convergence tick whose plan adopts the reconcile-started relays — no rebind, stop, or duplicate-start op is emitted against a relay the round just started and that probes as live-bound. A round reporting `started = 0` SHALL trigger nothing. The boot/recovery window remains gated by the existing RecoveryGate hold, unchanged.
+`Flezha.Convergence.Loop` SHALL consume `reconcile_round` completion events (the hook fires at round completion, carrying `started`/`duplicates`/`elapsed_ms`): a round reporting `started > 0` SHALL trigger an immediate convergence tick whose plan adopts the reconcile-started relays — no rebind, stop, or duplicate-start op is emitted against a relay the round just started and that probes as live-bound. A round reporting `started = 0` SHALL trigger nothing. The boot/recovery window remains gated by the existing RecoveryGate hold, unchanged. Under the reconcile the Loop SHALL keep one safety net: a relay that stays in the declared set while no hub member holds it (no registry row bound to a member, connected or held through a node-down grace) for longer than `convergence_unmet_intent_grace_ms` SHALL be started through the start authority by the `start_relay` primitive, cooling on the heal ladder when the start fails. Only a relay still declared SHALL be started: a stop removes the declared entry first, and a relay known only by its state directory is never started.
 
 #### Scenario: A reconcile-started relay is adopted, not fought
 - **WHEN** a steady-state reconcile round starts two orphaned relays and the completion event reaches the Loop
@@ -530,6 +530,14 @@ Every path that starts or binds a relay — the ProcessHub orphan reconcile, the
 #### Scenario: Quiet rounds are free
 - **WHEN** a reconcile round completes with `started = 0`
 - **THEN** no extra tick is triggered and the Loop's cadence is unchanged
+
+#### Scenario: A declared relay that runs nowhere past the grace is started
+- **WHEN** a relay stays declared while no hub member holds it for longer than `convergence_unmet_intent_grace_ms`
+- **THEN** the Planner plans `start_relay` for it and `Heal` starts it through `RelayManager.start_relay`
+
+#### Scenario: A stopped relay is never started by the loop
+- **WHEN** a stop removes a relay's declared entry and leaves its state directory
+- **THEN** the Loop plans no start for it, and a `start_relay` planned before the stop answers `:unmet` without starting anything
 
 ### Requirement: Rebind is node-placement-aware with cross-node re-placement
 

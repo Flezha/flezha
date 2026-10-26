@@ -71,20 +71,10 @@ fn a_refused_undo_resent_within_its_first_sends_millisecond_keeps_its_ack_wake()
     std::env::set_var(ACK_TIMEOUT, u64::MAX.to_string());
     let inst = host_class::steps("undo_resend_ack", &["in"]);
     let r = Run::of(&inst).expect("a steps instance");
-    let (id, reference_id) = (7, "undo_resend_ack-7".to_string());
-    r.decide(|d| {
-        let command = crate::pb::command_request::Command::TaskCommit(Default::default());
-        let barrier = Barrier {
-            target: BarrierFor::Undo,
-            reference_id: reference_id.clone(),
-            command: Some(command),
-            sends: 1,
-        };
-        d.s.barriers.insert(id, barrier);
-        d.arm(Deadline::Ack(id), ack_timeout());
-    });
+    let id = 7;
+    let reference_id = sent_barrier(&r, id, BarrierFor::Undo);
 
-    crate::steps::events::barrier_acked(&Arc::downgrade(&inst), id, Err("refused".into()));
+    crate::steps::events::barrier_acked(&Arc::downgrade(&inst), id, Err(refusal("not_owner")));
     std::env::remove_var(ACK_TIMEOUT);
 
     let due = armed(r.run, Deadline::Ack(id)).expect("the re-send's ack is armed");
@@ -96,6 +86,81 @@ fn a_refused_undo_resent_within_its_first_sends_millisecond_keeps_its_ack_wake()
     );
     crate::shutdown::drop_pending_ack(&reference_id);
     core.disarm_instance(r.inst.seq, Deadline::Ack(id), due);
+}
+
+/// Barrier `id` on `target`, sent once and waiting for its ack; its
+/// reference id.
+fn sent_barrier(r: &Run<'_>, id: u64, target: BarrierFor) -> String {
+    let reference_id = format!("{}-{id}", r.inst.instance_id);
+    r.decide(|d| {
+        let command = crate::pb::command_request::Command::TaskCommit(Default::default());
+        let barrier = Barrier {
+            target,
+            reference_id: reference_id.clone(),
+            command: Some(command),
+            sends: 1,
+        };
+        d.s.barriers.insert(id, barrier);
+        d.arm(Deadline::Ack(id), ack_timeout());
+    });
+    reference_id
+}
+
+/// The controller's refusal by its catalogue code's last segment.
+fn refusal(reason: &str) -> crate::FlezhaError {
+    let details = [
+        ("relay", "r".into()),
+        ("cell", "c".into()),
+        ("seq", 3.into()),
+    ];
+    crate::FlezhaError::with(&format!("commit.{reason}"), details)
+}
+
+/// A stage commit refused because its records were not durable in time waits
+/// out a back-off and goes out again under its reference id, until its sends
+/// are used up; any other refusal fails the stage at once.
+#[test]
+fn a_record_not_durable_refusal_is_sent_again_after_a_back_off_and_a_real_one_is_not() {
+    const ACK_TIMEOUT: &str = "FLEZHA_STEPS_ACK_TIMEOUT_MS";
+    let _env = crate::runner::env_test_guard();
+    // An ack wait saturates far past any back-off, so the two are told apart.
+    std::env::set_var(ACK_TIMEOUT, u64::MAX.to_string());
+    let inst = host_class::steps("refusal_retry", &["in"]);
+    let r = Run::of(&inst).expect("a steps instance");
+    let weak = Arc::downgrade(&inst);
+    let back_off_bound =
+        crate::relay::due_after(Duration::from_millis(crate::channel::RETRY_BACKOFF_MAX_MS));
+
+    let reference_id = sent_barrier(&r, 1, BarrierFor::Stage(0));
+    for sends in 1..crate::steps::commit::BARRIER_SENDS {
+        crate::steps::events::barrier_acked(&weak, 1, Err(refusal("record_not_durable")));
+        let due = armed(r.run, Deadline::Ack(1)).expect("the back-off is armed");
+        assert!(due <= back_off_bound, "send {sends} waits a back-off");
+        assert_eq!(r.run.sheet().barriers[&1].sends, sends, "nothing sent yet");
+        deadline_due(&inst, Deadline::Ack(1), due);
+        assert_eq!(r.run.sheet().barriers[&1].sends, sends + 1, "sent again");
+        assert!(armed(r.run, Deadline::Ack(1)).expect("the ack wait") > back_off_bound);
+    }
+    crate::steps::events::barrier_acked(&weak, 1, Err(refusal("record_not_durable")));
+    assert!(
+        !r.run.sheet().barriers.contains_key(&1),
+        "its sends used up, it failed"
+    );
+
+    crate::shutdown::drop_pending_ack(&reference_id);
+
+    // A fresh run, so the failed stage above cannot stand in for this one.
+    let inst = host_class::steps("refusal_real", &["in"]);
+    let r = Run::of(&inst).expect("a steps instance");
+    let reference_id = sent_barrier(&r, 2, BarrierFor::Stage(0));
+    crate::steps::events::barrier_acked(&Arc::downgrade(&inst), 2, Err(refusal("not_owner")));
+    std::env::remove_var(ACK_TIMEOUT);
+    assert!(
+        !r.run.sheet().barriers.contains_key(&2),
+        "a real refusal fails at once"
+    );
+    assert_eq!(armed(r.run, Deadline::Ack(2)), None);
+    crate::shutdown::drop_pending_ack(&reference_id);
 }
 
 /// What `f` decides for a run bound expecting two restores, one landed

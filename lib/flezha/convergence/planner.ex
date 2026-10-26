@@ -56,6 +56,7 @@ defmodule Flezha.Convergence.Planner do
     extra_plugins: [:stop_plugin],
     unhealthy_plugins: [:restart_plugin],
     stale_tags: [:publish_binding],
+    unplaced_relays: [:start_relay],
     not_started_plugins: [:start_plugin],
     stalled_relays: [:resync_runner, :rebind_relay]
   ]
@@ -210,8 +211,8 @@ defmodule Flezha.Convergence.Planner do
 
   # Prerequisite order: evictions and channel resets, then the data-plane
   # wedge (at most one op, of either kind), then (re)binds, Cell resyncs,
-  # plugin starts, and the row re-publish last. Each group preserves Delta
-  # order within it.
+  # plugin starts, the row re-publish, and the starts of relays that run
+  # nowhere. Each group preserves Delta order within it.
   defp ordered_ops(%Diff{} = d, backoff) do
     # The not-started bindings go last, so they take only the slots no repair
     # needs: the Diff already knows their heal is unmet, so even on the first
@@ -223,6 +224,7 @@ defmodule Flezha.Convergence.Planner do
       resync_ops(d) ++
       plugin_ops(d) ++
       publish_ops(d) ++
+      relay_start_ops(d) ++
       start_ops(d.not_started_plugins)
   end
 
@@ -359,6 +361,10 @@ defmodule Flezha.Convergence.Planner do
     Enum.map(stale, fn {{ns, rid}, tag, bound} ->
       op(:publish_binding, ns, rid, %{tag: tag, bound: bound})
     end)
+  end
+
+  defp relay_start_ops(%Diff{unplaced_relays: unplaced}) do
+    Enum.map(unplaced, fn {ns, rid} -> op(:start_relay, ns, rid, %{}) end)
   end
 
   defp op(primitive, namespace, target, args) do

@@ -84,12 +84,14 @@ defmodule Flezha.Convergence.RemedySeamTest do
       namespace: "ghost_ns",
       target: "ghost_op",
       args: %{tag: "old", bound: "new"}
-    }
+    },
+    start_relay: %{namespace: "ghost_ns", target: "ghost_op", args: %{}}
   }
 
-  # What a healthy answer to a missing target is: a failed heal, or an
-  # idempotent `:ok` for the one primitive whose absence IS the goal.
-  @healthy_answer %{evict_runner: :ok}
+  # What a healthy answer to a missing target is: a failed heal, an idempotent
+  # `:ok` for the one primitive whose absence IS the goal, or `:unmet` for a
+  # start whose relay is no longer declared.
+  @healthy_answer %{evict_runner: :ok, start_relay: :unmet}
 
   test "clause 1: every primitive has a key rule, an executor and an evidence entry, and fails safely on a missing target" do
     for primitive <- Heal.primitives() do
@@ -215,6 +217,7 @@ defmodule Flezha.Convergence.RemedySeamTest do
     extra_plugins: %Diff{extra_plugins: [{{:ns, "r"}, "p1", nil}]},
     unhealthy_plugins: %Diff{unhealthy_plugins: [{{:ns, "r"}, "p1", @plugin, :owned_pid_dead}]},
     stale_tags: %Diff{stale_tags: [{{:ns, "r"}, "e_old", "e1"}]},
+    unplaced_relays: %Diff{unplaced_relays: [{:ns, "r"}]},
     stalled_relays: %Diff{stalled_relays: [{:ns, "r"}]}
   }
 

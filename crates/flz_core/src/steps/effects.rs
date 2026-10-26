@@ -122,8 +122,6 @@ impl Frame {
 pub(super) struct Effects {
     pub(super) markers: Vec<(&'static str, Arc<Vec<u8>>)>,
     pub(super) frames: Vec<(u64, Frame)>,
-    /// Frames sent as they stand: a barrier's re-send, a park.
-    pub(super) control: Vec<(String, Command)>,
     pub(super) drop_acks: Vec<String>,
     pub(super) disarm: Vec<(Deadline, u64)>,
     /// A deadline's re-arm: the due it replaces, then its new one.
@@ -173,9 +171,6 @@ impl Run<'_> {
         }
         for (id, frame) in fx.frames.drain(..) {
             self.send_barrier(id, frame);
-        }
-        for (reference_id, command) in fx.control.drain(..) {
-            crate::runner::emit_control_request(reference_id, command);
         }
         for (slot, ops) in fx.removals.drain(..) {
             slot.dispatcher.write_timer_ops(&slot, ops);
@@ -267,13 +262,7 @@ impl Run<'_> {
         let weak = self.weak();
         crate::shutdown::register_pending_ack(
             reference_id.clone(),
-            Box::new(move |result| {
-                barrier_acked(
-                    &weak,
-                    id,
-                    result.map(|_| ()).map_err(|refusal| refusal.text()),
-                )
-            }),
+            Box::new(move |result| barrier_acked(&weak, id, result.map(|_| ()))),
         );
         crate::runner::emit_control_request(reference_id, command);
     }

@@ -111,6 +111,12 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
   # The rows this tier cannot drive, each with the reason recorded.
   @deferred %{
+    start_relay:
+      "needs a declared relay that runs nowhere for longer than the unmet-intent grace: " <>
+        "the hub's own reconcile starts such a relay first, and holding it off means a hub " <>
+        "without auto-recovery, which declares nothing. The net is proved by " <>
+        "`Flezha.Convergence.LoopTest` (detection past the grace, the Diff, the Planner and " <>
+        "the start through `RelayManager.start_relay/2`)",
     reset_control_channel:
       "needs a relay that is PARKED and still in the hub's declared set: the start " <>
         "authority stops a child whose start fails, and an Overwatch started outside it is " <>

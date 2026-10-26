@@ -610,8 +610,12 @@ flowchart LR
     H --> S
 ```
 
-The heal step has nine primitives, among them rebinding a relay, resyncing a runner,
-starting, stopping or restarting a plugin, and evicting a runner. Three guards keep it from
+The heal step has ten primitives, among them rebinding a relay, resyncing a runner,
+starting, stopping or restarting a plugin, evicting a runner, and starting a relay that is
+still declared but has run nowhere for longer than the unmet-intent grace
+(`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`, 120 s). The hub's own reconcile normally starts
+such a relay first; the loop's start is the safety net. A stop removes the relay from the
+declared set, so a stopped relay is never started again. Three guards keep it from
 over-reacting:
 
 - a relay must be misbound for **two ticks in a row** before it is moved;

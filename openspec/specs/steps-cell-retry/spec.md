@@ -131,10 +131,16 @@ action the only difference.
 
 ### Requirement: A commit barrier is re-sent a fixed number of times
 
-The re-send of a task-commit, iteration-commit or compensation barrier whose acknowledgement timed out (`FLEZHA_STEPS_ACK_TIMEOUT_MS`) SHALL be governed by the runner's controller connection, not by the class: a constant of three sends, each waited out with the shared ladder's default backoff base, declared beside the acknowledgement timeout in the shared core and read by the Elixir SDK's driver from its knob table. The waiter SHALL stay registered across the re-sends so a late acknowledgement continues the chain, and only the exhausted count SHALL be a terminal error, as today.
+The re-send of a task-commit, iteration-commit or compensation barrier whose acknowledgement timed out (`FLEZHA_STEPS_ACK_TIMEOUT_MS`) SHALL be governed by the runner's controller connection, not by the class: a constant of three sends, each waited out with the shared ladder's default backoff base, declared beside the acknowledgement timeout in the shared core and read by the Elixir SDK's driver from its knob table. The waiter SHALL stay registered across the re-sends so a late acknowledgement continues the chain, and only the exhausted count SHALL be a terminal error, as today. A barrier the controller refuses as `commit.record_not_durable` SHALL be sent again under the same reference id after the shared ladder's backoff from a 1 s base, within the same three sends; any other refusal of a forward task-commit or an iteration-commit barrier SHALL fail it at once.
 
 #### Scenario: A stalled acknowledgement is re-sent three times
 
 - **WHEN** a controller withholds every `TaskCommitResponse`
 - **THEN** the runner SHALL send the same barrier under the same reference id three times in total and then end the run with a terminal error, and no class setting SHALL change that count
+
+#### Scenario: A barrier refused as not durable in time is re-sent
+
+- **WHEN** a controller refuses a task-commit barrier with `commit.record_not_durable`
+- **THEN** the runner SHALL send the same barrier again under the same reference id after a backoff, up to three sends in total, and fail the stage only when the last send is refused
+- **AND** a refusal with any other code SHALL fail the stage without a re-send
 

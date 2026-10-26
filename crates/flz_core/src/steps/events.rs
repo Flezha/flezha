@@ -454,7 +454,11 @@ pub(super) fn with_cell<T>(
 }
 
 /// A barrier's controller reply, on the control reader.
-pub(super) fn barrier_acked(inst: &Weak<RelayInstance>, id: u64, result: Result<(), String>) {
+pub(super) fn barrier_acked(
+    inst: &Weak<RelayInstance>,
+    id: u64,
+    result: Result<(), crate::FlezhaError>,
+) {
     let Some(inst) = inst.upgrade() else { return };
     let Some(r) = Run::of(&inst) else { return };
     r.decide(|d| {
@@ -467,7 +471,7 @@ pub(super) fn barrier_acked(inst: &Weak<RelayInstance>, id: u64, result: Result<
                 d.s.barriers.remove(&id);
                 target.on_ack(d);
             }
-            Err(error) => target.on_refusal(d, id, error),
+            Err(refusal) => target.on_refusal(d, id, refusal),
         }
     });
 }

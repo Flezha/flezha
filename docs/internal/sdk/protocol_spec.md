@@ -1654,8 +1654,12 @@ acks of every barrier in the tick — across every instance on the runner — ar
 released after that one sync. The control-channel reader never journals: it
 hands the frame to the per-runner commit worker (`ControlChannel.Commits`), so
 a commit storm never queues a ping, stop, park or compaction behind disk I/O.
-A non-empty `error` (journal write failure, oversized payload, a record not
-durable) terminates the run abnormally through the terminal-error path, including saga compensation.
+A non-empty `error` (journal write failure, oversized payload) terminates the
+run abnormally through the terminal-error path, including saga compensation. A
+record not durable (`commit.record_not_durable`) is the one transient refusal:
+the runner re-sends the barrier under the same `reference_id` after a back-off
+(about 1 s, then 2 s), within the three sends below, and terminates the run only
+when it is refused on the last one.
 
 **Idempotent re-send.** An ack that does not arrive within
 `FLEZHA_STEPS_ACK_TIMEOUT_MS` (default 30 s) of a send is re-sent: the same

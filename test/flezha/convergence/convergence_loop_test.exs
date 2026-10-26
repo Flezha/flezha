@@ -487,6 +487,102 @@ defmodule Flezha.Convergence.LoopTest do
     end
   end
 
+  describe "the net: a declared relay that runs nowhere is started after the grace" do
+    alias Flezha.Config.Backoff
+    alias Flezha.Convergence.{Heal, Planner}
+    alias Flezha.Service.{HubManager, RelayManager}
+
+    import ExUnit.CaptureLog
+
+    defp declared(ids) do
+      %Intent{
+        relays: Enum.map(ids, &%{namespace: :ns, relay_id: &1, factory_id: "f", plugins: []})
+      }
+    end
+
+    test "a declared relay no member holds is named once it outlives the unmet-intent grace" do
+      stub(HubManager, :placed_relay_ids, fn :ns, :unreadable -> MapSet.new(["btc_feed"]) end)
+      grace = Flezha.Config.Durations.get(:convergence_unmet_intent_grace_ms)
+      intent = declared(["btc_feed", "eth_feed"])
+
+      assert {[], since} = Intent.detect_unplaced(intent, %{}, 0)
+      assert since == %{{:ns, "eth_feed"} => 0}
+      assert {[], ^since} = Intent.detect_unplaced(intent, since, grace)
+      assert {[{:ns, "eth_feed"}], ^since} = Intent.detect_unplaced(intent, since, grace + 1)
+
+      # Placed again clears its clock.
+      stub(HubManager, :placed_relay_ids, fn :ns, :unreadable -> MapSet.new(["eth_feed"]) end)
+      assert {[], %{{:ns, "btc_feed"} => _}} = Intent.detect_unplaced(intent, since, grace + 2)
+    end
+
+    test "a hub that cannot be read names none of its relays" do
+      stub(HubManager, :placed_relay_ids, fn :ns, :unreadable -> :unreadable end)
+
+      assert {[], %{}} = Intent.detect_unplaced(declared(["eth_feed"]), %{}, 0)
+    end
+
+    test "a row bound to a hub member counts as placed, connected or held in a grace" do
+      pid = self()
+      hub_id = Flezha.Identificator.hub("ns")
+      stub(ProcessHub, :is_alive?, fn ^hub_id -> true end)
+      stub(ProcessHub, :nodes, fn ^hub_id, [:include_local] -> [node(), :held@gone] end)
+
+      stub(ProcessHub, :process_list, fn ^hub_id, :global ->
+        [
+          {"on_here", [{node(), pid}]},
+          {"on_held", [{:held@gone, pid}]},
+          {"on_departed", [{:departed@gone, pid}]},
+          {"unbound", []},
+          {{:plugin, "p"}, [{node(), pid}]}
+        ]
+      end)
+
+      assert HubManager.placed_relay_ids("ns", :unreadable) == MapSet.new(["on_here", "on_held"])
+    end
+
+    test "the Diff keeps only relays still declared, and the Planner starts each" do
+      reality = %{unplaced: [{:ns, "eth_feed"}, {:ns, "stopped_feed"}]}
+
+      assert %Diff{unplaced_relays: [{:ns, "eth_feed"}]} =
+               delta = Diff.compute(declared(["eth_feed"]), reality)
+
+      assert [%{primitive: :start_relay, namespace: :ns, target: "eth_feed"}] =
+               Planner.plan(delta, Backoff.new(:heal))
+
+      assert %Diff{unplaced_relays: []} = Diff.compute(declared([]), reality)
+    end
+
+    test "start_relay starts the declared relay through the start authority" do
+      relay = %{id: "eth_feed", factory_id: "f"}
+      stub(HubManager, :declared_relay, fn "ns", "eth_feed" -> {:ok, relay} end)
+      expect(RelayManager, :start_relay, fn "ns", ^relay -> {:ok, %{relay_id: "eth_feed"}} end)
+
+      log =
+        capture_log(fn ->
+          assert Heal.execute(%{
+                   primitive: :start_relay,
+                   namespace: :ns,
+                   target: "eth_feed",
+                   args: %{}
+                 }) == :ok
+        end)
+
+      assert log =~ "starting declared relay eth_feed in ns: it has run nowhere"
+    end
+
+    test "start_relay never starts a relay a stop took out of the declared set" do
+      stub(HubManager, :declared_relay, fn "ns", "stopped_feed" -> :error end)
+      reject(&RelayManager.start_relay/2)
+
+      assert Heal.execute(%{
+               primitive: :start_relay,
+               namespace: :ns,
+               target: "stopped_feed",
+               args: %{}
+             }) == :unmet
+    end
+  end
+
   describe "Progress.progress_markers/0 — the tier cursors reach the classifier" do
     alias Flezha.Convergence.{Loop, StallClassifier}
     alias Flezha.Relay.ClassRegistry

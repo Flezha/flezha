@@ -102,6 +102,24 @@ defmodule Flezha.Service.HubManager.Rows do
   end
 
   @doc """
+  The relay ids whose registry row is bound to a member of the namespace's hub,
+  connected or held through a node-down grace, whether or not that node answers
+  now; `unreadable` when the hub cannot be read.
+  """
+  @spec placed_relay_ids(binary() | atom(), term()) :: MapSet.t() | term()
+  def placed_relay_ids(namespace, unreadable) do
+    with_live_hub(namespace, unreadable, fn hub_id ->
+      members = MapSet.new(ProcessHub.nodes(hub_id, [:include_local]))
+
+      for {relay_id, node_pids} <- ProcessHub.process_list(hub_id, :global),
+          is_binary(relay_id),
+          Enum.any?(node_pids, &MapSet.member?(members, elem(&1, 0))),
+          into: MapSet.new(),
+          do: relay_id
+    end)
+  end
+
+  @doc """
   The node hosting the pid `Flezha.Process.Hub.live_pid/1` picks from
   `node_pids`, or `nil` when every entry is on a dead node (a FAILED
   placement); it surfaces per-node placement in the CLI.
@@ -382,6 +400,22 @@ defmodule Flezha.Service.HubManager.Rows do
       for %{id: id} = child_spec <- children, is_binary(id) do
         relay = cspec_relay(child_spec)
         %{id: id, factory_id: relay && Map.get(relay, :factory_id)}
+      end
+    end)
+  end
+
+  @doc """
+  The relay builder `relay_id`'s declared entry starts, or `:error` when the
+  entry is gone (a stop removed it), is not a relay, or the hub cannot be read.
+  """
+  @spec declared_relay(binary() | atom(), binary()) :: {:ok, map()} | :error
+  def declared_relay(namespace, relay_id) do
+    with_live_hub(namespace, :error, fn hub_id ->
+      with %{} = spec <- DeclaredChildren.declared_child(hub_id, relay_id),
+           %{} = relay <- cspec_relay(spec) do
+        {:ok, relay}
+      else
+        _ -> :error
       end
     end)
   end

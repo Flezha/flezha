@@ -146,10 +146,17 @@ A barrier (`Barrier`) keeps its reference id for its whole life. An ack not rece
 `BARRIER_SENDS` (three) sends in all, a constant of the controller connection rather than a class
 setting; the ack stays registered across the re-sends, so a late one continues the chain. The
 controller journals a barrier once by the entry's identity, so a re-sent barrier is answered from
-the existing entry. Only an `Undo` barrier is re-sent on a refusal (`resend_refused`, as a new
-frame, since the refusal consumed the first send's waiter, and its ack wait re-armed in place, so
-a refusal answered in the send's own millisecond cannot drop the new wait); every other refusal
-fails the barrier at once.
+the existing entry. Every re-send goes out as a new frame (`Decide::resend`), whose send registers
+the ack's waiter again, in place of the one a timeout left or a refusal consumed, and re-arms the
+ack wait in place, so a refusal answered in the send's own millisecond cannot drop the new wait.
+An `Undo` barrier is re-sent on any refusal at once. Any barrier refused as
+`commit.record_not_durable` is re-sent after a back-off: the controller journals nothing when a
+named record's wait times out, its Cell's writer cannot be reached, or the writer refuses the
+wait, and the reason on the wire does not tell these apart, so all three are retried
+(`resend_after`: `REFUSAL_RETRY`, the shared ladder from a 1 s base, counted and logged by
+`retry::note_failed_attempt`), the back-off waited out on its `Ack` deadline. Both count
+against the same `BARRIER_SENDS`; every other refusal, and one with no send left, fails the
+barrier at once.
 
 ### Record, then Mark
 
@@ -190,7 +197,7 @@ queues a ping, stop, park or compaction behind disk I/O. Each step of the path:
 | append | `Commits` | once every named record is durable, `TaskJournal.append_async/4` with `sync: :batched`, answered when the `FsyncBatcher` tick, a prefix cut or a clean close syncs the batch; no wait blocks the process |
 | identity | journal writer | the 16-byte header `[epoch u32][type u8][task_idx u16][iter u32]` is the dedup key |
 | remote | before the ack | under `durable: remote`, `DurabilityTier.commit_sync/1` ships the journal suffix to the remote tier first |
-| ack | the channel | `TaskCommitResponse` or `IterCommitResponse` under the request's `reference_id`; a non-empty `error` (a write failure, `{:oversized_handoff, size, max}`, `record_not_durable`) ends the run |
+| ack | the channel | `TaskCommitResponse` or `IterCommitResponse` under the request's `reference_id`; a non-empty `error` (a write failure, `{:oversized_handoff, size, max}`) ends the run; `record_not_durable` is re-sent after a back-off while sends remain |
 | release | after the ack | `WalWriter.commit_records/3` per named range releases those records' outputs and drops a held entry of that Cell below the range, an attempt that never committed |
 
 A dead-lettered iteration's record is its turn's message: it is parked in the dead-letter queue,
@@ -263,7 +270,7 @@ Paths in the Test column are under `test/system/` unless they name a crate.
 | C4 | `IterCommit` durable, crash before the input release or the cut | the bind seeds the floor from the journal's released offset, so the message drives one iteration | `Replay.seed_floor/1` | `steps_crash_resume_e2e_test.exs` "the re-forwarded message drives one iteration after the resume, never two", "an Overwatch killed mid-bind leaves the message one iteration" |
 | C5 | a completing iteration journaled, crash before `RelayCompleted` | the resumed run ends `ok` with the journaled result and runs nothing | `open_gate` (`JournalResume.completion`) | `sdk/rust/src/steps/tests/driver/durable_loop.rs` `loop_completion` |
 | C6 | a timer firing's stage committed, the firing's removal unwritten | the restored timer is not fired again | `committed_firings` (the root's `TaskCommit` names the firing) | `steps_crash_resume_e2e_test.exs` "a crash after the firing's root committed does not fire it again"; `sdk/rust/src/steps/tests/driver/timers.rs` `a_crash_after_the_roots_ack_does_not_fire_it_again` |
-| C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `resend_refused`, `undo_journaled` | `crates/flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
+| C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `Decide::resend`, `undo_journaled` | `crates/flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
 | C8 | a failed turn parked, crash before its `dead_lettered` entry | the bind removes the unrecorded entry and the turn runs again, so the message is parked at most once | `TaskJournal.Turns.drop_unrecorded_turns/1` | `steps_failed_turn_e2e_test.exs` "after the park and before the record re-runs the turn, and parks it once", "after the record and before the undo is journaled undoes the turn once, on the rebind" |
 | C9 | intent markers sent, crash before the barrier frame they precede | with a journal, intents start no compensation without a done marker; the stage runs again | the order inside `act`; `open_gate` | `steps_crash_resume_e2e_test.exs` "durable saga steps resumes compensation after a SIGKILL mid-rollback" |
 | C10 | `RelayCompleted` written, the drain of owed outboxes times out | the teardown goes on, the warning names what is still owed, the retained WAL keeps the debt; a finished relay is not started again | `drain_owed_ms`, `DurableTasks` | `test/flezha/runner/control_channel_steps_test.exs` "the teardown flushes the runner's stream channels before it deregisters" (the flush); none for the timeout |

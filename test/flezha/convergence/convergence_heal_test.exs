@@ -256,7 +256,7 @@ defmodule Flezha.Convergence.HealTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the nine reachable primitives" do
+    test "the heal surface is exactly the ten reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
                  :rebind_relay,
@@ -267,7 +267,8 @@ defmodule Flezha.Convergence.HealTest do
                  :evict_runner,
                  :restart_runner,
                  :reset_control_channel,
-                 :publish_binding
+                 :publish_binding,
+                 :start_relay
                ])
     end
 

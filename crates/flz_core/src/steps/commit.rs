@@ -11,7 +11,7 @@ use super::compensation::{CellRun, RecordSpan};
 use super::instance::{FiringKey, Value};
 use super::run::Run;
 use super::StepsError;
-use crate::channel::ChannelId;
+use crate::channel::{ChannelId, RetryPolicy};
 use crate::pb::command_request::Command;
 
 /// How long one send waits for its ack (`FLEZHA_STEPS_ACK_TIMEOUT_MS`)
@@ -22,6 +22,17 @@ const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_STEPS_ACK_TIMEOUT_MS";
 /// Sends of one barrier before an unacked commit fails the run. A re-send is
 /// the controller connection's business, not the class's, so no class sets it.
 pub(super) const BARRIER_SENDS: u32 = 3;
+
+/// The refusal that passes: a record the barrier names was not confirmed
+/// durable (its wait timed out, or its writer could not be reached or refused),
+/// so the controller journaled nothing and the same barrier is sent again,
+/// within [`BARRIER_SENDS`], after [`REFUSAL_RETRY`]'s back-off.
+pub(super) const RECORD_NOT_DURABLE: &str = "commit.record_not_durable";
+
+pub(super) const REFUSAL_RETRY: RetryPolicy = RetryPolicy {
+    max_attempts: BARRIER_SENDS,
+    backoff_base_ms: 1_000,
+};
 
 pub(super) fn ack_timeout() -> Duration {
     Duration::from_millis(crate::util::env_parse(

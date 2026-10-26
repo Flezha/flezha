@@ -22,7 +22,8 @@ pub enum Deadline {
     /// Waiting at a committed boundary long enough to suspend.
     ParkIdle,
     MaxDuration,
-    /// A barrier's ack is overdue: re-send it, or give up on it.
+    /// A barrier's ack is overdue, or its refusal's back-off is over: re-send
+    /// it, or give up on it.
     Ack(u64),
     /// Cell restores that never landed: the run ends `error`.
     RestoreGate,

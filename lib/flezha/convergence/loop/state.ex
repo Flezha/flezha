@@ -73,6 +73,9 @@ defmodule Flezha.Convergence.Loop.State do
             # relay_id => monotonic ms it was first seen with evidence and no
             # intent; it joins `intent_mismatch` past the unmet-intent grace.
             intent_mismatch_since: %{},
+            # {namespace, relay_id} => monotonic ms a declared relay was first
+            # seen running nowhere; past the unmet-intent grace the Diff names it.
+            unplaced_since: %{},
             # {state-root mtime, first-level dir listing} cache.
             evidence_cache: nil,
             # Monotonic ms when `bound < intended` first held; nil while met or

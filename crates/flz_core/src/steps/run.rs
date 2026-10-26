@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use flz_transport::transport::FlezhaStream;
 
-use super::commit::ack_timeout;
+use super::commit::{ack_timeout, REFUSAL_RETRY};
 use super::effects::{Effects, Frame};
 use super::instance::{
     AfterUndo, Barrier, BarrierFor, Carry, CellPos, Firing, Message, MidResume, PassOrigin,
@@ -26,7 +26,9 @@ use crate::host::{Crossed, HostPayload};
 use crate::relay::instance::RelayInstance;
 use crate::relay::topology::{CellMode, TaskletDescriptor};
 use crate::relay::Deadline;
+use crate::retry::note_failed_attempt;
 use crate::routing::{Destination, Entering, Routed};
+use crate::FlezhaError;
 
 /// How long a message's item waits before a full mailbox is tried again.
 pub(super) const ADMIT_RETRY: Duration = Duration::from_millis(5);
@@ -571,11 +573,12 @@ impl Decide<'_, '_, '_> {
         self.clear_waits();
     }
 
-    /// A refused compensation goes out again under its reference id while
-    /// [`Barrier::resend`] allows. The refusal consumed the send's waiter, so
-    /// the stored command is sent as a new frame, which registers another.
+    /// A barrier goes out again under its reference id (the controller
+    /// journals a barrier once by identity) while [`Barrier::resend`] allows,
+    /// as a new frame: its send registers the ack's waiter, in place of the
+    /// one a refusal consumed or a timeout left, and re-arms the ack wait.
     /// Whether it was sent.
-    pub(super) fn resend_refused(&mut self, id: u64) -> bool {
+    pub(super) fn resend(&mut self, id: u64) -> bool {
         let Some(command) = self.s.barriers.get_mut(&id).and_then(Barrier::resend) else {
             return false;
         };
@@ -583,18 +586,25 @@ impl Decide<'_, '_, '_> {
         true
     }
 
-    /// An ack overdue: the barrier goes out again under its reference id (the
-    /// controller journals a barrier once by identity) while
-    /// [`Barrier::resend`] allows.
-    fn ack_overdue(&mut self, id: u64) {
-        let Some(barrier) = self.s.barriers.get_mut(&id) else {
-            return;
+    /// A refusal that passes is counted and logged, and its barrier waits out
+    /// the back-off on its ack deadline, which re-sends it as an overdue ack
+    /// would, while [`Barrier::can_resend`]. Whether it waits.
+    pub(super) fn resend_after(&mut self, id: u64, refusal: &FlezhaError) -> bool {
+        let Some(barrier) = self.s.barriers.get(&id).filter(|b| b.can_resend()) else {
+            return false;
         };
-        if let Some(command) = barrier.resend() {
-            self.fx
-                .control
-                .push((barrier.reference_id.clone(), command));
-            return self.arm(Deadline::Ack(id), ack_timeout());
+        let label = barrier.target.label(self.s);
+        let delay = note_failed_attempt(&label, barrier.sends, REFUSAL_RETRY, &refusal.text());
+        self.arm(Deadline::Ack(id), delay);
+        true
+    }
+
+    /// An ack overdue, or a refused barrier's back-off over: the barrier goes
+    /// out again while [`Barrier::resend`] allows, and fails on the timeout
+    /// once it does not.
+    fn ack_overdue(&mut self, id: u64) {
+        if self.resend(id) {
+            return;
         }
         let Some(barrier) = self.s.barriers.remove(&id) else {
             return;

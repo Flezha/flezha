@@ -304,8 +304,9 @@ defmodule Flezha.Convergence.Loop do
     state = Progress.classify(Liveness.classify(state), started_at)
 
     intent = Intent.declared()
-    reality = Probe.snapshot()
-    state = %{state | no_quorum: no_quorum_namespaces()}
+    {unplaced, unplaced_since} = Intent.detect_unplaced(intent, state.unplaced_since, started_at)
+    reality = Map.put(Probe.snapshot(), :unplaced, unplaced)
+    state = %{state | no_quorum: no_quorum_namespaces(), unplaced_since: unplaced_since}
 
     # Facts the probe shows repaired leave the map and release their ladder
     # BEFORE the plan, so a rung never fires for a fault already gone.

@@ -13,9 +13,9 @@ defmodule Flezha.Convergence.Intent do
   reconcile replaying it).
 
   The Loop diffs this against `Probe.snapshot/0` (reality) each tick. Starting
-  a declared-but-absent relay is NOT this pipeline's job — the hub's own
-  reconcile converges running children toward the declared set through the
-  idempotent start authority.
+  a declared-but-absent relay is the hub's own reconcile's job, through the
+  idempotent start authority; the Loop starts one only as a safety net, once it
+  has run nowhere for longer than the unmet-intent grace (`detect_unplaced/3`).
   """
 
   alias Flezha.Config.Durations
@@ -128,9 +128,7 @@ defmodule Flezha.Convergence.Intent do
           {{[binary()], %{binary() => integer()}}, term()}
   def detect_mismatch(intent, {prev_mismatch, since} = prev, cache, now) do
     {candidates, cache} = intent_mismatch(intent, cache)
-    since = Map.new(candidates, &{&1, Map.get(since, &1, now)})
-    grace = Durations.get(:convergence_unmet_intent_grace_ms)
-    mismatch = Enum.filter(candidates, &(now - since[&1] > grace))
+    {mismatch, since} = outlived_grace(candidates, since, now)
     note_intent_mismatch_transition(prev_mismatch, mismatch)
     {{mismatch, since}, cache}
   rescue
@@ -139,6 +137,44 @@ defmodule Flezha.Convergence.Intent do
       {prev, cache}
   catch
     _, _ -> {prev, cache}
+  end
+
+  @doc """
+  Declared relays that no hub member has held for longer than
+  `convergence_unmet_intent_grace_ms`, as `{namespace, relay_id}`, and the
+  refreshed map of when each was first seen unplaced. A relay is placed while
+  its registry row is bound to a hub member, connected or held through a
+  node-down grace, so a member that is only out of reach keeps its relays.
+  Only the declared set is read, so a relay a stop removed, or one known only
+  by a state directory, is never named; under the auto-restore kill-switch the
+  intent is what runs, so none is. A hub that cannot be read names none of its
+  relays, and a failure answers `{[], since}`.
+  """
+  @spec detect_unplaced(t(), %{{atom(), binary()} => integer()}, integer()) ::
+          {[{atom(), binary()}], %{{atom(), binary()} => integer()}}
+  def detect_unplaced(%__MODULE__{relays: relays}, since, now) do
+    placed =
+      for namespace <- Enum.uniq(Enum.map(relays, & &1.namespace)),
+          into: %{},
+          do: {namespace, HubManager.placed_relay_ids(namespace, :unreadable)}
+
+    unplaced =
+      for %{namespace: ns, relay_id: id} <- relays,
+          (ids = placed[ns]) != :unreadable,
+          not MapSet.member?(ids, id),
+          do: {ns, id}
+
+    outlived_grace(unplaced, since, now)
+  catch
+    _, _ -> {[], since}
+  end
+
+  # The candidates first seen more than the unmet-intent grace ago, and when
+  # each candidate was first seen; one that left the candidates starts over.
+  defp outlived_grace(candidates, since, now) do
+    since = Map.new(candidates, &{&1, Map.get(since, &1, now)})
+    grace = Durations.get(:convergence_unmet_intent_grace_ms)
+    {Enum.filter(candidates, &(now - since[&1] > grace)), since}
   end
 
   @doc false

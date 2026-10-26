@@ -1,13 +1,13 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: nine idempotent, bounded primitives. Every
+  The entire heal surface: ten idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive, and adding a remedy is one entry in the table.
 
       rebind_relay  resync_runner
       start_plugin  stop_plugin  restart_plugin
       evict_runner  restart_runner
-      reset_control_channel  publish_binding
+      reset_control_channel  publish_binding  start_relay
 
   None of them moves a relay between controllers. Which controller hosts
   a relay is the namespace hub's decision alone
@@ -47,6 +47,11 @@ defmodule Flezha.Convergence.Heal do
     * `publish_binding` — re-write a relay's durable row and route from
       the runner its Overwatch is bound to, planned from a registry write that
       named a stale runner.
+    * `start_relay` — start a declared relay that has run nowhere for longer
+      than `convergence_unmet_intent_grace_ms`, through the start authority
+      (`RelayManager.start_relay/3`), which places it as any start is placed.
+      The hub's reconcile normally starts it first; this is the safety net.
+      Only a relay still declared is started, so a stopped one never is.
   """
 
   alias Flezha.Config.Durations
@@ -89,7 +94,8 @@ defmodule Flezha.Convergence.Heal do
       executor: "FleetManager.reset_control_channel/1",
       evidence: :ok
     },
-    %{name: :publish_binding, executor: "Overwatch :publish_binding", evidence: :ok}
+    %{name: :publish_binding, executor: "Overwatch :publish_binding", evidence: :ok},
+    %{name: :start_relay, executor: "RelayManager.start_relay/3", evidence: :ok}
   ]
 
   @primitives Enum.map(@table, & &1.name)
@@ -236,6 +242,18 @@ defmodule Flezha.Convergence.Heal do
     end)
   end
 
+  # The declared entry is read again here: a stop that removed it after the
+  # tick read the intent leaves nothing to start. A start that loses the id
+  # claim found the relay running, which is the goal.
+  defp apply_primitive(:start_relay, %{namespace: namespace, target: relay_id}) do
+    namespace = to_string(namespace)
+
+    case HubManager.declared_relay(namespace, relay_id) do
+      {:ok, relay} -> start_unplaced(namespace, relay_id, relay)
+      :error -> :unmet
+    end
+  end
+
   # Malformed op (no live target) — never produced by the Planner, but a
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op) when prim in @primitives, do: :error
@@ -349,5 +367,21 @@ defmodule Flezha.Convergence.Heal do
       %{count: 1},
       Map.merge(meta, %{reason: :convergence_rebind, mode: :reassigned})
     )
+  end
+
+  defp start_unplaced(namespace, relay_id, relay) do
+    Logger.warning(
+      "[convergence] starting declared relay #{relay_id} in #{namespace}: " <>
+        "it has run nowhere for longer than the unmet-intent grace"
+    )
+
+    case RelayManager.start_relay(namespace, relay) do
+      {:error, reason} ->
+        Logger.warning("[convergence] start of #{relay_id} failed: #{inspect(reason)}")
+        :error
+
+      _started_or_duplicate ->
+        :ok
+    end
   end
 end

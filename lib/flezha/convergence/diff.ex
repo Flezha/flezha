@@ -43,6 +43,7 @@ defmodule Flezha.Convergence.Diff do
           extra_plugins: [{relay_ref(), binary(), pid()}],
           unhealthy_plugins: [{relay_ref(), binary(), map(), term()}],
           stale_tags: [{relay_ref(), binary() | nil, binary()}],
+          unplaced_relays: [relay_ref()],
           data_plane_wedge: wedge(),
           data_plane_layer: atom() | nil,
           draining: boolean()
@@ -58,6 +59,7 @@ defmodule Flezha.Convergence.Diff do
             extra_plugins: [],
             unhealthy_plugins: [],
             stale_tags: [],
+            unplaced_relays: [],
             data_plane_wedge: nil,
             data_plane_layer: nil,
             draining: false
@@ -77,6 +79,7 @@ defmodule Flezha.Convergence.Diff do
     :extra_plugins,
     :unhealthy_plugins,
     :stale_tags,
+    :unplaced_relays,
     :data_plane_wedge
   ]
 
@@ -96,10 +99,11 @@ defmodule Flezha.Convergence.Diff do
   @awaiting_binding [:unbound, :failed, :halted]
 
   # The fields a binding op is planned from — the waiting ones, and the row
-  # re-publish that follows a placement. While this node drains they are
-  # emptied: every binding the local loop can plan places onto this node, and
-  # the drain owns the node.
-  @placing_fields @waiting_fields ++ [:stale_tags]
+  # re-publish that follows a placement — and the relay starts. While this node
+  # drains they are emptied: every binding the local loop can plan places onto
+  # this node, the drain owns the node, and the other nodes' loops start what
+  # runs nowhere.
+  @placing_fields @waiting_fields ++ [:stale_tags, :unplaced_relays]
 
   @doc "The fields whose ops place a waiting relay on a runner."
   @spec waiting_fields() :: [atom()]
@@ -133,11 +137,22 @@ defmodule Flezha.Convergence.Diff do
       extra_plugins: extra,
       unhealthy_plugins: unhealthy,
       stale_tags: stale_tags(declared, observed),
+      unplaced_relays: unplaced_refs(declared, Map.get(reality, :unplaced, [])),
       data_plane_wedge: resolve_wedge(verdict, Map.get(reality, :active_runners, %{}), observed),
       data_plane_layer: StallClassifier.layer(verdict),
       draining: Facts.targets(facts, :node_draining) != []
     }
     |> suppress_placing()
+  end
+
+  # The declared relays the Loop found running nowhere past the unmet-intent
+  # grace (`reality.unplaced`), kept to the intent this Diff is computed over.
+  defp unplaced_refs(declared, unplaced) do
+    unplaced = MapSet.new(unplaced)
+
+    for %{namespace: ns, relay_id: rid} <- declared,
+        MapSet.member?(unplaced, {ns, rid}),
+        do: {ns, rid}
   end
 
   defp suppress_placing(%__MODULE__{draining: false} = d), do: d

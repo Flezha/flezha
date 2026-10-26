@@ -815,8 +815,9 @@ Overridden on the `Tasklet` trait (Rust) or Tasklet class (Java).
 | `CLOCK` (set by a written `event_time`, or the `logical_clock` key) | wall clock | Wall clock, event time or logical clock; decides `ctx.now()` and event-time ordering. |
 
 A steps tasklet's retry ladder is its input edge's (above), and a commit
-barrier whose ack timed out is re-sent three times, a constant, before the run
-ends abnormally.
+barrier whose ack timed out, or that the controller refused because a record it
+names was not durable in time, is sent three times in all, a constant, before
+the run ends abnormally.
 
 ## Limits and gotchas
 
