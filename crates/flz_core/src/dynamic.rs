@@ -109,7 +109,11 @@ impl DynamicCellRegistry {
     /// gate with an empty mailbox; a steps relay's only between passes, and
     /// never one a rollback could still reach.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
-        let now = crate::util::monotonic_ms();
+        self.reap_sweep_at(idle_ttl, crate::util::monotonic_ms());
+    }
+
+    /// [`Self::reap_sweep`] with the clock reading `now`.
+    fn reap_sweep_at(&self, idle_ttl: Duration, now: i64) {
         let (held, recorded) = match self.instance.upgrade() {
             Some(instance) => match crate::steps::reap_holds(&instance) {
                 Some(holds) => holds,
@@ -198,14 +202,13 @@ impl DynamicCellRegistry {
         self.note_evicted(key);
     }
 
-    /// Whether a Cell of this tasklet is host-run and idle past `idle_ttl`:
-    /// evicting it waits for the host to answer its leave.
-    fn host_eviction_due(&self, idle_ttl: Duration) -> bool {
+    /// Whether a Cell of this tasklet is host-run and idle past `idle_ttl`
+    /// at `now`: evicting it waits for the host to answer its leave.
+    fn host_eviction_due(&self, idle_ttl: Duration, now: i64) -> bool {
         let host = self
             .topology
             .tasklet(self.tasklet_id)
             .is_some_and(|tasklet| tasklet.host_facts.is_some());
-        let now = crate::util::monotonic_ms();
         host && self
             .cells
             .iter()
@@ -266,29 +269,32 @@ pub(crate) fn arm_sweep(registry: &Arc<DynamicCellRegistry>, idle_ttl: Duration)
 /// A sweep came due on a poller: sweep, then arm the next one, until the
 /// relay stops. A host-run Cell's eviction waits for the host's answer, which
 /// a poller must not, so that sweep runs on its own thread, as a leave does.
+/// Both read the clock once: a Cell crossing the TTL between two reads would
+/// be evicted on the poller, which waits out the leave nobody hands out.
 pub(crate) fn sweep_due(registry: Arc<DynamicCellRegistry>, idle_ttl: Duration) {
     if registry.relay_stopped.load(Ordering::Acquire) {
         return;
     }
-    if !registry.host_eviction_due(idle_ttl) {
-        return sweep(&registry, idle_ttl);
+    let now = crate::util::monotonic_ms();
+    if !registry.host_eviction_due(idle_ttl, now) {
+        return sweep(&registry, idle_ttl, now);
     }
     let sweeping = Arc::clone(&registry);
     let spawned = thread::Builder::new()
         .name("flezha-leave".to_string())
-        .spawn(move || sweep(&sweeping, idle_ttl));
+        .spawn(move || sweep(&sweeping, idle_ttl, now));
     if spawned.is_err() {
         arm_sweep(&registry, idle_ttl);
     }
 }
 
-fn sweep(registry: &Arc<DynamicCellRegistry>, idle_ttl: Duration) {
+fn sweep(registry: &Arc<DynamicCellRegistry>, idle_ttl: Duration, now: i64) {
     {
         let _sweeping = registry.sweeping.lock_recover();
         if registry.relay_stopped.load(Ordering::Acquire) {
             return;
         }
-        registry.reap_sweep(idle_ttl);
+        registry.reap_sweep_at(idle_ttl, now);
     }
     if !registry.relay_stopped.load(Ordering::Acquire) {
         arm_sweep(registry, idle_ttl);
