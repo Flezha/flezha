@@ -33,6 +33,7 @@ const INVOCATIONS: &[&[&str]] = &[
     &["boot", "await", "--timeout", "1"],
     &["boot", "status"],
     &["cluster", "status"],
+    &["controller", "list"],
     &["controller", "mem-top"],
     &["controller", "status"],
     &["controller", "stop", "--no-wait"],

@@ -27,7 +27,6 @@ defmodule Flezha.Service.Listener do
   alias Flezha.Service.HubManager
   alias Flezha.Service.Listener.Receiver
   alias Flezha.Service.PluginManager
-  alias Flezha.Service.PluginRecords
   alias Flezha.Service.RelayApi
 
   @type event ::
@@ -265,7 +264,7 @@ defmodule Flezha.Service.Listener do
     args = [namespace, relay_id, name]
 
     with {:error, _unreadable} <-
-           PluginRecords.on_hub_node(namespace, {__MODULE__, :attachment_here}, args, :unknown),
+           HubManager.on_hub_node(namespace, {__MODULE__, :attachment_here}, args, :unknown),
          do: :unknown
   end
 

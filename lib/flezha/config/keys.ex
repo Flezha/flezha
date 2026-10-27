@@ -127,6 +127,9 @@ defmodule Flezha.Config.Keys do
      key: true, env: "FLEZHA_NODE_NAME", runtimes: [:controller, :shell], per_run: :node_name},
     {:node_host_name, :string, "127.0.0.1",
      key: true, env: "FLEZHA_NODE_HOST", runtimes: [:shell, :harness]},
+    # The machine the controller runs on, which `flz controller list` names;
+    # unset names none.
+    {:host_node, :string, nil, key: true, env: "FLEZHA_HOST_NODE"},
     {:process_hub_registry_root, :path, "storage/app/process_hub",
      key: true, env: "FLEZHA_PROCESS_HUB_REGISTRY_ROOT", per_run: :hub_root},
 

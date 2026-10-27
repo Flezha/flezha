@@ -12,6 +12,7 @@ defmodule Flezha.Service.RelayApiTest do
 
   import FlezhaTest.Helper.MimicGlobal
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Error
   alias Flezha.Identificator
   alias Flezha.Partition
@@ -154,6 +155,11 @@ defmodule Flezha.Service.RelayApiTest do
       stub(ProcessHub, :is_alive?, fn
         ^hub_id -> true
         other -> Mimic.call_original(ProcessHub, :is_alive?, [other])
+      end)
+
+      stub(Directory, :hub_nodes, fn
+        ^namespace -> [node()]
+        other -> Mimic.call_original(Directory, :hub_nodes, [other])
       end)
 
       stub(ProcessRegistry, :lookup, fn

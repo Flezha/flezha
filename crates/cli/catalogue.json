@@ -111,6 +111,14 @@
       ]
     },
     {
+      "name": "Controller.controllers",
+      "doc": "Every connected controller, the one that answered first.",
+      "action": "controller.status",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
       "name": "Controller.durability_breaches",
       "doc": "The durability breaches recorded since the controller started.",
       "action": "controller.status",

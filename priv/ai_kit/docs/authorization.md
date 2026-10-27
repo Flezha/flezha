@@ -274,7 +274,7 @@ roles outside that line), and the namespace it is judged in:
 | `flz role unbind` | `authz.role_unbind` | admin | the binding's namespace |
 | `flz namespace create`, `delete`, `set-quota` | `authz.namespace_*` | admin | the namespace named |
 | `flz namespace show` | `authz.namespace_show` | viewer | the namespace named |
-| `flz controller status`, `mem-top` | `controller.status` | viewer | the caller's namespace |
+| `flz controller status`, `list`, `mem-top` | `controller.status` | viewer | the caller's namespace |
 | `flz controller stop` | `controller.stop` | admin | `_system` |
 | `flz cluster status`, `flz relay list`, `info`, `flz runner list`, `dropped` | `relay.list` | viewer | the namespace named |
 | `flz runner drop`, `readmit` | `runner.drop` | ops | the namespace named |

@@ -443,3 +443,18 @@ operation that streams, since it holds the stream's process on the controller's 
 - **WHEN** a `:ui` caller's call fails with an internal code carrying a reason
 - **THEN** the reason SHALL read as naming the controller's log, as it does for an HTTP caller
 
+### Requirement: The connected controllers SHALL be readable
+
+`Flezha.Service.Controller.controllers/1` and `flz controller list` SHALL list every controller connected to the cluster. Each row SHALL give its node, its host address, the machine it runs on when `FLEZHA_HOST_NODE` names one, its version, how long it has been up, how many runners are connected to it, and whether it is the controller that answered. A controller that does not answer SHALL still be listed, marked unreachable, with only its node.
+
+#### Scenario: Two controllers
+
+- **GIVEN** two connected controllers, each with `FLEZHA_HOST_NODE` set
+- **WHEN** a caller lists the controllers
+- **THEN** both are listed with their machine names, and the one that answered is marked as such
+
+#### Scenario: A peer does not answer
+
+- **WHEN** a connected controller does not answer within the read's timeout
+- **THEN** it is listed with its node and marked unreachable, and the other rows are complete
+

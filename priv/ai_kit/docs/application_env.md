@@ -199,6 +199,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:healthz_bind` | string | `0.0.0.0` |
 | `:healthz_enabled` | bool | `false` |
 | `:healthz_port` | int | `9569` |
+| `:host_node` | string | unset |
 | `:http_poll_min_interval_ms` | ms | `1000` |
 | `:hub_start_child_ms` | ms | `15000` |
 | `:initial_nodes` | list of atom | `""` |

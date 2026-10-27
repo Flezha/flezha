@@ -88,20 +88,20 @@ defmodule Flezha.Relay.Handover do
   @spec abandoned(Overwatch.t()) :: {:noreply, Overwatch.t()} | {:stop, :shutdown, Overwatch.t()}
   def abandoned(%Overwatch{} = state) do
     case replacement(state) do
-      :running -> {:stop, :shutdown, state}
+      :taken_over -> {:stop, :shutdown, state}
       :none -> {:noreply, take_back(state)}
-      :unknown -> {:noreply, await_replacement(state)}
+      :unasked -> {:noreply, await_replacement(state)}
     end
   end
 
   defp replacement(%Overwatch{} = state) do
     state.namespace
     |> Identificator.hub()
-    |> Hub.with_live(:unknown, fn hub_id ->
+    |> Hub.with_live(:unasked, fn hub_id ->
       case ProcessHub.child_lookup(hub_id, state.id) do
         {_spec, node_pids} ->
           if Enum.any?(Hub.on_live_nodes(node_pids), &another_running?/1),
-            do: :running,
+            do: :taken_over,
             else: :none
 
         nil ->

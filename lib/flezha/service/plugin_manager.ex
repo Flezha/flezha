@@ -694,7 +694,7 @@ defmodule Flezha.Service.PluginManager do
     do: Init.write_plugins(namespace, child_id, RegistryUpdate.rewrite_cspec_plugins(update_fn))
 
   defp on_hub_node(namespace, function, args, none),
-    do: PluginRecords.on_hub_node(namespace, {__MODULE__, function}, args, none)
+    do: HubManager.on_hub_node(namespace, {__MODULE__, function}, args, none)
 
   # ---------- Published surface: each function is judged in the plugin's own
   # namespace, which `fields` carries and the door stamps from a connection.

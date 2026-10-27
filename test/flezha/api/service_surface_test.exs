@@ -14,15 +14,20 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   """
   use FlezhaTest.Case, fixtures: [], async: false
 
+  import ExUnit.CaptureIO
+
   alias Flezha.AuthZ.Verbs
   alias Flezha.Service.Controller
+  alias Flezha.Service.Cli
   alias Flezha.Service.Dlq
   alias Flezha.Service.Fleet
+  alias Flezha.Service.HubManager
   alias Flezha.Service.Namespace
   alias Flezha.Service.Relay
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Schedule
   alias Flezha.Service.Steps
+  alias Flezha.State.TestHelpers
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RpcSurface
@@ -41,6 +46,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:boot_status, []},
       {:boot_await, [10]},
       {:cluster_status, ["default"]},
+      {:controllers, []},
       {:stop, [[]]}
     ],
     Dlq => [
@@ -261,6 +267,67 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
       assert %{relays: relays} = :erpc.call(peer, LivenessCounters, :snapshot_cluster, [])
       assert %{io_in_received: 1} = Enum.find(relays, &(&1.relay_id == relay))
+    end
+  end
+
+  describe "controllers/1 on two controllers" do
+    @describetag :multi_node
+
+    setup do
+      on_exit(TestHelpers.override_env(:host_node, "machine-a"))
+
+      {peer_pid, peer} =
+        NodeTestHelper.start_peer_node(:ctl_list, app_env: [host_node: "machine-b"])
+
+      on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
+      %{peer: peer, context: %{source: :ui, principal: "console@_system"}}
+    end
+
+    test "lists both, with their machines, and marks the one that answered",
+         %{peer: peer, context: context} do
+      assert {:ok, [here, there]} = Controller.controllers(context)
+      version = to_string(Application.spec(:flezha, :vsn))
+
+      assert %{node: node, host_node: "machine-a", local?: true, reachable?: true} = here
+      assert node == node()
+      assert %{node: ^peer, host_node: "machine-b", local?: false, reachable?: true} = there
+
+      for row <- [here, there] do
+        assert %{host: "127.0.0.1", version: ^version} = row
+        assert is_integer(row.uptime_ms) and row.uptime_ms > 0
+        assert is_integer(row.runners) and row.runners >= 0
+      end
+
+      out = capture_io(fn -> :ok = Cli.call("Controller.controllers", "[]", []) end)
+      assert [_header, _columns, local_line, peer_line] = String.split(out, "\n", trim: true)
+
+      assert local_line =~
+               ~r/^  #{Regex.escape(to_string(node()))} \(this\)\s+127\.0\.0\.1\s+machine-a\s/
+
+      assert peer_line =~ ~r/^  #{Regex.escape(to_string(peer))}\s+127\.0\.0\.1\s+machine-b\s/
+    end
+
+    test "a peer that does not answer in time is listed by its node alone",
+         %{peer: peer, context: context} do
+      on_exit(TestHelpers.override_env(:peer_read_ms, 300))
+      # Its answer counts its runners through its fleet manager, held here.
+      assert NodeTestHelper.wait_until(
+               fn -> :erpc.call(peer, HubManager, :get_running_namespaces, []) != [] end,
+               30_000
+             )
+
+      fleet = :erpc.call(peer, Process, :whereis, [Flezha.Runner.FleetManager])
+      :ok = :sys.suspend(fleet)
+
+      try do
+        assert {:ok, [%{local?: true, reachable?: true}, there]} = Controller.controllers(context)
+        assert there == %{node: peer, reachable?: false, local?: false}
+
+        out = capture_io(fn -> :ok = Cli.call("Controller.controllers", "[]", []) end)
+        assert out =~ ~r/#{Regex.escape(to_string(peer))}\s+unreachable\s+-\s+-\s+-\s+-$/m
+      after
+        :sys.resume(fleet)
+      end
     end
   end
 end

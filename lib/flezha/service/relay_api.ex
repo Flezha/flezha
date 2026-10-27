@@ -79,6 +79,17 @@ defmodule Flezha.Service.RelayApi do
   """
   @spec graph_of(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def graph_of(namespace, relay_id) do
+    HubManager.on_hub_node(
+      namespace,
+      {__MODULE__, :graph_here},
+      [namespace, relay_id],
+      {:relay_not_found, namespace, relay_id}
+    )
+  end
+
+  # On a node hosting the namespace's hub, which holds the relay's row.
+  @doc false
+  def graph_here(namespace, relay_id) do
     with {:ok, %{factory_id: factory}, host} <- declared(namespace, relay_id),
          %{graph: _} = read <- RelayManager.factory_graph(namespace, factory, host) || @no_graph,
          do: {:ok, Map.put(read, :factory, factory)}

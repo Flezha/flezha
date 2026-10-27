@@ -1,7 +1,8 @@
 defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
   `flz namespace list`, `flz runner list`, `flz runner dropped`, `flz relay
-  list` and `flz cluster status`: the text forms of the listings.
+  list`, `flz controller list` and `flz cluster status`: the text forms of the
+  listings.
   """
 
   alias Flezha.Service.Cli.Context
@@ -61,6 +62,38 @@ defmodule Flezha.Service.Cli.Listing do
         {"RUNNER", 0, &Context.label_or(&1.runner, "(none)")}
       ]
     })
+  end
+
+  @doc "`flz controller list`: one row per connected controller."
+  def controllers(rows, _args, _opts) do
+    table(rows, %{
+      empty: "No controllers found.",
+      header: "Controllers:",
+      columns: [
+        {"NODE", 40, &"#{&1.node}#{if &1.local?, do: " (this)", else: ""}"},
+        {"HOST", 24, &controller_cell(&1, :host)},
+        {"MACHINE", 18, &controller_cell(&1, :host_node)},
+        {"VERSION", 10, &controller_cell(&1, :version)},
+        {"UP", 14, &controller_cell(&1, :uptime_ms)},
+        {"RUNNERS", 0, &controller_cell(&1, :runners)}
+      ]
+    })
+  end
+
+  defp controller_cell(%{reachable?: false}, :host), do: "unreachable"
+  defp controller_cell(%{reachable?: false}, _field), do: "-"
+  defp controller_cell(%{uptime_ms: ms}, :uptime_ms), do: uptime(div(ms, 1000))
+  defp controller_cell(row, field), do: Context.label_or(row[field], "-")
+
+  defp uptime(s) do
+    clock =
+      :io_lib.format("~2..0B:~2..0B:~2..0B", [
+        div(rem(s, 86_400), 3600),
+        rem(div(s, 60), 60),
+        rem(s, 60)
+      ])
+
+    if s < 86_400, do: to_string(clock), else: "#{div(s, 86_400)}d #{clock}"
   end
 
   @doc "`flz cluster status`."

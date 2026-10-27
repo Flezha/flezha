@@ -12,6 +12,7 @@ defmodule Flezha.Service.RelayGraphTest do
   import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.RoleStore
+  alias Flezha.Cluster.Directory
   alias Flezha.Error
   alias Flezha.Partition
   alias Flezha.Relay.PartitionGroup
@@ -45,6 +46,12 @@ defmodule Flezha.Service.RelayGraphTest do
 
       namespace, id ->
         {:error, {:relay_not_found, namespace, id}}
+    end)
+
+    # The rows are this node's, so it hosts the namespace's hub.
+    stub(Directory, :hub_nodes, fn
+      ^namespace -> [node()]
+      other -> Mimic.call_original(Directory, :hub_nodes, [other])
     end)
 
     stub(PartitionGroup, :members, fn

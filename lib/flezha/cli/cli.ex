@@ -56,6 +56,7 @@ defmodule Flezha.Service.Cli do
     "Controller.boot_await" => &Boot.await/3,
     "Controller.boot_status" => &Boot.status/3,
     "Controller.cluster_status" => &Listing.cluster/3,
+    "Controller.controllers" => &Listing.controllers/3,
     "Controller.mem_top" => &MemTop.mem_top/3,
     "Controller.status" => &Controller.status/3,
     "Namespace.bind_role" => &Authz.bind_role/3,

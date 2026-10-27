@@ -3,10 +3,9 @@ defmodule Flezha.Service.PluginRecords do
   What a namespace's plugin records hold: every plugin enabled there, the
   relays bound to each and the controllers it runs on. The records are read
   here and written by `Flezha.Service.PluginManager`, both on a node that hosts
-  the namespace's hub (`on_hub_node/4`).
+  the namespace's hub (`Flezha.Service.HubManager.on_hub_node/4`).
   """
 
-  alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Probe
   alias Flezha.Plugin
@@ -22,7 +21,8 @@ defmodule Flezha.Service.PluginRecords do
   """
   @spec plugins(binary()) :: [map()]
   def plugins(namespace) do
-    with {:error, _} <- on_hub_node(namespace, {__MODULE__, :plugins_here}, [namespace], :none),
+    with {:error, _} <-
+           HubManager.on_hub_node(namespace, {__MODULE__, :plugins_here}, [namespace], :none),
          do: []
   end
 
@@ -109,26 +109,4 @@ defmodule Flezha.Service.PluginRecords do
 
   defp bound_to(bindings, name), do: Enum.filter(bindings, &(Plugin.base_id(elem(&1, 1)) == name))
   defp relays_of(bindings), do: bindings |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
-
-  # A namespace's records are written and read on a node that hosts its hub:
-  # this one when it does, otherwise one that does, under a bound. With no hub
-  # anywhere nothing is enabled or bound there, which `none` says.
-  @doc false
-  def on_hub_node(namespace, {module, function}, args, none) do
-    case Directory.hub_nodes(namespace) do
-      [] ->
-        {:error, none}
-
-      hub_nodes ->
-        if node() in hub_nodes,
-          do: apply(module, function, args),
-          else: remote(hd(hub_nodes), module, function, args)
-    end
-  end
-
-  defp remote(hub_node, module, function, args) do
-    :erpc.call(hub_node, module, function, args, Durations.get(:route_call_timeout_ms))
-  catch
-    _kind, _reason -> {:error, :registry_unavailable}
-  end
 end

@@ -13,6 +13,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz controller start [--mode \| -m attached\|daemon\|attached_iex\|daemon_iex]` | Start the flezha controller. |
 | `flz controller stop [--timeout-ms <ms>] [--no-wait] [--force]` | Drain this controller and stop it. |
 | `flz controller status` | The controller's status: node, clock, shutdown and durability. |
+| `flz controller list` | Every connected controller, the one that answered first. |
 | `flz controller mem-top` | One snapshot of the controller's memory hot spots. |
 <!-- flz-reference:end -->
 

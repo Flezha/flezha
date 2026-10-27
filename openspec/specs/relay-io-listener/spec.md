@@ -631,3 +631,25 @@ A relay with no tally listener SHALL pay nothing beyond the hook check every unb
 - **WHEN** no tally listener is attached to a relay
 - **THEN** its `on_output` path runs exactly the code it ran before this change
 
+### Requirement: A listener SHALL attach to a relay that runs on another controller
+
+A listener opened on any controller SHALL attach to its relay wherever the relay runs in the cluster, in every direction. The plugin it enables SHALL be readable where its relay is bound before the bind is made, so the bind never answers that the plugin is not enabled.
+
+#### Scenario: Listening across controllers
+
+- **GIVEN** two connected controllers and a relay running on the second
+- **WHEN** a caller on the first listens to the relay's outputs
+- **THEN** the listener attaches and hands on the relay's next output
+
+#### Scenario: Calls across controllers
+
+- **GIVEN** two connected controllers and a relay running on the second
+- **WHEN** a caller on the first listens to the relay's calls
+- **THEN** the listener attaches, and the call the relay takes next is handed on with how it ended
+
+#### Scenario: Listening from a controller without the namespace's hub
+
+- **GIVEN** two connected controllers, and a namespace whose hub only the second hosts
+- **WHEN** a caller on the first listens to a relay of that namespace in any direction
+- **THEN** the listener attaches; a tally counts the relay's announced output channels
+

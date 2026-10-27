@@ -22,10 +22,11 @@
 #   Flezha.AuthZ.enforcement_posture/0
 #   Flezha.Service.Admin.context/2
 #
-# One public function on the modules below is NOT on this surface, because it
-# takes no context and no consumer calls it:
-# `Flezha.Service.Controller.local_recovery_snapshot/1` is the remote half of
-# one fan-out.
+# Two public functions on the modules below are NOT on this surface, because
+# they take no context and no consumer calls them:
+# `Flezha.Service.Controller.local_recovery_snapshot/1` and
+# `Flezha.Service.Controller.local_controller/0` are the remote halves of two
+# fan-outs.
 Flezha.Service.AuditLog.list_files/1
 Flezha.Service.AuditLog.read/2
 Flezha.Service.AuditLog.rotate/1
@@ -35,6 +36,7 @@ Flezha.Service.AuditLog.unsubscribe/2
 Flezha.Service.Controller.boot_await/2
 Flezha.Service.Controller.boot_status/1
 Flezha.Service.Controller.cluster_status/2
+Flezha.Service.Controller.controllers/1
 Flezha.Service.Controller.durability_breaches/1
 Flezha.Service.Controller.durability_status/1
 Flezha.Service.Controller.liveness_counters/1

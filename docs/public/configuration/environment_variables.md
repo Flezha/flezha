@@ -63,6 +63,7 @@ Notes on the area's variables:
 - `FLEZHA_CLUSTER_DISCOVERY`: `manual_discovery` or `k8s_pod_discovery`.
 - `FLEZHA_NODE_NAME`: `rel/env.sh.eex` builds `RELEASE_NODE=<name>@<host>` from it, and the test harness starts distribution under the same `<name>@<host>`. Default: `flezha` (`:test` derives a base per run).
 - `FLEZHA_NODE_HOST`: The host half of `RELEASE_NODE` (`rel/env.sh.eex`); also sets `:node_host_name`, the host half the test harness names its node with.
+- `FLEZHA_HOST_NODE`: The machine the controller runs on, which `flz controller list` shows beside each controller. The Kubernetes manifest sets it from the pod's node name. Default: unset, and no machine is named.
 - `RELEASE_COOKIE`: Read by `rel/env.sh.eex`: set → `RELEASE_DISTRIBUTION=name`; unset → a node start (`start`, `start_iex`, `daemon`, `daemon_iex`) mints 32 random bytes into `FLEZHA_COOKIE_FILE` (default `<state root>/cookie`, `0600`), reuses it on later boots, and only where neither is possible → `none` (no clustering, and `flzvm remote` cannot connect). Every other command, `flzvm remote` and the `flzvm eval` behind `flz`'s local verbs included, only reads the file. `flz` itself needs no cookie: it reaches the controller over its control socket. A cluster still provisions one value on every node. No command line carries it: each VM that joins distribution reads it from `.erlang.cookie` under the release's `tmp/home/<node name>/` (`RELEASE_TMP`), which the release writes `0600`. Default: minted per node.
 - `FLEZHA_DIST_TLS_OPTFILE`: Read by `rel/env.sh.eex`: path of an `inet_tls_dist` option file, adds `-proto_dist inet_tls -ssl_dist_optfile`.
 - `FLEZHA_INITIAL_NODES`: Comma list of node names.
@@ -240,6 +241,7 @@ skipped as a block.
 | `FLEZHA_HEALTHZ_BIND` | string | `0.0.0.0` |
 | `FLEZHA_HEALTHZ_ENABLED` | bool | `false` |
 | `FLEZHA_HEALTHZ_PORT` | int | `9569` |
+| `FLEZHA_HOST_NODE` | string | unset |
 | `FLEZHA_INITIAL_NODES` | list of atom | `""` |
 | `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS` | ms | `0` |
 | `FLEZHA_INPUT_SILENCE_TIMEOUT_MS` | ms | `0` |

@@ -41,6 +41,10 @@ pub(crate) const TABLE: Command = Command {
             .calls(&["Controller.status"])
             .notes(help::CONTROLLER_STATUS)
             .help_word(),
+        Verb::door("list")
+            .calls(&["Controller.controllers"])
+            .notes(help::CONTROLLER_LIST)
+            .help_word(),
         Verb::door("mem-top")
             .calls(&["Controller.mem_top"])
             .notes(help::CONTROLLER_MEM_TOP)

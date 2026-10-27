@@ -6,6 +6,7 @@ defmodule Flezha.Service.HubManager do
   """
 
   alias Flezha.AuthZ.NamespaceStore
+  alias Flezha.Cluster.Directory
   alias Flezha.Cluster.GroupedHashing
   alias Flezha.Config.Durations
   alias Flezha.Convergence.RecoveryGate
@@ -248,6 +249,31 @@ defmodule Flezha.Service.HubManager do
       {:ok, state} -> RecoveryGate.recovering?(state)
       {:error, :unknown_hub} -> false
     end
+  end
+
+  @doc """
+  Run `module.function(args)` on a node that hosts `namespace`'s hub, which
+  holds its rows: this one when it does, otherwise one that does, within
+  `route_call_timeout_ms`. With no hub anywhere it answers `{:error, none}`,
+  and `{:error, :registry_unavailable}` when the other node does not answer.
+  """
+  @spec on_hub_node(binary(), {module(), atom()}, list(), term()) :: term()
+  def on_hub_node(namespace, {module, function}, args, none) do
+    case Directory.hub_nodes(namespace) do
+      [] ->
+        {:error, none}
+
+      hub_nodes ->
+        if node() in hub_nodes,
+          do: apply(module, function, args),
+          else: on_other_hub_node(hd(hub_nodes), module, function, args)
+    end
+  end
+
+  defp on_other_hub_node(hub_node, module, function, args) do
+    :erpc.call(hub_node, module, function, args, Durations.get(:route_call_timeout_ms))
+  catch
+    _kind, _reason -> {:error, :registry_unavailable}
   end
 
   def get_running_namespaces() do

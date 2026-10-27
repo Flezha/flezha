@@ -27,6 +27,7 @@ const SCREENS: &[(&str, &[&str])] = &[
     ("controller-start", &["controller", "start", "--help"]),
     ("controller-stop", &["controller", "stop", "--help"]),
     ("controller-status", &["controller", "status", "--help"]),
+    ("controller-list", &["controller", "list", "--help"]),
     ("controller-mem-top", &["controller", "mem-top", "--help"]),
     ("dlq", &["dlq", "help"]),
     ("namespace", &["namespace", "help"]),

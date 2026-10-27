@@ -1,0 +1,18 @@
+flz controller list - Every connected controller, the one that answered first.
+
+Usage: flz controller list
+
+OPTIONS:
+    --token <token>          The caller's token (default: FLEZHA_TOKEN).
+    --help | -h              Print this help.
+    --output | -o text|json  Output format (default: text).
+    --json                   The same as --output json.
+
+OUTPUT COLUMNS:
+    NODE       The controller's node; `(this)` marks the one that answered
+    HOST       The host half of its node name
+    MACHINE    The machine it runs on (FLEZHA_HOST_NODE), `-` when unset
+    VERSION    Its release version
+    UP         How long it has been up
+    RUNNERS    How many runners are connected to it
+    A controller that does not answer in time shows `unreachable`.

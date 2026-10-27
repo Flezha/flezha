@@ -41,6 +41,15 @@ pub(crate) const CONTROLLER_MEM_TOP: Help = r#"OUTPUT (default text format):
     DETS files under storage/app/process_hub/ sorted by file size.
     :recon_alloc.memory(:allocated_types) allocator breakdown."#;
 
+pub(crate) const CONTROLLER_LIST: Help = r#"OUTPUT COLUMNS:
+    NODE       The controller's node; `(this)` marks the one that answered
+    HOST       The host half of its node name
+    MACHINE    The machine it runs on (FLEZHA_HOST_NODE), `-` when unset
+    VERSION    Its release version
+    UP         How long it has been up
+    RUNNERS    How many runners are connected to it
+    A controller that does not answer in time shows `unreachable`."#;
+
 pub(crate) const CONTROLLER_START: Help = r#"EXAMPLES:
     flz controller start
     flz controller start --mode daemon

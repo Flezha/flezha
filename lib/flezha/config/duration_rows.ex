@@ -36,6 +36,9 @@ defmodule Flezha.Config.DurationRows do
     {:k8s_discovery_request_ms, :ms, 15_000, []},
     # One authorization write or snapshot exchanged with another controller.
     {:authz_replica_call_ms, :ms, 5_000, []},
+    # Another controller's answer to a read of its own state, such as
+    # `flz controller list`; a controller that misses it is listed unreachable.
+    {:peer_read_ms, :ms, 5_000, []},
     {:reconnect_max_backoff_ms, :ms, 30_000,
      key: true, env: "FLEZHA_RECONNECT_MAX_BACKOFF_MS", runtimes: [:controller, :rust]},
 

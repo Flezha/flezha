@@ -21,9 +21,11 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
   import FlezhaTest.Helper.StepsResumeHarness,
     only: [boot_runner: 4, replace_runner: 4, suspended?: 2]
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Relay.{Builder, PartitionGroup}
   alias Flezha.Partition
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Home
   alias Flezha.Relay.KeyGroup
   alias Flezha.Service.{Cli, HubManager, Listener, RelayManager, PluginManager}
   alias Flezha.State.TestHelpers
@@ -207,6 +209,54 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
       rescale_drill(ns)
     end
 
+    # A listener's plugin home is placed by its generated name, so over a few
+    # rounds some land on B, whose row A learns of only after the enable.
+    test "listeners on A attach to a relay B hosts in every direction and leave nothing",
+         %{namespace: ns, peer: peer} do
+      id = start_on!(ns, "part_echo", peer)
+
+      homes =
+        for round <- 1..4, direction <- [:output, :calls, :tally] do
+          listener = listen(ns, id, direction: direction)
+          [name] = Enum.uniq(listeners(ns, id))
+          {_spec, [{home, _pid} | _]} = Home.row(ns, name)
+          hear(direction, ns, id, round)
+          stop_listening(listener, ns, [id])
+          home
+        end
+
+      assert peer in homes, "no listener's home was placed on #{peer}"
+
+      for node <- [node(), peer] do
+        assert for(
+                 %{id: "io_listener_" <> _ = name} <-
+                   :erpc.call(node, HubManager, :plugin_entries, [ns]),
+                 do: name
+               ) == [],
+               "a listener's plugin was left enabled on #{node}"
+      end
+    end
+
+    # A namespace only B's runner serves has its hub on B alone: A reads
+    # nothing of it locally and asks B.
+    test "listeners on A attach in every direction to a namespace whose hub only B hosts",
+         %{peer: peer} do
+      ns = unique("listener_drill_far")
+      NodeTestHelper.start_runner_remote(peer, ns)
+      assert wait_until(fn -> Directory.hub_nodes(ns) == [peer] end, 30_000)
+      :erpc.call(peer, NodeTestHelper, :await_serving, [peer, ns, "part_echo"])
+      id = unique("part_echo")
+      builder = %Builder{id: id, factory_id: "part_echo"}
+      assert {:ok, _} = :erpc.call(peer, RelayManager, :start_relay, [ns, builder])
+      assert wait_until(fn -> bound?(ns, id) end, 30_000)
+
+      for direction <- [:output, :calls, :tally] do
+        listener = listen(ns, id, direction: direction)
+        hear(direction, ns, id, 1)
+        stop_listening(listener, ns, [id])
+      end
+    end
+
     test "a listener on A hears a relay hosted by B after B leaves the ring",
          %{namespace: ns, peer: peer} do
       id = start_on!(ns, "part_echo", peer)
@@ -346,18 +396,23 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
 
     task =
       Task.async(fn ->
-        Listener.listen(ns, id, [window_ms: 240_000, idle_ms: 100], fn
-          :idle ->
-            receive do
-              :stop -> :done
-            after
-              0 -> :continue
-            end
+        Listener.listen(
+          ns,
+          id,
+          [window_ms: 240_000, idle_ms: 100] ++ Keyword.take(opts, [:direction]),
+          fn
+            :idle ->
+              receive do
+                :stop -> :done
+              after
+                0 -> :continue
+              end
 
-          event ->
-            send(test, {:heard, event})
-            :continue
-        end)
+            event ->
+              send(test, {:heard, event})
+              :continue
+          end
+        )
       end)
 
     for target <- Keyword.get(opts, :on, [id]) do
@@ -366,6 +421,26 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
     end
 
     %{task: task}
+  end
+
+  # What a listener of `direction` hears once `round` reaches the relay.
+  defp hear(:output, ns, id, round) do
+    send!(ns, id, "#{round}")
+    done = "done:#{round}"
+    assert_receive {:heard, {:output, ^done, _}}, 60_000
+  end
+
+  defp hear(:calls, ns, id, round) do
+    request = "#{round}"
+    done = "done:#{round}"
+    assert {:ok, ^done, _} = RelayManager.call_relay(ns, id, request, %{}, 30_000, nil, "cli")
+    assert_receive {:heard, {:call, ^request, _}}, 30_000
+    assert_receive {:heard, {:answered, ^done, _}}, 30_000
+  end
+
+  defp hear(:tally, ns, id, round) do
+    send!(ns, id, "#{round}")
+    assert_receive {:heard, {:tally, %{"answer" => counted}, _}} when counted > 0, 30_000
   end
 
   # The listener ends, and neither the rows nor the convergence loop keep it.

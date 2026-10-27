@@ -297,6 +297,10 @@ setting:
   keeps answering during the move, but for that stretch two copies run, and
   input the old copy takes after its state was handed over can be lost.
 
+A move that is never finished, because a controller failed partway through
+it, is undone after 30 seconds: the old copy takes the relay back and restores
+it from that controller's saved state.
+
 ```sh
 $ flz namespace set-migration trading hot
 ```
