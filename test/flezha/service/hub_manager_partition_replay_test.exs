@@ -15,6 +15,7 @@ defmodule Flezha.Service.HubManagerPartitionReplayTest do
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
+  alias Flezha.Cluster.GroupedHashing
   alias Flezha.Identificator
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
@@ -44,6 +45,16 @@ defmodule Flezha.Service.HubManagerPartitionReplayTest do
     HubRegistryTestHelper.seed_runner(@namespace, @runner, "market")
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id()], 5_000)
+
+    # The hub's start arms a redistribution pass. Let it run before any member
+    # exists, or it rebinds the rows a test unbinds before a reconcile round can.
+    # Reading the coordinator's state first puts the arming before the wait.
+    _ = :sys.get_state(hub_id())
+
+    assert NodeTestHelper.wait_until(
+             fn -> not GroupedHashing.recheck_pending?(hub_id()) end,
+             5_000
+           )
 
     members = Enum.map(0..(@count - 1), &start_member/1)
 

@@ -121,6 +121,12 @@ defmodule Flezha.Cluster.GroupedHashing do
   def cached_ring_sets(hub_id),
     do: read(hub_id, MapSet.new(), &(Storage.get(&1, @ring_sets) || MapSet.new()))
 
+  @doc false
+  # Whether a redistribution pass is armed and has not run yet, for a test that
+  # must not let one land between its own steps.
+  def recheck_pending?(hub_id),
+    do: read(hub_id, false, &(Storage.get(&1, @recheck_pending) != nil))
+
   @doc "The nodes serving `group` on `hub_id`, sorted."
   @spec group_nodes(atom(), group()) :: [node()]
   def group_nodes(hub_id, group), do: read(hub_id, [], &Map.get(group_nodes_map(&1), group, []))
