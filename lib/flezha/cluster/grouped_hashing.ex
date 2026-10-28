@@ -73,6 +73,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   alias ProcessHub.Service.Storage
   alias ProcessHub.Strategy.Distribution.Base, as: DistributionStrategy
   alias ProcessHub.Task.ClusterUpdateTask.NodeUp
+  alias ProcessHub.Worker.WorkerQueue
 
   @type group() :: term()
   @type t() :: %__MODULE__{group_key: atom()}
@@ -476,7 +477,9 @@ defmodule Flezha.Cluster.GroupedHashing do
   # The pass a drain runs after taking itself out of the distribution: every
   # local child is recomputed and whatever no longer belongs here moves through
   # the migration strategy, consent and handover included. Off the coordinator,
-  # so a table write never waits on a migration.
+  # so a table write never waits on a migration, and on the hub's worker queue,
+  # where a drain's own pass and ProcessHub's redistribution run, so two passes
+  # never migrate the same child at once and hand over its state twice.
   #
   # Runs in the coordinator. The pending mark names the coordinator that armed
   # it, so one restarted before its pass ran arms a new one.
@@ -494,7 +497,7 @@ defmodule Flezha.Cluster.GroupedHashing do
   def run_recheck(hub) do
     Storage.remove(hub.storage.misc, @recheck_pending)
 
-    Task.Supervisor.start_child(hub.procs.task_sup, fn ->
+    WorkerQueue.run_async(hub.procs.worker_queue, fn ->
       NodeUp.handle(%NodeUp{joined_nodes: [], hub: hub})
     end)
 
