@@ -155,6 +155,9 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       # Wait until the first caller has entered drain, then issue
       # a second shutdown — it should join.
       assert_receive {:hub_called, drainer}, 1_000
+      # A failure below must not leave the coordinator parked mid-shutdown for
+      # every later test; this runs before the setup's reset.
+      on_exit(fn -> send(drainer, :unpark) end)
 
       caller_b =
         Task.async(fn ->
