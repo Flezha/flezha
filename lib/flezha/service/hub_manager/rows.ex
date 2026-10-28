@@ -168,10 +168,12 @@ defmodule Flezha.Service.HubManager.Rows do
       |> Enum.map(fn {relay_id, entry} ->
         {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
+        builder = cspec_relay(cspec)
+
         %{
           id: relay_id,
           health: Map.get(health, relay_id, :unknown),
-          factory: cspec_group(cspec),
+          factory: builder && Map.get(builder, :factory_id),
           partition: cspec_partition(cspec)
         }
         |> Map.merge(host(node_pids, metadata))
@@ -308,18 +310,6 @@ defmodule Flezha.Service.HubManager.Rows do
       {:ok, {_namespace, %{} = relay}} -> relay
       {:ok, {_namespace, _runner, %{} = relay}} -> relay
       _ -> nil
-    end
-  end
-
-  @doc """
-  The group a relay's cspec places it in, its factory id, or `nil`: what a
-  relay start puts in its metadata, read back from the spec alone.
-  """
-  @spec cspec_group(map()) :: term()
-  def cspec_group(cspec) do
-    case cspec_relay(cspec) do
-      %{} = relay -> Map.get(relay, :factory_id)
-      nil -> nil
     end
   end
 

@@ -11,11 +11,6 @@ defmodule Flezha.Cluster.GroupedHashing do
   placement afterwards. A child with no group is hashed over every hub node,
   which is what `ProcessHub.Strategy.Distribution.ConsistentHashing` does.
 
-  `spec_group`, a `{module, function}` taking a child spec, reads a group from
-  the spec itself. It is the last place a group is looked for, after the start's
-  metadata and the registry row, so a declared child replayed by a node that has
-  neither, one whose registry was lost, still lands in its group.
-
   Nothing here names a namespace, a runner or a factory. Flezha passes a
   relay's factory id as its group and `Flezha.Runner.FleetManager` declares
   the factories its fleet can run, but that vocabulary stays outside.
@@ -71,7 +66,6 @@ defmodule Flezha.Cluster.GroupedHashing do
   alias Flezha.Process.Poll
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.Cluster
-  alias ProcessHub.Service.DeclaredChildren
   alias ProcessHub.Service.HookManager
   alias ProcessHub.Service.ProcessRegistry
   alias ProcessHub.Service.Recovery
@@ -81,9 +75,9 @@ defmodule Flezha.Cluster.GroupedHashing do
   alias ProcessHub.Task.ClusterUpdateTask.NodeUp
 
   @type group() :: term()
-  @type t() :: %__MODULE__{group_key: atom(), spec_group: {module(), atom()} | nil}
+  @type t() :: %__MODULE__{group_key: atom()}
 
-  defstruct group_key: :group, spec_group: nil
+  defstruct group_key: :group
 
   # Misc-storage keys. The table is two views of one truth: rows as their owning
   # nodes announced them, and the members-per-group map every placement reads.
@@ -543,17 +537,9 @@ defmodule Flezha.Cluster.GroupedHashing do
   defp hub_nodes(misc), do: misc |> Cluster.nodes([:include_local]) |> Enum.sort()
 
   defp group_of(strategy, hub, child_id) do
-    with nil <- Storage.get(hub.storage.misc, stash_key(child_id)),
-         nil <- registry_group(hub, strategy.group_key, child_id),
-         do: declared_group(strategy, hub, child_id)
-  end
-
-  defp declared_group(%{spec_group: nil}, _hub, _child_id), do: nil
-
-  defp declared_group(%{spec_group: {module, fun}}, hub, child_id) do
-    case DeclaredChildren.declared_child(hub.hub_id, child_id) do
-      %{} = child_spec -> apply(module, fun, [child_spec])
-      nil -> nil
+    case Storage.get(hub.storage.misc, stash_key(child_id)) do
+      nil -> registry_group(hub, strategy.group_key, child_id)
+      group -> group
     end
   end
 
