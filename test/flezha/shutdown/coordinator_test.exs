@@ -195,6 +195,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       stub(ProcessHub.Service.Migration, :drain, fn _hub, opts ->
         assert Keyword.fetch!(opts, :timeout) > 0
+        assert Keyword.fetch!(opts, :when_busy) == :wait
         send(test_pid, {:row, :drain})
         {:ok, %{migrated: 1, forced: 0}}
       end)

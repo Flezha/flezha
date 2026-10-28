@@ -295,7 +295,9 @@ defmodule Flezha.Service.HubManager.Lifecycle do
       :ok = ProcessHub.register_hook_handlers(hub_id, Hook.handover_delivered(), [handler])
 
       try do
-        result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
+        # A hub with work still queued, as a membership change leaves it,
+        # is drained behind that work rather than refused.
+        result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000), when_busy: :wait)
 
         with {:ok, _} <- result,
              :ok <- await_local_children_gone(local, namespace, deadline),

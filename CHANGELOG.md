@@ -48,6 +48,10 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A controller shut down just after its cluster changed now hands its relays
+  to a peer. The drain used to give up when the hub still had queued work,
+  so the relays stopped and were restored from disk later instead of moving
+  live; it now waits its turn behind that work inside the drain's time budget.
 - Listing a namespace's relays or its enabled plugins no longer slows with the
   square of the fleet. At 2,000 relays a relay listing took about 14 seconds,
   past the caller's timeout, and a console showed the namespace as empty; it
