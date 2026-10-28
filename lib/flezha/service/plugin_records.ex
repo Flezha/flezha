@@ -41,7 +41,7 @@ defmodule Flezha.Service.PluginRecords do
   @spec rows(binary(), [Plugin.t()], [{binary(), binary(), Plugin.t()}], [{node(), [binary()]}]) ::
           [map()]
   def rows(namespace, entries, bound, running) do
-    relays = Enum.group_by(bound, &Plugin.base_id(elem(&1, 1)), &elem(&1, 0))
+    bound = Enum.group_by(bound, &plugin_of/1)
     nodes = for {on, ids} <- running, id <- ids, do: {Plugin.base_id(id), on}
     nodes = Enum.group_by(nodes, &elem(&1, 0), &elem(&1, 1))
 
@@ -51,7 +51,7 @@ defmodule Flezha.Service.PluginRecords do
         provider: provider_name(entry.provider),
         provider_id: provider_id(entry.provider),
         single: entry.single,
-        relays: relays |> Map.get(name, []) |> Enum.uniq() |> Enum.sort(),
+        relays: bound |> Map.get(name, []) |> relays_of() |> Enum.sort(),
         hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0)))
       }
       |> Map.merge(
@@ -123,6 +123,7 @@ defmodule Flezha.Service.PluginRecords do
         do: {relay_id, id, binding}
   end
 
-  defp bound_to(bindings, name), do: Enum.filter(bindings, &(Plugin.base_id(elem(&1, 1)) == name))
+  defp bound_to(bindings, name), do: Enum.filter(bindings, &(plugin_of(&1) == name))
+  defp plugin_of({_relay_id, id, _binding}), do: Plugin.base_id(id)
   defp relays_of(bindings), do: bindings |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 end

@@ -124,12 +124,8 @@ defmodule Flezha.Convergence.Snapshot do
   it has not judged. A caller that decides from the state reads `verdict/2`.
   """
   @spec relay_health(String.t(), term()) :: Verdict.state() | :recovering
-  def relay_health(namespace, relay_id) do
-    case verdict(namespace, relay_id) do
-      %Verdict{state: state} -> Verdict.listed_state(state, unmet_intent())
-      _ -> :unknown
-    end
-  end
+  def relay_health(namespace, relay_id),
+    do: namespace |> verdict(relay_id) |> listed(unmet_intent())
 
   @doc """
   Every judged relay of `namespace` as `%{relay_id => health}`, each worded as
@@ -140,10 +136,13 @@ defmodule Flezha.Convergence.Snapshot do
   def relay_health_of(namespace) do
     facts = unmet_intent()
 
-    for {relay_id, %Verdict{state: state}} <- verdict_rows({:relay, {namespace, :"$1"}}),
+    for {relay_id, verdict} <- verdict_rows({:relay, {namespace, :"$1"}}),
         into: %{},
-        do: {relay_id, Verdict.listed_state(state, facts)}
+        do: {relay_id, listed(verdict, facts)}
   end
+
+  defp listed(%Verdict{state: state}, facts), do: Verdict.listed_state(state, facts)
+  defp listed(nil, _facts), do: :unknown
 
   @doc """
   Stamp a periodic sensor's completed pass: `at_ms` is monotonic and
