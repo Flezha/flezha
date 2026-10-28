@@ -19,7 +19,8 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
     use GenServer
     use ProcessHub.Strategy.Migration.HotSwap, handover: true
 
-    def start_link(value), do: GenServer.start_link(__MODULE__, value)
+    # `group` rides in the spec, as a relay's factory does, for `spec_group/1`.
+    def start_link(value, _group), do: GenServer.start_link(__MODULE__, value)
 
     @doc "The term this instance holds, asked of it wherever it runs."
     def held(pid), do: GenServer.call(pid, :held)
@@ -67,7 +68,7 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
     spec =
       ProcessHub.child_spec(%ProcessHub{
         hub_id: hub_id,
-        distribution_strategy: %GroupedHashing{},
+        distribution_strategy: %GroupedHashing{spec_group: {__MODULE__, :spec_group}},
         migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{handover: true},
         redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
         synchronization_strategy:
@@ -160,7 +161,7 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
     result =
       hub_id
       |> ProcessHub.start_child(
-        %{id: child_id, start: {Child, :start_link, [value]}, restart: :transient},
+        %{id: child_id, start: {Child, :start_link, [value, group]}, restart: :transient},
         awaitable: true,
         metadata: %{group: group},
         disable_logging: true,
@@ -179,6 +180,10 @@ defmodule FlezhaTest.Helper.GroupedHubTestHelper do
         other
     end
   end
+
+  @doc "The group a child spec started by `start_child/5` carries."
+  def spec_group(%{start: {Child, :start_link, [_value, group]}}), do: group
+  def spec_group(_child_spec), do: nil
 
   @doc """
   Write `groups` into THIS node's table as `from`'s served set, by the same

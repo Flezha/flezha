@@ -323,8 +323,9 @@ defmodule Flezha.Service.HubManager do
       # A relay's group is its factory id, and a controller serves the
       # factories its fleet can run, so a relay is only ever assigned to a
       # controller that can run it. A relay with no factory has no group
-      # and is hashed over every controller in the hub.
-      distribution_strategy: %GroupedHashing{},
+      # and is hashed over every controller in the hub. The spec carries the
+      # factory too, so a relay replayed with no row still finds its group.
+      distribution_strategy: %GroupedHashing{spec_group: {Rows, :cspec_group}},
       migration_strategy: Lifecycle.migration_strategy(namespace),
       registry_backend: Lifecycle.registry_backend_config(hub_id),
       auto_recovery: Lifecycle.auto_recovery_config(),
