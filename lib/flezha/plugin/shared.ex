@@ -246,21 +246,17 @@ defmodule Flezha.Plugin.Shared do
   @doc """
   The controllers where the enabled `plugin` runs, and those where a
   controller plugin's copy lags. A copy waiting for its workers to start runs
-  nowhere. A relay plugin runs where its shared copy runs and on each node
-  `relays` (each read relay's node with the plugin ids it has running) names
-  for it.
+  nowhere. A relay plugin runs where its shared copy runs and on `relay_nodes`,
+  the nodes of the read relays that have it running.
   """
-  @spec running_on(Plugin.t(), [{node(), [binary()]}]) ::
-          %{controllers: [node()], lagging: [node()]}
-  def running_on(%Plugin{namespace: namespace, id: name} = plugin, relays) do
+  @spec running_on(Plugin.t(), [node()]) :: %{controllers: [node()], lagging: [node()]}
+  def running_on(%Plugin{namespace: namespace, id: name} = plugin, relay_nodes) do
     if Plugin.controller?(plugin),
       do: copies_running_on(namespace, name),
-      else: %{controllers: relay_plugin_nodes(namespace, name, relays), lagging: []}
-  end
-
-  defp relay_plugin_nodes(namespace, name, relays) do
-    on_relays = for {on, ids} <- relays, Enum.any?(ids, &(Plugin.base_id(&1) == name)), do: on
-    Enum.sort(Enum.uniq(Directory.plugin_nodes(namespace, name) ++ on_relays))
+      else: %{
+        controllers: Enum.sort(Enum.uniq(Directory.plugin_nodes(namespace, name) ++ relay_nodes)),
+        lagging: []
+      }
   end
 
   defp copies_running_on(namespace, name) do

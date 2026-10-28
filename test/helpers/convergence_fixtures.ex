@@ -34,7 +34,7 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
   @doc """
   Publish the Loop's verdict for each of `rows` (their `health` is the record
   state) beside its unmet-intent clock, and stub `HubManager.relay_rows/1` to
-  answer `rows` with each health read back through `Snapshot.relay_health/2`,
+  answer `rows` with each health read back through `Snapshot.relay_health_of/1`,
   as the registry rows read it. The calling test must `use Mimic`.
   """
   @spec stub_registry_rows(String.t(), [map()], non_neg_integer() | nil) :: :ok
@@ -45,7 +45,8 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
     })
 
     Mimic.stub(HubManager, :relay_rows, fn ns ->
-      Enum.map(rows, &%{&1 | health: Snapshot.relay_health(ns, &1.id)})
+      health = Snapshot.relay_health_of(ns)
+      Enum.map(rows, &%{&1 | health: Map.get(health, &1.id, :unknown)})
     end)
 
     :ok

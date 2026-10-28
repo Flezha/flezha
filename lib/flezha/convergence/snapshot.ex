@@ -3,7 +3,7 @@ defmodule Flezha.Convergence.Snapshot do
   The single published source of truth read by `/healthz`, the CLI
   status surface, and telemetry consumers.
 
-  Owns one public ETS table holding three kinds of row:
+  Owns one public ETS table holding four kinds of row:
 
     * `{:recovery, hub_id} => state` — the per-hub recovery lifecycle
       state, cached from ProcessHub's `recovery_state_changed` hook and
@@ -15,8 +15,15 @@ defmodule Flezha.Convergence.Snapshot do
       `/healthz` sees detection die. Written by the sensor rather than
       polled from it, so reading it never blocks on the wedged process.
 
-    * `:current => map` — the latest reality + health summary published
-      by `Flezha.Convergence.Loop` once per tick.
+    * `{:verdict, subject} => verdict` — one row per subject the Loop
+      judged on its last tick, tagged with the tick's generation (counted
+      in the `:generation` row) so a subject dropped from the next tick is
+      removed. Kept apart from
+      `:current` so reading one subject copies one row, whatever the fleet
+      size.
+
+    * `:current => map` — the latest reality summary published by
+      `Flezha.Convergence.Loop` once per tick, without its verdicts.
 
   Started unconditionally by the application module so recovery-state
   reads work even when the optional `Loop` is disabled (e.g. tests).
@@ -35,8 +42,7 @@ defmodule Flezha.Convergence.Snapshot do
   @default_current %{
     last_tick_at: nil,
     stuck_relays: %{},
-    intent_mismatch: [],
-    relay_health: %{}
+    intent_mismatch: []
   }
 
   # ---------- public API ----------
@@ -45,19 +51,36 @@ defmodule Flezha.Convergence.Snapshot do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Latest published reality/health summary, or a safe default before the first tick."
+  @doc """
+  Latest published reality/health summary, or a safe default before the first
+  tick. Its `relay_health` holds every verdict, so it costs a read of the
+  whole fleet: a reader of one subject reads `record/1` instead.
+  """
   @spec current() :: map()
-  def current() do
-    case lookup(:current) do
-      nil -> @default_current
-      map -> map
-    end
-  end
+  def current(), do: Map.put(tick(), :relay_health, verdicts())
 
-  @doc "Publish the per-tick reality/health summary. Called by the Loop."
+  @doc """
+  Publish the per-tick reality/health summary. Called by the Loop. It replaces
+  the last one whole: its `relay_health` becomes every published verdict, and
+  a map without one leaves none.
+  """
   @spec publish(map()) :: :ok
   def publish(map) when is_map(map) do
-    insert(:current, map)
+    {verdicts, tick} = Map.pop(map, :relay_health, %{})
+    with_table(:ok, &publish(&1, tick, verdicts))
+  end
+
+  # One insert carries the tick and all its verdicts, so no reader sees part
+  # of them; the rows of subjects no longer judged go after.
+  defp publish(tid, tick, verdicts) do
+    generation = :ets.update_counter(tid, :generation, 1, {:generation, 0})
+    rows = for {subject, verdict} <- verdicts, do: {{:verdict, subject}, generation, verdict}
+    true = :ets.insert(tid, [{:current, tick} | rows])
+
+    _ =
+      :ets.select_delete(tid, [{{{:verdict, :_}, :"$1", :_}, [{:<, :"$1", generation}], [true]}])
+
+    :ok
   end
 
   @doc """
@@ -69,7 +92,7 @@ defmodule Flezha.Convergence.Snapshot do
           unmet_intent_ms: non_neg_integer() | nil,
           unmet_intent_grace_ms: non_neg_integer()
         }
-  def unmet_intent(current \\ current()) do
+  def unmet_intent(current \\ tick()) do
     %{
       unmet_intent_ms: Map.get(current, :unmet_intent_ms),
       unmet_intent_grace_ms: Durations.get(:convergence_unmet_intent_grace_ms)
@@ -87,13 +110,11 @@ defmodule Flezha.Convergence.Snapshot do
   @doc """
   The Loop's verdict record for any subject — a runner, a plugin, a channel or
   a driver as well as a relay — or `nil` for one it has not judged. The
-  one read of the published health map, so no reader digs into the snapshot's
+  one read of a published verdict, so no reader digs into the snapshot's
   shape for itself.
   """
   @spec record({Verdict.kind(), term()}) :: Verdict.t() | nil
-  def record(subject) do
-    current() |> Map.get(:relay_health, %{}) |> Map.get(subject)
-  end
+  def record(subject), do: lookup({:verdict, subject})
 
   @doc """
   Per-relay health for `{namespace, relay_id}` as every user surface
@@ -111,6 +132,20 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   @doc """
+  Every judged relay of `namespace` as `%{relay_id => health}`, each worded as
+  `relay_health/2` words it, read in one pass. A listing reads this once
+  rather than `relay_health/2` per row.
+  """
+  @spec relay_health_of(String.t()) :: %{term() => Verdict.state() | :recovering}
+  def relay_health_of(namespace) do
+    facts = unmet_intent()
+
+    for {relay_id, %Verdict{state: state}} <- verdict_rows({:relay, {namespace, :"$1"}}),
+        into: %{},
+        do: {relay_id, Verdict.listed_state(state, facts)}
+  end
+
+  @doc """
   Stamp a periodic sensor's completed pass: `at_ms` is monotonic and
   `period_ms` is the sensor's own cadence, so a reader can bound staleness
   without knowing which sensor it is looking at.
@@ -122,7 +157,7 @@ defmodule Flezha.Convergence.Snapshot do
 
   @doc "Every stamped sensor as `{name, {at_ms, period_ms}}`."
   @spec sensors() :: %{atom() => {integer(), non_neg_integer()}}
-  def sensors(), do: tagged_rows(:sensor)
+  def sensors(), do: tagged_rows({:sensor, :"$1"})
 
   @doc "Last known recovery state for `hub_id`; `:unknown` if never observed."
   @spec recovery_state(atom()) :: atom()
@@ -132,7 +167,7 @@ defmodule Flezha.Convergence.Snapshot do
 
   @doc "All observed `{hub_id => state}` recovery entries."
   @spec recovery_states() :: %{atom() => atom()}
-  def recovery_states(), do: tagged_rows(:recovery)
+  def recovery_states(), do: tagged_rows({:recovery, :"$1"})
 
   @doc """
   Record an observed recovery transition from a non-telemetry source —
@@ -152,12 +187,8 @@ defmodule Flezha.Convergence.Snapshot do
   by `HubManager.start_hub/1` + recovery telemetry).
   """
   @spec reset_recovery_states() :: :ok
-  def reset_recovery_states() do
-    case :ets.whereis(@table) do
-      :undefined -> :ok
-      tid -> :ets.match_delete(tid, {{:recovery, :_}, :_}) && :ok
-    end
-  end
+  def reset_recovery_states(),
+    do: with_table(:ok, &(:ets.match_delete(&1, {{:recovery, :_}, :_}) && :ok))
 
   # ---------- recovery_state_changed hook callback ----------
 
@@ -210,41 +241,40 @@ defmodule Flezha.Convergence.Snapshot do
 
   # ---------- internals ----------
 
-  # Every `{tag, name} => value` row as `%{name => value}`; the shape both
-  # keyed row families (`:recovery`, `:sensor`) are read back with.
-  defp tagged_rows(tag) do
-    case :ets.whereis(@table) do
-      :undefined ->
-        %{}
+  defp tick(), do: lookup(:current) || @default_current
 
-      tid ->
-        tid
-        |> :ets.select([{{{tag, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}])
-        |> Map.new()
-    end
+  defp verdicts(), do: verdict_rows(:"$1")
+
+  # The verdicts whose subject matches `subject`, keyed by what it binds to
+  # `:"$1"`; the generation between key and verdict is skipped.
+  defp verdict_rows(subject), do: tagged_rows({:verdict, subject}, [:_])
+
+  # Every row whose key matches `key` as `%{name => value}`, `name` being what
+  # the key binds to `:"$1"`; the shape every keyed row family is read back
+  # with. `skip` matches the fields a family keeps between key and value.
+  defp tagged_rows(key, skip \\ []) do
+    head = List.to_tuple([key | skip] ++ [:"$2"])
+    with_table(%{}, &Map.new(:ets.select(&1, [{head, [], [{{:"$1", :"$2"}}]}])))
   end
 
   defp lookup(key) do
-    case :ets.whereis(@table) do
-      :undefined ->
-        nil
-
-      tid ->
-        case :ets.lookup(tid, key) do
-          [{^key, value}] -> value
-          [] -> nil
-        end
-    end
+    with_table(nil, fn tid ->
+      case :ets.lookup(tid, key) do
+        [{^key, value}] -> value
+        [{^key, _generation, value}] -> value
+        [] -> nil
+      end
+    end)
   end
 
-  defp insert(key, value) do
-    case :ets.whereis(@table) do
-      :undefined ->
-        :ok
+  defp insert(key, value), do: with_table(:ok, &(:ets.insert(&1, {key, value}) && :ok))
 
-      tid ->
-        true = :ets.insert(tid, {key, value})
-        :ok
+  # The table is gone while the Snapshot restarts; every access then answers
+  # `default` rather than raising.
+  defp with_table(default, fun) do
+    case :ets.whereis(@table) do
+      :undefined -> default
+      tid -> fun.(tid)
     end
   end
 end

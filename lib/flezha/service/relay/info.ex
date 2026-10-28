@@ -27,13 +27,14 @@ defmodule Flezha.Service.Relay.Info do
   @spec report(String.t()) :: map()
   def report(namespace) do
     {:ok, live} = RelayManager.get_relay_ids(namespace)
+    health = Snapshot.relay_health_of(namespace)
 
     %{
       namespace: namespace,
       key_groups: KeyGroup.key_groups(),
       groups: namespace |> HubManager.relay_rows() |> Partition.groups() |> Enum.map(&group/1),
       relays:
-        Enum.map(live, &row(namespace, &1)) ++
+        Enum.map(live, &row(namespace, &1, Map.get(health, &1, :unknown))) ++
           Enum.map(retained(namespace, live), fn {id, record} -> finished(id, record) end)
     }
   end
@@ -77,11 +78,11 @@ defmodule Flezha.Service.Relay.Info do
     end
   end
 
-  # The row of a relay the hub lists, read once.
-  defp row(namespace, relay_id) do
+  # The row of a relay the hub lists, read once, with its listed `health`.
+  defp row(namespace, relay_id, health) do
     case relay(namespace, relay_id) do
       {:live, state} ->
-        live(namespace, relay_id, state)
+        live(relay_id, state, health)
 
       {:finished, row} ->
         row
@@ -90,7 +91,7 @@ defmodule Flezha.Service.Relay.Info do
         %{
           id: relay_id,
           phase: to_string(verdict.phase || :unknown),
-          health: Snapshot.relay_health(namespace, relay_id),
+          health: health,
           live_read: code
         }
 
@@ -100,7 +101,7 @@ defmodule Flezha.Service.Relay.Info do
     end
   end
 
-  defp live(namespace, relay_id, state) do
+  defp live(relay_id, state, health) do
     settings = Map.get(state, :settings) || %{}
 
     %{
@@ -114,7 +115,7 @@ defmodule Flezha.Service.Relay.Info do
       durable: durable_level(relay_id, state),
       sleep_after_ms: ClassRegistry.sleep_after_ms(class_of(relay_id, state)),
       phase: to_string(Overwatch.phase(state) || :unknown),
-      health: Snapshot.relay_health(namespace, relay_id),
+      health: health,
       uptime_ms: uptime_ms(state),
       default_input_type: state.default_input_type,
       waiting_callers: Inbound.waiting(state.calls),

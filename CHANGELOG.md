@@ -48,6 +48,10 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- Listing a namespace's relays or its enabled plugins no longer slows with the
+  square of the fleet. At 2,000 relays a relay listing took about 14 seconds,
+  past the caller's timeout, and a console showed the namespace as empty; it
+  now answers in well under a second.
 - A relay whose move between controllers was never finished no longer keeps
   confirming input it does not run. Once a move takes a relay's state its
   runner drops the relay, and when the hub went down before finishing the

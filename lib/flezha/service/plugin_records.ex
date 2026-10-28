@@ -30,17 +30,33 @@ defmodule Flezha.Service.PluginRecords do
   def plugins_here(namespace) do
     bound = all_bindings(namespace)
     running = Probe.plugins_running(namespace, relays_of(bound))
+    rows(namespace, HubManager.plugin_entries(namespace), bound, running)
+  end
 
-    for %Plugin{id: name} = entry <- HubManager.plugin_entries(namespace) do
+  @doc """
+  The rows of `entries`, from the namespace's bindings (`{relay_id, id,
+  binding}`) and each read relay's node with the plugin ids it runs. Both are
+  grouped by plugin once, so each row reads only its own group.
+  """
+  @spec rows(binary(), [Plugin.t()], [{binary(), binary(), Plugin.t()}], [{node(), [binary()]}]) ::
+          [map()]
+  def rows(namespace, entries, bound, running) do
+    relays = Enum.group_by(bound, &Plugin.base_id(elem(&1, 1)), &elem(&1, 0))
+    nodes = for {on, ids} <- running, id <- ids, do: {Plugin.base_id(id), on}
+    nodes = Enum.group_by(nodes, &elem(&1, 0), &elem(&1, 1))
+
+    for %Plugin{id: name} = entry <- entries do
       %{
         name: name,
         provider: provider_name(entry.provider),
         provider_id: provider_id(entry.provider),
         single: entry.single,
-        relays: bound |> bound_to(name) |> relays_of() |> Enum.sort(),
+        relays: relays |> Map.get(name, []) |> Enum.uniq() |> Enum.sort(),
         hooks: Enum.map(entry.hooks, &to_string(elem(&1, 0)))
       }
-      |> Map.merge(Shared.running_on(%Plugin{entry | namespace: namespace}, running))
+      |> Map.merge(
+        Shared.running_on(%Plugin{entry | namespace: namespace}, Map.get(nodes, name, []))
+      )
     end
   end
 

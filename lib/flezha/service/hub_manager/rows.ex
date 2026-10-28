@@ -151,7 +151,7 @@ defmodule Flezha.Service.HubManager.Rows do
   a dead node, which `get_all_relays/1` filters out), carrying the assigned
   runner, the declared factory (from the durable cspec start-args) and live node
   from the registry dump and the live health classified
-  by the Convergence Loop (`Snapshot.relay_health/2`), so the CLI sees exactly
+  by the Convergence Loop (`Snapshot.relay_health_of/1`), so the CLI sees exactly
   what the loop sees, worded as every surface shows it: `:recovering` for a
   rebinding relay inside the unmet-intent grace. A registry row the loop has
   not yet observed reports `:unknown` until the next tick covers it.
@@ -161,6 +161,8 @@ defmodule Flezha.Service.HubManager.Rows do
         ]
   def relay_rows(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
+      health = Snapshot.relay_health_of(namespace)
+
       hub_id
       |> relay_dump()
       |> Enum.map(fn {relay_id, entry} ->
@@ -170,7 +172,7 @@ defmodule Flezha.Service.HubManager.Rows do
 
         %{
           id: relay_id,
-          health: Snapshot.relay_health(namespace, relay_id),
+          health: Map.get(health, relay_id, :unknown),
           factory: builder && Map.get(builder, :factory_id),
           partition: cspec_partition(cspec)
         }
