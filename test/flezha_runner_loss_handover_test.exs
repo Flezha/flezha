@@ -1,7 +1,6 @@
 defmodule FlezhaTest.RunnerLossHandover do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
-  alias Flezha.Identificator
   alias Flezha.Relay.Replay
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -9,13 +8,9 @@ defmodule FlezhaTest.RunnerLossHandover do
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.StepsResumeHarness
-  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.TierE2EHarness
-  alias ProcessHub.Constant.Hook
-
-  import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
   use ExUnit.Case
 
@@ -258,35 +253,6 @@ defmodule FlezhaTest.RunnerLossHandover do
     # among the factory's servers before the first one is placed.
     NodeTestHelper.await_serving(peer_node, namespace, @test_store_input_factory)
 
-    self = self()
-    _node = node()
-
-    ProcessHub.register_hook_handlers(
-      Identificator.hub(namespace),
-      Hook.child_registered(),
-      [
-        %ProcessHub.Service.HookManager{
-          id: "hub_insert_hook_test",
-          m: Process,
-          f: :send,
-          a: [self, :hook_insert_recv, []]
-        }
-      ]
-    )
-
-    ProcessHub.register_hook_handlers(
-      Identificator.hub(namespace),
-      Hook.post_children_start(),
-      [
-        %ProcessHub.Service.HookManager{
-          id: "hub_pstartup_hook_test",
-          m: Process,
-          f: :send,
-          a: [self, :hook_pstartup_recv, []]
-        }
-      ]
-    )
-
     # Start relays and store some state on them.
     relay_infos =
       for relay_id <- relay_ids do
@@ -323,31 +289,19 @@ defmodule FlezhaTest.RunnerLossHandover do
     NodeTestHelper.stop_runner_remote(peer_node, namespace, rem_runner_1)
     NodeTestHelper.stop_runner_remote(peer_node, namespace, rem_runner_2)
 
-    # Wait for cross-node ProcessHub sync via hook messages (pure message passing).
-    # Each :hook_insert_recv arrives when the local registry syncs a tag update.
-    # We check the condition after each message — no polling, no sleeping.
-    MessageTestHelper.recv_until(
-      :hook_insert_recv,
-      fn ->
-        RelayManager.relay_registry(namespace)
-        |> Enum.all?(fn {_, {_, _, %{tag: tag}}} -> tag === runner_id_1 end)
-      end,
-      15_000
-    )
-
-    collect(do: (:hook_pstartup_recv -> :ok))
-
-    # The tag converges when the registry row moves; the destination Overwatch
-    # still has to finish binding and take the handover before it can answer for
-    # its Cells. Poll that out — migrated-with-state is an eventual property,
-    # and reading it at the first converged tag races the bind.
+    # Every row names the surviving runner and every Cell holds its state once
+    # the destination Overwatches have bound and taken their handover. The tag
+    # write that ends the move fires no registry hook, so this is polled.
     assert NodeTestHelper.wait_until(
              fn ->
-               Enum.all?(relay_infos, fn {relay_id, _info} ->
-                 RelayManager.get_cell_state(namespace, relay_id) ===
-                   {:ok,
-                    "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"}
-               end)
+               Enum.all?(RelayManager.relay_registry(namespace), fn {_, {_, _, %{tag: tag}}} ->
+                 tag === runner_id_1
+               end) and
+                 Enum.all?(relay_infos, fn {relay_id, _info} ->
+                   RelayManager.get_cell_state(namespace, relay_id) ===
+                     {:ok,
+                      "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"}
+                 end)
              end,
              15_000
            ),

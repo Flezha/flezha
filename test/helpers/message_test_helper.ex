@@ -19,18 +19,6 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
     :ok
   end
 
-  def recv_until(msg, condition, timeout \\ 5000) do
-    if condition.() do
-      :ok
-    else
-      receive do
-        ^msg -> recv_until(msg, condition, timeout)
-      after
-        timeout -> raise "Condition not met within #{timeout}ms"
-      end
-    end
-  end
-
   @doc """
   Every message one of the clauses matches, in arrival order, each as its
   clause's body returns it. Stops once no matching message arrives within the
