@@ -53,12 +53,17 @@ defmodule Flezha.Cli.Socket do
     stderr = device(stream, "cli_stderr")
     Context.bind_stderr(stderr)
 
+    # Through `proc_lib`, so a call that crashes logs its report itself before
+    # it exits, ahead of the DOWN, rather than through the runtime afterwards.
     {call, monitor} =
-      spawn_monitor(fn ->
-        Process.group_leader(self(), stdout)
-        Context.bind_stderr(stderr)
-        run(request)
-      end)
+      :proc_lib.spawn_opt(
+        fn ->
+          Process.group_leader(self(), stdout)
+          Context.bind_stderr(stderr)
+          run(request)
+        end,
+        [:monitor]
+      )
 
     await(stream, {call, monitor}, [stdout, stderr], format(request))
   end
