@@ -48,6 +48,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay that answers a move's readiness check after the check gave up no
+  longer leaves an error line in the controller's log, and its late "ready"
+  can no longer be taken as its answer to a later check.
 - A controller shut down just after its cluster changed now hands its relays
   to a peer. The drain used to give up when the hub still had queued work,
   so the relays stopped and were restored from disk later instead of moving
