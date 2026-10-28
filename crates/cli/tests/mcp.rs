@@ -19,11 +19,12 @@ const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");
 const REQUEST: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
 const NOTIFICATION: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
 
-/// With no controller to reach, a VM of its own that logs a line at boot,
-/// replies, and shows on stderr the expression it was handed and the line its
-/// stdin carried.
+/// With no controller to reach, a VM of its own that shows on stderr the
+/// expression it was handed and the line its stdin carried, then logs a line
+/// at boot and replies. Its stderr is written in full first: `flz` passes the
+/// boot line to the same stderr, and would split a copy still being written.
 const OFFLINE: &str = "#!/bin/sh
-echo 'a boot log line'; echo '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}'; echo \"$2\" >&2; cat >&2
+echo \"$2\" >&2; cat >&2; echo 'a boot log line'; echo '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}'
 ";
 
 /// A child that fails without replying.
