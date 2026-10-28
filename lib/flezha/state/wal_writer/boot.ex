@@ -92,10 +92,12 @@ defmodule Flezha.State.WalWriter.Boot do
     :ok = WriterRegistry.await_files(state.cell_id)
     unit = commit_unit(state.cell_id)
     state = %{state | commit_unit: unit, remote: RemoteGate.new(state.cell_id, unit)}
-    File.mkdir_p!(Path.dirname(state.wal_path))
 
     # The directory gone again is that delete: never a writer that recreates it.
-    with {:ok, file} <- :file.open(state.wal_path, [:raw, :read, :write, :binary]) do
+    # A delete running under `mkdir_p` makes it answer `:enotdir` (a level it
+    # found existing was gone when it looked again) or `:enoent`.
+    with :ok <- File.mkdir_p(Path.dirname(state.wal_path)),
+         {:ok, file} <- :file.open(state.wal_path, [:raw, :read, :write, :binary]) do
       case RecordFrame.scan_for_last_valid_seq(file, state.wal_path) do
         {:ok, last_seq} ->
           opened(%{state | file_handle: file}, file, max(last_seq, snapshot_seq(state.cell_id)))
@@ -104,7 +106,7 @@ defmodule Flezha.State.WalWriter.Boot do
           refused(%{state | file_handle: file}, refusal)
       end
     else
-      {:error, :enoent} -> :dropped
+      {:error, reason} when reason in [:enoent, :enotdir] -> :dropped
     end
   end
 

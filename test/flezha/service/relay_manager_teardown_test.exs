@@ -102,6 +102,22 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     refute File.exists?(Paths.class_dir(instance))
   end
 
+  # fails when: a writer a late record started while the stop deletes its relay's
+  # tree crashes making its directory. A delete running under `mkdir_p` makes it
+  # answer `:enotdir`; a file where the Cell's directory goes answers the same.
+  test "a writer booting while its Cell is deleted stops without a crash" do
+    instance = "teardown_boot_#{System.unique_integer([:positive])}"
+    cell_id = {instance, "t", "k1"}
+    File.mkdir_p!(Paths.class_dir(instance))
+    File.write!(Path.join(Paths.class_dir(instance), "t"), "")
+
+    {:ok, writer} = Supervisor.find_or_start(cell_id)
+    ref = Process.monitor(writer)
+
+    assert_receive {:DOWN, ^ref, :process, ^writer, :normal}
+    File.rm_rf!(Paths.class_dir(instance))
+  end
+
   # fails when: a writer a late record started while the stop deleted its
   # relay's tree crashes on its next record, or keeps that record's stream credit.
   test "a writer whose Cell the stop deleted under it refuses its next record and stops" do
