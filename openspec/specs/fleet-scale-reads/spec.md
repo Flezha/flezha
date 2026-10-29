@@ -93,7 +93,7 @@ With `opts` it SHALL answer:
 
 ### Requirement: The relay list SHALL filter, sort and summarise a namespace in one read
 
-A paged relay list SHALL filter by health, factory, runner, node, partition group, relay ids (at most 500) and a case-insensitive text search over relay id and factory id. It SHALL sort by id or by severity. A partition group SHALL count as one row, and each row SHALL carry its run kind and bound-plugin count.
+A paged relay list SHALL filter by health, factory, run kind (`flow` or `steps`), runner, node, partition group, relay ids (at most 500) and a case-insensitive text search over relay id and factory id. It SHALL sort by id or by severity. A partition group SHALL count as one row, and each row SHALL carry its run kind and bound-plugin count. A run kind other than `flow` or `steps` SHALL be refused as `invalid`.
 
 Each paged answer SHALL carry the namespace's `summary`, computed over every relay whatever the filter: counts by health, the faulted partition groups, and the factories relays wait on with how many relays wait on each. When the filter names only `ids`, the read SHALL look those relays up directly, its cost SHALL NOT grow with the namespace's other relays, and its `summary` SHALL be `nil`.
 
@@ -102,6 +102,12 @@ Each paged answer SHALL carry the namespace's `summary`, computed over every rel
 - **GIVEN** a namespace running 5,000 relays
 - **WHEN** a caller reads the relay list with `filter: [text: "00500"]`
 - **THEN** the rows SHALL be the relays whose id or factory contains `00500`, and `total` SHALL count them
+
+#### Scenario: Only the steps relays
+
+- **GIVEN** a namespace running 2,000 flow relays and 40 steps relays
+- **WHEN** a caller reads the relay list with `filter: [run: "steps"]`
+- **THEN** the rows SHALL be the 40 steps relays and `total` SHALL be 40
 
 #### Scenario: A status line without rows
 

@@ -31,7 +31,7 @@ defmodule Flezha.Service.Relay.Info do
   alias Flezha.State.TaskJournal
 
   @sorts [id: :asc, severity: :asc]
-  @filters [:health, :factory, :runner, :node, :group, :ids, :text]
+  @filters [:health, :factory, :run, :runner, :node, :group, :ids, :text]
 
   @doc """
   What `Flezha.Service.Relay.list/3` answers: every relay row of `namespace`,
@@ -41,7 +41,8 @@ defmodule Flezha.Service.Relay.Info do
 
   The page filters by `health` (health words, and `unhealthy` for any word
   ranked `degraded` or worse by `Flezha.Convergence.Verdict.rank/1`),
-  `factory`, `runner`, `node`, `group` (a partition group's id), `ids` (at most
+  `factory`, `run` (`flow` or `steps`; a relay with no recorded run matches
+  neither), `runner`, `node`, `group` (a partition group's id), `ids` (at most
   500 relay or group ids) and `text` (a case-insensitive substring of the id or
   the factory), and sorts by `id` or by `severity` (worst first, then id). Its
   rows also carry their run kind (`run`) and bound-plugin count (`plugins`).
@@ -154,6 +155,14 @@ defmodule Flezha.Service.Relay.Info do
   end
 
   defp filter_value(:text, value) when is_binary(value), do: {:ok, String.downcase(value)}
+
+  defp filter_value(:run, value) do
+    case ClassRegistry.parse_run(value) do
+      nil -> Page.invalid("filter.run", value)
+      run -> {:ok, run}
+    end
+  end
+
   defp filter_value(key, value) when is_binary(value) and key != :text, do: {:ok, value}
   defp filter_value(key, value), do: Page.invalid("filter.#{key}", value)
 
@@ -174,6 +183,7 @@ defmodule Flezha.Service.Relay.Info do
   defp matches?(row, {:ids, ids}), do: to_string(row.id) in ids
   defp matches?(row, {:factory, factory}), do: row.factory == factory
   defp matches?(row, {:group, group}), do: row[:members] != nil and row.id == group
+  defp matches?(row, {:run, run}), do: any_member?(row, &(&1.run == run))
   defp matches?(row, {:runner, runner}), do: any_member?(row, &(&1.runner == runner))
   defp matches?(row, {:node, node}), do: any_member?(row, &(to_string(&1.node) == node))
 

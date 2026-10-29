@@ -295,23 +295,19 @@ defmodule Flezha.Runner.FleetManager.Factories do
   # so a runner announcing anything else is visible.
   defp advertised_run(namespace, runner_id, factory) do
     case factory["run"] do
-      "flow" ->
-        :flow
-
-      "steps" ->
-        :steps
-
       unknown when unknown in [nil, ""] ->
         @unspecified.run
 
-      unknown ->
-        Logger.warning(
-          "[fleet_manager] runner #{runner_id} on #{namespace} announces factory " <>
-            "#{factory["id"]} with run #{inspect(unknown)}, which is neither flow nor " <>
-            "steps; it will not be a placement candidate for it"
-        )
+      written ->
+        with nil <- ClassRegistry.parse_run(written) do
+          Logger.warning(
+            "[fleet_manager] runner #{runner_id} on #{namespace} announces factory " <>
+              "#{factory["id"]} with run #{inspect(written)}, which is neither flow nor " <>
+              "steps; it will not be a placement candidate for it"
+          )
 
-        @unspecified.run
+          @unspecified.run
+        end
     end
   end
 

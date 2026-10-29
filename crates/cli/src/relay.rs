@@ -17,12 +17,15 @@ const HEALTH: OptSpec = OptSpec::text("--health", "--health", "<words>")
     .doc("Show only relays of these health words, comma-separated; unhealthy names every fault.");
 const FACTORY: OptSpec =
     OptSpec::text("--factory", "--factory", "<factory>").doc("Show only this factory's relays.");
+const RUN: OptSpec = OptSpec::text("--run", "--run", "<kind>")
+    .doc("Show only relays of this run kind: flow or steps.");
 const RUNNER: OptSpec =
     OptSpec::text("--runner", "--runner", "<runner>").doc("Show only relays bound to this runner.");
 /// `flz relay list`'s filter flags, by the filter key each sends.
 pub(crate) const LIST_FILTERS: &[(&str, &OptSpec)] = &[
     ("health", &HEALTH),
     ("factory", &FACTORY),
+    ("run", &RUN),
     ("runner", &RUNNER),
     ("text", &SEARCH),
 ];
@@ -142,6 +145,7 @@ pub(crate) const TABLE: Command = Command {
             AFTER,
             HEALTH,
             FACTORY,
+            RUN,
             RUNNER,
             SEARCH,
         ])

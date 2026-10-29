@@ -780,12 +780,17 @@ defmodule Flezha.Relay.ClassRegistry do
     end
   end
 
-  defp parse_run(str) do
-    run = String.to_existing_atom(str)
-    if known_run?(run), do: run, else: nil
+  @doc "The run `written` names (`:flow` or `:steps`, or either's name), else `nil`."
+  @spec parse_run(term()) :: run() | nil
+  def parse_run(written) when is_atom(written), do: if(known_run?(written), do: written)
+
+  def parse_run(written) when is_binary(written) do
+    written |> String.to_existing_atom() |> parse_run()
   rescue
     ArgumentError -> nil
   end
+
+  def parse_run(_written), do: nil
 
   @doc "Whether `run` is how a relay runs."
   @spec known_run?(atom()) :: boolean()

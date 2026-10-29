@@ -71,14 +71,23 @@ mod tests {
             .verbs
             .iter()
             .find(|verb| verb.name == "list");
-        let argv = owned(&["--limit", "2", "--health", "unhealthy", "--search", "ord"]);
+        let argv = owned(&[
+            "--limit",
+            "2",
+            "--health",
+            "unhealthy",
+            "--run",
+            "steps",
+            "--search",
+            "ord",
+        ]);
         let read =
             crate::args::read("flz relay", relay.expect("relay list"), &argv).expect("reads");
         assert_eq!(
             crate::rpc::page(&read, crate::relay::LIST_FILTERS),
             Some(serde_json::json!({
                 "limit": 2,
-                "filter": { "health": "unhealthy", "text": "ord" }
+                "filter": { "health": "unhealthy", "run": "steps", "text": "ord" }
             }))
         );
     }

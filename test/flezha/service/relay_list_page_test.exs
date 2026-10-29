@@ -35,7 +35,7 @@ defmodule Flezha.Service.RelayListPageTest do
       factory: Keyword.get(opts, :factory, "orders"),
       partition: Keyword.get(opts, :partition),
       node: node(),
-      run: :flow,
+      run: Keyword.get(opts, :run, :flow),
       plugins: 0
     }
   end
@@ -119,6 +119,21 @@ defmodule Flezha.Service.RelayListPageTest do
     assert ids(page(filter: [group: "ohlc"])) == ["ohlc"]
     assert ids(page(filter: [text: "R001"])) == ["r0010"]
     assert ids(page(filter: %{"text" => "CANDLE"})) == ["ohlc"]
+  end
+
+  test "a run filter keeps only that run kind, a steps group as one row" do
+    steps = &relay(&1, run: :steps, factory: "batch")
+    group = for i <- 0..1, do: %{member("etl", i, 2, :healthy) | run: :steps}
+    fleet(for(n <- 1..5, do: relay(n)) ++ for(n <- 6..8, do: steps.(n)) ++ group)
+
+    assert %{total: 4} = by_steps = page(filter: [run: "steps"])
+    assert ids(by_steps) == ["etl", "r0006", "r0007", "r0008"]
+    assert hd(by_steps.rows).run == :steps
+    assert %{total: 5, rows: rows} = page(filter: %{"run" => :flow})
+    assert Enum.all?(rows, &(&1.run == :flow))
+
+    assert {:error, %Flezha.Error{code: "usage.invalid_number"}} =
+             Relay.list(@ns, [filter: [run: "batch"]], @caller)
   end
 
   test "the severity sort puts the worst first, then by id" do

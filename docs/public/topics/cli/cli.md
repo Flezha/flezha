@@ -110,12 +110,13 @@ $ flz relay list --limit 50 --health unhealthy --after g2gDdwpyZWxheV9saXN0...
 
 The filters narrow the rows before they are counted. `flz relay list` takes
 `--health` (health words, comma-separated; `unhealthy` names every fault),
-`--factory`, `--runner` and `--search`, a piece of the relay or factory id in
-any case. `flz plugin list` takes `--provider`, `--relay` (the plugins bound
-to that relay) and `--search`; a paged plugin row names at most 10 of its
-relays and how many there are in all. `flz dlq list` pages newest first. A
-cursor belongs to the listing and the order that printed it; any other is
-refused. Without these options each listing prints what it always printed.
+`--factory`, `--run` (`flow` or `steps`), `--runner` and `--search`, a piece
+of the relay or factory id in any case. `flz plugin list` takes `--provider`,
+`--relay` (the plugins bound to that relay) and `--search`; a paged plugin row
+names at most 10 of its relays and how many there are in all. `flz dlq list`
+pages newest first. A cursor belongs to the listing and the order that printed
+it; any other is refused. Without these options each listing prints what it
+always printed.
 
 The operations behind them, and the steps reads, take the same page as a
 trailing `opts` argument (`limit`, `after`, `sort`, `filter`), and answer

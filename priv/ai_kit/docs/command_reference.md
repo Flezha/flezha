@@ -77,7 +77,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz relay scale <group> <partitions> [--namespace \| -n <namespace>] [--timeout \| -t <ms>]` | Rescale a partition group in a namespace to a new size. |
 | `flz relay stop <relay_id> [--namespace \| -n <namespace>]` | Stop a relay in a namespace, or a whole partition group. |
 | `flz relay state <relay_id> [--namespace \| -n <namespace>]` | A relay's live state, as JSON, and the change sequence it was read at. |
-| `flz relay list [--namespace \| -n <namespace>] [--limit <n>] [--after <cursor>] [--health <words>] [--factory <factory>] [--runner <runner>] [--search <text>]` | The relays in a namespace, one row each. |
+| `flz relay list [--namespace \| -n <namespace>] [--limit <n>] [--after <cursor>] [--health <words>] [--factory <factory>] [--run <kind>] [--runner <runner>] [--search <text>]` | The relays in a namespace, one row each. |
 | `flz relay info [<relay_id>] [--namespace \| -n <namespace>]` | Every relay in a namespace as its Overwatch reports it. |
 | `flz relay diagnose <relay_id> [--namespace \| -n <namespace>]` | What is wrong with a relay and what to do about it. |
 | `flz relay graph <relay_id> [--namespace \| -n <namespace>]` | The graph of a relay's factory, as its runner announces it. |

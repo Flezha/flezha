@@ -74,6 +74,8 @@ v0.1.0-alpha.1 pre-release.
   `--after` and filter flags ([CLI](docs/public/topics/cli/cli.md#listing-by-the-page)).
   Dead-letter stats are kept in memory and read no entry file. Every answer
   read without `opts` is unchanged.
+- A paged `Relay.list` filters by run kind, `filter: [run: "flow" | "steps"]`,
+  and `flz relay list` takes `--run`; any other run kind is refused.
 - Reads answer for the whole cluster, whichever controller the caller is
   connected to: a relay's health is its hosting controller's verdict, a
   controller outside a namespace's hub lists its relays, the factory list holds
