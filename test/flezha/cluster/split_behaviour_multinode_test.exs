@@ -84,11 +84,10 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
             10_000
           )
 
-    assert wait(fn -> match?({200, %{"status" => "no_quorum"}}, healthz(p3)) end),
+    # `default` loses quorum here too, so the status alone can come from a tick
+    # that judged this namespace before its own hub lost quorum.
+    assert wait(fn -> ns in no_quorum_namespaces(p3) end),
            "/healthz said #{inspect(healthz(p3))}"
-
-    {200, body} = healthz(p3)
-    assert ns in body["namespaces"]
 
     assert {:error, %Flezha.Error{code: "controller.no_quorum"}} =
              :erpc.call(p3, Flezha.Service.Relay, :start, [
@@ -189,6 +188,13 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
   end
 
   defp ones(relays), do: Map.new(relays, &{&1, 1})
+
+  defp no_quorum_namespaces(node) do
+    case healthz(node) do
+      {200, %{"status" => "no_quorum", "namespaces" => listed}} -> listed
+      _other -> []
+    end
+  end
 
   defp healthz(at) do
     {:ok, port} = :erpc.call(at, Flezha.Healthz.Server, :listen_port, [])

@@ -139,12 +139,23 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
         [window_ms: 60_000, idle_ms: 500, before: fn -> send!(ns, id, "20") end],
         fn
           :idle -> send(test, :idle) && :continue
-          {:part, _, _} -> :continue
+          {:part, _, _} -> send(test, :part) && :continue
           {:output, "done:20", _} -> :done
         end
       )
 
-    refute_received :idle
+    # The turn streams from its first part on; before it, the pass is still
+    # being placed, which an idle event may report.
+    assert [:part | streaming] = Enum.drop_while(heard([]), &(&1 == :idle))
+    refute :idle in streaming
+  end
+
+  defp heard(events) do
+    receive do
+      event when event in [:idle, :part] -> heard([event | events])
+    after
+      0 -> Enum.reverse(events)
+    end
   end
 
   defp start!(ns, factory, kind, plugins \\ []) do

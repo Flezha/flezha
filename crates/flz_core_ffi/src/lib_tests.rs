@@ -152,23 +152,20 @@ fn threads_failing_on_one_context_each_read_their_own_error() {
 }
 
 /// A context the allocator places where a freed one was reads none of the
-/// freed context's errors.
+/// freed context's errors: an error is kept under its context's id, which no
+/// later context shares, never under its address.
 #[test]
 fn a_context_at_a_freed_contexts_address_has_no_last_error() {
     let id = CString::new("never-declared").unwrap();
-    // Each round frees both contexts, so the allocator can hand the address
-    // back however other test threads allocate meanwhile.
-    let reused = (0..10_000).any(|_| {
-        let freed = flz_core_context_new(flz_core::SCHEMA_VERSION);
-        assert_eq!(
-            unsafe { flz_core_undeclare_class(freed, id.as_ptr()) },
-            FLZ_ERR
-        );
-        unsafe { flz_core_context_free(freed) };
-        let fresh = flz_core_context_new(flz_core::SCHEMA_VERSION);
-        assert!(unsafe { flz_core_last_error(fresh) }.is_null());
-        unsafe { flz_core_context_free(fresh) };
-        fresh == freed
-    });
-    assert!(reused, "the allocator never reused the address");
+    let freed = flz_core_context_new(flz_core::SCHEMA_VERSION);
+    assert_eq!(
+        unsafe { flz_core_undeclare_class(freed, id.as_ptr()) },
+        FLZ_ERR
+    );
+    let freed_id = unsafe { (*freed).id };
+    unsafe { flz_core_context_free(freed) };
+    let fresh = flz_core_context_new(flz_core::SCHEMA_VERSION);
+    assert_ne!(unsafe { (*fresh).id }, freed_id);
+    assert!(unsafe { flz_core_last_error(fresh) }.is_null());
+    unsafe { flz_core_context_free(fresh) };
 }

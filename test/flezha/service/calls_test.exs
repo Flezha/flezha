@@ -471,8 +471,12 @@ defmodule FlezhaTest.Service.CallsTest do
 
       assert [%{run: :flow}] = FakeStartRegistry.started()
 
+      # An identity no other test spawned: a keyless call's id is minted from
+      # it, and the relay history would answer that id as already spawned.
+      identity = "flow-#{System.unique_integer([:positive])}"
+
       assert {{:refused, %Flezha.Error{code: "relay.factory_not_steps"}}, _} =
-               RelayManager.spawn_or_deliver(@ns, "", "agent", "t", :deliver, @caller, "c2", [
+               RelayManager.spawn_or_deliver(@ns, "", "agent", "t", :deliver, @caller, identity, [
                  {:runs, [:steps]} | Keyword.delete(opts, :runs)
                ])
     end
