@@ -141,6 +141,35 @@ defmodule Flezha.Service.RelayListPageTest do
     assert ids(page(sort: "severity", limit: 3)) == ["ohlc", "r0010", "r0007"]
   end
 
+  test "an id sorts by the key inspect/1 writes for it, whatever it holds" do
+    every_byte = for byte <- 0..255, do: <<byte>>
+    ascii_pairs = for a <- ?\s..?~, b <- [?{, ?a, ?", ?\\, ?\s], do: <<a, b>>
+
+    random =
+      for _ <- 1..2_000,
+          do: for(_ <- 1..:rand.uniform(12), into: "", do: <<Enum.random(0..255)>>)
+
+    edges = [
+      "",
+      "orders#p0",
+      "a\#{b}",
+      "#",
+      "a#",
+      "quote\"d",
+      "back\\slash",
+      "naïve",
+      String.duplicate("a", 4096),
+      String.duplicate("a", 4097),
+      :atom_id,
+      {:tuple, "id"},
+      42
+    ]
+
+    for id <- every_byte ++ ascii_pairs ++ random ++ edges do
+      assert HubManager.id_order(id) == inspect(id), "id #{inspect(id)}"
+    end
+  end
+
   test "limit 0 answers only the summary, counted as the unpaged list counts" do
     rows = mixed_fleet()
     {:ok, %{rows: unpaged}} = Relay.list(@ns, @caller)

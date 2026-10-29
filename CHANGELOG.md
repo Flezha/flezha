@@ -76,6 +76,10 @@ v0.1.0-alpha.1 pre-release.
   read without `opts` is unchanged.
 - A paged `Relay.list` filters by run kind, `filter: [run: "flow" | "steps"]`,
   and `flz relay list` takes `--run`; any other run kind is refused.
+- A page of a large listing is read faster: each row's sort key is made once,
+  and a relay id of plain printable ASCII is ordered without `inspect/1`, in
+  the same order as before. One page of 5,000 relays fell from about 110 ms to
+  about 65 ms on a development controller.
 - Reads answer for the whole cluster, whichever controller the caller is
   connected to: a relay's health is its hosting controller's verdict, a
   controller outside a namespace's hub lists its relays, the factory list holds

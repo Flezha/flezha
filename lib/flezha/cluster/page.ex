@@ -105,8 +105,14 @@ defmodule Flezha.Cluster.Page do
   """
   @spec slice(Enumerable.t(), t(), (term() -> term())) :: answer()
   def slice(rows, %__MODULE__{} = page, key) do
-    sorted = Enum.sort_by(rows, key, page.direction)
-    answer(Enum.filter(sorted, &after?(key.(&1), page)), length(sorted), false, page, key)
+    # Each row's key is made once; the rows after the cursor are a suffix of
+    # the sorted rows.
+    sorted = rows |> Enum.map(&{key.(&1), &1}) |> Enum.sort_by(&elem(&1, 0), page.direction)
+
+    sorted
+    |> Enum.drop_while(&(not after?(elem(&1, 0), page)))
+    |> Enum.map(&elem(&1, 1))
+    |> answer(length(sorted), false, page, key)
   end
 
   @doc """

@@ -165,9 +165,31 @@ defmodule Flezha.Service.HubManager.Rows do
       |> Enum.map(fn {relay_id, entry} ->
         relay_row(relay_id, normalize_registry_entry(entry), detailed?)
       end)
-      |> Enum.sort_by(&inspect(&1.id))
+      |> Enum.sort_by(&id_order(&1.id))
     end)
   end
+
+  @doc """
+  The key relay listings sort an id by: the id as `inspect/1` writes it. An id
+  of plain printable ASCII is only quoted by `inspect/1`, so its key is built
+  without it; a listing sorts thousands of ids on every page it reads.
+  """
+  @spec id_order(term()) :: String.t()
+  def id_order(id) when is_binary(id) and byte_size(id) <= 4096 do
+    if quoted_as_is?(id), do: <<?", id::binary, ?">>, else: inspect(id)
+  end
+
+  def id_order(id), do: inspect(id)
+
+  # Bytes `inspect/1` copies between its quotes unchanged: printable ASCII but
+  # the quote, the backslash and the `#{` that would start interpolation.
+  defp quoted_as_is?(<<?#, ?{, _rest::binary>>), do: false
+
+  defp quoted_as_is?(<<byte, rest::binary>>) when byte in ?\s..?~ and byte not in [?", ?\\],
+    do: quoted_as_is?(rest)
+
+  defp quoted_as_is?(<<>>), do: true
+  defp quoted_as_is?(_other), do: false
 
   @doc """
   The detailed rows `relay_rows/2` answers for `relay_ids` alone, each read

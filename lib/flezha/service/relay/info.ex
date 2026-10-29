@@ -129,7 +129,7 @@ defmodule Flezha.Service.Relay.Info do
       else: []
   end
 
-  defp id_key(row), do: inspect(row.id)
+  defp id_key(row), do: HubManager.id_order(row.id)
 
   defp sort_key(:id), do: &id_key/1
   defp sort_key(:severity), do: &{-Verdict.rank(&1.health), id_key(&1)}
