@@ -56,7 +56,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_journal,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    Completion.read(instance_id)
+    RelayManager.on_state_node(instance_id, Completion, :read, [instance_id])
   end
 
   @doc """
@@ -86,7 +86,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_journal,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    Journal.report(instance_id)
+    RelayManager.on_state_node(instance_id, Journal, :report, [instance_id])
   end
 
   @doc "The iterations the instance's journal has committed."
@@ -95,7 +95,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_journal,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    {:ok, TaskJournal.committed_iterations(instance_id)}
+    on_state(instance_id, :local_committed_iterations, [instance_id])
   end
 
   @doc "The input-log offset the instance's last iteration consumed. It is `nil` for none."
@@ -104,7 +104,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_journal,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    {:ok, TaskJournal.consumed_offset(instance_id)}
+    on_state(instance_id, :local_consumed_offset, [instance_id])
   end
 
   @doc "The input-log records above the instance's floor. They are what it has not consumed yet."
@@ -113,12 +113,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_inbox,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    with records when is_list(records) <- InputLog.undelivered(instance_id) do
-      {:ok,
-       Enum.map(records, fn {offset, message, metadata} ->
-         %{offset: offset, message: message, metadata: metadata}
-       end)}
-    end
+    on_state(instance_id, :local_undelivered, [instance_id])
   end
 
   @doc "The last offset written to the instance's input log. It is `-1` when it has none."
@@ -127,7 +122,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_inbox,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    with {:ok, _floor, last} <- InputLog.tail(instance_id), do: {:ok, last}
+    on_state(instance_id, :local_last_offset, [instance_id])
   end
 
   @doc """
@@ -138,20 +133,11 @@ defmodule Flezha.Service.Steps do
   @spec time_travel(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb time_travel(cell, target, caller_context),
     verb: :state_at,
-    row: &persisted_cell_row/1,
+    row: &cell_path_row/1,
     as: located,
     args: [cell: @cell, target: [type: :string, doc: "A WAL seq, or an ISO 8601 time."]] do
-    with {:ok, at} <- target(target, "target"),
-         {:ok, result} <- TimeTravel.query(located.cell_id, at) do
-      {:ok,
-       %{
-         cell: cell,
-         target: target,
-         terminal_seq: result.terminal_seq,
-         snapshot_size: byte_size(result.snapshot_bytes),
-         change_log_size: byte_size(result.change_log_bytes)
-       }}
-    end
+    {relay_class, _tasklet, _key} = located.cell_id
+    on_state(relay_class, :local_time_travel, [cell, target])
   end
 
   @doc """
@@ -187,28 +173,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_list,
     row: &class_row/1,
     args: [relay_class: @relay_class] do
-    rows =
-      for {{class, tasklet, key} = cell_id, counters} <- Metrics.snapshot_all(),
-          class == relay_class do
-        %{
-          relay_class: class,
-          tasklet_id: tasklet,
-          cell_key: key,
-          wal_seq: counters.wal_seq,
-          snapshot_seq: counters.snapshot_seq,
-          wal_bytes: wal_bytes(cell_id),
-          flush_latency_ms_p99: counters.flush_latency_ms_p99,
-          fsync_durability_lag_ms: counters.fsync_durability_lag_ms,
-          dedup_drops_total: counters.dedup_drops_total
-        }
-      end
-
-    {:ok,
-     %{
-       relay_class: relay_class,
-       history_retention_hours: PersistenceResolver.retention_hours(relay_class),
-       cells: rows
-     }}
+    on_state(relay_class, :local_cells, [relay_class])
   end
 
   @doc """
@@ -220,23 +185,11 @@ defmodule Flezha.Service.Steps do
   @spec outbox(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb outbox(cell, caller_context),
     verb: :state_outbox,
-    row: &persisted_cell_row/1,
+    row: &cell_path_row/1,
     as: located,
     args: [cell: @cell] do
-    {relay_class, _tasklet, _key} = cell_id = located.cell_id
-
-    status =
-      case WriterRegistry.lookup(cell_id) do
-        {:ok, pid} ->
-          WalWriter.outbox_status(pid)
-
-        :error ->
-          # The same cursor record the writer answers with, read off the dedup
-          # file instead of the live writer; only the outbox depth is unknown.
-          Map.merge(Lineage.progress(cell_id), %{pending: nil, held: nil})
-      end
-
-    {:ok, Map.merge(status, %{cell: cell, input_watermark: InputLog.watermark(relay_class)})}
+    {relay_class, _tasklet, _key} = located.cell_id
+    on_state(relay_class, :local_outbox, [cell])
   end
 
   @doc """
@@ -250,26 +203,7 @@ defmodule Flezha.Service.Steps do
     verb: :state_inbox,
     row: &instance_row/1,
     args: [instance_id: @instance_id] do
-    case retained_input(instance_id) do
-      {:ok, floor, records} ->
-        {:ok,
-         %{
-           instance: instance_id,
-           floor: floor,
-           entries:
-             Enum.map(records, fn {offset, message, metadata} ->
-               %{
-                 offset: offset,
-                 consumed: offset <= floor,
-                 bytes: byte_size(message),
-                 channel: Map.get(metadata, "channel")
-               }
-             end)
-         }}
-
-      {:error, refusal} ->
-        {:error, {:inbox_unreadable, instance_id, refusal}}
-    end
+    on_state(instance_id, :local_inbox, [instance_id])
   end
 
   # ---------- Mutations ----------
@@ -373,6 +307,120 @@ defmodule Flezha.Service.Steps do
     updated = Map.put(Config.get(:time_travel_retention_hours), relay_class, hours)
     Application.put_env(:flezha, :time_travel_retention_hours, updated, persistent: true)
     {:ok, %{relay_class: relay_class, hours: hours}}
+  end
+
+  # ---------- Local halves ----------
+
+  # Each read above answers from the controller holding the instance's state;
+  # these are the halves that controller runs, called by name.
+
+  defp on_state(instance_id, function, args),
+    do: RelayManager.on_state_node(instance_id, __MODULE__, function, args)
+
+  @doc false
+  def local_committed_iterations(instance_id),
+    do: {:ok, TaskJournal.committed_iterations(instance_id)}
+
+  @doc false
+  def local_consumed_offset(instance_id), do: {:ok, TaskJournal.consumed_offset(instance_id)}
+
+  @doc false
+  def local_undelivered(instance_id) do
+    with records when is_list(records) <- InputLog.undelivered(instance_id) do
+      {:ok,
+       Enum.map(records, fn {offset, message, metadata} ->
+         %{offset: offset, message: message, metadata: metadata}
+       end)}
+    end
+  end
+
+  @doc false
+  def local_last_offset(instance_id) do
+    with {:ok, _floor, last} <- InputLog.tail(instance_id), do: {:ok, last}
+  end
+
+  @doc false
+  def local_time_travel(cell, target) do
+    with {:ok, %{cell_id: cell_id}} <- persisted_cell(cell),
+         {:ok, at} <- target(target, "target"),
+         {:ok, result} <- TimeTravel.query(cell_id, at) do
+      {:ok,
+       %{
+         cell: cell,
+         target: target,
+         terminal_seq: result.terminal_seq,
+         snapshot_size: byte_size(result.snapshot_bytes),
+         change_log_size: byte_size(result.change_log_bytes)
+       }}
+    end
+  end
+
+  @doc false
+  def local_cells(relay_class) do
+    rows =
+      for {{class, tasklet, key} = cell_id, counters} <- Metrics.snapshot_all(),
+          class == relay_class do
+        %{
+          relay_class: class,
+          tasklet_id: tasklet,
+          cell_key: key,
+          wal_seq: counters.wal_seq,
+          snapshot_seq: counters.snapshot_seq,
+          wal_bytes: wal_bytes(cell_id),
+          flush_latency_ms_p99: counters.flush_latency_ms_p99,
+          fsync_durability_lag_ms: counters.fsync_durability_lag_ms,
+          dedup_drops_total: counters.dedup_drops_total
+        }
+      end
+
+    {:ok,
+     %{
+       relay_class: relay_class,
+       history_retention_hours: PersistenceResolver.retention_hours(relay_class),
+       cells: rows
+     }}
+  end
+
+  @doc false
+  def local_outbox(cell) do
+    with {:ok, %{cell_id: {relay_class, _tasklet, _key} = cell_id}} <- persisted_cell(cell) do
+      status =
+        case WriterRegistry.lookup(cell_id) do
+          {:ok, pid} ->
+            WalWriter.outbox_status(pid)
+
+          :error ->
+            # The same cursor record the writer answers with, read off the dedup
+            # file instead of the live writer; only the outbox depth is unknown.
+            Map.merge(Lineage.progress(cell_id), %{pending: nil, held: nil})
+        end
+
+      {:ok, Map.merge(status, %{cell: cell, input_watermark: InputLog.watermark(relay_class)})}
+    end
+  end
+
+  @doc false
+  def local_inbox(instance_id) do
+    case retained_input(instance_id) do
+      {:ok, floor, records} ->
+        {:ok,
+         %{
+           instance: instance_id,
+           floor: floor,
+           entries:
+             Enum.map(records, fn {offset, message, metadata} ->
+               %{
+                 offset: offset,
+                 consumed: offset <= floor,
+                 bytes: byte_size(message),
+                 channel: Map.get(metadata, "channel")
+               }
+             end)
+         }}
+
+      {:error, refusal} ->
+        {:error, {:inbox_unreadable, instance_id, refusal}}
+    end
   end
 
   # ---------- The rows ----------

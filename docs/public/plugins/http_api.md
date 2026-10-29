@@ -121,7 +121,7 @@ $ curl -s -X POST http://127.0.0.1:8765/v1/call/Relay.list \
 ```
 
 ```output
-[{"factory":"echo","health":"healthy","id":"my_echo","node":"flezha@127.0.0.1","partition":null,"runner":"default_151bd2853a67"}]
+{"rows":[{"factory":"echo","health":"healthy","id":"my_echo","node":"flezha@127.0.0.1","partition":null,"runner":"default_151bd2853a67"}],"unreachable":[]}
 ```
 
 `GET /v1/catalogue` lists the operations the token may call, with their arguments. A

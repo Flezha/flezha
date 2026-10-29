@@ -388,7 +388,9 @@ defmodule Flezha.Runner.FleetManager do
        # What this node last declared to each namespace hub as the groups it
        # serves, so a sync announces only what moved.
        announced_groups: %{}
-     })}
+     })
+     # Joins the controllers group now, not at the first fleet mutation.
+     |> Announce.sync()}
   end
 
   @impl true

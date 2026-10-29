@@ -13,7 +13,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz controller start [--mode \| -m attached\|daemon\|attached_iex\|daemon_iex]` | Start the flezha controller. |
 | `flz controller stop [--timeout-ms <ms>] [--no-wait] [--force]` | Drain this controller and stop it. |
 | `flz controller status` | The controller's status: node, clock, shutdown and durability. |
-| `flz controller list` | Every connected controller, the one that answered first. |
+| `flz controller list` | Every controller the cluster directory lists, the one that answered first. |
 | `flz controller mem-top` | One snapshot of the controller's memory hot spots. |
 <!-- flz-reference:end -->
 
@@ -149,7 +149,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 <!-- flz-reference:begin flz namespace -->
 | Command | What it does |
 | --- | --- |
-| `flz namespace list` | The namespaces in the durable catalog the caller may be shown. |
+| `flz namespace list` | The namespaces in the durable catalog the caller may be shown, and the controllers each runs on. |
 | `flz namespace create <name> [X<key>=<value> ...] [--<key> <value> ...]` | Create a namespace. |
 | `flz namespace delete <name>` | Delete a namespace and the quota counters keyed on it. |
 | `flz namespace show <name>` | One namespace record. |

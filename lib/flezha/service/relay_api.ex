@@ -33,25 +33,16 @@ defmodule Flezha.Service.RelayApi do
   ones. Where nodes disagree, the latest announcement wins.
   """
   @spec list(String.t()) :: [map()]
-  def list(namespace) do
-    namespace
-    |> Cluster.global_factories()
-    |> Enum.group_by(& &1.id)
-    |> Enum.map(fn {factory, rows} -> api_of(factory, rows) end)
-    |> Enum.sort_by(& &1.factory)
-  end
+  def list(namespace),
+    do: Enum.map(Cluster.global_factories(namespace).rows, &api_of/1)
 
-  # One factory's API from the rows its nodes answer, the latest winning.
-  defp api_of(factory, rows) do
-    latest = Enum.max_by(rows, &(&1.api_at || 0))
-
-    %{
-      factory: factory,
-      description: latest.description,
-      channels: latest.api,
-      disagree: Enum.any?(rows, & &1.api_disagree) or length(Enum.uniq_by(rows, & &1.api)) > 1
+  defp api_of(row),
+    do: %{
+      factory: row.id,
+      description: row.description,
+      channels: row.api,
+      disagree: row.api_disagree
     }
-  end
 
   @doc """
   The factory row of the relay `relay_id`, read from its own registry entry
@@ -68,7 +59,7 @@ defmodule Flezha.Service.RelayApi do
           {:ok, %{factory: relay.factory_id, description: nil, channels: [], disagree: false}}
 
         row ->
-          {:ok, api_of(row.id, [row])}
+          {:ok, api_of(row)}
       end
     end
   end

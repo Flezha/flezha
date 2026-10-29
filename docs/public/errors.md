@@ -705,6 +705,7 @@ SDK raises or returns its one error type carrying them.
 | `state.serialize_failed` | internal | 1 | the state of tasklet '{tasklet}' failed to serialize: {reason} |  |
 | `state.snapshot_failed` | internal | 1 | the Cell's snapshot could not be taken: {reason} |  |
 | `state.tasklet_not_found` | not_found | 5 | relay '{relay}' has no tasklet named '{tasklet}' |  |
+| `state.unreachable` | not_found | 5 | no controller that answered holds the state of '{instance}'; these did not answer: {unreachable} | `flz controller list` |
 
 ### template
 

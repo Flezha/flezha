@@ -43,7 +43,7 @@ defmodule Flezha.Service.NamespaceListTest do
       assert output =~ "_system"
     end
 
-    test "the output says which namespaces have a hub on this controller" do
+    test "the output says which namespaces have a hub, and on which controllers" do
       {:ok, _} = NamespaceStore.create("with-hub")
       {:ok, _} = NamespaceStore.create("without-hub")
       {:ok, _} = HubManager.start_hub("with-hub")
@@ -52,18 +52,22 @@ defmodule Flezha.Service.NamespaceListTest do
       rows =
         capture_io(fn -> Cli.call("Relay.list_namespaces", "[]", output: "json") end)
         |> Jason.decode!()
+        |> Map.fetch!("rows")
 
-      by_name = Map.new(rows, &{&1["namespace"], &1["running"]})
+      by_name = Map.new(rows, &{&1["namespace"], {&1["running"], &1["nodes"]}})
 
-      assert by_name["with-hub"] == true
-      assert by_name["without-hub"] == false
+      assert by_name["with-hub"] == {true, [to_string(node())]}
+      assert by_name["without-hub"] == {false, []}
     end
 
     test "an empty answer says so rather than rendering a headerless table" do
-      output = capture_io(fn -> Cli.render({:ok, []}, "Relay.list_namespaces", "[]", []) end)
+      output =
+        capture_io(fn ->
+          Cli.render({:ok, %{rows: [], unreachable: []}}, "Relay.list_namespaces", "[]", [])
+        end)
 
       assert output =~ "No namespaces found."
-      assert {:ok, []} = Relay.list_namespaces(bound("nothing-here"))
+      assert {:ok, %{rows: [], unreachable: []}} = Relay.list_namespaces(bound("nothing-here"))
     end
   end
 
@@ -75,12 +79,12 @@ defmodule Flezha.Service.NamespaceListTest do
     end
 
     test "a namespace-scoped caller sees its own namespace and no other" do
-      assert {:ok, [%{namespace: "team-orders"}]} =
+      assert {:ok, %{rows: [%{namespace: "team-orders"}]}} =
                Relay.list_namespaces(bound("team-orders"))
     end
 
     test "an admin in the system namespace sees them all" do
-      assert {:ok, rows} =
+      assert {:ok, %{rows: rows}} =
                Relay.list_namespaces(%{
                  source: :cli,
                  role: :admin,
@@ -104,7 +108,7 @@ defmodule Flezha.Service.NamespaceListTest do
     end
 
     test "a namespace-scoped caller sees its own namespace and no other" do
-      assert {:ok, [%{namespace: "team-orders", running: true}]} =
+      assert {:ok, %{rows: [%{namespace: "team-orders", running: true, nodes: [_]}]}} =
                Relay.list_namespaces(%{
                  source: :ui,
                  role: :viewer,
@@ -114,7 +118,7 @@ defmodule Flezha.Service.NamespaceListTest do
     end
 
     test "an admin in the system namespace still sees the whole cluster" do
-      assert {:ok, running} =
+      assert {:ok, %{rows: running}} =
                Relay.list_namespaces(%{
                  source: :ui,
                  role: :admin,
@@ -150,7 +154,7 @@ defmodule Flezha.Service.NamespaceListTest do
     end
 
     test "a tenant-bound caller is judged, runs, and sees only its own namespace" do
-      assert {:ok, [%{namespace: "team-orders"}]} =
+      assert {:ok, %{rows: [%{namespace: "team-orders"}]}} =
                Relay.list_namespaces(%{
                  source: :ui,
                  role: :viewer,
@@ -174,7 +178,7 @@ defmodule Flezha.Service.NamespaceListTest do
     test "a system-bound principal carried only by the role store gets the open answer" do
       :ok = RoleStore.bind("system-alice", "_system", :viewer, bound_by: "root")
 
-      assert {:ok, running} =
+      assert {:ok, %{rows: running}} =
                Relay.list_namespaces(%{source: :ui, principal: "system-alice"})
 
       assert "team-orders" in names(running)

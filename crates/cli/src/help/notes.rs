@@ -48,7 +48,8 @@ pub(crate) const CONTROLLER_LIST: Help = r#"OUTPUT COLUMNS:
     VERSION    Its release version
     UP         How long it has been up
     RUNNERS    How many runners are connected to it
-    A controller that does not answer in time shows `unreachable`."#;
+    A controller that does not answer in time shows `unreachable`, and a
+    closing line names it."#;
 
 pub(crate) const CONTROLLER_START: Help = r#"EXAMPLES:
     flz controller start

@@ -101,7 +101,11 @@ defmodule Flezha.Runner.FleetManager.Announce do
     QuotaCounters.set(namespace, :runners, Enum.count(runners, &active?/1))
   end
 
-  @doc "The `:pg` capability groups this node's fleet backs right now."
+  @doc """
+  The `:pg` groups this node backs right now: its fleet's capability groups, and
+  the controllers group, which every controller joins whether or not it holds a
+  runner.
+  """
   @spec desired_directory_groups(map()) :: MapSet.t()
   def desired_directory_groups(state) do
     runner_groups =
@@ -114,7 +118,7 @@ defmodule Flezha.Runner.FleetManager.Announce do
           {factory_id, _info} <- factories,
           do: Directory.factory_group(namespace, factory_id)
 
-    MapSet.new(runner_groups ++ factory_groups)
+    MapSet.new([Directory.controllers_group() | runner_groups ++ factory_groups])
   end
 
   defp active?({_id, {status, _ts}}), do: status == :active

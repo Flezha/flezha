@@ -85,16 +85,6 @@ defmodule Flezha.Parallel do
     end
   end
 
-  @doc """
-  Run `fun` on every node concurrently and pair each with its outcome. An
-  unreachable peer is one `{:exit, reason}` rather than a failed read for
-  everybody, and the slowest node costs one `:timeout`, not one per node.
-  """
-  @spec map_nodes([node()], (node() -> term()), keyword()) :: [{node(), outcome()}]
-  def map_nodes(nodes, fun, opts) do
-    nodes |> Enum.uniq() |> results(fun, opts)
-  end
-
   # `map/3` with no explicit bound runs every item at once: its callers fan out
   # over a set they already sized. Passing one opts into the same per-item
   # budget `each/3` defaults to.

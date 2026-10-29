@@ -141,6 +141,17 @@ defmodule Flezha.Convergence.Snapshot do
         do: {relay_id, listed(verdict, facts)}
   end
 
+  @doc """
+  `relay_health_of/1` for `relay_ids` alone, every one of them answered: one
+  the Loop has not judged reads `:unknown`. The local half of a cluster health
+  read, asked of the controller hosting the relays.
+  """
+  @spec relay_health_of(String.t(), [term()]) :: %{term() => Verdict.state() | :recovering}
+  def relay_health_of(namespace, relay_ids) do
+    health = relay_health_of(namespace)
+    Map.new(relay_ids, &{&1, Map.get(health, &1, :unknown)})
+  end
+
   defp listed(%Verdict{state: state}, facts), do: Verdict.listed_state(state, facts)
   defp listed(nil, _facts), do: :unknown
 

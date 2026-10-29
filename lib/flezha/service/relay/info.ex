@@ -3,11 +3,17 @@ defmodule Flezha.Service.Relay.Info do
   What `Flezha.Service.Relay.info/2` answers for a namespace: every live
   relay as its Overwatch reports it, or by its published phase and health,
   marked `live_read`, when that Overwatch does not answer; every finished one
-  whose completion record is still inside its retention window, with
-  `expires_at` (unix seconds) the end of that window; and every
-  partition group with its read-time key-group coverage.
+  on any controller whose completion record is still inside its retention
+  window, with `expires_at` (unix seconds) the end of that window and the
+  `node` holding it; and every partition group with its read-time key-group
+  coverage.
+
+  `rows/1` is the namespace's relay rows as every surface reads them: the
+  registry's, read on a hub member, each with the health the controller
+  hosting it judges.
   """
 
+  alias Flezha.Cluster.Reads
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Calls.Inbound
@@ -23,20 +29,72 @@ defmodule Flezha.Service.Relay.Info do
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
 
-  @doc "The report for `namespace`."
+  @doc "The report for `namespace`, with the controllers that did not answer."
   @spec report(String.t()) :: map()
   def report(namespace) do
-    {:ok, live} = RelayManager.get_relay_ids(namespace)
-    health = Snapshot.relay_health_of(namespace)
+    %{rows: rows, unreachable: unreachable} = rows(namespace)
+
+    {live, live_unreachable} =
+      hub_read(namespace, {RelayManager, :get_relay_ids, [namespace]})
+
+    # A live relay the rows do not name yet reads this controller's verdict.
+    health =
+      Map.merge(Snapshot.relay_health_of(namespace, live), Map.new(rows, &{&1.id, &1.health}))
+
+    %{rows: finished, unreachable: retained_unreachable} =
+      Reads.rows(Reads.controllers(), __MODULE__, :local_retained, [namespace, live])
 
     %{
       namespace: namespace,
       key_groups: KeyGroup.key_groups(),
-      groups: namespace |> HubManager.relay_rows() |> Partition.groups() |> Enum.map(&group/1),
-      relays:
-        Enum.map(live, &row(namespace, &1, Map.get(health, &1, :unknown))) ++
-          Enum.map(retained(namespace, live), fn {id, record} -> finished(id, record) end)
+      groups: rows |> Partition.groups() |> Enum.map(&group/1),
+      relays: Enum.map(live, &row(namespace, &1, Map.get(health, &1, :unknown))) ++ finished,
+      unreachable: Enum.uniq(unreachable ++ live_unreachable ++ retained_unreachable)
     }
+  end
+
+  @doc """
+  The relay rows of `namespace` (`HubManager.relay_rows/1`), read on a member
+  of its hub, each with `health` as the controller hosting it judges it. A
+  row no controller hosts reads this controller's verdict; a row whose host
+  does not answer reads `:unknown`, and that host is named in `unreachable`.
+  """
+  @spec rows(String.t()) :: Reads.rows()
+  def rows(namespace) do
+    {rows, unreachable} = hub_read(namespace, {HubManager, :relay_rows, [namespace]})
+    {placed, unplaced} = Enum.split_with(rows, & &1.node)
+    ids = Enum.map(placed, & &1.id)
+
+    %{answers: answers, unreachable: hosts_unreachable} =
+      placed
+      |> Enum.map(& &1.node)
+      |> Reads.ask(Snapshot, :relay_health_of, [namespace, ids])
+
+    health = Map.new(answers)
+    here = Snapshot.relay_health_of(namespace, Enum.map(unplaced, & &1.id))
+
+    %{
+      rows:
+        Enum.map(rows, fn row ->
+          verdicts = if row.node, do: Map.get(health, row.node, %{}), else: here
+          Map.put(row, :health, Map.get(verdicts, row.id, :unknown))
+        end),
+      unreachable: unreachable ++ hosts_unreachable
+    }
+  end
+
+  @doc """
+  A registry read of `namespace` answered on a member of its hub
+  (`RelayManager.on_hub_member/4`): its list, and the member that did not
+  answer.
+  """
+  @spec hub_read(String.t(), {module(), atom(), list()}) :: {list(), [node()]}
+  def hub_read(namespace, call) do
+    case RelayManager.on_hub_member(namespace, namespace, call) do
+      {:error, {:routed_call_failed, member, _kind, _reason}} -> {[], [member]}
+      {:ok, list} -> {list, []}
+      list -> {list, []}
+    end
   end
 
   @doc """
@@ -58,9 +116,9 @@ defmodule Flezha.Service.Relay.Info do
         {:live, state}
 
       {:error, reason} when elem(reason, 0) in [:relay_not_found, :hub_down] ->
-        case retained_record(namespace, relay_id, System.system_time(:second)) do
-          nil -> {:error, {:relay_not_found, namespace, relay_id}}
-          record -> {:finished, finished(relay_id, record)}
+        case Reads.find(Reads.controllers(), __MODULE__, :local_finished, [namespace, relay_id]) do
+          {:ok, _node, row} -> {:finished, row}
+          {:error, _unreachable} -> {:error, {:relay_not_found, namespace, relay_id}}
         end
 
       # A bare reason is the bounded call's refusal of a pid the hub resolved.
@@ -124,19 +182,27 @@ defmodule Flezha.Service.Relay.Info do
     }
   end
 
-  # Finished relays with a completion record still inside the retention
-  # window, keyed by the relay_class dir (== relay_id).
-  defp retained(namespace, live_ids) do
-    now = System.system_time(:second)
+  @doc false
+  # The local half of `report/1`'s finished relays: this node's completion
+  # records still inside their retention window, of classes `live_ids` does not
+  # name. A class dir is named for its relay's id.
+  @spec local_retained(String.t(), [String.t()]) :: [map()]
+  def local_retained(namespace, live_ids) do
+    for relay_id <- Paths.relay_classes(),
+        relay_id not in live_ids,
+        row = local_finished(namespace, relay_id),
+        row != nil,
+        do: row
+  end
 
-    Paths.relay_classes()
-    |> Enum.reject(&(&1 in live_ids))
-    |> Enum.flat_map(fn relay_id ->
-      case retained_record(namespace, relay_id, now) do
-        nil -> []
-        record -> [{relay_id, record}]
-      end
-    end)
+  @doc false
+  # The local half of `relay/2`'s lookup of a finished relay, with this `node`.
+  @spec local_finished(String.t(), String.t()) :: map() | nil
+  def local_finished(namespace, relay_id) do
+    case retained_record(namespace, relay_id, System.system_time(:second)) do
+      nil -> nil
+      record -> relay_id |> finished(record) |> Map.put(:node, node())
+    end
   end
 
   # A finished relay's class dir is named for its id, and the window is the

@@ -32,8 +32,10 @@ defmodule Flezha.Service.Cli.Info do
   ]
 
   @doc "`flz relay info`."
-  def info(%{relays: [], groups: []} = report, _args, _opts),
-    do: IO.puts("No relays found for namespace '#{report.namespace}'.")
+  def info(%{relays: [], groups: []} = report, _args, _opts) do
+    IO.puts("No relays found for namespace '#{report.namespace}'.")
+    Context.unreachable(report.unreachable)
+  end
 
   def info(report, _args, _opts) do
     IO.puts("Relay information for namespace '#{report.namespace}':")
@@ -41,6 +43,7 @@ defmodule Flezha.Service.Cli.Info do
 
     Enum.each(report.groups, &print_group(&1, report.key_groups))
     Enum.each(report.relays, &print_relay/1)
+    Context.unreachable(report.unreachable)
   end
 
   @doc """
@@ -247,6 +250,7 @@ defmodule Flezha.Service.Cli.Info do
     IO.puts("Relay: #{relay.id}")
     IO.puts("  Run: #{relay.run}")
     IO.puts("  Phase: finished")
+    if relay[:node], do: IO.puts("  Node: #{relay.node}")
     IO.puts("  Status: #{relay.status}")
     if relay.error, do: IO.puts("  Error: #{relay.error}")
     IO.puts("  Finished At (unix s): #{relay.finished_at}")

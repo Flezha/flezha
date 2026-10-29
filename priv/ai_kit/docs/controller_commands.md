@@ -96,7 +96,7 @@ _system                            normal           0
 
 ## `flz cluster`
 
-Shows the controllers of a cluster, which one leads, and how their relays are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](tutorials/run_a_cluster.html).
+Shows the controllers of a cluster, which one answered, and how their relays are doing. Explained in [`clustering.md`](../deploying/clustering.md), tutorial [Run a cluster](tutorials/run_a_cluster.html).
 
 `flz cluster help` prints the group's verbs, and the [command
 reference](command_reference.md) lists each with its usage line.
@@ -110,11 +110,10 @@ $ flz cluster status
 ```output
 Cluster status for namespace 'default':
 
-  Leader:     flezha@127.0.0.1
-  Local node: flezha@127.0.0.1(leader)
+  Answered by: flezha@127.0.0.1
 
   Nodes:
-    flezha@127.0.0.1: 1 relay(s) recovery_state=normal [leader]
+    flezha@127.0.0.1: 1 relay(s) recovery_state=normal
 
   Relay health: degraded=1
 ```

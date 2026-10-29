@@ -4,6 +4,7 @@ defmodule Flezha.Service.RelayManager do
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Reads
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
@@ -56,28 +57,74 @@ defmodule Flezha.Service.RelayManager do
   rides BEAM distribution on the returned pid, so the interaction still
   executes inside the relay's own node.
   """
-  def get_relay_pid(namespace, relay_id, opts \\ []) do
-    on_hub_member(namespace, relay_id, opts, :get_relay_pid, fn ->
-      HubManager.get_pid(namespace, relay_id)
-    end)
-  end
+  def get_relay_pid(namespace, relay_id, opts \\ []),
+    do: on_hub_member(namespace, relay_id, {HubManager, :get_pid, [namespace, relay_id]}, opts)
 
-  # Run `local` when this node is a hub member (or the call was already
-  # forwarded — the loop guard), else forward `fun` once to one deterministic
-  # hub-member node. Local with no hub anywhere preserves today's refusal.
-  defp on_hub_member(namespace, relay_id, opts, fun, local) do
+  @doc """
+  Run `module.function(args)` where `namespace`'s hub is: here when this node
+  is a hub member, or when the call was already forwarded once (`routed:
+  true`, the loop guard); else on one hub-member node the directory names,
+  chosen by `key`. With no hub anywhere it runs here, which keeps the answer a
+  down hub gives. A member that does not answer is `{:error,
+  {:routed_call_failed, node, kind, reason}}`.
+  """
+  @spec on_hub_member(binary(), term(), {module(), atom(), list()}, keyword()) :: term()
+  def on_hub_member(namespace, key, {module, function, args} = call, opts \\ []) do
     if Keyword.get(opts, :routed, false) or HubManager.hub_alive?(namespace) do
-      local.()
+      apply(module, function, args)
     else
       case List.delete(Directory.hub_nodes(namespace), node()) do
         [] ->
-          local.()
+          apply(module, function, args)
 
         nodes ->
-          target = Placement.pick_runner(nodes, relay_id)
-          opts = Keyword.put(opts, :routed, true)
-          route_call(target, fun, [namespace, relay_id, opts], &{:error, &1})
+          target = Placement.pick_runner(nodes, key)
+
+          route_call(
+            target,
+            :on_hub_member,
+            [namespace, key, call, [routed: true]],
+            &{:error, &1}
+          )
       end
+    end
+  end
+
+  @doc """
+  Run `module.function(args)` on the controller holding `instance_id`'s state:
+  the one hosting its Overwatch while it runs, else the one whose state root
+  holds its class. When no controller holds it, it runs here if every
+  controller answered, and is refused `state_unreachable`, naming the
+  controllers that did not, otherwise.
+  """
+  @spec on_state_node(String.t(), module(), atom(), list()) :: term()
+  def on_state_node(instance_id, module, function, args) do
+    case state_node(instance_id) do
+      {:ok, holder} when holder == node() ->
+        apply(module, function, args)
+
+      {:ok, holder} ->
+        route_call(holder, module, function, args, fn _failed ->
+          {:error, {:state_unreachable, instance_id, [holder]}}
+        end)
+
+      {:error, []} ->
+        apply(module, function, args)
+
+      {:error, unreachable} ->
+        {:error, {:state_unreachable, instance_id, unreachable}}
+    end
+  end
+
+  defp state_node(instance_id) do
+    with {:ok, namespace} <- namespace_of(instance_id),
+         {:ok, pid} <- get_relay_pid(namespace, instance_id) do
+      {:ok, node(pid)}
+    else
+      _not_running ->
+        with {:ok, holder, true} <-
+               Reads.find(Reads.controllers(), Paths, :holds_class?, [instance_id]),
+             do: {:ok, holder}
     end
   end
 
@@ -291,9 +338,7 @@ defmodule Flezha.Service.RelayManager do
     # Whole-call forward, unlike the pid-riding read verbs: the stop path's
     # side effects (ControlUnit lookup, plugin disable, state-dir delete,
     # quota release) are node-local and must run on the hosting node.
-    on_hub_member(namespace, relay_id, opts, :request_stop, fn ->
-      Teardown.request_stop(namespace, relay_id)
-    end)
+    on_hub_member(namespace, relay_id, {Teardown, :request_stop, [namespace, relay_id]}, opts)
   end
 
   @doc """
@@ -312,9 +357,7 @@ defmodule Flezha.Service.RelayManager do
   """
   @spec stop_relay(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_relay(namespace, relay_id, opts \\ []) do
-    on_hub_member(namespace, relay_id, opts, :stop_relay, fn ->
-      Teardown.stop_relay(namespace, relay_id, opts)
-    end)
+    on_hub_member(namespace, relay_id, {Teardown, :stop_relay, [namespace, relay_id, opts]}, opts)
   end
 
   @doc """

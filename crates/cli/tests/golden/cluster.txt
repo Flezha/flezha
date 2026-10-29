@@ -1,4 +1,4 @@
-flz cluster - Controller cluster status (nodes, leader, relay health).
+flz cluster - Controller cluster status (nodes, relay health, who answered).
 
 USAGE:
     flz cluster <COMMAND>

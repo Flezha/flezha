@@ -4,7 +4,8 @@ defmodule Flezha.Cluster.Directory do
   scope, readable on every node without a network round.
 
   Writers advertise node-local truth: `Flezha.Runner.FleetManager` joins
-  `{:factory, ns, id}` / `{:runners, ns}` groups as its fleet state changes,
+  `{:controllers}` while it runs, and `{:factory, ns, id}` / `{:runners, ns}`
+  groups as its fleet state changes,
   and `Flezha.Service.HubManager.start_hub/1` joins each namespace hub's own
   pid to `{:hub, ns}`. Membership is cleaned by `:pg`'s monitors, so a dead
   process or node needs no leave call and partitions heal on reconnect.
@@ -20,6 +21,9 @@ defmodule Flezha.Cluster.Directory do
   def child_spec(_opts) do
     Cspec.build(@scope, {:pg, :start_link, [@scope]}, :worker_permanent)
   end
+
+  @doc "Group every running controller joins, so the cluster's controllers are one read."
+  def controllers_group(), do: {:controllers}
 
   @doc "Group advertising runners for `factory_id` in `namespace` on the member's node."
   def factory_group(namespace, factory_id), do: {:factory, to_string(namespace), factory_id}
@@ -153,6 +157,10 @@ defmodule Flezha.Cluster.Directory do
   """
   @spec monitor_scope() :: {reference(), map()} | nil
   def monitor_scope(), do: if(scope_up?(), do: :pg.monitor_scope(@scope))
+
+  @doc "Every controller node of the cluster: a connected node that is not one is never listed."
+  @spec controller_nodes() :: [node()]
+  def controller_nodes(), do: nodes_of(controllers_group())
 
   @doc "Nodes running a copy of the plugin `name` of `namespace`."
   def plugin_nodes(namespace, name), do: nodes_of(plugin_group(namespace, name))

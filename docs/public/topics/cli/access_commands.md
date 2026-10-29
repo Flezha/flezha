@@ -42,7 +42,7 @@ $ flz namespace list
 Fetching namespaces...
 Namespaces:
 
-  NAMESPACE                          RUNNING
+  NAMESPACE                          RUNNING ON
   _system                            no
   trading                            no
 ```

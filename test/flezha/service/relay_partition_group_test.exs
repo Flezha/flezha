@@ -17,6 +17,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
 
   alias Flezha.Convergence.Snapshot
   alias Flezha.Relay.PartitionGroup
+  alias Flezha.Cluster.Directory
   alias Flezha.Partition
   alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
@@ -47,14 +48,20 @@ defmodule Flezha.Service.Cli.PartitionTest do
     %{id: id, health: :healthy, runner: "runner-9", factory: "f", partition: nil, node: node()}
   end
 
-  # The rows `flz relay list` prints: a partition group collapsed into one.
-  defp grouped(rows) do
-    stub(HubManager, :relay_rows, fn _ns -> rows end)
-    {:ok, listed} = Relay.list("default", %{source: :cli})
+  # The rows `flz relay list` prints: a partition group collapsed into one,
+  # each member's health its published verdict (`unmet_ms` past its intent).
+  defp grouped(rows, unmet_ms \\ 500_000) do
+    ConvergenceFixtures.stub_registry_rows("default", rows, unmet_ms)
+    {:ok, %{rows: listed, unreachable: []}} = Relay.list("default", %{source: :cli})
     listed
   end
 
   describe "a group in the relay list" do
+    setup do
+      prev = Snapshot.current()
+      on_exit(fn -> Snapshot.publish(prev) end)
+    end
+
     test "collapses a group's members into one row with per-member placement" do
       rows = for index <- 0..2, do: member_row("ohlc", index, 3)
 
@@ -83,11 +90,13 @@ defmodule Flezha.Service.Cli.PartitionTest do
     end
 
     test "ranks a recovering member between degraded and parked" do
+      # A failed member inside the unmet-intent grace reads recovering.
       group = fn healths ->
         [%{health: health}] =
           healths
+          |> Enum.map(&if(&1 == :recovering, do: :failed, else: &1))
           |> Enum.with_index(fn h, i -> member_row("ohlc", i, length(healths), health: h) end)
-          |> grouped()
+          |> grouped(2_000)
 
         health
       end
@@ -171,7 +180,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
          }}
       end)
 
-      stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
+      stub(Directory, :hub_nodes, fn _ns -> [node()] end)
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
       %{rows: rows}
     end

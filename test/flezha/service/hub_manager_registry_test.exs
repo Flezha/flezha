@@ -16,6 +16,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   import FlezhaTest.Helper.HubRegistryTestHelper
 
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Relay.Info
 
   @namespace "mn_registry_test"
 
@@ -130,7 +131,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
     end
   end
 
-  describe "relay_rows/1 health surface" do
+  describe "the relay rows' health (Info.rows/1)" do
     @health_ns "mn_health_test"
 
     setup do
@@ -147,8 +148,8 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
     test "reflects the Convergence Loop's classified health, not the absent metadata key" do
       # `metadata[:health]` is a key nothing ever writes, so reading it reports
-      # `:unknown` forever even for a producing relay. `relay_rows/1`
-      # must read the loop's published per-relay health instead.
+      # `:unknown` forever even for a producing relay. The rows must carry the
+      # loop's published per-relay health instead.
       inject_relay(@health_ns, "relay_health", [{node(), self()}])
 
       Snapshot.publish(%{
@@ -158,7 +159,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
           ])
       })
 
-      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_health"))
+      row = Enum.find(Info.rows(@health_ns).rows, &(&1.id == "relay_health"))
       assert row.health == :healthy
     end
 
@@ -174,7 +175,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
           unmet_intent_ms: unmet_intent_ms
         })
 
-        Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_moving")).health
+        Enum.find(Info.rows(@health_ns).rows, &(&1.id == "relay_moving")).health
       end
 
       assert health_after.(2_000) == :recovering
@@ -185,7 +186,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       inject_relay(@health_ns, "relay_unseen", [{node(), self()}])
       Snapshot.publish(%{relay_health: %{}})
 
-      row = Enum.find(HubManager.relay_rows(@health_ns), &(&1.id == "relay_unseen"))
+      row = Enum.find(Info.rows(@health_ns).rows, &(&1.id == "relay_unseen"))
       assert row.health == :unknown
     end
   end

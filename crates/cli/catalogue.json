@@ -112,7 +112,7 @@
     },
     {
       "name": "Controller.controllers",
-      "doc": "Every connected controller, the one that answered first.",
+      "doc": "Every controller the cluster directory lists, the one that answered first.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -136,7 +136,7 @@
     },
     {
       "name": "Controller.liveness_counters",
-      "doc": "Every data-plane liveness counter the connected controllers hold.",
+      "doc": "Every data-plane liveness counter the cluster's controllers hold.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -297,7 +297,7 @@
     },
     {
       "name": "Fleet.factories",
-      "doc": "The factories declared in `namespace`, with their runners.",
+      "doc": "The factories any controller's runners advertise in `namespace`.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -394,7 +394,7 @@
     },
     {
       "name": "Fleet.runners_for_factory",
-      "doc": "The runners of one factory in `namespace`.",
+      "doc": "The runners of one factory in `namespace`, on every controller.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1158,7 +1158,7 @@
     },
     {
       "name": "Relay.list_namespaces",
-      "doc": "The namespaces in the durable catalog the caller may be shown.",
+      "doc": "The namespaces in the durable catalog the caller may be shown, and the controllers each runs on.",
       "action": "relay.list",
       "remote": true,
       "stream": false,
@@ -1243,7 +1243,7 @@
     },
     {
       "name": "Relay.registry",
-      "doc": "The namespace's hub registry, as the hub reports it.",
+      "doc": "The namespace's hub registry, as a member of its hub reports it.",
       "action": "relay.list",
       "remote": true,
       "stream": false,

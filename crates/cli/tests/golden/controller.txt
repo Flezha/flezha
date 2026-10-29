@@ -7,6 +7,7 @@ COMMANDS:
     start    Start the flezha controller.
     stop     Drain this controller and stop it.
     status   The controller's status: node, clock, shutdown and durability.
-    list     Every connected controller, the one that answered first.
+    list     Every controller the cluster directory lists, the one that answered
+             first.
     mem-top  One snapshot of the controller's memory hot spots.
     help     Show this help message.

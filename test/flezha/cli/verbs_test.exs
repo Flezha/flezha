@@ -196,13 +196,8 @@ defmodule Flezha.Service.Cli.ClusterTest do
   @moduledoc """
   CLI surface for `flz relay list` and `flz cluster status`. The data
   sources (`HubManager` registry access) are stubbed so the rendering
-  and shaping are asserted deterministically.
-
-  After `convergence-self-healing` §4 deleted the
-  `Flezha.Reconciler.Leader` GenServer, the cluster_status leader
-  column degrades to the local node — the cluster-wide registry-
-  mutating actions that needed leader election are gone (process_hub's
-  coordinator handles election where it is still required).
+  and shaping are asserted deterministically. The cluster elects no
+  leader, so the status names the controller that answered instead.
   """
   # async: false: Mimic stubs.
   use ExUnit.Case, async: false
@@ -210,6 +205,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
 
   import ExUnit.CaptureIO
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Convergence.Snapshot
   alias Flezha.Service.Cli
   alias Flezha.Service.HubManager
@@ -252,7 +248,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
           capture_io(fn ->
             Cli.call("Relay.list", Jason.encode!(["trading"]), output: "json")
           end)
-        )
+        )["rows"]
 
       assert Enum.map(rows, &{&1["id"], &1["health"]}) ==
                [{"prices", "recovering"}, {"quotes", "recovering"}]
@@ -269,7 +265,7 @@ defmodule Flezha.Service.Cli.ClusterTest do
       ConvergenceFixtures.stub_registry_rows(
         "shop",
         [
-          %{id: "r1", health: :healthy, runner: "e1", node: :a@h},
+          %{id: "r1", health: :healthy, runner: "e1", node: node()},
           %{id: "r2", health: :failed, runner: nil, node: nil}
         ],
         500_000
@@ -278,10 +274,11 @@ defmodule Flezha.Service.Cli.ClusterTest do
       out =
         capture_io(fn -> Cli.call("Relay.list", Jason.encode!(["shop"]), output: "json") end)
 
-      assert {:ok, decoded} = Jason.decode(out)
+      assert {:ok, %{"rows" => decoded, "unreachable" => []}} = Jason.decode(out)
+      here = to_string(node())
 
       assert Enum.map(decoded, &Map.take(&1, ["id", "health", "runner", "node"])) == [
-               %{"id" => "r1", "health" => "healthy", "runner" => "e1", "node" => "a@h"},
+               %{"id" => "r1", "health" => "healthy", "runner" => "e1", "node" => here},
                %{"id" => "r2", "health" => "failed", "runner" => nil, "node" => nil}
              ]
     end
@@ -309,16 +306,23 @@ defmodule Flezha.Service.Cli.ClusterTest do
   end
 
   describe "cluster_status/2" do
-    test "json reports the local node as leader, per-node relay counts, unplaced, and a health rollup" do
-      stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
+    setup do
+      prev = Snapshot.current()
+      on_exit(fn -> Snapshot.publish(prev) end)
+      stub(Directory, :hub_nodes, fn _ns -> [node()] end)
+      :ok
+    end
 
-      stub(HubManager, :relay_rows, fn _ns ->
+    test "json reports who answered, per-node relay counts, unplaced, and a health rollup" do
+      ConvergenceFixtures.stub_registry_rows(
+        "shop",
         [
           %{id: "r1", health: :healthy, runner: "e1", node: node()},
           %{id: "r2", health: :degraded, runner: "e2", node: node()},
           %{id: "r4", health: :failed, runner: nil, node: nil}
-        ]
-      end)
+        ],
+        500_000
+      )
 
       stub(HubManager, :recovery_state, fn hub_id ->
         if hub_id == Flezha.Identificator.hub("shop"),
@@ -333,19 +337,20 @@ defmodule Flezha.Service.Cli.ClusterTest do
 
       assert {:ok, d} = Jason.decode(out)
       # Each node reports the recovery state of the namespace's own hub.
-      assert [%{"recovery_state" => "recovering"}] = d["nodes"]
-      assert d["leader"] == to_string(node())
-      assert d["is_leader"] == true
+      assert [%{"recovery_state" => "recovering", "relay_count" => 2}] = d["nodes"]
+      assert d["answered_by"] == to_string(node())
+      refute Map.has_key?(d, "leader")
+      assert d["unreachable"] == []
       assert d["unplaced_relays"] == 1
       assert d["relay_health"] == %{"healthy" => 1, "degraded" => 1, "failed" => 1}
     end
 
-    test "text output names the local node as leader" do
-      stub(HubManager, :get_hub_nodes, fn _ns, true -> [node()] end)
-
-      stub(HubManager, :relay_rows, fn _ns ->
-        [%{id: "r1", health: :healthy, runner: "e1", node: node()}]
-      end)
+    test "text output names the controller that answered, and no leader" do
+      ConvergenceFixtures.stub_registry_rows(
+        "shop",
+        [%{id: "r1", health: :healthy, runner: "e1", node: node()}],
+        500_000
+      )
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
 
@@ -353,10 +358,9 @@ defmodule Flezha.Service.Cli.ClusterTest do
         capture_io(fn -> Cli.call("Controller.cluster_status", Jason.encode!(["shop"]), []) end)
 
       assert out =~ "Cluster status for namespace 'shop'"
-      assert out =~ "Leader:"
-      assert out =~ to_string(node())
+      assert out =~ "Answered by: #{node()}"
       assert out =~ "1 relay(s)"
-      assert out =~ "[leader]"
+      refute out =~ "leader"
       assert out =~ "healthy=1"
     end
   end

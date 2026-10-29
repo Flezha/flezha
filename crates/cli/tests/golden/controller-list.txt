@@ -1,4 +1,4 @@
-flz controller list - Every connected controller, the one that answered first.
+flz controller list - Every controller the cluster directory lists, the one that answered first.
 
 Usage: flz controller list
 
@@ -15,4 +15,5 @@ OUTPUT COLUMNS:
     VERSION    Its release version
     UP         How long it has been up
     RUNNERS    How many runners are connected to it
-    A controller that does not answer in time shows `unreachable`.
+    A controller that does not answer in time shows `unreachable`, and a
+    closing line names it.

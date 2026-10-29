@@ -251,7 +251,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, %{monotonic_us: clock}} = Controller.status(context)
       assert clock >= before and clock <= System.monotonic_time(:microsecond)
 
-      assert {:ok, factories} = Fleet.factories("default", context)
+      assert {:ok, %{rows: factories, unreachable: []}} = Fleet.factories("default", context)
       assert is_list(factories)
 
       assert {:ok, %{principal: "runner@default", namespace: "default"}} =
@@ -260,13 +260,23 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
     # A console is pinned to one controller, and a relay runs on whichever one
     # placed it: read from the peer, a relay counted here must still show.
+    @tag :multi_node
     test "the liveness read includes a relay held by another controller" do
       relay = "relay_#{System.unique_integer([:positive])}"
       LivenessCounters.bump_relay(LivenessCounters.register_relay(relay), :io_in_received)
-      {_peer_pid, peer} = NodeTestHelper.start_bare_peer(:liveness_peer)
+      {peer_pid, peer} = NodeTestHelper.start_peer_node(:liveness_peer)
+      on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
+      here = node()
 
-      assert %{relays: relays} = :erpc.call(peer, LivenessCounters, :snapshot_cluster, [])
-      assert %{io_in_received: 1} = Enum.find(relays, &(&1.relay_id == relay))
+      assert NodeTestHelper.wait_until(
+               fn -> here in :erpc.call(peer, Flezha.Cluster.Reads, :controllers, []) end,
+               10_000
+             )
+
+      assert %{relays: relays, unreachable: []} =
+               :erpc.call(peer, LivenessCounters, :snapshot_cluster, [])
+
+      assert %{io_in_received: 1, node: ^here} = Enum.find(relays, &(&1.relay_id == relay))
     end
   end
 
@@ -285,7 +295,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
     test "lists both, with their machines, and marks the one that answered",
          %{peer: peer, context: context} do
-      assert {:ok, [here, there]} = Controller.controllers(context)
+      assert {:ok, %{rows: [here, there], unreachable: []}} = Controller.controllers(context)
       version = to_string(Application.spec(:flezha, :vsn))
 
       assert %{node: node, host_node: "machine-a", local?: true, reachable?: true} = here
@@ -320,7 +330,9 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       :ok = :sys.suspend(fleet)
 
       try do
-        assert {:ok, [%{local?: true, reachable?: true}, there]} = Controller.controllers(context)
+        assert {:ok, %{rows: [%{local?: true, reachable?: true}, there], unreachable: [^peer]}} =
+                 Controller.controllers(context)
+
         assert there == %{node: peer, reachable?: false, local?: false}
 
         out = capture_io(fn -> :ok = Cli.call("Controller.controllers", "[]", []) end)

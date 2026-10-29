@@ -1,22 +1,61 @@
 defmodule Flezha.Runner.FleetManager.Cluster do
   @moduledoc """
   The fleet reads that span the cluster: every node holding active runners in
-  a namespace answers its own half over `:erpc`, and an unreachable peer
-  contributes nothing rather than failing the read.
+  a namespace answers its own half through `Flezha.Cluster.Reads`, and an
+  unreachable peer contributes nothing rather than failing the read.
   """
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Reads
   alias Flezha.Config.Durations
-  alias Flezha.Parallel
   alias Flezha.Runner.FleetManager
   alias Flezha.Transport.LivenessCounters
 
   @doc """
-  `list_factories/1` on every node holding active runners in `namespace`: one
-  row per node that advertises a factory.
+  Every factory any node's runners advertise in `namespace`, one row each, and
+  the nodes that did not answer. A row lists the `nodes` advertising it and the
+  union of their `runners`; its other fields are the most recently announced
+  advertisement's (`api_at`), and `api_disagree` is true when any node's
+  runners disagree or two nodes announce different APIs.
   """
-  @spec global_factories(String.t()) :: [map()]
-  def global_factories(namespace), do: across_runner_nodes(namespace, :factory_rows)
+  @spec global_factories(String.t()) :: Reads.rows()
+  def global_factories(namespace) do
+    answer = across_runner_nodes(namespace, :factory_rows)
+
+    merged =
+      answer.rows
+      |> Enum.group_by(& &1.id)
+      |> Enum.map(fn {_id, rows} -> merge_factory(rows) end)
+      |> Enum.sort_by(& &1.id)
+
+    %{answer | rows: merged}
+  end
+
+  defp merge_factory(rows) do
+    latest = Enum.max_by(rows, &(&1.api_at || 0))
+
+    latest
+    |> Map.delete(:node)
+    |> Map.merge(%{
+      nodes: rows |> Enum.map(& &1.node) |> Enum.uniq() |> Enum.sort(),
+      runners: rows |> Enum.flat_map(& &1.runners) |> Enum.uniq() |> Enum.sort(),
+      api_disagree: Enum.any?(rows, & &1.api_disagree) or length(Enum.uniq_by(rows, & &1.api)) > 1
+    })
+  end
+
+  @doc """
+  The runners of `factory_id` in `namespace` on every node advertising it,
+  each once, and the nodes that did not answer.
+  """
+  @spec factory_runners(String.t(), String.t()) :: Reads.rows()
+  def factory_runners(namespace, factory_id) do
+    answer =
+      namespace
+      |> Directory.factory_nodes(factory_id)
+      |> Reads.rows(FleetManager, :runners_for_factory, [namespace, factory_id])
+
+    %{answer | rows: Enum.uniq(answer.rows)}
+  end
 
   @doc false
   # This node's rows, read over `:erpc` by `global_factories/1`.
@@ -31,7 +70,7 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   """
   @spec global_runners(String.t()) :: {:ok, [binary()]}
   def global_runners(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:active_runners) |> Enum.uniq()}
+    do: {:ok, namespace |> across_runner_nodes(:active_runners) |> rows() |> Enum.uniq()}
 
   @doc false
   # This node's half of `global_runners/1`, reached over `:erpc`.
@@ -49,7 +88,7 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   """
   @spec global_runner_rows(String.t()) :: {:ok, [map()]}
   def global_runner_rows(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:runner_rows) |> Enum.uniq_by(& &1.id)}
+    do: {:ok, namespace |> across_runner_nodes(:runner_rows) |> rows() |> Enum.uniq_by(& &1.id)}
 
   @doc false
   # This node's half of `global_runner_rows/1`, reached over `:erpc`.
@@ -81,7 +120,7 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   """
   @spec global_occupants(String.t()) :: {:ok, [binary()]}
   def global_occupants(namespace),
-    do: {:ok, namespace |> across_runner_nodes(:occupants) |> Enum.uniq()}
+    do: {:ok, namespace |> across_runner_nodes(:occupants) |> rows() |> Enum.uniq()}
 
   @doc false
   # This node's half of `global_occupants/1`, reached over `:erpc`.
@@ -96,7 +135,7 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   """
   @spec find_session(String.t(), binary()) :: map() | nil
   def find_session(namespace, runner_id),
-    do: namespace |> across_runner_nodes(:session_rows, [runner_id]) |> List.first()
+    do: namespace |> across_runner_nodes(:session_rows, [runner_id]) |> rows() |> List.first()
 
   @doc false
   # This node's half of `find_session/2`, reached over `:erpc`.
@@ -112,13 +151,10 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   end
 
   defp across_runner_nodes(namespace, fun, args \\ []) do
-    [node() | Directory.runner_nodes(namespace)]
-    |> Parallel.map_nodes(&:erpc.call(&1, __MODULE__, fun, [namespace | args]),
+    Reads.rows([node() | Directory.runner_nodes(namespace)], __MODULE__, fun, [namespace | args],
       timeout: Durations.get(:runner_lookup_ms)
     )
-    |> Enum.flat_map(fn
-      {_node, {:ok, rows}} -> rows
-      {_node, {:exit, _reason}} -> []
-    end)
   end
+
+  defp rows(%{rows: rows}), do: rows
 end

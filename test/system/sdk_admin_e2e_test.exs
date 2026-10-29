@@ -91,7 +91,7 @@ defmodule FlezhaTest.System.SdkAdminE2ETest do
       assert Jason.decode!(again) == %{"id" => "app_started", "outcome" => "already_running"}
 
       assert {"Relay.list", "ok", rows} = list
-      running = for %{"id" => id} <- Jason.decode!(rows), do: id
+      running = for %{"id" => id} <- Jason.decode!(rows)["rows"], do: id
       assert "app_started" in running
       assert generated in running
       assert {"Relay.send", "ok", _delivered} = send

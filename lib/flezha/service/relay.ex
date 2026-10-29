@@ -22,6 +22,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.AuthZ.Namespace
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.Scope
+  alias Flezha.Cluster.Directory
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Builder
@@ -61,46 +62,54 @@ defmodule Flezha.Service.Relay do
   # ---------- Reads ----------
 
   @doc """
-  The namespaces in the durable catalog the caller may be shown. That is its
-  own, or all of them for an admin in `_system`, each with whether this
-  controller runs a hub for it.
+  The namespaces in the durable catalog the caller may be shown, and the
+  controllers each runs on. That is its own, or all of them for an admin in
+  `_system`, each with whether a hub for it runs on any controller of the
+  cluster (`running`) and on which (`nodes`).
 
   Reading the running hub set alone left a namespace created a moment earlier
   invisible until something connected to it, and reported one that had been
   torn down as gone from the catalog.
   """
-  @spec list_namespaces(caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @spec list_namespaces(caller_context()) :: {:ok, map()} | {:error, term()}
   verb list_namespaces(caller_context) do
-    running = MapSet.new(HubManager.get_running_namespaces())
-
     # `unbound: :all`: the row is `:caller`-scoped, so a context with no
     # namespace is an ungated deployment's user rather than a tenant, and
     # narrowing it to `_system` would hide the namespaces it just created.
-    {:ok,
-     NamespaceStore.list()
-     |> Enum.map(& &1.name)
-     |> Namespace.visible(caller_context, :all)
-     |> Enum.sort()
-     |> Enum.map(&%{namespace: &1, running: MapSet.member?(running, &1)})}
+    rows =
+      NamespaceStore.list()
+      |> Enum.map(& &1.name)
+      |> Namespace.visible(caller_context, :all)
+      |> Enum.sort()
+      |> Enum.map(fn namespace ->
+        nodes = namespace |> Directory.hub_nodes() |> Enum.sort()
+        %{namespace: namespace, running: nodes != [], nodes: nodes}
+      end)
+
+    {:ok, %{rows: rows, unreachable: []}}
   end
 
   @doc """
-  The relays in a namespace, one row each. Each row holds its health, runner,
-  node and, for a partition group, its width and members. A group is one row,
-  exactly as healthy as its sickest member: an aggregate that rounded up would
-  hide the one partition that stopped serving its keys.
+  The relays in a namespace, one row each. Each row holds its health as the
+  controller hosting it judges it, its runner, its node and, for a partition
+  group, its width and members; `unreachable` names the controllers that did
+  not answer. A
+  group is one row, exactly as healthy as its sickest member: an aggregate
+  that rounded up would hide the one partition that stopped serving its keys.
   """
-  @spec list(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @spec list(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb list(namespace, caller_context), verb: :list_relays, args: [namespace: @namespace] do
-    rows = namespace |> Namespace.or_default() |> HubManager.relay_rows()
+    %{rows: rows} = answer = namespace |> Namespace.or_default() |> Info.rows()
     plain = Enum.reject(rows, &(&1[:partition] != nil))
-    {:ok, Enum.sort_by(plain ++ Enum.map(Partition.groups(rows), &group_row/1), &inspect(&1.id))}
+    groups = Enum.map(Partition.groups(rows), &group_row/1)
+    {:ok, %{answer | rows: Enum.sort_by(plain ++ groups, &inspect(&1.id))}}
   end
 
   @doc """
   Every relay in a namespace as its Overwatch reports it. It also answers every
-  finished one still inside its retention window, and every partition group with
-  its key-group coverage.
+  finished one still inside its retention window on any controller, every
+  partition group with its key-group coverage, and the controllers that did not
+  answer.
   """
   @spec info(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb info(namespace, caller_context), verb: :relay_info, args: [namespace: @namespace] do
@@ -111,8 +120,9 @@ defmodule Flezha.Service.Relay do
   What is wrong with a relay and what to do about it. Answers a `verdict` of
   `ok`, `warning` or `problem`, and the findings that explain it, each a
   catalogued `diagnose.*` code with its message, details and hint. Read from the
-  facts the controller already keeps; it changes nothing. Dead letters' error
-  texts are shown only to a caller that may also list dead letters (`dlq.list`).
+  facts the controller hosting the relay keeps, or the one holding its state
+  when none hosts it; it changes nothing. Dead letters' error texts are shown
+  only to a caller that may also list dead letters (`dlq.list`).
   """
   @spec diagnose(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb diagnose(namespace, relay_id, caller_context),
@@ -120,29 +130,36 @@ defmodule Flezha.Service.Relay do
     args: [namespace: @namespace, relay_id: @relay_id] do
     namespace = Namespace.or_default(namespace)
     errors? = AuthZ.allowed?(caller_context, :"dlq.list", Scope.build(namespace))
-    Diagnose.report(namespace, relay_id, errors?)
+    RelayManager.on_state_node(relay_id, Diagnose, :report, [namespace, relay_id, errors?])
   end
 
-  @doc "One row per relay in `namespace`: node, health and partition."
-  @spec relay_rows(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @doc """
+  One row per relay in `namespace`: node, health and partition. `unreachable`
+  names the controllers that did not answer.
+  """
+  @spec relay_rows(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb relay_rows(namespace, caller_context),
     verb: :relay_info,
     args: [namespace: @namespace] do
-    {:ok, HubManager.relay_rows(namespace)}
+    {:ok, Info.rows(namespace)}
   end
 
-  @doc "The plugin bindings each relay in `namespace` declares."
-  @spec relay_plugins(String.t(), caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @doc """
+  The plugin bindings each relay in `namespace` declares. Each row is
+  `{relay_id, bindings}`, read on a member of the namespace's hub.
+  """
+  @spec relay_plugins(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb relay_plugins(namespace, caller_context),
     verb: :relay_info,
     args: [namespace: @namespace] do
-    {:ok, HubManager.relay_bindings(namespace)}
+    {rows, unreachable} = Info.hub_read(namespace, {HubManager, :relay_bindings, [namespace]})
+    {:ok, %{rows: rows, unreachable: unreachable}}
   end
 
-  @doc "The namespace's hub registry, as the hub reports it."
+  @doc "The namespace's hub registry, as a member of its hub reports it."
   @spec registry(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb registry(namespace, caller_context), verb: :relay_info, args: [namespace: @namespace] do
-    HubManager.get_registry(namespace)
+    RelayManager.on_hub_member(namespace, namespace, {HubManager, :get_registry, [namespace]})
   end
 
   @doc """

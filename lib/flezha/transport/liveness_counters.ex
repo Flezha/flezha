@@ -45,6 +45,7 @@ defmodule Flezha.Transport.LivenessCounters do
   new liveness metric is one row plus the line that bumps it.
   """
 
+  alias Flezha.Cluster.Reads
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Observability.CounterTable
@@ -666,22 +667,26 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   @doc """
-  `snapshot_all/0` on this node and every connected controller, rows joined.
-  A relay's counters live on the controller running it, so a reader pinned to
-  one controller needs this to see a relay placed on another. A peer that does
-  not answer in time is left out.
+  `snapshot_all/0` on every controller of the cluster, rows joined, each with
+  the `node` that holds it. A relay's counters live on the controller running
+  it, so a reader pinned to one controller needs this to see a relay placed on
+  another. A controller that does not answer in time is named in `unreachable`.
   """
-  @spec snapshot_cluster() :: %{channels: [map()], relays: [map()]}
+  @spec snapshot_cluster() :: %{channels: [map()], relays: [map()], unreachable: [node()]}
   def snapshot_cluster() do
-    Node.list()
-    |> :erpc.multicall(__MODULE__, :snapshot_all, [], Durations.get(:transport_stats_call_ms))
-    |> Enum.reduce(snapshot_all(), fn
-      {:ok, %{channels: channels, relays: relays}}, acc ->
-        %{channels: channels ++ acc.channels, relays: relays ++ acc.relays}
+    %{answers: answers, unreachable: unreachable} =
+      Reads.ask(Reads.controllers(), __MODULE__, :snapshot_all, [],
+        timeout: Durations.get(:transport_stats_call_ms)
+      )
 
-      _unanswered, acc ->
-        acc
-    end)
+    for {node, snapshot} <- answers,
+        group <- [:channels, :relays],
+        row <- snapshot[group],
+        reduce: %{channels: [], relays: [], unreachable: unreachable} do
+      acc -> Map.update!(acc, group, &[Map.put(row, :node, node) | &1])
+    end
+    |> Map.update!(:channels, &Enum.reverse/1)
+    |> Map.update!(:relays, &Enum.reverse/1)
   end
 
   @doc """

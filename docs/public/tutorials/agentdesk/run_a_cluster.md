@@ -26,11 +26,10 @@ $ flz cluster status --namespace agents
 ```output
 Cluster status for namespace 'agents':
 
-  Leader:     flezha@controller.agentdesk
-  Local node: flezha@controller.agentdesk (leader)
+  Answered by: flezha@controller.agentdesk
 
   Nodes:
-    flezha@controller.agentdesk: 2 relay(s) recovery_state=normal [leader]
+    flezha@controller.agentdesk: 2 relay(s) recovery_state=normal
     flezha@controller-2.agentdesk: 3 relay(s) recovery_state=normal
 
   Relay health: suspended=3, healthy=2

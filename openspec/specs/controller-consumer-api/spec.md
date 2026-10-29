@@ -445,7 +445,7 @@ operation that streams, since it holds the stream's process on the controller's 
 
 ### Requirement: The connected controllers SHALL be readable
 
-`Flezha.Service.Controller.controllers/1` and `flz controller list` SHALL list every controller connected to the cluster. Each row SHALL give its node, its host address, the machine it runs on when `FLEZHA_HOST_NODE` names one, its version, how long it has been up, how many runners are connected to it, and whether it is the controller that answered. A controller that does not answer SHALL still be listed, marked unreachable, with only its node.
+`Flezha.Service.Controller.controllers/1` and `flz controller list` SHALL list every controller the cluster directory lists. Each row SHALL give its node, its host address, the machine it runs on when `FLEZHA_HOST_NODE` names one, its version, how long it has been up, how many runners are connected to it, and whether it is the controller that answered. A controller that does not answer SHALL still be listed, marked unreachable, with only its node, and SHALL also be named in the answer's `unreachable`. A node connected to the cluster that is not a controller SHALL NOT be listed.
 
 #### Scenario: Two controllers
 
@@ -456,5 +456,11 @@ operation that streams, since it holds the stream's process on the controller's 
 #### Scenario: A peer does not answer
 
 - **WHEN** a connected controller does not answer within the read's timeout
-- **THEN** it is listed with its node and marked unreachable, and the other rows are complete
+- **THEN** it is listed with its node and marked unreachable, it is named in `unreachable`, and the other rows are complete
+
+#### Scenario: A console node is connected
+
+- **GIVEN** two controllers and a console connected to them as a visible node
+- **WHEN** a caller lists the controllers
+- **THEN** only the two controllers are listed
 

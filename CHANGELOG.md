@@ -8,6 +8,23 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- Reads answer for the whole cluster, whichever controller the caller is
+  connected to: a relay's health is its hosting controller's verdict, a
+  controller outside a namespace's hub lists its relays, the factory list holds
+  every controller's factories, and steps reads, `Relay.info` and
+  `Relay.diagnose` run where the relay or its state is
+  ([Clustering](docs/public/topics/deploying/clustering.md#how-it-works)). The
+  list answers of `Relay.list`, `Relay.relay_rows`, `Relay.relay_plugins`,
+  `Relay.list_namespaces`, `Fleet.factories`, `Fleet.runners_for_factory` and
+  `Controller.controllers` are now `{rows, unreachable}` instead of a bare list,
+  so every SDK's `list_relays` answers that shape too; `unreachable` names the
+  controllers that did not answer, and each row carries its `node`.
+  `Relay.info`, `Controller.cluster_status` and
+  `Controller.liveness_counters` gain `unreachable`. `Relay.list_namespaces`
+  rows gain `nodes`, and `running` means running on any controller.
+  `Controller.cluster_status` no longer answers `leader`, `is_leader` or
+  `local_node`, and its node rows no `leader`; it answers `answered_by`.
+  `Fleet.factories` rows gain `nodes`.
 - Relays move between controllers by cold swap by default: a relay stops on the
   controller it leaves before it starts on the new one, which copies its saved
   state first, so only one copy ever runs. During the move the relay answers

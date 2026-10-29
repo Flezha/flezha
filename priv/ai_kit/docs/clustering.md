@@ -36,6 +36,13 @@ flowchart LR
   60000 by default), and the orchestrator must give the process longer than that before it
   kills it: the timeout plus 15 seconds, 75 seconds by default.
   [deploying_a_controller.md](deploying_a_controller.md) has the pairing rule.
+- **Reading.** A read answers for the whole cluster, whichever controller the caller is
+  connected to. The relay list, relay info, the factory list, `flz namespace list` and
+  `flz cluster status` ask every controller at once, all within one 5-second bound. A relay's health is the verdict of the controller that hosts it, each
+  row names its `node`, and a controller that does not answer in time is named in the
+  answer's `unreachable` (the CLI prints it on a closing `Did not answer:` line) instead of
+  failing the read. A steps instance's journal, inbox and Cells are read on the controller
+  that holds its state.
 - **The state copy.** A durability backend (PostgreSQL, S3 or a path that outlives the node's
   disk) holds a copy of each controller's state, which a relay that moves is restored
   from. For a relay at `durable: local` the copy is made in the background, every
@@ -186,7 +193,9 @@ Relays in namespace 'agents':
 ```
 
 The second controller took a share as it joined. The CLI, run in the first controller, sees
-the whole cluster:
+the whole cluster: each relay's health is the verdict of the controller hosting it, and a
+controller that does not answer in time is named on a closing `Did not answer:` line
+rather than failing the read:
 
 ```sh
 $ flz cluster status --namespace agents
@@ -195,11 +204,10 @@ $ flz cluster status --namespace agents
 ```output
 Cluster status for namespace 'agents':
 
-  Leader:     flezha@controller.agentdesk
-  Local node: flezha@controller.agentdesk (leader)
+  Answered by: flezha@controller.agentdesk
 
   Nodes:
-    flezha@controller.agentdesk: 2 relay(s) recovery_state=normal [leader]
+    flezha@controller.agentdesk: 2 relay(s) recovery_state=normal
     flezha@controller-2.agentdesk: 3 relay(s) recovery_state=normal
 
   Relay health: suspended=3, healthy=2

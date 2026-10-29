@@ -5,7 +5,7 @@ USAGE:
 
 COMMANDS:
     controller  Controller management commands.
-    cluster     Controller cluster status (nodes, leader, relay health).
+    cluster     Controller cluster status (nodes, relay health, who answered).
     relay       Relay management commands.
     namespace   Namespace management commands.
     runner      Runner management commands.

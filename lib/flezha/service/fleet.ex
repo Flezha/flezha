@@ -99,23 +99,28 @@ defmodule Flezha.Service.Fleet do
     {:ok, DropMarks.list(call.namespace)}
   end
 
-  @doc "The runners of one factory in `namespace`."
+  @doc """
+  The runners of one factory in `namespace`, on every controller. Each
+  controller advertising it answers its own; `unreachable` names those that
+  did not answer.
+  """
   @spec runners_for_factory(String.t(), String.t(), caller_context()) ::
-          {:ok, [term()]} | {:error, term()}
+          {:ok, map()} | {:error, term()}
   verb runners_for_factory(namespace, factory_id, caller_context),
     verb: :list_runners,
     args: [namespace: @namespace, factory_id: [type: :string, doc: "The factory."]] do
-    {:ok, FleetManager.runners_for_factory(namespace, factory_id)}
+    {:ok, FleetManager.Cluster.factory_runners(namespace, factory_id)}
   end
 
   @doc """
-  The factories declared in `namespace`, with their runners. Each carries the
-  `runners` that can place it, so a listing needs no `runners_for_factory/3`
-  call per factory.
+  The factories any controller's runners advertise in `namespace`. One row
+  each, carrying the `nodes` advertising it and the `runners` that can place
+  it, so a listing needs no `runners_for_factory/3` call per factory;
+  `unreachable` names the controllers that did not answer.
   """
-  @spec factories(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
+  @spec factories(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb factories(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
-    FleetManager.list_factories(namespace)
+    {:ok, FleetManager.Cluster.global_factories(namespace)}
   end
 
   @doc "The caller context a runner in `namespace` connects with."

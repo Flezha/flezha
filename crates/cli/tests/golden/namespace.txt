@@ -5,7 +5,7 @@ USAGE:
 
 COMMANDS:
     list           The namespaces in the durable catalog the caller may be
-                   shown.
+                   shown, and the controllers each runs on.
     create         Create a namespace.
     delete         Delete a namespace and the quota counters keyed on it.
     show           One namespace record.

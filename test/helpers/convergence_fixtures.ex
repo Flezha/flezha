@@ -44,10 +44,8 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
       unmet_intent_ms: unmet_intent_ms
     })
 
-    Mimic.stub(HubManager, :relay_rows, fn ns ->
-      health = Snapshot.relay_health_of(ns)
-      Enum.map(rows, &%{&1 | health: Map.get(health, &1.id, :unknown)})
-    end)
+    # The registry rows carry no health: a read adds the hosting controller's.
+    Mimic.stub(HubManager, :relay_rows, fn _ns -> Enum.map(rows, &Map.delete(&1, :health)) end)
 
     :ok
   end

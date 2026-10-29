@@ -67,20 +67,6 @@ defmodule Flezha.Process.ParallelAndCspecTest do
     assert elapsed_us < 2_000_000, "the wedged item was waited for more than once"
   end
 
-  test "map_nodes/3 answers per node and survives an unreachable one" do
-    outcomes =
-      Parallel.map_nodes([node(), :nobody@nowhere], &:erpc.call(&1, Kernel, :node, []),
-        timeout: 2_000
-      )
-
-    assert {node(), {:ok, node()}} in outcomes
-    assert {:nobody@nowhere, {:exit, _reason}} = List.keyfind(outcomes, :nobody@nowhere, 0)
-  end
-
-  test "a duplicate node is asked once" do
-    assert length(Parallel.map_nodes([node(), node()], & &1, timeout: 1_000)) == 1
-  end
-
   # ---------- Cspec ----------
 
   test "build/4 turns a kind into the six keys a supervisor reads" do

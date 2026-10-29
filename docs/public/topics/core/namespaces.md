@@ -96,13 +96,14 @@ $ flz namespace list
 Fetching namespaces...
 Namespaces:
 
-  NAMESPACE                          RUNNING
+  NAMESPACE                          RUNNING ON
   _system                            no
   trading                            no
 ```
 
-`RUNNING` says whether a namespace's hub is up; it comes up when the
-namespace's first runner connects. A caller sees its own namespace in the
+`RUNNING` says whether a namespace's hub is up on any controller of the
+cluster, and `ON` names the controllers it runs on; it comes up when the
+namespace's first runner connects. Every controller answers the same. A caller sees its own namespace in the
 listing and no other; `admin@_system` sees them all. A caller with no
 namespace at all, as on a controller with authorization off, sees them all
 too.
@@ -398,7 +399,7 @@ that start workflows) reaches only the start and the send below; adding
 | bind a relay to a plugin | `PluginManager.bind` | `name`, then `relay_id` and optionally `hooks` and `channel` |
 | unbind a relay | `PluginManager.unbind` | `name`, then `relay_id` |
 | disable a plugin | `PluginManager.disable` | `name` |
-| list relays | `Relay.list` | none; one row per relay: its `id`, health, runner and node, and a partition group as one row |
+| list relays | `Relay.list` | none; answers `rows`, one per relay across the cluster (its `id`, health, runner and node, a partition group as one row), and `unreachable`, the controllers that did not answer |
 | list plugins | `PluginManager.enabled` | none; one row per plugin enabled in the namespace |
 | read cell state | `Relay.cell_state` | `relay_id`, and optionally `cell`: `<tasklet>` for its Cells or `<tasklet>/<cell_key>` for one; absent, every Cell of the relay |
 

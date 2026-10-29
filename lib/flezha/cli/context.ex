@@ -15,6 +15,15 @@ defmodule Flezha.Service.Cli.Context do
   def label_or(nil, default), do: default
   def label_or(value, _default), do: to_string(value)
 
+  @doc "The closing line of a cluster read some controllers did not answer; nothing when all did."
+  @spec unreachable([node()]) :: :ok
+  def unreachable([]), do: :ok
+
+  def unreachable(nodes) do
+    IO.puts("")
+    IO.puts("  Did not answer: #{Enum.join(nodes, ", ")}")
+  end
+
   @doc """
   The caller context a verb's trailing options describe. Identity comes ONLY
   from a verified token (`flz --token` / `FLEZHA_TOKEN`, threaded through as

@@ -2,19 +2,21 @@ defmodule Flezha.Service.Cli.Listing do
   @moduledoc """
   `flz namespace list`, `flz runner list`, `flz runner dropped`, `flz relay
   list`, `flz controller list` and `flz cluster status`: the text forms of the
-  listings.
+  listings. A cluster read's listing ends naming the controllers that did not
+  answer.
   """
 
   alias Flezha.Service.Cli.Context
 
-  @doc "`flz namespace list`: each namespace in the catalog, and whether it runs here."
-  def namespaces(rows, _args, _opts) do
-    table(rows, %{
+  @doc "`flz namespace list`: each namespace in the catalog, and the controllers it runs on."
+  def namespaces(answer, _args, _opts) do
+    table(answer, %{
       empty: "No namespaces found.",
       header: "Namespaces:",
       columns: [
         {"NAMESPACE", 35, & &1.namespace},
-        {"RUNNING", 0, &if(&1.running, do: "yes", else: "no")}
+        {"RUNNING", 8, &if(&1.running, do: "yes", else: "no")},
+        {"ON", 0, &Enum.join(&1.nodes, ", ")}
       ]
     })
   end
@@ -50,8 +52,8 @@ defmodule Flezha.Service.Cli.Listing do
   end
 
   @doc "`flz relay list`: one row per relay, a partition group as one row."
-  def relays(rows, [namespace | _], _opts) do
-    table(rows, %{
+  def relays(answer, [namespace | _], _opts) do
+    table(answer, %{
       empty: "No relays found for namespace '#{namespace}'.",
       header: "Relays in namespace '#{namespace}':",
       columns: [
@@ -64,9 +66,9 @@ defmodule Flezha.Service.Cli.Listing do
     })
   end
 
-  @doc "`flz controller list`: one row per connected controller."
-  def controllers(rows, _args, _opts) do
-    table(rows, %{
+  @doc "`flz controller list`: one row per controller of the cluster."
+  def controllers(answer, _args, _opts) do
+    table(answer, %{
       empty: "No controllers found.",
       header: "Controllers:",
       columns: [
@@ -100,8 +102,7 @@ defmodule Flezha.Service.Cli.Listing do
   def cluster(s, _args, _opts) do
     IO.puts("Cluster status for namespace '#{s.namespace}':")
     IO.puts("")
-    IO.puts("  Leader:     #{Context.label_or(s.leader, "(none)")}")
-    IO.puts("  Local node: #{s.local_node}#{if s.is_leader, do: " (leader)", else: ""}")
+    IO.puts("  Answered by: #{s.answered_by}")
     IO.puts("")
     IO.puts("  Nodes:")
 
@@ -109,11 +110,7 @@ defmodule Flezha.Service.Cli.Listing do
       IO.puts("    (none)")
     else
       Enum.each(s.nodes, fn n ->
-        marker = if n.leader, do: " [leader]", else: ""
-
-        IO.puts(
-          "    #{n.node}: #{n.relay_count} relay(s) recovery_state=#{n.recovery_state}#{marker}"
-        )
+        IO.puts("    #{n.node}: #{n.relay_count} relay(s) recovery_state=#{n.recovery_state}")
       end)
     end
 
@@ -122,11 +119,18 @@ defmodule Flezha.Service.Cli.Listing do
 
     IO.puts("")
     IO.puts("  Relay health: #{health_summary(s.relay_health)}")
+    Context.unreachable(s.unreachable)
   end
 
   # Every listing answers with one line saying there is nothing, or a padded
   # table. Only the two texts and the columns differ, so the shape is written
-  # once and each listing declares its own.
+  # once and each listing declares its own. A cluster read closes with the
+  # controllers that did not answer.
+  defp table(%{rows: rows, unreachable: unreachable}, spec) do
+    table(rows, spec)
+    Context.unreachable(unreachable)
+  end
+
   defp table([], %{empty: empty}), do: IO.puts(empty)
 
   defp table(rows, %{header: header, columns: columns}) do
@@ -139,15 +143,12 @@ defmodule Flezha.Service.Cli.Listing do
     end)
   end
 
-  # A column pads to its declared width. The last one declares 0, which
-  # `pad_trailing/2` leaves alone, so no line ends in trailing whitespace.
+  # A column pads to its declared width, and no line ends in whitespace: the
+  # last column declares 0, and an empty last cell leaves its padding behind.
   defp line(columns, text) do
-    [
-      "  "
-      | Enum.map(columns, fn {_title, width, _render} = column ->
-          String.pad_trailing(text.(column), width)
-        end)
-    ]
+    ["  " | Enum.map(columns, fn {_t, width, _r} = c -> String.pad_trailing(text.(c), width) end)]
+    |> IO.iodata_to_binary()
+    |> String.trim_trailing()
   end
 
   defp unix_iso(nil), do: "-"

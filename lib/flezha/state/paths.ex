@@ -172,7 +172,7 @@ defmodule Flezha.State.Paths do
   """
   @spec namespace_of_class(binary()) :: binary()
   def namespace_of_class(relay_class) when is_binary(relay_class) do
-    claimed_namespace(relay_class) || disk_namespace(relay_class) || "_system"
+    held_namespace(relay_class) || "_system"
   end
 
   @doc "Directory holding one namespace's durable state — the first level under `state_root/0`."
@@ -258,6 +258,18 @@ defmodule Flezha.State.Paths do
   defp disk_namespace(relay_class) do
     Enum.find(namespaces(), &class_on_disk?(relay_class, &1))
   end
+
+  @doc """
+  Whether this node's state root holds `relay_class`: a namespace claims it, or
+  its directory is on disk. The local half of the cluster lookup of where an
+  instance's state is.
+  """
+  @spec holds_class?(binary()) :: boolean()
+  def holds_class?(relay_class) when is_binary(relay_class),
+    do: held_namespace(relay_class) != nil
+
+  defp held_namespace(relay_class),
+    do: claimed_namespace(relay_class) || disk_namespace(relay_class)
 
   @doc "Whether `relay_class` has a state directory under `namespace` on this node."
   @spec class_on_disk?(binary(), binary()) :: boolean()

@@ -7,9 +7,9 @@ defmodule Flezha.Service.Controller do
   Every public function takes a `Flezha.Service.CallerContext` as its last
   argument, binds a row of `Flezha.AuthZ.Verbs`, and answers data.
   `local_recovery_snapshot/1` and `local_controller/0` are the exceptions and
-  are not on the published surface: they are the remote halves of
-  `cluster_status/2`'s and `controllers/1`'s fan-out, which every peer calls by
-  name. `stop_progress/4` is the telemetry handler a stop attaches.
+  are not on the published surface: they are the local halves of
+  `cluster_status/2`'s and `controllers/1`'s cluster reads, which every peer
+  calls by name. `stop_progress/4` is the telemetry handler a stop attaches.
 
   `stop/2` reports its progress as it goes, to the `:emit` the caller's context
   carries (a function, or a pid that receives `{:flezha_emit, event}`), from
@@ -27,6 +27,8 @@ defmodule Flezha.Service.Controller do
 
   alias Flezha.AuthZ.Namespace
   alias Flezha.Boot.Readiness
+  alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Reads
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Identificator
@@ -37,6 +39,7 @@ defmodule Flezha.Service.Controller do
   alias Flezha.Service.CallerContext
   alias Flezha.Service.Controller.MemTop
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Relay.Info
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.DurabilityTier
   alias Flezha.State.Paths
@@ -121,61 +124,72 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The cluster as one namespace sees it: nodes, relays and health. Each node
-  comes with its relay count and recovery state, beside the unplaced relays and
-  the relays' health.
+  The cluster as one namespace sees it: nodes, relays and health. Each of the
+  hub's nodes comes with its relay count and recovery state, beside the
+  unplaced relays and the relays' health, each relay's as the controller
+  hosting it judges it. `answered_by` names the
+  controller that answered; the cluster elects no leader. `unreachable` names
+  the controllers that did not answer.
   """
   @spec cluster_status(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb cluster_status(namespace, caller_context),
     args: [namespace: [type: :string, doc: "The namespace."]] do
     namespace = Namespace.or_default(namespace)
-    nodes = HubManager.get_hub_nodes(namespace, true)
-    rows = HubManager.relay_rows(namespace)
+    nodes = namespace |> Directory.hub_nodes() |> Enum.sort()
+    %{rows: rows, unreachable: rows_unreachable} = Info.rows(namespace)
     counts = Enum.frequencies_by(rows, & &1.node)
-    recovery = recovery_map(namespace, nodes)
 
-    # There is no leader election: the convergence loop uses local reads and
-    # process_hub's own coordinator for cluster-wide work, so the local node is
-    # the de-facto leader.
+    %{answers: recovery, unreachable: recovery_unreachable} =
+      Reads.ask(nodes, __MODULE__, :local_recovery_snapshot, [Identificator.hub(namespace)])
+
+    recovery = Map.new(recovery)
+
     {:ok,
      %{
        namespace: namespace,
-       leader: node(),
-       local_node: node(),
-       is_leader: true,
+       answered_by: node(),
        nodes:
          Enum.map(nodes, fn n ->
            %{
              node: n,
              relay_count: Map.get(counts, n, 0),
-             leader: n == node(),
              recovery_state: Map.get(recovery, n, :unknown)
            }
          end),
        unplaced_relays: Map.get(counts, nil, 0),
-       relay_health: Enum.frequencies_by(rows, & &1.health)
+       relay_health: Enum.frequencies_by(rows, & &1.health),
+       unreachable: Enum.uniq(rows_unreachable ++ recovery_unreachable)
      }}
   end
 
   @doc """
-  Every connected controller, the one that answered first. Each row gives its
-  node, its `host` address, the machine it runs on (`host_node`, `nil` while
-  `FLEZHA_HOST_NODE` is unset), its `version`, `uptime_ms`, how many `runners`
-  are connected to it, and `local?` for the one that answered. A controller
-  that does not answer in time is listed with its node and `reachable?: false`.
+  Every controller the cluster directory lists, the one that answered first.
+  Each row gives its node, its `host` address, the machine it runs on
+  (`host_node`, `nil` while `FLEZHA_HOST_NODE` is unset), its `version`,
+  `uptime_ms`, how many `runners` are connected to it, and `local?` for the one
+  that answered. A controller that does not answer in time is listed with its
+  node and `reachable?: false`, and named in `unreachable`.
   """
-  @spec controllers(caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @spec controllers(caller_context()) :: {:ok, map()} | {:error, term()}
   verb controllers(caller_context), verb: :controller_status do
-    nodes = [node() | Enum.sort(Node.list())]
-    facts = fan_out(nodes, :local_controller, [])
+    nodes = Reads.controllers()
+
+    %{answers: answers, unreachable: unreachable} =
+      Reads.ask(nodes, __MODULE__, :local_controller, [])
+
+    facts = Map.new(answers)
 
     {:ok,
-     Enum.map(nodes, fn n ->
-       case Map.fetch!(facts, n) do
-         :unreachable -> %{node: n, reachable?: false, local?: false}
-         %{} = row -> Map.merge(row, %{reachable?: true, local?: n == node()})
-       end
-     end)}
+     %{
+       rows:
+         Enum.map(nodes, fn n ->
+           case Map.fetch(facts, n) do
+             :error -> %{node: n, reachable?: false, local?: false}
+             {:ok, row} -> Map.merge(row, %{reachable?: true, local?: n == node()})
+           end
+         end),
+       unreachable: unreachable
+     }}
   end
 
   @doc "The durability breaches recorded since the controller started."
@@ -190,7 +204,11 @@ defmodule Flezha.Service.Controller do
     {:ok, DurabilityTier.status()}
   end
 
-  @doc "Every data-plane liveness counter the connected controllers hold."
+  @doc """
+  Every data-plane liveness counter the cluster's controllers hold. Each row
+  carries the `node` that holds it; `unreachable` names the controllers that
+  did not answer.
+  """
   @spec liveness_counters(caller_context()) :: {:ok, term()} | {:error, term()}
   verb liveness_counters(caller_context), verb: :controller_status do
     {:ok, LivenessCounters.snapshot_cluster()}
@@ -241,8 +259,8 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc false
-  # The remote half of `cluster_status/2`'s recovery fan-out. Public because the
-  # fan-out calls it by name on every peer.
+  # The local half of `cluster_status/2`'s recovery read, called by name on
+  # every hub node.
   @spec local_recovery_snapshot(atom()) :: atom()
   def local_recovery_snapshot(hub_id) when is_atom(hub_id) do
     case HubManager.recovery_state(hub_id) do
@@ -252,7 +270,7 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc false
-  # The remote half of `controllers/1`.
+  # The local half of `controllers/1`.
   @spec local_controller() :: map()
   def local_controller do
     {uptime_ms, _since_last} = :erlang.statistics(:wall_clock)
@@ -272,25 +290,6 @@ defmodule Flezha.Service.Controller do
       uptime_ms: uptime_ms,
       runners: length(runners)
     }
-  end
-
-  defp recovery_map(namespace, nodes),
-    do: fan_out(nodes, :local_recovery_snapshot, [Identificator.hub(namespace)])
-
-  # Each of `nodes`' answer to `function`, this node's read in place and the
-  # peers' at once; a peer that does not answer in time answers `:unreachable`.
-  defp fan_out(nodes, function, args) do
-    peers = List.delete(nodes, node())
-    answers = :erpc.multicall(peers, __MODULE__, function, args, Durations.get(:peer_read_ms))
-
-    remote =
-      Enum.zip_with(peers, answers, fn
-        peer, {:ok, answer} -> {peer, answer}
-        peer, _failed -> {peer, :unreachable}
-      end)
-
-    local = if node() in nodes, do: [{node(), apply(__MODULE__, function, args)}], else: []
-    Map.new(local ++ remote)
   end
 
   # The phase lines come from an attached handler, so the detach must survive

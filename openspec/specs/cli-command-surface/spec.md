@@ -497,7 +497,7 @@ A refused verb SHALL exit with the exit code of its error's class: 1 internal, 2
 
 ### Requirement: `flz namespace list` SHALL answer from the namespace catalog
 
-`flz namespace list` SHALL answer from the durable namespace catalog, the same store `flz namespace create`, `delete`, `show` and `set-quota` write, and SHALL report for each namespace whether a hub for it is running on this controller. A namespace created a moment earlier SHALL therefore appear, whether or not anything is running in it.
+`flz namespace list` SHALL answer from the durable namespace catalog, the same store `flz namespace create`, `delete`, `show` and `set-quota` write, and SHALL report for each namespace whether a hub for it is running on any controller of the cluster, and on which controllers. A namespace created a moment earlier SHALL therefore appear, whether or not anything is running in it. The answer SHALL be the same whichever controller answers it.
 
 The verb's declared row SHALL be unchanged: the same verb name, the same action and the same scope it binds today. Only the data the body reads changes, so no user gains or loses the ability to run it.
 
@@ -512,9 +512,15 @@ The command's help text SHALL describe what it now answers, rather than naming r
 
 #### Scenario: The output says what is running
 
-- **GIVEN** a catalog holding two namespaces, one of which has a live hub on this controller
+- **GIVEN** a catalog holding two namespaces, one of which has a live hub on some controller of the cluster
 - **WHEN** a user runs `flz namespace list`
-- **THEN** both SHALL appear, and the output SHALL distinguish the one with a live hub from the one without
+- **THEN** both SHALL appear, and the output SHALL distinguish the one with a live hub from the one without, naming the controllers that run the live one
+
+#### Scenario: A hub that runs only on another controller
+
+- **GIVEN** controllers A and B, and namespace `trader` whose hub runs on B only
+- **WHEN** a user connected to A runs `flz namespace list`
+- **THEN** `trader` SHALL be shown as running, on B
 
 #### Scenario: A namespace-scoped caller sees its own namespace only
 

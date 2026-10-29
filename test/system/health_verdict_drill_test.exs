@@ -402,7 +402,7 @@ defmodule FlezhaTest.System.HealthVerdictDrillTest do
         Cli.call("Relay.list", Jason.encode!([ctx.namespace]), output: "json")
       end)
 
-    rows = Jason.decode!(out)
+    %{"rows" => rows} = Jason.decode!(out)
 
     case Enum.find(rows, &(&1["id"] == id)) do
       %{"health" => health} -> health
