@@ -22,7 +22,6 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Service.PluginRecords
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
-  alias ProcessHub.Service.DeclaredChildren
 
   @doc """
   The name this run's node is distributed under: `<base>@<host>` from the two
@@ -321,6 +320,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   its disable keeps its copy dialing.
   """
   def stop_peers_and_namespace(peers, namespace) do
+    # Read while every plugin home has its registry row: with durable starts
+    # off nothing else names it, and a home on a stopping peer has none until
+    # the hub places it here again.
+    homes = for %{name: name} <- PluginRecords.plugins(namespace), do: {:plugin, name}
     for {pid, peer} <- peers, do: stop_peer_node(pid, peer)
     hub_id = Identificator.hub(namespace)
 
@@ -328,7 +331,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       fn ->
         Enum.all?(ProcessHub.process_list(hub_id, :global), fn {_id, node_pids} ->
           Keyword.keys(node_pids) -- [node()] == []
-        end) and plugin_homes_here?(hub_id)
+        end) and Enum.all?(homes, &home_here?(hub_id, &1))
       end,
       30_000
     )
@@ -338,14 +341,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
   # A plugin home has no group, so one whose controller left runs here once the
   # hub has placed it again.
-  defp plugin_homes_here?(hub_id) do
-    %{children: children} = DeclaredChildren.declared_children(hub_id)
-
-    Enum.all?(
-      for(%{id: {:plugin, _} = id} <- children, do: ProcessHub.child_lookup(hub_id, id)),
-      &match?({_spec, [{node, _pid}]} when node == node(), &1)
-    )
-  end
+  defp home_here?(hub_id, id),
+    do: match?({_spec, [{node, _pid}]} when node == node(), ProcessHub.child_lookup(hub_id, id))
 
   @doc "Disable every plugin and stop every relay in `namespace`, on every hub node."
   def stop_namespace(namespace) do
