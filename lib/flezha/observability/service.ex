@@ -36,7 +36,7 @@ defmodule Flezha.Service.Observability do
   # it names the registered ones and mints no atom.
   @source [type: :string, doc: "A registered observability source."]
 
-  alias Flezha.AuthZ
+  alias Flezha.AuthZ.Namespace
   alias Flezha.Cluster.Reads
   alias Flezha.Config
   alias Flezha.Observability
@@ -309,17 +309,10 @@ defmodule Flezha.Service.Observability do
   end
 
   # Which signals the caller's namespace may see, for a query, a forwarded tail
-  # and the listing's counts alike: `:all`, or the one namespace. It is data,
-  # so a local half on another controller applies it. `admin@_system` sees
-  # everything; every other caller sees only their own namespace's signals (and
-  # signals whose metadata carries no namespace — pre-change emits).
-  defp visibility(%{role: :admin, namespace: "_system"}), do: :all
-  defp visibility(%{source: :internal}), do: :all
-
-  defp visibility(caller_context) do
-    bound_ns = Map.get(caller_context, :namespace)
-    if is_nil(bound_ns) or not AuthZ.enabled?(), do: :all, else: bound_ns
-  end
+  # and the listing's counts alike. It is data, so a local half on another
+  # controller applies it; a signal whose metadata carries no namespace (a
+  # pre-change emit) is seen by every caller.
+  defp visibility(caller_context), do: Namespace.read_scope(caller_context)
 
   defp visible_to(:all), do: fn _signal -> true end
   defp visible_to(namespace), do: &(Map.get(&1.metadata, :namespace) in [nil, namespace])

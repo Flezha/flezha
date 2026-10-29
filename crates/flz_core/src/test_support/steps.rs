@@ -434,6 +434,7 @@ pub fn await_completion(rx: &Receiver<RunnerMessage>, id: &str) -> (String, Stri
                 status,
                 error,
                 result,
+                ..
             } if relay_id == id => return (status, error, result),
             RunnerMessage::EmitControlRequest {
                 reference_id,

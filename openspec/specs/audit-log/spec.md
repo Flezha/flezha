@@ -2,15 +2,21 @@
 
 ## Purpose
 
-The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_packages` (which plugin packages each boot loaded and refused). The sink writes one structured JSON Lines record per accepted signal to disk under `storage/app/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and a `Flezha.Service.AuditLog` service-API module callable from both the CLI (`flz audit list | read | tail | stats | rotate`) and the planned Phoenix UI directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
+The audit-log capability provides a durable, append-only observability sink on top of the foundation bus. It is a Sink subscribed to a configurable allow-list of `(source, name)` pairs — by default capturing every `:event` signal on the foundation's `:observability_service` audit seam (subscribe / enable / disable calls), every `:event` on `:flezha_shutdown` (graceful shutdown phase boundaries), and every `:event` on `:flezha_plugin_packages` (which plugin packages each boot loaded and refused). The sink writes one structured JSON Lines record per accepted signal to disk under `storage/app/audit/`, with a stable top-level field order so downstream readers do not need to know the metadata convention to identify the actor. The subsystem ships size + age file rotation, size + age retention sweep, a small binary `INDEX` catalog (rebuildable from on-disk files), per-record or batched `fsync` modes, and is read through the `audit` kind of `Flezha.Service.Logs`, callable from both the CLI (`flz logs ... audit`, spelled `flz audit list | read | tail | stats | rotate`) and the console directly. The sink uses the foundation's `:block` overflow policy so the audit chain is never silently broken under load. Authentication / authorization of audit readers, remote shipping, and tamper-evident inter-file hash chains are explicitly out of scope and deferred to follow-up capabilities.
 ## Requirements
 ### Requirement: Durable append-only audit sink
 
-The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implements the foundation's `Flezha.Observability.Sink` behaviour and writes one durable record per accepted signal to an append-only file on disk under the configured audit directory. The sink SHALL use the foundation's `:block` overflow policy. The sink SHALL register with the foundation Registry only when the `:audit_log, :enabled` config flag is `true`, AND when the master `:observability, :enabled` flag is also `true`.
+The system SHALL keep the audit log as the `audit` kind of the shared log core (see
+`log-kinds`), fed by a Sink that implements the foundation's `Flezha.Observability.Sink`
+behaviour and writes one durable record per accepted signal to an append-only file on disk
+under the configured audit directory. The sink SHALL use the foundation's `:block` overflow
+policy. The sink SHALL register with the foundation Registry only when the `:audit_log,
+:enabled` config flag is `true`, AND when the master `:observability, :enabled` flag is also
+`true`.
 
 #### Scenario: Sink off by default
 - **WHEN** the application boots with default configuration
-- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL NOT include a sink named `:audit_log`, no `storage/app/audit/` directory SHALL be created, and `Flezha.Service.AuditLog.stats/1` SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
+- **THEN** `Flezha.Observability.Registry.list_sinks/0` SHALL NOT include a sink named `:audit_log`, no `storage/app/audit/` directory SHALL be created, and `Flezha.Service.Logs.stats(%{kind: "audit"}, ctx)` SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
 
 #### Scenario: Sink registers when enabled
 - **WHEN** the application boots with `:audit_log, :enabled: true`
@@ -18,11 +24,20 @@ The system SHALL provide a Sink `Flezha.Observability.AuditLog.Sink` that implem
 
 #### Scenario: Master observability flag transitively disables audit
 - **WHEN** the application boots with `:observability, :enabled: false` AND `:audit_log, :enabled: true`
-- **THEN** the audit-log subsystem SHALL NOT start, no sink SHALL register, no disk I/O SHALL occur, and `Flezha.Service.AuditLog.*` calls SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}` (master flag wins)
+- **THEN** the audit kind SHALL NOT start, no sink SHALL register, no disk I/O SHALL occur for it, and every `Flezha.Service.Logs` call on the `audit` kind SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}` (master flag wins)
 
 ### Requirement: Configurable subscription allow-list
 
-The sink SHALL apply a configured `(source, name | :any)` allow-list inside its handler. Signals not matching the allow-list SHALL be discarded without being written. The default allow-list SHALL be derived, not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_packages, :any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the user-verb declaration table names (at minimum `:observability_service` and `:audit_log`), so that a verb declared with an audit reaches the durable log by construction and no verb's audit can be volatile. Users SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime config.
+The sink's `(source, name | :any)` allow-list SHALL decide what it receives: the sink's bus
+filter SHALL name exactly the sources its allow-list names, so the bus never hands it a signal
+of another source, and the handler SHALL apply the `name` part. Signals not matching the
+allow-list SHALL be discarded without being written. The default allow-list SHALL be derived,
+not written by hand: it SHALL include `{:flezha_shutdown, :any}`, `{:flezha_plugin_packages,
+:any}`, `{:platform_authz, :any}`, and `{source, :any}` for every audit source the user-verb
+declaration table names (at minimum `:observability_service` and `:audit_log`), so that a verb
+declared with an audit reaches the durable log by construction and no verb's audit can be
+volatile. Users SHALL be able to extend it via `:audit_log, :extra_subscriptions` runtime
+config.
 
 #### Scenario: Default allow-list captures observability-service audit events
 - **WHEN** the audit subsystem is enabled and a caller invokes `Flezha.Service.Observability.disable_source/2`
@@ -44,6 +59,10 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 - **WHEN** a signal arrives at the sink whose `(source, name)` pair is not in the allow-list AND does not match an `:any` wildcard for that source
 - **THEN** no record SHALL be written for that signal AND the file size SHALL NOT change
 
+#### Scenario: A signal of a source outside the allow-list never reaches the sink
+- **WHEN** a relay emits a `:metric` on a source the allow-list does not name
+- **THEN** the bus SHALL NOT call the audit sink for it, and the emitting process SHALL NOT wait on the sink
+
 #### Scenario: User-extended allow-list is honoured
 - **WHEN** the application boots with `:audit_log, :extra_subscriptions: [{:my_source, :critical}]` and a signal `(source: :my_source, name: :critical)` is emitted
 - **THEN** a record for that signal SHALL appear in `audit-current.jsonl`
@@ -58,11 +77,11 @@ The sink SHALL apply a configured `(source, name | :any)` allow-list inside its 
 
 ### Requirement: JSON Lines record format with stable field order
 
-Each record SHALL be a single UTF-8 JSON object on its own line, terminated by `\n`. The top-level fields SHALL appear in this exact order: `ts_us`, `ts_iso`, `source`, `name`, `measurements`, `metadata`, `caller`, `namespace`. The `caller` field SHALL be denormalised from `metadata.caller_source`, `metadata.principal`, and `metadata.request_id` so a reader does not need to know the metadata convention to identify the actor. When `:authn_authz, :enabled` is `true` the `caller.principal` value SHALL be the verified principal bound by the authentication layer; when `false` the `caller.principal` value SHALL be `null` and SHALL NOT carry any caller-supplied placeholder. The `namespace` field SHALL be the resolved namespace from `caller_context.namespace`; for pre-`platform-authn-authz` records or signals without a namespace context the field SHALL be `"_system"`.
+Each record SHALL be a single UTF-8 JSON object on its own line, terminated by `\n`. The top-level fields SHALL appear in this exact order: `ts_us`, `ts_iso`, `source`, `name`, `measurements`, `metadata`, `caller`, `namespace`, `node`. `ts_us` SHALL be wall-clock microseconds and `ts_iso` the same instant. `node` SHALL be the controller that wrote the record. The `caller` field SHALL be denormalised from `metadata.caller_source`, `metadata.principal`, and `metadata.request_id` so a reader does not need to know the metadata convention to identify the actor. When `:authn_authz, :enabled` is `true` the `caller.principal` value SHALL be the verified principal bound by the authentication layer; when `false` the `caller.principal` value SHALL be `null` and SHALL NOT carry any caller-supplied placeholder. The `namespace` field SHALL be the resolved namespace from `caller_context.namespace`; for pre-`platform-authn-authz` records or signals without a namespace context the field SHALL be `"_system"`.
 
 #### Scenario: Single-line record for a signal
 - **WHEN** the sink writes a signal with `source: :observability_service`, `name: :enable_source`, `metadata: %{caller_source: :cli, request_id: "req-1"}`
-- **THEN** the written line SHALL be valid JSON, SHALL end with `\n`, SHALL contain top-level fields in the order `ts_us, ts_iso, source, name, measurements, metadata, caller, namespace`, AND `caller.source` SHALL equal `"cli"` AND `caller.request_id` SHALL equal `"req-1"`
+- **THEN** the written line SHALL be valid JSON, SHALL end with `\n`, SHALL contain top-level fields in the order `ts_us, ts_iso, source, name, measurements, metadata, caller, namespace, node`, AND `caller.source` SHALL equal `"cli"` AND `caller.request_id` SHALL equal `"req-1"`
 
 #### Scenario: Verified principal lands in caller.principal
 - **WHEN** `:authn_authz, :enabled` is `true` AND a signal is written whose `metadata.principal` was bound by the authentication layer
@@ -80,13 +99,21 @@ Each record SHALL be a single UTF-8 JSON object on its own line, terminated by `
 - **WHEN** any record is written
 - **THEN** its `ts_iso` field SHALL match the regex `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$`
 
+#### Scenario: ts_us is wall-clock time
+- **WHEN** a record is written at wall-clock time T
+- **THEN** its `ts_us` SHALL equal T in microseconds since the Unix epoch, within the writer's clock resolution, and SHALL agree with `ts_iso` to the millisecond
+
 ### Requirement: Fsync semantics
 
-The writer SHALL support two `:fsync_mode` values. In `:per_record` (default) the writer SHALL call `:file.sync/1` after every record write before returning to the caller. In `:batched` the writer SHALL accumulate writes and call `:file.sync/1` no less frequently than every `:fsync_interval_ms` (default `100`). In either mode the writer SHALL never return from `handle_call({:signal, _}, ...)` until the record is durably written (`:per_record`) or buffered in the OS page cache (`:batched`).
+The audit kind SHALL support two `:fsync_mode` values. In `:per_record` (default) every caller's record SHALL be written and synced with `:file.sync/1` before the writer answers that caller; records queued at the same moment SHALL share one write and one sync (group commit). In `:batched` the writer SHALL answer once the record is written and call `:file.sync/1` no less frequently than every `:fsync_interval_ms` (default `100`). In either mode the writer SHALL never answer a signal until the record is durably written (`:per_record`) or buffered in the OS page cache (`:batched`).
 
 #### Scenario: Per-record fsync default
 - **WHEN** the audit subsystem is enabled with default config
-- **THEN** every `handle_call({:signal, _}, ...)` to the writer SHALL trigger a `:file.sync/1` on the active file before replying
+- **THEN** every signal the sink accepts SHALL be synced to disk before the sink answers the producer
+
+#### Scenario: Concurrent records share a sync
+- **WHEN** ten producers' signals reach the writer at the same moment under `:per_record`
+- **THEN** each producer SHALL be answered only after its record is synced, and the writer SHALL have issued fewer than ten syncs
 
 #### Scenario: Batched fsync flushes within configured interval
 - **WHEN** the audit subsystem is enabled with `:fsync_mode: :batched, :fsync_interval_ms: 50`
@@ -142,75 +169,91 @@ The system SHALL maintain a small binary catalog `storage/app/audit/INDEX` conta
 
 ### Requirement: Service-API surface
 
-The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL call `Flezha.AuthZ.authorize/3` before any side effect. Read tasklets (`list_files`, `read`, `tail`, `stats`) SHALL require at least `viewer`; `rotate` SHALL require at least `ops`. Read tasklets SHALL filter returned records to those whose `namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see all records across all namespaces.
+The audit log SHALL be read through `Flezha.Service.Logs` with `kind: "audit"` (see
+`log-kinds`), callable from both the CLI and the console directly. `Flezha.Service.AuditLog`
+SHALL NOT exist. Every public function SHALL accept a `caller_context` argument with the same
+shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk,
+:internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL authorize
+before any side effect. Reads (`kinds`, `read`, `tail`, `files`, `stats`) SHALL require at
+least `viewer`; `rotate` SHALL require at least `ops`. Reads SHALL answer only records whose
+`namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see
+all records across all namespaces. Reads SHALL cover every controller in the cluster.
 
 #### Scenario: list_files returns catalog entries
-- **WHEN** the caller invokes `Flezha.Service.AuditLog.list_files(%{source: :cli, principal: "alice", namespace: "_system", role: :viewer})` and three rotated files exist
-- **THEN** the call SHALL return `{:ok, [...]}` with three entries each carrying `filename`, `first_ts_us`, `last_ts_us`, `record_count`, `size_bytes`, and `sha256`
+- **WHEN** the caller invokes `Flezha.Service.Logs.files(%{kind: "audit"}, ctx)` with a viewer context in a cluster of two controllers holding three rotated files each
+- **THEN** the call SHALL return `{:ok, %{files: [...], unreachable: []}}` with six entries each carrying `node`, `filename`, `first_ts_us`, `last_ts_us`, `record_count`, `size_bytes`, and `sha256`
 
 #### Scenario: read returns records with filter pushdown
-- **WHEN** the caller invokes `read(%{file: "audit-...jsonl", source: "observability_service", since_us: T0, limit: 100}, ctx)`
-- **THEN** the call SHALL return up to `100` records from the named file whose `source` equals `"observability_service"` AND whose `ts_us >= T0`
+- **WHEN** the caller invokes `read(%{kind: "audit", node: n, file: "audit-...jsonl", filters: %{source: "observability_service"}, since_us: T0, limit: 100}, ctx)`
+- **THEN** the call SHALL return up to `100` records from the named file on controller `n` whose `source` equals `"observability_service"` AND whose `ts_us >= T0`
 
 #### Scenario: Viewer in team-orders sees only team-orders records
-- **WHEN** `:authn_authz, :enabled` is `true` AND a viewer bound to `team-orders` invokes `read/2` against a file containing records from both `team-orders` and `team-payments`
+- **WHEN** `:authn_authz, :enabled` is `true` AND a viewer bound to `team-orders` reads the audit kind holding records from both `team-orders` and `team-payments`
 - **THEN** the returned list SHALL contain only records whose `namespace` field is `"team-orders"`
 
 #### Scenario: admin@_system sees all namespaces
-- **WHEN** `admin@_system` invokes `read/2` against a file containing records from multiple namespaces
+- **WHEN** `admin@_system` reads the audit kind holding records from multiple namespaces
 - **THEN** the returned list SHALL contain records from every namespace
 
 #### Scenario: Viewer cannot rotate
-- **WHEN** `:authn_authz, :enabled` is `true` AND a viewer invokes `rotate/1`
+- **WHEN** `:authn_authz, :enabled` is `true` AND a viewer invokes `rotate(%{kind: "audit"}, ctx)`
 - **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.role_insufficient", class: :denied}}` AND no rotation SHALL occur
 
 #### Scenario: tail streams live records
-- **WHEN** the caller invokes `tail(%{source: nil}, ctx)` and a record is subsequently written
-- **THEN** the caller SHALL receive a streaming message carrying the new record within the same scheduler tick
+- **WHEN** the caller invokes `tail(%{kind: "audit", filters: %{}}, ctx)` and a record is subsequently written on any controller
+- **THEN** the caller SHALL receive a streaming message carrying the new record and its `node`
 
 #### Scenario: stats returns operational snapshot
-- **WHEN** the caller invokes `stats(ctx)`
-- **THEN** the call SHALL return `{:ok, %{...}}` with at minimum `current_file`, `current_file_bytes`, `total_bytes`, `total_files`, `oldest_ts_us`, `record_count`, `drop_count`
+- **WHEN** the caller invokes `stats(%{kind: "audit"}, ctx)`
+- **THEN** the call SHALL return `{:ok, %{controllers: [...], unreachable: [...]}}` whose rows carry at minimum `node`, `current_file`, `current_file_bytes`, `total_bytes`, `total_files`, `oldest_ts_us`, `record_count`, `dropped_count`
 
 #### Scenario: rotate forces immediate rotation
-- **WHEN** an `ops` caller invokes `rotate(ctx)`
-- **THEN** the active file SHALL be rotated immediately AND the call SHALL return `{:ok, %{rotated_to: filename}}` AND a fresh empty active file SHALL be opened
+- **WHEN** an `ops` caller invokes `rotate(%{kind: "audit", node: n}, ctx)`
+- **THEN** controller `n`'s active audit file SHALL be rotated immediately AND the call SHALL return `{:ok, %{rotated: [%{node: n, rotated_to: filename}], unreachable: []}}` AND a fresh empty active file SHALL be opened
 
 #### Scenario: Missing caller_context source is rejected
 - **WHEN** any public function is invoked with `caller_context: %{}`
 - **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.invalid_caller_context"}}`
 
 #### Scenario: Master flag disabled returns disabled error
-- **WHEN** any public function is invoked while the master observability flag is `false`
+- **WHEN** any public function is invoked on the audit kind while the master observability flag is `false`
 - **THEN** the call SHALL return `{:error, %Flezha.Error{code: "observability.disabled"}}`
 
 #### Scenario: Audit subsystem disabled returns disabled error
-- **WHEN** any public function is invoked while the master flag is `true` but `:audit_log, :enabled: false`
+- **WHEN** any public function is invoked on the audit kind while the master flag is `true` but `:audit_log, :enabled: false`
 - **THEN** the call SHALL return `{:error, %Flezha.Error{code: "audit.disabled"}}`
 
 ### Requirement: `flz audit` CLI verb family
 
-The system SHALL provide a `flz audit` CLI command tree exposing the audit-log service API to users. At minimum the verbs `list`, `tail`, `read <file>`, `stats`, `rotate` SHALL be implemented. Every verb SHALL build a `caller_context` with `source: :cli` and route through `Flezha.Service.CliManager.audit_log_*` wrappers. Text output SHALL be the default; `--json` SHALL render machine-parseable output (newline-delimited JSON for `tail` and `read`).
+`flz audit list | tail | read [<file>] | stats | rotate` SHALL remain available as spellings of
+`flz logs files audit`, `flz logs tail audit`, `flz logs read audit`, `flz logs stats audit`
+and `flz logs rotate audit` (see `log-kinds`), resolved in the CLI verb table with no
+implementation of their own. Text output SHALL be the default; `--json` SHALL render
+machine-parseable output (newline-delimited JSON for `tail` and `read`).
 
 #### Scenario: `flz audit list` shows catalog
 - **WHEN** the user runs `flz audit list`
-- **THEN** one row per catalog entry SHALL be printed with at minimum filename, first ts, last ts, record count, size
+- **THEN** one row per catalog entry of every controller SHALL be printed with at minimum controller, filename, first ts, last ts, record count, size
 
 #### Scenario: `flz audit read` applies filters
-- **WHEN** the user runs `flz audit read audit-20260518T071455Z-1.jsonl --source observability_service --since 1h --limit 50`
-- **THEN** the command SHALL print up to `50` records matching the filters, one per line, sorted by `ts_us` ascending
+- **WHEN** the user runs `flz audit read audit-20260518T071455Z-1.jsonl --node flezha@a --source observability_service --since 1h --limit 50`
+- **THEN** the command SHALL print up to `50` records of that file matching the filters, one per line, sorted by `ts_us` ascending
+
+#### Scenario: `flz audit read` without a file reads the cluster newest first
+- **WHEN** the user runs `flz audit read --source platform_authz --limit 20`
+- **THEN** the command SHALL print the 20 newest matching records of every controller, newest first, each naming its controller
 
 #### Scenario: `flz audit tail` streams live
-- **WHEN** the user runs `flz audit tail --json` and a record is subsequently written
-- **THEN** the command SHALL print the record as a single JSON line within the same scheduler tick
+- **WHEN** the user runs `flz audit tail --json` and a record is subsequently written on any controller
+- **THEN** the command SHALL print the record as a single JSON line carrying its `node`
 
 #### Scenario: `flz audit rotate` forces rotation
 - **WHEN** the user runs `flz audit rotate`
-- **THEN** the command SHALL print the new rotated filename on success, exit zero, AND the next `flz audit list` SHALL include the new entry
+- **THEN** the command SHALL print the new rotated filename of each controller on success, exit zero, AND the next `flz audit list` SHALL include the new entries
 
 #### Scenario: `flz audit stats` shows snapshot
 - **WHEN** the user runs `flz audit stats`
-- **THEN** the command SHALL print current file path, current file size, total bytes, total file count, oldest record ts, record count, and drop count
+- **THEN** the command SHALL print, per controller, current file path, current file size, total bytes, total file count, oldest record ts, record count, and drop count
 
 #### Scenario: `flz audit *` against disabled audit emits clear error
 - **WHEN** the user runs any `flz audit *` verb while audit is disabled
@@ -218,14 +261,14 @@ The system SHALL provide a `flz audit` CLI command tree exposing the audit-log s
 
 ### Requirement: Audit reads are themselves auditable
 
-Every public function of `Flezha.Service.AuditLog` SHALL emit an `:event` signal on the `:audit_log` source recording the called function name, the caller `:source`, and the optional `:request_id`. The emit SHALL happen synchronously inside the service call so the record reaches the sink in the same logical tasklet.
+Every call of `Flezha.Service.Logs` on the `audit` kind SHALL emit an `:event` signal on the `:audit_log` source recording the called function name, the caller `:source`, and the optional `:request_id`. The emit SHALL happen synchronously inside the service call so the record reaches the sink in the same logical tasklet.
 
 #### Scenario: `tail` invocation is audited
-- **WHEN** the caller invokes `tail/2` with a `caller_context` of `%{source: :cli, request_id: "r"}`
+- **WHEN** the caller invokes `tail(%{kind: "audit"}, ctx)` with a `caller_context` of `%{source: :cli, request_id: "r"}`
 - **THEN** within one second a record SHALL appear in `audit-current.jsonl` with `source: "audit_log"`, `name: "tail"`, `caller.source: "cli"`, `caller.request_id: "r"`
 
 #### Scenario: `read` invocation is audited
-- **WHEN** the caller invokes `read/2`
+- **WHEN** the caller invokes `read(%{kind: "audit"}, ctx)`
 - **THEN** a `:read` audit event SHALL be recorded
 
 ### Requirement: Gzipped rotated files are readable
@@ -258,14 +301,14 @@ The system SHALL expose a runtime configuration map `:audit_log` with keys `:ena
 
 ### Requirement: Shutdown coordinator closes the writer cleanly
 
-The graceful-shutdown coordinator SHALL call into `Flezha.Observability.AuditLog.Writer.close/0` (with a bounded timeout) during its finalise phase BEFORE the foundation's `FsyncBatcher` flush. The close SHALL drain any in-flight buffered writes, fsync the active file, and close the file descriptor. Any signal that arrives at the sink AFTER close SHALL be discarded with a per-sink counter increment but SHALL NOT crash the producer.
+The graceful-shutdown coordinator SHALL close every enabled kind's writer (with a bounded timeout) during its finalise phase BEFORE the foundation's `FsyncBatcher` flush. The close SHALL drain any in-flight queued appends, fsync the active file, and close the file descriptor. Any signal or append that arrives AFTER close SHALL be discarded with a per-kind counter increment but SHALL NOT crash the producer.
 
 #### Scenario: Clean close on shutdown
 - **WHEN** the graceful shutdown coordinator drives `finalise` and the audit subsystem is enabled
 - **THEN** the active file SHALL be fsynced and its FD closed before the foundation's `FsyncBatcher` flush, AND no records SHALL be lost from before the close
 
 #### Scenario: Post-close signals are discarded
-- **WHEN** a signal arrives at the sink after the writer's `close/0` has returned
+- **WHEN** a signal arrives at the sink after the writer's close has returned
 - **THEN** the signal SHALL be discarded, a per-sink `:post_close_dropped` counter SHALL increment, AND no exception SHALL propagate to the producer
 
 ### Requirement: A record the audit log produced SHALL never raise when the audit log writes it

@@ -1,0 +1,27 @@
+flz logs - The controller's durable logs (the relay history and the audit log), read across the cluster.
+
+USAGE:
+    flz logs <COMMAND>
+
+COMMANDS:
+    kinds   Every log kind, with the filters a read takes and the columns a
+            reader shows.
+    read    A kind's records from every controller, newest first, each naming
+            its `node`.
+    tail    Stream a kind's new records from every controller as they are
+            written.
+    files   A kind's rotated files on every controller, each with its record
+            times and digest.
+    stats   A kind's operational snapshot, one row per controller.
+    rotate  Close a kind's current file and start a new one, on `node` or on
+            every controller.
+    help    Show this help message.
+
+Each kind is read across every controller. The kinds, with the filters each
+takes and the columns it shows:
+    flz logs kinds
+
+The last ten runs of a factory, newest first:
+    flz logs read relay_history --event ended --factory fan_trade --limit 10
+
+flz audit is flz logs with the audit kind filled in.

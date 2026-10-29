@@ -4,9 +4,10 @@
 
 use super::Help;
 
-pub(crate) const AUDIT_READ: Help = r#"With --json the matching records are one JSON array."#;
-
-pub(crate) const AUDIT_TAIL: Help = r#"With --json each record is one JSON line."#;
+pub(crate) const AUDIT_READ: Help = r#"Without a file the records of every controller are newest first, and a next
+cursor is printed while more are older; pass it back with --before. A <file>
+with --node reads that one file, oldest first. With --json the answer is one
+JSON object."#;
 
 pub(crate) const AUTH: Help = r#"bootstrap reads the one-time token from its standard input, never from an
 argument, which any local user could read:
@@ -105,6 +106,22 @@ EXAMPLES:
     flz namespace list --output json
     flz boot status
     flz boot await --timeout 60"#;
+
+pub(crate) const LOGS: Help = r#"Each kind is read across every controller. The kinds, with the filters each
+takes and the columns it shows:
+    flz logs kinds
+
+The last ten runs of a factory, newest first:
+    flz logs read relay_history --event ended --factory fan_trade --limit 10
+
+flz audit is flz logs with the audit kind filled in."#;
+
+pub(crate) const LOGS_READ: Help = r#"Records are newest first, each naming the controller that wrote it. When
+more are older, the read prints a next cursor; pass it back with --before.
+With --node and --file the read is that one file, oldest first. With --json
+the answer is one JSON object."#;
+
+pub(crate) const LOGS_TAIL: Help = r#"With --json each record is one JSON line."#;
 
 pub(crate) const MCP: Help = r#"An AI assistant starts this command and speaks MCP with it; it is not run by
 hand. Five tools need no controller: flezha_guide, flezha_sdk_example,

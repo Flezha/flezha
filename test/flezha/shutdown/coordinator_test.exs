@@ -10,7 +10,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
-  alias Flezha.Observability.AuditLog.Writer
+  alias Flezha.Logs.Writer
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
   alias Flezha.Shutdown.Coordinator
@@ -20,7 +20,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
   @finalise_rows [
     {FsyncBatcher, :flush_step, :fsync},
-    {Writer, :close_step, :audit_log},
+    {Writer, :close_step, :logs},
     {HubManager.Lifecycle, :hubs_step, :hubs},
     {TransportServer, :transports_step, :transports}
   ]
@@ -129,7 +129,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000, defer: [:transports])
 
-      assert received_rows() == [:fsync, :audit_log, :hubs]
+      assert received_rows() == [:fsync, :logs, :hubs]
     end
   end
 
@@ -205,7 +205,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
 
-      assert received_rows() == [:drain, :fsync, :audit_log, :hubs, :transports]
+      assert received_rows() == [:drain, :fsync, :logs, :hubs, :transports]
     end
 
     test "solo node (:no_target_nodes) skips migration and completes clean" do
@@ -285,7 +285,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       assert log =~ "still_local=1"
 
       # The timeout path still stops the hub, in finalise.
-      assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
+      assert received_rows() == [:fsync, :logs, :hubs, :transports]
     end
 
     test "a plugin home is neither locally hosted nor still local" do
@@ -350,7 +350,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
         end)
 
       assert log =~ "timeout phase=finalising"
-      assert received_rows() == [:fsync, :audit_log]
+      assert received_rows() == [:fsync, :logs]
     end
 
     test "a failed row is logged and the rows after it still run" do
@@ -364,7 +364,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
         end)
 
       assert log =~ "[shutdown] step node/fsync failed: {:exit, :disk_gone}"
-      assert received_rows() == [:audit_log, :hubs, :transports]
+      assert received_rows() == [:logs, :hubs, :transports]
     end
 
     test "the drain walk ends with its shutdown, and an old walk's report is never read" do
@@ -434,7 +434,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       stub_finalise_rows()
 
       assert Flezha.Application.prep_stop(:state) == :state
-      assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
+      assert received_rows() == [:fsync, :logs, :hubs, :transports]
       refute Shutdown.quiesced?(:node, nil)
     end
 
@@ -450,7 +450,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
         end)
 
       assert log =~ "[shutdown] coordinator unavailable in prep_stop: :noproc"
-      assert received_rows() == [:fsync, :audit_log, :hubs, :transports]
+      assert received_rows() == [:fsync, :logs, :hubs, :transports]
     end
   end
 
@@ -471,7 +471,7 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       end)
 
       assert Enum.map(Shutdown.steps(:node), & &1.name) ==
-               [:drain, :fsync, :audit_log, :hubs, :transports]
+               [:drain, :fsync, :logs, :hubs, :transports]
 
       assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
 

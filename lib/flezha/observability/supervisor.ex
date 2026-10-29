@@ -3,8 +3,10 @@ defmodule Flezha.Observability.Supervisor do
   Top-level supervisor for the observability foundation.
 
   Starts, in order: `Registry` (ETS state and the cardinality tracker),
-  `Phoenix.PubSub`, `SinkSupervisor`, `LoggerHandler`, `TelemetryBridge`,
-  and the one-shot `DefaultSinks` that registers the two built-in sinks.
+  `SinkSupervisor`, `LoggerHandler`, `TelemetryBridge`, and the one-shot
+  `DefaultSinks` that registers the two built-in sinks. The PubSub server its
+  sink publishes on is the application's own, and the durable logs are
+  `Flezha.Logs.Supervisor`'s.
 
   Under `:observability` → `enabled: false` it starts no sinks, no logger
   handler and no bus: only the telemetry bridge's leveled lines, so an event
@@ -26,7 +28,6 @@ defmodule Flezha.Observability.Supervisor do
     TelemetryBridge
   }
 
-  alias Flezha.Observability.AuditLog.Supervisor, as: AuditLogSupervisor
   alias Flezha.Observability.Export.Supervisor, as: ExportSupervisor
   alias Flezha.Observability.OtpBackend.Supervisor, as: OtpBackendSupervisor
 
@@ -45,14 +46,12 @@ defmodule Flezha.Observability.Supervisor do
       if enabled?() do
         [
           Registry,
-          {Phoenix.PubSub, name: Flezha.Observability.PubSub},
           SinkSupervisor,
           LoggerHandler,
           TelemetryBridge,
           DefaultSinks,
           OtpBackendSupervisor,
-          ExportSupervisor,
-          AuditLogSupervisor
+          ExportSupervisor
         ]
       else
         [{TelemetryBridge, lines_only: true}]

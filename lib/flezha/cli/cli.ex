@@ -19,7 +19,6 @@ defmodule Flezha.Service.Cli do
   alias Flezha.Service.Admin
 
   alias Flezha.Service.Cli.{
-    Audit,
     Authz,
     Boot,
     Context,
@@ -28,6 +27,7 @@ defmodule Flezha.Service.Cli do
     Info,
     Journal,
     Listing,
+    Logs,
     MemTop,
     Observe,
     Relay,
@@ -40,8 +40,8 @@ defmodule Flezha.Service.Cli do
   # take the answer, the arguments as written and the options, so an act that
   # answers `:ok` can still name what it acted on.
   @drivers %{
-    "AuditLog.tail" => &Audit.tail/3,
     "Controller.stop" => &Controller.stop/3,
+    "Logs.tail" => &Logs.tail/3,
     "Observability.tail" => &Observe.tail/3,
     "Relay.call_channel" => &Relay.call_channel/3,
     "Relay.listen" => &Relay.listen/3,
@@ -49,10 +49,6 @@ defmodule Flezha.Service.Cli do
   }
 
   @renderers %{
-    "AuditLog.list_files" => &Audit.list_files/3,
-    "AuditLog.read" => &Audit.read/3,
-    "AuditLog.rotate" => &Audit.rotate/3,
-    "AuditLog.stats" => &Audit.stats/3,
     "Controller.boot_await" => &Boot.await/3,
     "Controller.boot_status" => &Boot.status/3,
     "Controller.cluster_status" => &Listing.cluster/3,
@@ -81,6 +77,11 @@ defmodule Flezha.Service.Cli do
     "Fleet.provider" => &Plugin.provider/3,
     "Fleet.providers" => &Plugin.providers/3,
     "Fleet.runners" => &Listing.runners/3,
+    "Logs.files" => &Logs.files/3,
+    "Logs.kinds" => &Logs.kinds/3,
+    "Logs.read" => &Logs.read/3,
+    "Logs.rotate" => &Logs.rotate/3,
+    "Logs.stats" => &Logs.stats/3,
     "Observability.disable_source" => &Observe.disable/3,
     "Observability.enable_source" => &Observe.enable/3,
     "Observability.list_sinks" => &Observe.sinks/3,

@@ -274,7 +274,7 @@ defmodule FlezhaTest.System.BackoffTableDrillTest do
       %ProcessHub.StartResult{started: [], errors: [{id, :no_response}]}
     end)
 
-    spawn(fn -> Init.init_relay(false, "drill_ns", relay) end)
+    spawn(fn -> Init.init_relay(false, "drill_ns", relay, %{announce?: true, record?: false}) end)
     :ok
   end
 

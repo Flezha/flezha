@@ -186,7 +186,13 @@ defmodule Flezha.Observability.Bus do
     end
   end
 
-  defp mailbox_full?(pid, watermark) do
+  @doc """
+  Whether `pid`'s mailbox holds `watermark` messages or more, or `pid` is
+  gone: the one bound every producer checks before it sends to a consumer that
+  must not be buried.
+  """
+  @spec mailbox_full?(pid(), non_neg_integer()) :: boolean()
+  def mailbox_full?(pid, watermark) do
     case Process.info(pid, :message_queue_len) do
       {:message_queue_len, len} -> len >= watermark
       nil -> true

@@ -7,6 +7,7 @@ mod controller;
 mod dispatch;
 mod dlq;
 mod help;
+mod logs;
 mod mcp;
 mod namespace;
 mod observe;
@@ -25,8 +26,8 @@ use std::env;
 
 use dispatch::{Command, Missing, Verb};
 
-/// `flz` itself is a command table like the sixteen below it: same bare-invocation
-/// rule, same help spellings, same refusal. Fifteen of its rows are tables of
+/// `flz` itself is a command table like the seventeen below it: same bare-invocation
+/// rule, same help spellings, same refusal. Sixteen of its rows are tables of
 /// their own; `reset`, `mcp` and `help`, which prints the catalogue under
 /// `--json`, are the verbs the top level runs itself.
 const FLZ: Command = Command {
@@ -55,6 +56,7 @@ const FLZ: Command = Command {
             .notes(help::MCP)
             .help_word(),
         Verb::table("observe", &observe::TABLE),
+        Verb::table("logs", &logs::TABLE),
         Verb::table("audit", &audit::TABLE),
         Verb::table("dlq", &dlq::TABLE),
         Verb::table("schedule", &schedule::TABLE),

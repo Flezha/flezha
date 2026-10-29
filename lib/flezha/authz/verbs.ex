@@ -39,12 +39,19 @@ defmodule Flezha.AuthZ.Verbs do
     retention_default: @public,
     # The one-time token is its own credential.
     authz_bootstrap: [action: :public, remote: false],
-    # Audit log: every read is itself audited, under the function's own name.
+    # The durable logs. A call on the audit kind is judged again under the
+    # audit rows below, which audit it under the function's own name.
+    logs_kinds: [action: :"logs.read", scope: :caller],
+    logs_read: [action: :"logs.read", scope: :caller],
+    logs_tail: [action: :"logs.read", scope: :caller],
+    logs_files: [action: :"logs.read", scope: :caller],
+    logs_stats: [action: :"logs.read", scope: :caller],
+    logs_rotate: [action: :"logs.rotate", scope: :caller],
     audit_list: [
       action: :"audit.read",
       scope: :caller,
       audit: {:before, :audit_log},
-      audit_name: :list_files
+      audit_name: :files
     ],
     audit_read: [
       action: :"audit.read",
@@ -71,7 +78,6 @@ defmodule Flezha.AuthZ.Verbs do
       audit: {:before, :audit_log},
       audit_name: :rotate
     ],
-    audit_unsubscribe: [action: :"audit.read", scope: :caller],
     # Identity, tokens, roles and namespaces. The token store records its own
     # issue and revoke; the role and namespace stores record nothing, so those
     # verbs are audited here.

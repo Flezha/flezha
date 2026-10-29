@@ -39,6 +39,8 @@ defmodule Flezha.Convergence.VerdictSeamTest do
     "lib/flezha/convergence/snapshot.ex" => "publishes the record and documents its states",
     "lib/flezha/service/relay/diagnose.ex" =>
       "reads the relay and plugin records' states to name a finding, mints none",
+    "lib/flezha/service/relay_manager/teardown.ex" =>
+      "reads the Overwatch's `phase` to pick the stop a sleeping or halted relay takes, mints none",
     # facts in another sense
     "lib/flezha/plugin/provider/http_poll/poll_worker.ex" =>
       "`:failed` is an event segment; `:suspended` is a poll outcome journaled for wake",

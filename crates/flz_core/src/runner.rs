@@ -53,13 +53,21 @@ pub fn emit_control_request(reference_id: String, command: crate::pb::command_re
     coordinator_send(RunnerMessage::control_request(reference_id, command));
 }
 
-/// A steps relay's `RelayCompleted`, so the controller deregisters it.
-pub fn emit_relay_completed(relay_id: String, status: String, error: String, result: Vec<u8>) {
+/// A steps relay's `RelayCompleted`, so the controller deregisters it;
+/// `undo` is how its compensation pass went (`complete`, `partial` or empty).
+pub fn emit_relay_completed(
+    relay_id: String,
+    status: String,
+    error: String,
+    result: Vec<u8>,
+    undo: String,
+) {
     coordinator_send(RunnerMessage::EmitRelayCompleted {
         relay_id,
         status,
         error,
         result,
+        undo,
     });
 }
 
@@ -96,6 +104,7 @@ pub enum RunnerMessage {
         status: String,
         error: String,
         result: Vec<u8>,
+        undo: String,
     },
     /// An SDK-initiated request, written verbatim under the caller's
     /// `reference_id`.

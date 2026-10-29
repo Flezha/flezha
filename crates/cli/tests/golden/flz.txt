@@ -16,7 +16,9 @@ COMMANDS:
                 be stopped).
     mcp         Serve Flezha to an AI assistant over MCP, on stdin and stdout.
     observe     Observability foundation inspection.
-    audit       Durable audit log inspection.
+    logs        The controller's durable logs (the relay history and the audit
+                log), read across the cluster.
+    audit       Durable audit log inspection (`flz logs ... audit`).
     dlq         Dead-letter queue: parked poison payloads (retry budget
                 exhausted).
     schedule    Cron-scheduled steps relay spawns.

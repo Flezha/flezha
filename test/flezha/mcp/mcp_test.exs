@@ -48,7 +48,7 @@ defmodule Flezha.McpTest do
 
     assert tools["Dlq.list"].annotations.readOnlyHint
     refute tools["Relay.start"].annotations.readOnlyHint
-    refute tools["AuditLog.read"].annotations.readOnlyHint
+    assert tools["Logs.read"].annotations.readOnlyHint
     assert tools["Dlq.drop"].annotations.destructiveHint
     refute tools["Dlq.replay"].annotations.destructiveHint
     assert tools["Relay.start"].description =~ "`relay.start`"

@@ -223,11 +223,17 @@ impl Decide<'_, '_, '_> {
     /// Carry out `steps`, one event at a time, then `then`.
     pub(super) fn begin_undo(&mut self, steps: VecDeque<UndoStep>, then: AfterUndo) {
         self.s.phase = Phase::Compensating;
+        let planned = steps
+            .iter()
+            .filter(|step| matches!(step, UndoStep::Cell { .. }))
+            .count();
         self.s.undo = Some(Undo {
             steps,
             cells: Vec::new(),
             then,
             error: None,
+            planned,
+            partial: false,
         });
         self.undo_step();
     }
@@ -290,16 +296,26 @@ impl Decide<'_, '_, '_> {
     }
 
     /// The undo plan ran out: what it planned, or `error` when an undo's
-    /// entry was never journaled.
+    /// entry was never journaled. A run that ends here reports whether its
+    /// rollback completed: `complete`, `partial`, or nothing when it planned
+    /// no hook.
     fn undo_finished(&mut self) {
         let finished = self.s.undo.take().expect("undo checked above");
+        let undo = match (
+            finished.planned,
+            finished.partial || finished.error.is_some(),
+        ) {
+            (0, _) => "",
+            (_, true) => "partial",
+            (_, false) => "complete",
+        };
         match (finished.then, finished.error) {
-            (AfterUndo::Terminal(status, error), None) => self.terminal(&status, error, Vec::new()),
+            (AfterUndo::Terminal(status, error), None) => self.ended(&status, error, undo),
             (AfterUndo::Resume, None) => self.resume(),
             (AfterUndo::Terminal(_, planned), Some(error)) if !planned.is_empty() => {
-                self.terminal("error", format!("{planned}; {error}"), Vec::new())
+                self.ended("error", format!("{planned}; {error}"), undo)
             }
-            (_, Some(error)) => self.terminal("error", error, Vec::new()),
+            (_, Some(error)) => self.ended("error", error, undo),
         }
     }
 
@@ -314,6 +330,7 @@ impl Decide<'_, '_, '_> {
         };
         let recorded = undo.steps.pop_front();
         if let Err(error) = result {
+            undo.partial = true;
             let id = &r.inst.instance_id;
             flz_transport::notice!(Error, "steps {id} compensation journaling failed: {error}");
             if matches!(undo.steps.front(), Some(UndoStep::Mark { .. })) {
@@ -335,6 +352,7 @@ impl Decide<'_, '_, '_> {
     /// the (idempotent) hook. A rewind collects it into its tasklet's entry.
     pub(super) fn undone(&mut self, node: usize, cell: CellPos, slot: &Arc<CellSlot>) {
         let attempt = self.s.attempts.remove(&(node, cell)).unwrap_or_default();
+        let failed = attempt.failure.is_some();
         if let Some(failure) = attempt.failure {
             let (id, error) = (&self.r.inst.instance_id, failure.error);
             flz_transport::notice!(Error, "steps {id} compensation error: {error}");
@@ -342,6 +360,7 @@ impl Decide<'_, '_, '_> {
         let Some(undo) = self.s.undo.as_mut() else {
             return;
         };
+        undo.partial |= failed;
         let Some(UndoStep::Cell { iter, marks, .. }) = undo.steps.pop_front() else {
             return;
         };

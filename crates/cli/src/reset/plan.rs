@@ -94,6 +94,7 @@ const ROOTS: &[(Source, ClearMode)] = &[
     ),
     (Source::AppData("auth"), ClearMode::OptIn(&INCLUDE_AUTH)),
     (Source::AppData("audit"), ClearMode::OptIn(&INCLUDE_AUDIT)),
+    (Source::AppData("relay_history"), ClearMode::Default),
     (
         Source::AppData("plugins"),
         ClearMode::OptIn(&INCLUDE_PLUGINS),

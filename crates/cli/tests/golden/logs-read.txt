@@ -1,0 +1,33 @@
+flz logs read - A kind's records from every controller, newest first, each naming its `node`.
+
+Usage: flz logs read <kind> [--namespace | -n <namespace>] [--factory <factory_id>] [--relay <relay_id>] [--event <event>] [--outcome <outcome>] [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>] [--before <cursor>] [--node <controller>] [--file <file>]
+
+OPTIONS:
+    --namespace | -n <namespace>  Match records of this namespace.
+    --factory <factory_id>        Match records of this factory.
+    --relay <relay_id>            Match records of this relay.
+    --event <event>               Match records of this event: started, ended or
+                                  start_failed.
+    --outcome <outcome>           Match ended records with this outcome.
+    --source <source>             Match records whose source is this.
+    --name <name>                 Match records whose name is this.
+    --since <microseconds>        Match records written at or after this
+                                  wall-clock time.
+    --until <microseconds>        Match records written at or before this
+                                  wall-clock time.
+    --limit <count>               Return at most this many records (default 100,
+                                  at most 1000).
+    --before <cursor>             Continue from the `next` cursor a previous
+                                  read printed.
+    --node <controller>           Only this controller (with --file, its file;
+                                  with rotate, rotate it alone).
+    --file <file>                 Read this one file, oldest first.
+    --token <token>               The caller's token (default: FLEZHA_TOKEN).
+    --help | -h                   Print this help.
+    --output | -o text|json       Output format (default: text).
+    --json                        The same as --output json.
+
+Records are newest first, each naming the controller that wrote it. When
+more are older, the read prints a next cursor; pass it back with --before.
+With --node and --file the read is that one file, oldest first. With --json
+the answer is one JSON object.

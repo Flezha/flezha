@@ -591,3 +591,22 @@ it in the log registers the log sink for `:beam_vm`.
 - **WHEN** the controller boots with no log sink configured
 - **THEN** no `:beam_vm` reading SHALL be written to the log
 
+### Requirement: A sink SHALL receive only the sources it subscribes to
+
+A sink that keeps an allow-list of sources SHALL declare those sources as its bus filter at
+registration, so the bus consults the filter and never dispatches it a signal of another
+source. A sink registered with `overflow: :block` SHALL NOT declare `sources: :any` unless it
+writes every source, because every producer on the node would otherwise wait on it for signals
+it discards.
+
+#### Scenario: A blocking sink with an allow-list is not called for other sources
+
+- **WHEN** a `:block` sink whose allow-list names only `:platform_authz` is registered, and a
+  relay emits a signal on `:flezha_relay`
+- **THEN** the bus SHALL NOT call that sink, and the emit SHALL return without waiting on it
+
+#### Scenario: An allow-list extended at boot widens the filter
+
+- **WHEN** the audit sink boots with `:extra_subscriptions: [{:my_source, :critical}]`
+- **THEN** its registered bus filter SHALL include `:my_source`
+

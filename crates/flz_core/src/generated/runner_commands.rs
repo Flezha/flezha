@@ -704,7 +704,10 @@ pub struct PingResponse {
 /// so a finished steps relay is removed from the durable registry and
 /// never replayed on boot or misjudged by convergence. Direction is reversed
 /// like RunnerShutdownNotification: SDK -> Controller over the
-/// "control_command" payload_id.
+/// "control_command" payload_id. `undo` says how the run's compensation pass
+/// went: "complete" when every compensate hook it planned succeeded and was
+/// journaled, "partial" when one failed or its journal entry was refused, and
+/// empty when no pass ran (or the runtime predates the field).
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RelayCompleted {
     #[prost(string, tag = "1")]
@@ -715,6 +718,8 @@ pub struct RelayCompleted {
     pub error: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub result: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "6")]
+    pub undo: ::prost::alloc::string::String,
 }
 /// Controller -> SDK. Offers credit-grant flow control for the runner's
 /// state stream. `stream_id` is an opaque credit-session id minted fresh per
@@ -909,7 +914,11 @@ pub struct StepsStop {
 /// the call's position in that invocation, the factory and a hash of the
 /// payload. A re-run of the invocation sends the same identity, and the
 /// Controller resolves it to the relay the first request did. Empty when
-/// the request came from outside a tasklet invocation.
+/// the request came from outside a tasklet invocation. `parent_relay_id` is
+/// the instance whose tasklet invocation made the request, which the
+/// Controller records as the spawned instance's parent only when the
+/// requesting session hosts it; empty from outside an invocation or from an
+/// older runtime.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnStepsRequest {
     #[prost(string, tag = "1")]
@@ -922,6 +931,8 @@ pub struct SpawnStepsRequest {
     pub if_running: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
     pub identity: ::prost::alloc::string::String,
+    #[prost(string, tag = "6")]
+    pub parent_relay_id: ::prost::alloc::string::String,
 }
 /// SDK -> Controller. A tasklet's `ctx.effect` result, which the Controller
 /// keeps in the instance's effect log, synced, before it answers

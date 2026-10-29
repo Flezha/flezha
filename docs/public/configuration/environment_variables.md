@@ -132,11 +132,14 @@ Notes on the area's variables:
 - `FLEZHA_DATA_PLANE_LIVENESS`: `false` drops the driver poll and the stall classifier, the counters stay.
 - `FLEZHA_TESTNET_WS_PORT`: The port `Flezha.Testnet` binds; the prod image entrypoint starts the daemon only when it is set explicitly. Default: `4500` (`:test` derives the port from the run).
 
-## Observability and audit
+## Observability, audit and relay history
 
 - `FLEZHA_OBSERVABILITY_ENABLED`: `false` starts no sinks and no logger handler; the telemetry bridge only writes the events that are also log lines.
 - `FLEZHA_OBSERVABILITY_LOG_SOURCES`: The sources whose signals are also written to the log, one `[<source>] <name> key=value` info line each; `beam_vm` gives the controller's memory and load every second. Unset writes none.
 - `FLEZHA_AUDIT_RETENTION_DAYS`: In days; the key it fills holds seconds.
+- `FLEZHA_RELAY_HISTORY_ENABLED`: The relay history, one record per relay run's start and end ([`running_and_testing.md`](../topics/core/running_and_testing.md#the-relay-history)); on unless set false, and it does not need observability.
+- `FLEZHA_RELAY_HISTORY_DIR`: Where each controller keeps its relay history files.
+- `FLEZHA_RELAY_HISTORY_RETENTION_DAYS`: In days; the key it fills holds seconds.
 - `FLEZHA_LOG_PATH`: The file the `:logger` file handler writes.
 - `FLEZHA_LOG_LEVEL`: Level for the controller; the runner default is the level every SDK starts its own diagnostics at. Default: `info` (controller), `warn` (runner).
 - `FLEZHA_LOG_MAX_BYTES`: The size at which that file rotates.
@@ -297,6 +300,9 @@ skipped as a block.
 | `FLEZHA_QUORUM_WINDOW_MS` | ms | `30000` |
 | `FLEZHA_RECONNECT_INTERVAL` | ms | `1000` |
 | `FLEZHA_RECONNECT_MAX_BACKOFF_MS` | ms | `30000` |
+| `FLEZHA_RELAY_HISTORY_DIR` | path | `storage/app/relay_history` |
+| `FLEZHA_RELAY_HISTORY_ENABLED` | bool | `true` |
+| `FLEZHA_RELAY_HISTORY_RETENTION_DAYS` | days | `30` |
 | `FLEZHA_RETENTION_CHECK_INTERVAL_MS` | ms | `60000` |
 | `FLEZHA_RUNNER_REMOVAL_GRACE_MS` | ms | `30000` |
 | `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | ms | `30000` |

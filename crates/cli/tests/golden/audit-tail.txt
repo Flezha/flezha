@@ -1,8 +1,10 @@
-flz audit tail - Stream every audit record the caller may read as it is written.
+flz audit tail - Stream a kind's new records from every controller as they are written.
 
-Usage: flz audit tail [--duration-ms <milliseconds>]
+Usage: flz audit tail [--source <source>] [--name <name>] [--duration-ms <milliseconds>]
 
 OPTIONS:
+    --source <source>             Match records whose source is this.
+    --name <name>                 Match records whose name is this.
     --duration-ms <milliseconds>  Stream for at most this long (default 30000).
     --token <token>               The caller's token (default: FLEZHA_TOKEN).
     --help | -h                   Print this help.

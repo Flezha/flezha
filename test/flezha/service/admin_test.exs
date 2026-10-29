@@ -262,7 +262,7 @@ defmodule Flezha.Service.AdminTest do
 
     test "a user-only verb is refused at the policy point" do
       assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
-               door("AuditLog.rotate", "[]")
+               door("Logs.rotate", ~s([{"kind":"audit"}]))
     end
 
     test "an auth-state verb is refused by grant" do
@@ -552,12 +552,12 @@ defmodule Flezha.Service.AdminTest do
 
     # Fails when: the console loses the streams it renders.
     test "tails the audit log into an :emit pid" do
-      assert Enum.any?(Admin.reachable(as(:ui)), &(&1.name == "AuditLog.tail"))
+      assert Enum.any?(Admin.reachable(as(:ui)), &(&1.name == "Logs.tail"))
       context = Map.merge(as(:ui), %{emit: self(), window_ms: 10})
 
       refute match?(
                {:error, %Flezha.Error{code: "control.unknown_function"}},
-               Admin.run("AuditLog.tail", "[]", context, :given)
+               Admin.run("Logs.tail", ~s([{"kind":"audit"}]), context, :given)
              )
     end
   end

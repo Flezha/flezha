@@ -11,7 +11,9 @@ defmodule Flezha.Service.RelayManager.Teardown do
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Identificator
+  alias Flezha.Logs.RelayHistory
   alias Flezha.Process.Hub
+  alias Flezha.Relay.Lifecycle
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
@@ -36,13 +38,14 @@ defmodule Flezha.Service.RelayManager.Teardown do
           overwatch: pid() | nil,
           runner_id: binary() | nil,
           preserve_state?: boolean() | :sealed,
-          cause: :stop | :complete | :rescale | :failed_start,
+          cause: :stop | :complete | :rescale | :rescale_leave | :failed_start,
           cell_count: non_neg_integer()
         }
 
   @impl Flezha.Shutdown.Step
   def shutdown_steps do
     [
+      %{scope: :process, order: 1, name: :relay_history, run: &history_step/2},
       %{scope: :relay, order: 10, name: :stream_flush, run: &stream_flush_step/2},
       %{scope: :relay, order: 20, name: :hub_stop, run: &hub_stop_step/2},
       %{scope: :relay, order: 25, name: :final_flush, run: &stream_flush_step/2},
@@ -53,9 +56,20 @@ defmodule Flezha.Service.RelayManager.Teardown do
     ]
   end
 
-  # The steps a stop's cause runs: a rescale is no stop to announce.
+  # First of what the Overwatch owes as it exits, so no budget overrun skips it:
+  # the run's `ended` record, when it leaves for good. A failed start ended no
+  # run, and a rescale's restart of a member it keeps ends none.
+  defp history_step({state, _reason}, _budget) do
+    if state.cause not in [:failed_start, :rescale] and Lifecycle.departure(state) == :stopped,
+      do: RelayHistory.ended(state, fn -> RelayManager.window_end(state.namespace, state.id) end)
+
+    :ok
+  end
+
+  # The steps a stop's cause runs: a rescale is no stop to announce, for the
+  # members it keeps and those it takes away alike.
   defp acts?(:failed_start, step), do: step == :hub_stop
-  defp acts?(:rescale, step), do: step != :announce
+  defp acts?(cause, step) when cause in [:rescale, :rescale_leave], do: step != :announce
   defp acts?(cause, _step) when cause in [:stop, :complete], do: true
 
   # Flush the runner's stream channels before the child is deregistered: a
@@ -78,7 +92,8 @@ defmodule Flezha.Service.RelayManager.Teardown do
   defp hub_stop_step(%{namespace: namespace, relay_id: relay_id} = target, budget) do
     with {:error, failure} <- hub_stop_children(namespace, [relay_id], budget) do
       # Still running, the relay must not end later as stopped by this stop.
-      if target.overwatch, do: RelayManager.call_overwatch(target.overwatch, {:cause, nil})
+      if target.overwatch,
+        do: RelayManager.call_overwatch(target.overwatch, {:note, %{cause: nil}})
 
       case is_list(failure) && List.keyfind(failure, relay_id, 0) do
         {_cid, reason} -> {:error, reason}
@@ -251,22 +266,30 @@ defmodule Flezha.Service.RelayManager.Teardown do
     if Completion.exists?(relay_id), do: :ok, else: Paths.delete_class_dir(relay_id)
   end
 
-  @doc "`RelayManager.request_stop/3` on the hosting node."
-  @spec request_stop(binary(), binary()) :: :ok | {:ok, :cooperative} | {:error, term()}
-  def request_stop(namespace, relay_id), do: request_stop(namespace, relay_id, true)
+  @doc """
+  `RelayManager.request_stop/3` on the hosting node. The instance is told who
+  asked (`by`) before the stop acts, so the end it reports is told apart from
+  one its own time limit caused. A halted steps instance is removed hard: no
+  runner runs it, so no completion would answer a cooperative stop.
+  """
+  @spec request_stop(binary(), binary(), map() | nil) ::
+          :ok | {:ok, :cooperative} | {:error, term()}
+  def request_stop(namespace, relay_id, by), do: request_stop(namespace, relay_id, by, true)
 
-  defp request_stop(namespace, relay_id, wake?) do
-    case RelayManager.get_overwatch_state(namespace, relay_id) do
-      {:ok, %{builder: %{run: :steps}, phase: :suspended}} when wake? ->
+  defp request_stop(namespace, relay_id, by, wake?) do
+    case RelayManager.ask_overwatch(namespace, relay_id, {:note, %{stop_requested_by: by}}) do
+      %{builder: %{run: :steps}, phase: :suspended} when wake? ->
         case RelayManager.ask_overwatch(namespace, relay_id, {:wake, then: :stop}) do
           :ok -> {:ok, :cooperative}
           # Woken meanwhile: stopped as an awake one, once.
-          {:error, :awake} -> request_stop(namespace, relay_id, false)
+          {:error, :awake} -> request_stop(namespace, relay_id, by, false)
           {:error, _no_runner} -> RelayManager.stop_relay(namespace, relay_id)
         end
 
-      {:ok, %{builder: %{run: :steps}, runner_id: runner_id}}
-      when is_binary(runner_id) ->
+      %{builder: %{run: :steps}, phase: :halted} ->
+        RelayManager.stop_relay(namespace, relay_id)
+
+      %{builder: %{run: :steps}, runner_id: runner_id} when is_binary(runner_id) ->
         case ControlUnit.steps_stop(runner_id, relay_id) do
           :ok -> {:ok, :cooperative}
           # No control unit to cooperate with — fall back to the hard teardown.
@@ -293,7 +316,8 @@ defmodule Flezha.Service.RelayManager.Teardown do
     with {:ok, relay_pid} <- stop_pid(namespace, relay_id, cause, Keyword.get(opts, :overwatch)) do
       # Told why it ends and read in one call: the flush needs its runner, the
       # quota step the Cells its start allocated.
-      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid, cause)
+      facts = opts |> Keyword.take([:terminal]) |> Map.new() |> Map.put(:cause, cause)
+      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid, facts)
 
       target = %{
         namespace: namespace,
@@ -349,11 +373,11 @@ defmodule Flezha.Service.RelayManager.Teardown do
     end)
   end
 
-  defp stop_facts(_namespace, _relay_id, nil, _cause), do: {nil, 0}
+  defp stop_facts(_namespace, _relay_id, nil, _facts), do: {nil, 0}
 
-  defp stop_facts(namespace, relay_id, relay_pid, cause) do
+  defp stop_facts(namespace, relay_id, relay_pid, facts) do
     {runner_id, relay} =
-      case RelayManager.call_overwatch(relay_pid, {:cause, cause}) do
+      case RelayManager.call_overwatch(relay_pid, {:note, facts}) do
         {:ok, %{builder: builder} = ow} ->
           {Map.get(ow, :runner_id), builder}
 

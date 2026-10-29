@@ -125,26 +125,29 @@ const CASES: &[(&[&str], Want)] = &[
         Rpc(r#"Relay.send ["default","op","hi",null,{}] {"await_ms":2000}"#),
     ),
     // `flz audit` — the `--json` dialect.
-    (&["audit", "list"], Rpc(r#"AuditLog.list_files [] {}"#)),
+    (
+        &["audit", "list"],
+        Rpc(r#"Logs.files [{"kind":"audit"}] {}"#),
+    ),
     (
         &["audit", "list", "--json"],
-        Rpc(r#"AuditLog.list_files [] {"output":"json"}"#),
+        Rpc(r#"Logs.files [{"kind":"audit"}] {"output":"json"}"#),
     ),
     (
         &["audit", "list", "--output", "json"],
-        Rpc(r#"AuditLog.list_files [] {"output":"json"}"#),
+        Rpc(r#"Logs.files [{"kind":"audit"}] {"output":"json"}"#),
     ),
     (
         &["audit", "tail", "--json"],
-        Rpc(r#"AuditLog.tail [] {"duration_ms":30000,"output":"json"}"#),
+        Rpc(r#"Logs.tail [{"kind":"audit"}] {"duration_ms":30000,"output":"json"}"#),
     ),
     (
         &["audit", "tail", "--output", "json"],
-        Rpc(r#"AuditLog.tail [] {"duration_ms":30000,"output":"json"}"#),
+        Rpc(r#"Logs.tail [{"kind":"audit"}] {"duration_ms":30000,"output":"json"}"#),
     ),
     (
         &["audit", "stats", "-o", "json"],
-        Rpc(r#"AuditLog.stats [] {"output":"json"}"#),
+        Rpc(r#"Logs.stats [{"kind":"audit"}] {"output":"json"}"#),
     ),
     // `flz controller` — the predicate that was inlined twice.
     (
@@ -452,11 +455,11 @@ const CASES: &[(&[&str], Want)] = &[
     // it.
     (
         &["audit", "read", "f"],
-        Rpc(r#"AuditLog.read [{"file":"f"}] {}"#),
+        Rpc(r#"Logs.read [{"file":"f","kind":"audit"}] {}"#),
     ),
     (
         &["audit", "read", "f", "--limit", "5"],
-        Rpc(r#"AuditLog.read [{"file":"f","limit":5}] {}"#),
+        Rpc(r#"Logs.read [{"file":"f","kind":"audit","limit":5}] {}"#),
     ),
     (
         &["audit", "read", "f", "--limit", "abc"],
@@ -464,7 +467,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["audit", "read", "f", "--since", "10", "--until", "20"],
-        Rpc(r#"AuditLog.read [{"file":"f","since_us":10,"until_us":20}] {}"#),
+        Rpc(r#"Logs.read [{"file":"f","kind":"audit","since_us":10,"until_us":20}] {}"#),
     ),
     (
         &["audit", "read", "f", "--since", "abc"],
@@ -476,7 +479,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["audit", "tail", "--duration-ms", "5000"],
-        Rpc(r#"AuditLog.tail [] {"duration_ms":5000}"#),
+        Rpc(r#"Logs.tail [{"kind":"audit"}] {"duration_ms":5000}"#),
     ),
     (
         &["audit", "tail", "--duration-ms", "abc"],
@@ -714,7 +717,7 @@ const CASES: &[(&[&str], Want)] = &[
     ),
     (
         &["audit", "stats", "--token", "t"],
-        Rpc(r#"AuditLog.stats [] {"token":"t"}"#),
+        Rpc(r#"Logs.stats [{"kind":"audit"}] {"token":"t"}"#),
     ),
     // `flz schedule` — `add`'s flags travel as one keyword list in which an
     // absent flag is absent, `--plugins` stays the text the caller wrote

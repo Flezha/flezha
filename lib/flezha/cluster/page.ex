@@ -65,8 +65,10 @@ defmodule Flezha.Cluster.Page do
   The page `opts` ask of `read`, which declares `sorts` (`[name: direction]`,
   the first the default), `filters` (the filter keys it takes) and, for a read
   that only filters, `keys` (the options it takes), or the refusal of the first
-  key, value or cursor it does not accept. Empty `opts` ask no page: `nil`, and
-  the read answers what it answers without them.
+  key, value or cursor it does not accept. A read with bounds of its own names
+  them as `limit: {default, max}`, and the option its cursor comes back in as
+  `cursor:` (`:after` unless named). Empty `opts` ask no page: `nil`, and the
+  read answers what it answers without them.
   """
   @spec parse(keyword() | map(), atom(), keyword()) ::
           {:ok, t() | nil} | {:error, Flezha.Error.t()}
@@ -74,13 +76,15 @@ defmodule Flezha.Cluster.Page do
 
   def parse(opts, read, declared) do
     sorts = Keyword.fetch!(declared, :sorts)
+    {default, max} = Keyword.get(declared, :limit, {@default_limit, @max_limit})
+    cursor_key = declared |> Keyword.get(:cursor, :after) |> to_string()
     opts = Map.new(opts, fn {key, value} -> {to_string(key), value} end)
 
     with :ok <- known(Map.keys(opts), Enum.map(declared[:keys] || @keys, &to_string/1)),
-         {:ok, limit} <- limit(Map.get(opts, "limit", @default_limit)),
+         {:ok, limit} <- limit(Map.get(opts, "limit", default), max),
          {:ok, sort} <- sort(Map.get(opts, "sort"), sorts),
          {:ok, filter} <- filter(Map.get(opts, "filter", []), declared[:filters] || []),
-         {:ok, cursor} <- cursor(Map.get(opts, "after"), read, sort) do
+         {:ok, cursor} <- cursor(Map.get(opts, cursor_key), read, sort, cursor_key) do
       {:ok,
        %__MODULE__{
          read: read,
@@ -166,8 +170,8 @@ defmodule Flezha.Cluster.Page do
     end
   end
 
-  defp limit(n) when is_integer(n) and n in 0..@max_limit, do: {:ok, n}
-  defp limit(written), do: invalid("limit", written)
+  defp limit(n, max) when is_integer(n) and n >= 0 and n <= max, do: {:ok, n}
+  defp limit(written, _max), do: invalid("limit", written)
 
   defp sort(nil, [{default, _direction} | _]), do: {:ok, default}
 
@@ -206,20 +210,20 @@ defmodule Flezha.Cluster.Page do
   defp unknown(key),
     do: {:error, Flezha.Error.new("control.unknown_parameter", parameter: to_string(key))}
 
-  defp cursor(nil, _read, _sort), do: {:ok, nil}
+  defp cursor(nil, _read, _sort, _option), do: {:ok, nil}
 
-  defp cursor(written, read, sort) when is_binary(written) do
+  defp cursor(written, read, sort, option) when is_binary(written) do
     with {:ok, bin} <- Base.url_decode64(written, padding: false),
          {^read, ^sort, key} <- :erlang.binary_to_term(bin, [:safe]) do
       {:ok, key}
     else
-      _ -> invalid("after", written)
+      _ -> invalid(option, written)
     end
   rescue
-    ArgumentError -> invalid("after", written)
+    ArgumentError -> invalid(option, written)
   end
 
-  defp cursor(written, _read, _sort), do: invalid("after", written)
+  defp cursor(written, _read, _sort, option), do: invalid(option, written)
 
   defp encode(read, sort, key),
     do: Base.url_encode64(:erlang.term_to_binary({read, sort, key}), padding: false)

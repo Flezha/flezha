@@ -11,6 +11,7 @@ defmodule Flezha.Service.RelayManager.Spawn do
 
   alias Flezha.AuthZ.Verb
   alias Flezha.Identificator
+  alias Flezha.Logs.RelayHistory
   alias Flezha.Relay.Builder, as: RelayBuilder
   alias Flezha.Service.RelayManager
   alias Flezha.State.Completion
@@ -28,13 +29,15 @@ defmodule Flezha.Service.RelayManager.Spawn do
   starts steps only), whether an absent id is started or refused
   `relay.not_found`, the metadata the seed and the delivery carry, and the
   relay call itself, which the callee's `:call` entry point reads its token
-  from and which never rides metadata.
+  from and which never rides metadata. `parent_relay` is the verified
+  instance a tasklet's request came from, which a spawn records as its origin.
   """
   @type opts :: [
           runs: [:steps | :flow],
           if_absent: :spawn | :not_found,
           metadata: map(),
-          call: map() | nil
+          call: map() | nil,
+          parent_relay: String.t() | nil
         ]
 
   @doc """
@@ -76,7 +79,8 @@ defmodule Flezha.Service.RelayManager.Spawn do
           runs: Keyword.get(opts, :runs, [:steps]),
           if_absent: Keyword.get(opts, :if_absent, :spawn),
           metadata: Keyword.get(opts, :metadata, %{}),
-          call: Keyword.get(opts, :call)
+          call: Keyword.get(opts, :call),
+          parent_relay: Keyword.get(opts, :parent_relay)
         }
 
         spawn_or_resolve(namespace, id, factory_id, request, caller_context)
@@ -175,15 +179,12 @@ defmodule Flezha.Service.RelayManager.Spawn do
       [seed_input: seed] ++
         if(request.call, do: [seed_call: %{request.call | created: true}], else: [])
 
+    builder = %RelayBuilder{id: requested, factory_id: factory_id, run: run, opts: opts}
+    origin = [origin: origin(request, caller_context)]
+
     start = fn _call ->
       namespace
-      |> RelayManager.start_relay(%RelayBuilder{
-        id: requested,
-        factory_id: factory_id,
-        run: run,
-        init_values: %{},
-        opts: opts
-      })
+      |> RelayManager.start_relay(builder, origin)
       |> RelayManager.start_answer(requested)
     end
 
@@ -203,6 +204,15 @@ defmodule Flezha.Service.RelayManager.Spawn do
         {{:refused, error}, instance_id}
     end
   end
+
+  # A relay's call names its caller; a tasklet's spawn its verified parent.
+  defp origin(%{call: %{caller: caller}} = request, caller_context),
+    do: RelayHistory.origin("call", caller_context, parented(caller, request))
+
+  defp origin(request, caller_context),
+    do: RelayHistory.origin("spawn", caller_context, parented(request.parent_relay, request))
+
+  defp parented(parent, request), do: %{parent_relay: parent, spawn_identity: request.identity}
 
   defp refused(reason), do: {:refused, Flezha.Error.from_reason(reason, :"wire.spawn")}
 

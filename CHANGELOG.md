@@ -8,6 +8,33 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- The controller keeps a relay history: one `started` record when a relay run
+  is started on purpose (by an operator, a partition group start, a schedule, a
+  tasklet's spawn, a relay's call or a rescale) and one `ended` record when it
+  ends for good, naming who or what started it, how it ended (`completed`,
+  `undone`, `failed`, `stopped`, `timed_out`, `rescaled_away`, `cancelled`)
+  and how long it ran; a start that fails writes `start_failed`. Moves,
+  failovers, crash restarts, sleeps and wakes write nothing. It is on by
+  default, works with observability off, and lives in
+  `storage/app/relay_history/`, capped at 1 GiB
+  ([Running and testing](docs/public/topics/core/running_and_testing.md#the-relay-history)).
+- `flz logs` reads every durable log (`kinds`, `read`, `tail`, `files`,
+  `stats`, `rotate`) across the whole cluster, newest first with a `next`
+  cursor; `flz audit` is now `flz logs ... audit`, and `flz audit read`
+  without a file reads the cluster newest first. Breaking for a direct service
+  caller: `Flezha.Service.AuditLog` is replaced by `Flezha.Service.Logs`, each
+  call naming its `kind`. Audit records carry wall-clock `ts_us` and the
+  controller that wrote them in `node`; files written before keep being read
+  through their `ts_iso`.
+- The audit sink's bus filter is now the sources its allow-list names, so the
+  bus no longer calls it, and no producer waits on it, for any other signal.
+  Concurrent audit records share one sync. `:audit_log, :fsync_mode` takes
+  `:interval`, which now syncs on its interval, with `:batched` kept as its
+  spelling.
+- `RelayCompleted` gains `undo` and `SpawnStepsRequest` gains
+  `parent_relay_id`: every SDK picks both up when it is rebuilt against the
+  new core, so a rolled-back run is told apart from a failed one and a spawned
+  run names the relay that asked for it. An older runner sends neither.
 - Large listings can be read one page at a time. `Relay.list`,
   `PluginManager.enabled`, `Dlq.list` and the steps reads `journal`,
   `committed_iterations`, `cells` and `undelivered` take an optional `opts` of
@@ -96,6 +123,11 @@ v0.1.0-alpha.1 pre-release.
   with no controller still start a VM of their own.
 
 ### Fixed
+
+- Stopping a halted steps relay removes it at once, instead of waiting for an
+  answer its runner never sends.
+- The convergence loop's start of a relay that ran nowhere no longer announces
+  it as started.
 
 - A cold move no longer loses input the old copy had already taken. A relay
   without an input log now stops behind the last input it was sent: its runner

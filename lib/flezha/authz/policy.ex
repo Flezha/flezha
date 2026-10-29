@@ -28,6 +28,7 @@ defmodule Flezha.AuthZ.Policy do
     :"plugin.list",
     :"plugin.info",
     :"audit.read",
+    :"logs.read",
     :"observability.query",
     :"observability.subscribe",
     :"authz.whoami",
@@ -67,6 +68,7 @@ defmodule Flezha.AuthZ.Policy do
   @ops_extra [
     :"relay.replay",
     :"audit.rotate",
+    :"logs.rotate",
     :"observability.enable_source",
     :"observability.disable_source",
     :"state.rotate",

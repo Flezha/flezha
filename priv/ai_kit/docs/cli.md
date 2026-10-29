@@ -183,6 +183,7 @@ one line.
 | [`flz token`](access_commands.md#flz-token) | Issues, lists and revokes tokens. | [`authorization.md`](../core/authorization.md#tokens), [runner credentials](../core/authorization.md#runner-credentials) |
 | [`flz role`](access_commands.md#flz-role) | Gives roles to a principal and takes them away. | [`authorization.md`](../core/authorization.md#roles) |
 | [`flz audit`](access_commands.md#flz-audit) | Reads the record of who did what. | [`authorization.md`](../core/authorization.md#the-audit-trail) |
+| [`flz logs`](controller_commands.md#flz-logs) | Reads the relay history and the audit log of every controller. | [`running_and_testing.md`](../core/running_and_testing.md#the-relay-history) |
 | [`flz observe`](controller_commands.md#flz-observe) | Lists the controller's sources of metrics and events, and streams their signals live. | [`hooks.md`](../plugins/hooks.md#controller-plugins-and-their-hooks) |
 | [`flz reset`](controller_commands.md#flz-reset) | Deletes the controller's data on disk, so its next start is empty. | [`running_and_testing.md`](../core/running_and_testing.md#start-from-a-clean-slate-flz-reset) |
 | [`flz mcp`](../core/mcp_server.md) | Serves Flezha to an AI assistant over MCP; the assistant starts it, not you. | [`mcp_server.md`](../core/mcp_server.md) |

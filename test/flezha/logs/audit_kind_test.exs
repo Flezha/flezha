@@ -1,29 +1,21 @@
-defmodule Flezha.Observability.AuditLogTest do
+defmodule Flezha.Logs.AuditKindTest do
   # async: false: writes Application env; a shared on-disk root; the observability registry.
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
 
-  # Supervised AuditLog children log a benign "shut down abnormally (exit) normal"
+  # The supervised kind children log a benign "shut down abnormally (exit) normal"
   # on teardown; capture so a green run stays quiet (logs still print on failure).
   @moduletag :capture_log
 
+  alias Flezha.Logs.{Codec, Index, Kind, Kinds, Reader, Retention, Rotation, Sink, Writer}
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.TestSinks
-
-  alias Flezha.Observability.AuditLog.{
-    Codec,
-    Index,
-    Reader,
-    Retention,
-    Rotation,
-    Sink,
-    Writer
-  }
-
-  alias Flezha.Service.AuditLog, as: AuditSvc
   alias Flezha.Service.Cli
+  alias Flezha.Service.Logs
   alias FlezhaTest.Helper.{AuthTestHelper, NodeTestHelper}
 
   @moduletag :audit_log
+
+  @pubsub Flezha.Observability.PubSub
 
   setup %{tmp: base_dir} do
     on_exit(&stop_audit_supervisor/0)
@@ -43,22 +35,34 @@ defmodule Flezha.Observability.AuditLogTest do
           metadata: %{caller_source: :cli, request_id: "req-1", source: :flezha_state}
         })
 
-      line = Codec.encode(signal)
+      line = encode(signal)
       assert String.ends_with?(line, "\n")
       keys = field_order(line)
-      assert keys == ~w[ts_us ts_iso source name measurements metadata caller namespace]
+      assert keys == ~w[ts_us ts_iso source name measurements metadata caller namespace node]
 
       {:ok, decoded} = Codec.decode(line)
       assert decoded["source"] == "observability_service"
       assert decoded["name"] == "enable_source"
+      assert decoded["node"] == Atom.to_string(node())
       caller = decoded["caller"]
       assert caller["source"] == "cli"
       assert caller["request_id"] == "req-1"
-      # platform-authn-authz delta: while `:authn_authz, :enabled` is
-      # `false` (the test default), the audit log writes the caller's
-      # `source` atom into the `principal` column so existing rows
-      # remain attributable.
+      # While `:authn_authz, :enabled` is `false` (the test default), the audit
+      # log writes the caller's `source` atom into the `principal` column so
+      # rows remain attributable.
       assert caller["principal"] == "cli"
+    end
+
+    test "ts_us is wall-clock and ts_iso names the same instant" do
+      before_us = System.system_time(:microsecond)
+
+      {:ok, decoded} =
+        Codec.decode(encode(Signal.new(%{kind: :event, source: :t, name: :tick, metadata: %{}})))
+
+      assert decoded["ts_us"] >= before_us - 1_000_000
+      assert decoded["ts_us"] <= System.system_time(:microsecond)
+      assert Codec.order_us(decoded) == decoded["ts_us"]
+      assert decoded["ts_iso"] == Codec.iso(decoded["ts_us"])
     end
 
     test "ts_iso matches the documented regex" do
@@ -70,7 +74,7 @@ defmodule Flezha.Observability.AuditLogTest do
           metadata: %{}
         })
 
-      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+      {:ok, decoded} = Codec.decode(encode(signal))
 
       assert Regex.match?(
                ~r/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/,
@@ -87,7 +91,7 @@ defmodule Flezha.Observability.AuditLogTest do
           metadata: %{}
         })
 
-      line = Codec.encode(signal)
+      line = encode(signal)
       assert line =~ ~s("principal":null)
     end
 
@@ -95,7 +99,7 @@ defmodule Flezha.Observability.AuditLogTest do
       # The line an earlier release wrote: metadata is an open map, so a record
       # whose roles were never recorded reads as one that names none.
       line =
-        Codec.encode(
+        encode(
           Signal.new(%{
             kind: :event,
             source: :relay_service,
@@ -111,14 +115,20 @@ defmodule Flezha.Observability.AuditLogTest do
       refute Map.has_key?(decoded["metadata"], "caller_roles")
     end
 
+    test "a record written before node orders by its ts_iso" do
+      # Such a record carried the writer's monotonic time in `ts_us`.
+      old = %{"ts_us" => -576_460_000_000, "ts_iso" => "2026-05-18T00:00:00.000Z"}
+
+      assert Codec.order_us(old) ==
+               DateTime.to_unix(~U[2026-05-18 00:00:00.000Z], :microsecond)
+    end
+
     test "decode rejects non-JSON lines" do
       assert {:error, _} = Codec.decode("not json\n")
     end
 
     test "a metadata key of every shape renders as it did before the shared rule" do
-      # The codec's own `stringify_key/1` was deleted onto
-      # `Signal.metadata_text/1`. These are the renderings it produced, pinned
-      # as literals so the deletion is proved free rather than assumed.
+      # The renderings a metadata key of each shape produces, pinned as literals.
       signal =
         Signal.new(%{
           kind: :event,
@@ -136,7 +146,7 @@ defmodule Flezha.Observability.AuditLogTest do
           }
         })
 
-      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+      {:ok, decoded} = Codec.decode(encode(signal))
 
       assert decoded["metadata"] |> Map.keys() |> Enum.sort() ==
                Enum.sort([
@@ -164,16 +174,13 @@ defmodule Flezha.Observability.AuditLogTest do
           metadata: %{payload: bad}
         })
 
-      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+      {:ok, decoded} = Codec.decode(encode(signal))
       assert decoded["metadata"]["payload"] == Signal.metadata_text(bad)
     end
 
     test "a key past inspect's default limit is rendered whole, not elided" do
       # The shared rule inspects with `limit: :infinity, printable_limit:
-      # :infinity`; the deleted `stringify_key/1` used bare `inspect/1`, whose
-      # default `:limit` is 200. This is the one deliberate widening the move
-      # carries into the audit log — a long key reads complete instead of
-      # ending in "...".
+      # :infinity`, so a long key reads complete instead of ending in "...".
       long = Enum.to_list(1..250)
 
       signal =
@@ -184,7 +191,7 @@ defmodule Flezha.Observability.AuditLogTest do
           metadata: %{long => 1}
         })
 
-      {:ok, decoded} = Codec.decode(Codec.encode(signal))
+      {:ok, decoded} = Codec.decode(encode(signal))
       [rendered] = Map.keys(decoded["metadata"])
 
       assert rendered == inspect(long, limit: :infinity, printable_limit: :infinity)
@@ -203,7 +210,8 @@ defmodule Flezha.Observability.AuditLogTest do
           last_ts_us: 2,
           record_count: 3,
           size_bytes: 100,
-          sha256: "abc"
+          sha256: "abc",
+          clock: :wall
         }
       ]
 
@@ -212,42 +220,32 @@ defmodule Flezha.Observability.AuditLogTest do
     end
 
     test "rebuild walks disk and recovers catalog", %{dir: dir} do
-      # Drop a synthetic rotated file
       filename = "audit-20260518T000000Z-1.jsonl"
-
-      line =
-        Codec.encode(
-          Signal.new(%{
-            kind: :event,
-            source: :observability_service,
-            name: :tick,
-            metadata: %{}
-          })
-        )
-
+      line = tick()
       File.write!(Path.join(dir, filename), line)
+      {:ok, decoded} = Codec.decode(line)
 
-      {:ok, entries} = Index.rebuild(dir)
-      assert [%{filename: ^filename, record_count: 1}] = entries
+      {:ok, entries} = Index.rebuild(kind(), dir)
+
+      assert [%{filename: ^filename, record_count: 1, clock: :wall, first_ts_us: ts}] = entries
+      assert ts == decoded["ts_us"]
     end
 
     test "rebuild tolerates a partial last line", %{dir: dir} do
       filename = "audit-20260518T000000Z-2.jsonl"
+      File.write!(Path.join(dir, filename), tick() <> ~s({"partial":))
 
-      line =
-        Codec.encode(
-          Signal.new(%{
-            kind: :event,
-            source: :observability_service,
-            name: :tick,
-            metadata: %{}
-          })
-        )
-
-      File.write!(Path.join(dir, filename), line <> ~s({"partial":))
-
-      {:ok, [entry]} = Index.rebuild(dir)
+      {:ok, [entry]} = Index.rebuild(kind(), dir)
       assert entry.record_count == 1
+    end
+
+    test "only the kind's rotated files are catalogued", %{dir: dir} do
+      for name <- ["audit-current.jsonl", "relay_history-20260518T000000Z-1.jsonl", "INDEX"],
+          do: File.write!(Path.join(dir, name), tick())
+
+      File.write!(Path.join(dir, "audit-20260518T000000Z-1.jsonl.gz"), :zlib.gzip(tick()))
+
+      assert Index.list_rotated_files(kind(), dir) == ["audit-20260518T000000Z-1.jsonl.gz"]
     end
   end
 
@@ -261,7 +259,7 @@ defmodule Flezha.Observability.AuditLogTest do
         for i <- 1..5 do
           src = if rem(i, 2) == 0, do: :observability_service, else: :flezha_shutdown
 
-          Codec.encode(
+          encode(
             Signal.new(%{
               kind: :event,
               source: src,
@@ -274,18 +272,49 @@ defmodule Flezha.Observability.AuditLogTest do
 
       File.write!(file, IO.iodata_to_binary(records))
 
-      filtered = Reader.stream(file, source: "observability_service") |> Enum.to_list()
-      assert length(filtered) == 2
+      by_source = Reader.matcher(%{"source" => "observability_service"}, nil, nil)
+      assert file |> Reader.stream(match: by_source) |> Enum.count() == 2
+
+      by_name = Reader.matcher(%{source: "flezha_shutdown", name: "tick"}, nil, nil)
+      assert file |> Reader.stream(match: by_name) |> Enum.count() == 3
 
       limited = Reader.stream(file, limit: 3) |> Enum.to_list()
       assert length(limited) == 3
+    end
+
+    test "matcher narrows by the record's time window", %{dir: dir} do
+      file = Path.join(dir, "audit-window.jsonl")
+      File.write!(file, tick() <> tick())
+      [first, second] = file |> Reader.stream() |> Enum.map(&Codec.order_us/1)
+
+      assert file |> Reader.stream(match: Reader.matcher(%{}, second, nil)) |> Enum.count() ==
+               Enum.count([first, second], &(&1 >= second))
+
+      assert file |> Reader.stream(match: Reader.matcher(%{}, nil, first - 1)) |> Enum.count() ==
+               0
+    end
+
+    test "reverse_stream reads newest first with byte offsets", %{dir: dir} do
+      file = Path.join(dir, "audit-reverse.jsonl")
+
+      lines =
+        for name <- [:a, :b, :c],
+            do: encode(Signal.new(%{kind: :event, source: :t, name: name, metadata: %{}}))
+
+      File.write!(file, IO.iodata_to_binary(lines) <> ~s({"truncated":))
+
+      assert [{o3, %{"name" => "c"}}, {o2, %{"name" => "b"}}, {0, %{"name" => "a"}}] =
+               file |> Reader.reverse_stream() |> Enum.to_list()
+
+      assert o2 == byte_size(Enum.at(lines, 0))
+      assert o3 == o2 + byte_size(Enum.at(lines, 1))
     end
 
     test "reads gzipped file transparently", %{dir: dir} do
       file = Path.join(dir, "audit-gz.jsonl.gz")
 
       line =
-        Codec.encode(
+        encode(
           Signal.new(%{
             kind: :event,
             source: :observability_service,
@@ -304,18 +333,7 @@ defmodule Flezha.Observability.AuditLogTest do
 
     test "skips truncated last line", %{dir: dir} do
       file = Path.join(dir, "audit-trunc.jsonl")
-
-      good =
-        Codec.encode(
-          Signal.new(%{
-            kind: :event,
-            source: :observability_service,
-            name: :tick,
-            metadata: %{}
-          })
-        )
-
-      File.write!(file, good <> ~s({"truncated":))
+      File.write!(file, tick() <> ~s({"truncated":))
 
       records = Reader.stream(file, []) |> Enum.to_list()
       assert length(records) == 1
@@ -325,23 +343,20 @@ defmodule Flezha.Observability.AuditLogTest do
   # ---------- flz audit tail ----------
 
   describe "flz audit tail" do
-    test "prints each record, and ends when the writer closes", %{dir: dir} do
+    test "prints each record written while its window is open", %{dir: dir} do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
       tail =
         Task.async(fn ->
           ExUnit.CaptureIO.capture_io(fn ->
-            Cli.call("AuditLog.tail", "[]", output: "json", duration_ms: 60_000)
+            Cli.call("Logs.tail", ~s([{"kind":"audit"}]), output: "json", duration_ms: 1_000)
           end)
         end)
 
-      assert NodeTestHelper.wait_until(fn -> :sys.get_state(Writer).subscribers != %{} end, 5_000)
+      assert NodeTestHelper.wait_until(&tail_subscribed?/0, 5_000)
 
-      :ok =
-        Writer.write(Codec.encode(Signal.new(%{kind: :event, source: :audit_log, name: :tailed})))
-
-      :ok = Writer.close()
+      :ok = Writer.append(kind(), encode(Signal.new(%{kind: :event, source: :t, name: :tailed})))
 
       assert Task.await(tail, 5_000) =~ "tailed"
     end
@@ -351,39 +366,32 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       ExUnit.CaptureIO.capture_io(fn ->
-        Cli.call("AuditLog.tail", "[]", duration_ms: 10)
+        Cli.call("Logs.tail", ~s([{"kind":"audit"}]), duration_ms: 10)
       end)
 
-      assert :sys.get_state(Writer).subscribers == %{}
+      refute tail_subscribed?()
     end
   end
 
   # ---------- a tail forwarded to a pid ----------
 
   # The `:erpc` worker a consumer on another node reaches runs the tail and
-  # hands each record to the pid the consumer names.
+  # hands each record the writer broadcasts to the pid the consumer names.
   describe "a tail forwarded to a pid" do
     test "hands each record on and releases the subscription when the pid exits", %{dir: dir} do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
       {sink, tail} = forwarded_tail(%{source: :ui})
 
-      :ok = Writer.write(Codec.encode(Signal.new(%{kind: :event, source: :t, name: :forwarded})))
-      assert_receive {:forwarded, %{"name" => "forwarded"}}, 2_000
+      :ok =
+        Writer.append(kind(), encode(Signal.new(%{kind: :event, source: :t, name: :forwarded})))
+
+      assert_receive {:forwarded, %{"name" => "forwarded", "node" => node_name}}, 2_000
+      assert node_name == Atom.to_string(node())
 
       Process.exit(sink, :kill)
       assert Task.await(tail, 2_000) == {:ok, :caller_down}
-      assert :sys.get_state(Writer).subscribers == %{}
-    end
-
-    test "ends when the writer closes", %{dir: dir} do
-      configure(dir)
-      {:ok, _} = start_audit_supervisor()
-      {_sink, tail} = forwarded_tail(%{source: :ui})
-
-      :ok = Writer.close()
-      assert Task.await(tail, 2_000) == {:ok, :done}
-      assert :sys.get_state(Writer).subscribers == %{}
+      refute tail_subscribed?()
     end
 
     test "drops a record of a namespace the caller may not read", %{dir: dir} do
@@ -397,7 +405,7 @@ defmodule Flezha.Observability.AuditLogTest do
         signal =
           Signal.new(%{kind: :event, source: :t, name: name, metadata: %{namespace: namespace}})
 
-        :ok = Writer.write(Codec.encode(signal))
+        :ok = Writer.append(kind(), encode(signal))
       end
 
       assert_receive {:forwarded, %{"name" => "own"}}, 2_000
@@ -415,32 +423,24 @@ defmodule Flezha.Observability.AuditLogTest do
       configure(dir, fsync_mode: :per_record)
       {:ok, _} = start_audit_supervisor()
 
-      line =
-        Codec.encode(
-          Signal.new(%{
-            kind: :event,
-            source: :observability_service,
-            name: :tick,
-            metadata: %{}
-          })
-        )
+      line = tick()
+      assert :ok = Writer.append(kind(), line)
 
-      assert :ok = Writer.write(line)
-
-      stats = Writer.stats()
+      stats = Writer.stats(kind())
       assert stats.current_file_bytes == byte_size(line)
       assert stats.current_record_count == 1
 
-      {:ok, tail} = Writer.subscribe_tail()
-      {:ok, info} = Writer.rotate_now(System.system_time(:microsecond))
+      :ok = Phoenix.PubSub.subscribe(@pubsub, Writer.topic(kind()))
+      {:ok, info} = Writer.rotate_now(kind(), System.system_time(:microsecond))
       assert String.starts_with?(info.rotated_to, "audit-")
       assert info.size_bytes == byte_size(line)
 
       # The rotation's own event, sent after the reply, is the new file's first record.
-      assert_receive {:audit_record, ^tail, %{"name" => "audit_rotated"}}, 2_000
-      stats2 = Writer.stats()
+      assert_broadcast_line("audit_rotated")
+      stats2 = Writer.stats(kind())
       assert stats2.current_record_count == 1
       assert stats2.catalog_count == 1
+      assert [%{clock: :wall, record_count: 1}] = Writer.catalog(kind())
     end
 
     test "double rotation within the same second produces -1 then -2", %{dir: dir} do
@@ -448,22 +448,13 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       ts_us = System.system_time(:microsecond)
+      line = tick()
 
-      line =
-        Codec.encode(
-          Signal.new(%{
-            kind: :event,
-            source: :observability_service,
-            name: :tick,
-            metadata: %{}
-          })
-        )
+      :ok = Writer.append(kind(), line)
+      {:ok, info1} = Writer.rotate_now(kind(), ts_us)
 
-      :ok = Writer.write(line)
-      {:ok, info1} = Writer.rotate_now(ts_us)
-
-      :ok = Writer.write(line)
-      {:ok, info2} = Writer.rotate_now(ts_us)
+      :ok = Writer.append(kind(), line)
+      {:ok, info2} = Writer.rotate_now(kind(), ts_us)
 
       assert String.ends_with?(info1.rotated_to, "-1.jsonl")
       assert String.ends_with?(info2.rotated_to, "-2.jsonl")
@@ -473,21 +464,13 @@ defmodule Flezha.Observability.AuditLogTest do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
-      line =
-        Codec.encode(
-          Signal.new(%{
-            kind: :event,
-            source: :observability_service,
-            name: :tick,
-            metadata: %{}
-          })
-        )
+      line = tick()
+      :ok = Writer.append(kind(), line)
+      :ok = Writer.close(kind())
 
-      :ok = Writer.write(line)
-      :ok = Writer.close()
-
-      assert Writer.closed?()
-      assert {:error, :closed} = Writer.write(line)
+      assert Writer.closed?(kind())
+      assert {:error, :closed} = Writer.append(kind(), line)
+      assert Writer.counters(kind()).post_close_dropped == 1
     end
   end
 
@@ -498,12 +481,12 @@ defmodule Flezha.Observability.AuditLogTest do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
-      AuditSvc.list_files(%{source: :cli})
+      Logs.files(%{kind: "audit"}, %{source: :cli})
       TestSinks.settle(Sink)
 
-      # The list_files call itself emits a :list_files event on :audit_log
-      # source — covered by the audit-of-audit test below. The
-      # cross-source default we want to test is :observability_service.
+      # The files call itself writes a :files record on the :audit_log
+      # source, covered by the Service API test below. The cross-source
+      # default tested here is :observability_service.
       Bus.emit(
         Signal.new(%{
           kind: :event,
@@ -532,6 +515,13 @@ defmodule Flezha.Observability.AuditLogTest do
 
       observed = Enum.find(decoded, &(&1["source"] == "observability_service"))
       assert observed["caller"]["source"] == "cli"
+    end
+
+    test "the bus filter names the allow-list's sources" do
+      sources = Sink.filter().sources
+      assert :platform_authz in sources
+      assert :audit_log in sources
+      assert sources == Enum.uniq(sources)
     end
 
     test "non-allow-listed signals are discarded", %{dir: dir} do
@@ -607,7 +597,7 @@ defmodule Flezha.Observability.AuditLogTest do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
-      :ok = Writer.close()
+      :ok = Writer.close(kind())
 
       Bus.emit(
         Signal.new(%{
@@ -620,7 +610,7 @@ defmodule Flezha.Observability.AuditLogTest do
       )
 
       TestSinks.settle(Sink)
-      assert Sink.post_close_dropped() >= 1
+      assert Writer.counters(kind()).post_close_dropped >= 1
     end
   end
 
@@ -646,9 +636,10 @@ defmodule Flezha.Observability.AuditLogTest do
         }
       ])
 
-      {:ok, result} = Retention.sweep_now()
+      {:ok, result} = Retention.sweep_now(kind())
       assert result.deleted_count >= 1
       refute File.exists?(stale)
+      assert {:ok, []} = Index.load(dir)
     end
 
     test "active file never deleted", %{dir: dir} do
@@ -657,7 +648,7 @@ defmodule Flezha.Observability.AuditLogTest do
 
       active = Path.join(dir, "audit-current.jsonl")
 
-      {:ok, _} = Retention.sweep_now()
+      {:ok, _} = Retention.sweep_now(kind())
       assert File.exists?(active)
     end
   end
@@ -665,32 +656,53 @@ defmodule Flezha.Observability.AuditLogTest do
   # ---------- Service API ----------
 
   describe "Service API" do
-    test "list_files returns catalog and audits the read", %{dir: dir} do
+    test "files returns catalog and audits the read", %{dir: dir} do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
-      # Generate one rotated file
-      :ok =
-        Writer.write(
-          Codec.encode(
-            Signal.new(%{
-              kind: :event,
-              source: :observability_service,
-              name: :tick,
-              metadata: %{}
-            })
-          )
-        )
+      :ok = Writer.append(kind(), tick())
+      {:ok, _} = Writer.rotate_now(kind())
 
-      {:ok, _} = Writer.rotate_now()
-
-      {:ok, entries} = AuditSvc.list_files(%{source: :cli})
-      assert length(entries) == 1
+      {:ok, %{files: entries, unreachable: []}} = Logs.files(%{kind: "audit"}, %{source: :cli})
+      this_node = node()
+      assert [%{node: ^this_node, record_count: 1}] = entries
 
       TestSinks.settle(Sink)
       content = File.read!(Path.join(dir, "audit-current.jsonl"))
       assert content =~ ~s("source":"audit_log")
-      assert content =~ ~s("name":"list_files")
+      assert content =~ ~s("name":"files")
+    end
+
+    test "read pages the newest records first", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+
+      for name <- [:first, :second, :third],
+          do:
+            :ok =
+              Writer.append(
+                kind(),
+                encode(Signal.new(%{kind: :event, source: :t, name: name, metadata: %{}}))
+              )
+
+      {:ok, _} = Writer.rotate_now(kind())
+      filters = %{source: "t"}
+
+      assert {:ok, %{records: [%{"name" => "third"}, %{"name" => "second"}], next: next}} =
+               Logs.read(%{kind: "audit", filters: filters, limit: 2}, %{source: :internal})
+
+      assert {:ok, %{records: [%{"name" => "first"}], next: nil}} =
+               Logs.read(%{kind: "audit", filters: filters, limit: 2, before: next}, %{
+                 source: :internal
+               })
+    end
+
+    test "read refuses a filter the kind does not declare", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+
+      assert {:error, %Flezha.Error{}} =
+               Logs.read(%{kind: "audit", filters: %{relay: "r"}}, %{source: :internal})
     end
 
     # Fails when: a name that walks out of the audit directory is joined onto
@@ -704,7 +716,7 @@ defmodule Flezha.Observability.AuditLogTest do
 
       for file <- ["../outside.jsonl", outside, ".."] do
         assert {:error, %Flezha.Error{code: "audit.file_not_found"}} =
-                 AuditSvc.read([file: file], %{source: :internal})
+                 Logs.read(%{kind: "audit", file: file}, %{source: :internal})
       end
     end
 
@@ -713,42 +725,72 @@ defmodule Flezha.Observability.AuditLogTest do
       {:ok, _} = start_audit_supervisor()
 
       assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
-               AuditSvc.list_files(%{})
+               Logs.files(%{kind: "audit"}, %{})
 
-      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} = AuditSvc.stats(%{})
+      assert {:error, %Flezha.Error{code: "authz.invalid_caller_context"}} =
+               Logs.stats(%{kind: "audit"}, %{})
     end
 
     test "audit_log_disabled returned when subsystem off", %{dir: dir} do
       configure(dir, enabled: false)
 
       assert {:error, %Flezha.Error{code: "audit.disabled"}} =
-               AuditSvc.list_files(%{source: :cli})
+               Logs.files(%{kind: "audit"}, %{source: :cli})
 
-      assert {:error, %Flezha.Error{code: "audit.disabled"}} = AuditSvc.stats(%{source: :cli})
+      assert {:error, %Flezha.Error{code: "audit.disabled"}} =
+               Logs.stats(%{kind: "audit"}, %{source: :cli})
+    end
+
+    test "stats answers one row per controller", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+      :ok = Writer.append(kind(), tick())
+
+      this_node = node()
+
+      assert {:ok, %{controllers: [%{node: ^this_node, record_count: n}], unreachable: []}} =
+               Logs.stats(%{kind: "audit"}, %{source: :cli})
+
+      assert n >= 1
     end
 
     test "rotate forces immediate rotation", %{dir: dir} do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
 
-      :ok =
-        Writer.write(
-          Codec.encode(
-            Signal.new(%{
-              kind: :event,
-              source: :observability_service,
-              name: :tick,
-              metadata: %{}
-            })
-          )
-        )
+      :ok = Writer.append(kind(), tick())
 
-      {:ok, info} = AuditSvc.rotate(%{source: :cli})
-      assert String.starts_with?(info.rotated_to, "audit-")
+      {:ok, %{rotated: [%{node: node_name, rotated_to: rotated_to}], unreachable: []}} =
+        Logs.rotate(%{kind: "audit"}, %{source: :cli})
+
+      assert node_name == node()
+      assert String.starts_with?(rotated_to, "audit-")
     end
   end
 
   # ---------- Helpers ----------
+
+  defp kind(), do: Kinds.fetch!(:audit)
+
+  defp encode(signal), do: Codec.encode(kind(), signal)
+
+  defp tick(),
+    do:
+      encode(
+        Signal.new(%{
+          kind: :event,
+          source: :observability_service,
+          name: :tick,
+          metadata: %{}
+        })
+      )
+
+  defp tail_subscribed?(), do: Registry.lookup(@pubsub, Writer.topic(kind())) != []
+
+  defp assert_broadcast_line(fragment) do
+    assert_receive {:log_lines, :audit, lines}, 2_000
+    unless Enum.any?(lines, &(&1 =~ fragment)), do: assert_broadcast_line(fragment)
+  end
 
   # A tail held by an `:erpc` worker for a sink process that forwards what it
   # is handed to the test; answers once the worker has subscribed.
@@ -758,10 +800,10 @@ defmodule Flezha.Observability.AuditLogTest do
 
     tail =
       Task.async(fn ->
-        :erpc.call(node(), AuditSvc, :tail, [[], Map.put(context, :emit, sink)])
+        :erpc.call(node(), Logs, :tail, [%{kind: "audit"}, Map.put(context, :emit, sink)])
       end)
 
-    assert NodeTestHelper.wait_until(fn -> :sys.get_state(Writer).subscribers != %{} end, 5_000)
+    assert NodeTestHelper.wait_until(&tail_subscribed?/0, 5_000)
     {sink, tail}
   end
 
@@ -794,15 +836,15 @@ defmodule Flezha.Observability.AuditLogTest do
     Application.put_env(:flezha, :audit_log, Keyword.merge(base, overrides))
   end
 
+  # The audit kind is off in the test config, so `Flezha.Logs.Supervisor`
+  # started no subtree for it: the test starts the one it would.
   defp start_audit_supervisor() do
     stop_audit_supervisor()
 
-    _ =
-      Flezha.Observability.Registry.register_source(
-        Flezha.Observability.AuditLog.Supervisor.__source__()
-      )
+    _ = Flezha.Observability.Registry.register_source(Flezha.Logs.Sink.__source__())
 
-    children = [Writer, Rotation, Retention, Sink]
+    kind = kind()
+    children = [{Writer, kind}, {Rotation, kind}, {Retention, kind}, Sink]
 
     {:ok, sup} = Elixir.Supervisor.start_link(children, strategy: :one_for_one)
     Process.put({__MODULE__, :sup}, sup)
@@ -822,18 +864,14 @@ defmodule Flezha.Observability.AuditLogTest do
         :ok
     end
 
-    # Free any orphaned named children left by a crashed prior run.
-    for mod <- [Sink, Retention, Rotation, Writer] do
-      case Process.whereis(mod) do
-        nil ->
-          :ok
+    # Free any orphaned children left by a crashed prior run.
+    names = [Sink | Enum.map([:retention, :rotation, :writer], &Kind.name(kind(), &1))]
 
-        pid ->
-          try do
-            GenServer.stop(pid, :shutdown, 1_000)
-          catch
-            _, _ -> :ok
-          end
+    for name <- names, pid = GenServer.whereis(name), is_pid(pid) do
+      try do
+        GenServer.stop(pid, :shutdown, 1_000)
+      catch
+        _, _ -> :ok
       end
     end
 

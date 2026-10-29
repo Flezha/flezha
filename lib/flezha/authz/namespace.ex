@@ -86,6 +86,22 @@ defmodule Flezha.AuthZ.Namespace do
   def listing_scope(_no_namespace, :system), do: @system
 
   @doc """
+  The records `caller_context` may read of a store that tags each with its
+  namespace (signals, log records): `:all`, or its one namespace.
+  `admin@_system`, an internal caller and every caller while authorization is
+  off read everything; a caller bound to no namespace too, as before
+  namespaces were bound.
+  """
+  @spec read_scope(map()) :: :all | name()
+  def read_scope(%{role: :admin, namespace: @system}), do: :all
+  def read_scope(%{source: :internal}), do: :all
+
+  def read_scope(caller_context) do
+    bound = Map.get(caller_context, :namespace)
+    if is_nil(bound) or not Flezha.AuthZ.enabled?(), do: :all, else: bound
+  end
+
+  @doc """
   The members of `names` that `caller_context` may be shown, by
   `listing_scope/2` — whose `unbound` argument this takes and whose warning
   about it applies here unchanged.

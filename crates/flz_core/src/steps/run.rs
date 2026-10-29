@@ -445,7 +445,15 @@ impl Decide<'_, '_, '_> {
         self.s.pass = None;
         self.r.run.pass_dead.store(true, Ordering::Release);
         self.clear_waits();
-        self.fx.completed = Some((status.to_string(), error, result));
+        self.fx.completed = Some((status.to_string(), error, result, String::new()));
+    }
+
+    /// The end after a compensation pass, carrying how its rollback went.
+    pub(super) fn ended(&mut self, status: &str, error: String, undo: &str) {
+        self.terminal(status, error, Vec::new());
+        if let Some(completed) = self.fx.completed.as_mut() {
+            completed.3 = undo.to_string();
+        }
     }
 
     /// A clean end with nothing left to run: `cancelled` when a stop asked.

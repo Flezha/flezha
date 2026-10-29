@@ -47,7 +47,7 @@ defmodule Flezha.Relay.Lifecycle do
 
   @behaviour Flezha.Shutdown.Step
 
-  @named_stops [:stop, :complete, :rescale, :failed_start]
+  @named_stops [:stop, :complete, :rescale, :rescale_leave, :failed_start]
 
   # ---------------------------------------------------------------
   # Process API — the lifecycle messages the Overwatch answers to

@@ -575,7 +575,11 @@ defmodule Flezha.Convergence.LoopTest do
     test "start_relay starts the declared relay through the start authority" do
       relay = %{id: "eth_feed", factory_id: "f"}
       stub(HubManager, :declared_relay, fn "ns", "eth_feed" -> {:ok, relay} end)
-      expect(RelayManager, :start_relay, fn "ns", ^relay -> {:ok, %{relay_id: "eth_feed"}} end)
+
+      expect(RelayManager, :start_relay, fn "ns", ^relay, [announce: false, record?: false] ->
+        {:ok, %{relay_id: "eth_feed"}}
+      end)
+
       on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
       log =
@@ -593,7 +597,7 @@ defmodule Flezha.Convergence.LoopTest do
 
     test "start_relay never starts a relay a stop took out of the declared set" do
       stub(HubManager, :declared_relay, fn "ns", "stopped_feed" -> :error end)
-      reject(&RelayManager.start_relay/2)
+      reject(&RelayManager.start_relay/3)
 
       assert Heal.execute(%{
                primitive: :start_relay,

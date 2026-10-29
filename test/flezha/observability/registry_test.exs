@@ -322,6 +322,7 @@ defmodule Flezha.Observability.RegistryTest do
       assert kinds == %{
                platform_authz: [:event],
                audit_log: [:event],
+               relay_history: [:event],
                observability_export: [:event],
                observability_registry: [:event],
                observability_service: [:event],

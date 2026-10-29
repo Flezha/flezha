@@ -40,7 +40,15 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   # What the console calls today and this tree does not answer. A break
   # recorded here is one the console has not caught up with yet, named in its
   # own spelling; the console's maintainer clears it.
-  @unresolved_today %{}
+  @unresolved_today %{
+    # The audit log is the `audit` kind of `Flezha.Service.Logs` now; the
+    # console moves to it in its own logs page change.
+    {Flezha.Service.AuditLog, :list_files, 1} => :withdrawn,
+    {Flezha.Service.AuditLog, :read, 2} => :moved,
+    {Flezha.Service.AuditLog, :rotate, 1} => :moved,
+    {Flezha.Service.AuditLog, :stats, 1} => :moved,
+    {Flezha.Service.AuditLog, :tail, 2} => :moved
+  }
 
   setup_all do
     # Just under the console's distinct calls today: the floor guards against a

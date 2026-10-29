@@ -123,3 +123,20 @@ re-run that Cell's (idempotent) hook, since no marker says it ran.
 - **WHEN** the controller refuses or never acknowledges all three sends of a `compensated` entry for tasklet `b`'s Cell while `a` is also to be undone
 - **THEN** `b`'s Cell SHALL have no done marker, `a`'s compensation SHALL still run and be marked, and the run SHALL end `error` with an error naming `b`
 
+### Requirement: A run that ended SHALL report whether its rollback completed
+
+`RelayCompleted` SHALL carry `undo`: `complete` when the run ended after a compensation pass in
+which every compensate hook it planned succeeded and was journaled, `partial` when any planned
+hook failed or its journal entry was refused, and empty when no compensation pass ran. The
+runtime that ran the pass SHALL set it, for durable and memory-only classes alike.
+
+#### Scenario: A fully rolled-back run
+
+- **WHEN** an `undo_all` steps run fails and every compensate hook succeeds
+- **THEN** its `RelayCompleted` SHALL carry `status: "error"` and `undo: "complete"`
+
+#### Scenario: A rollback with a failing hook
+
+- **WHEN** one compensate hook of the pass raises
+- **THEN** its `RelayCompleted` SHALL carry `undo: "partial"`
+

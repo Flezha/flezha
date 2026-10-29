@@ -167,7 +167,10 @@ fn a_record_not_durable_refusal_is_sent_again_after_a_back_off_and_a_real_one_is
 /// carrying its Cell's saga markers so a gate that opened would compensate:
 /// checked to start no pass, run no undo and leave the run done with nothing
 /// armed, its completion returned.
-fn at_the_gate(id: &str, f: impl FnOnce(&mut Decide<'_, '_, '_>)) -> (String, String, Vec<u8>) {
+fn at_the_gate(
+    id: &str,
+    f: impl FnOnce(&mut Decide<'_, '_, '_>),
+) -> (String, String, Vec<u8>, String) {
     let inst = host_class::steps(id, &["in"]);
     let r = Run::of(&inst).expect("a steps instance");
     r.run.bind(crate::steps::Resume {
@@ -205,7 +208,8 @@ fn a_restore_gate_timeout_ends_the_run_error() {
         (
             "error".to_string(),
             "steps restore gate timed out: 1 of 2 restores landed within 30 s".to_string(),
-            Vec::new()
+            Vec::new(),
+            String::new()
         )
     );
 }
@@ -214,7 +218,12 @@ fn a_restore_gate_timeout_ends_the_run_error() {
 fn a_stop_at_the_restore_gate_ends_the_run_cancelled() {
     assert_eq!(
         at_the_gate("gate_stop", |d| d.stop()),
-        ("cancelled".to_string(), String::new(), Vec::new())
+        (
+            "cancelled".to_string(),
+            String::new(),
+            Vec::new(),
+            String::new()
+        )
     );
 }
 

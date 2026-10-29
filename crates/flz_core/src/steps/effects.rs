@@ -129,7 +129,8 @@ pub(super) struct Effects {
     pub(super) admit: Vec<Release>,
     pub(super) cancel_retries: Vec<Arc<CellSlot>>,
     pub(super) parked: Option<MessagePark>,
-    pub(super) completed: Option<(String, String, Vec<u8>)>,
+    /// The run's end: status, error, result and how its rollback went.
+    pub(super) completed: Option<(String, String, Vec<u8>, String)>,
     pub(super) run_undo: Option<(Arc<CellSlot>, Vec<Value>, Option<u64>)>,
     pub(super) start: Option<Source>,
     /// Firing removals a stage's commit made durable, per Cell.
@@ -149,8 +150,8 @@ impl Run<'_> {
         if let Some(parked) = fx.parked {
             self.park_message(parked);
         }
-        if let Some((status, error, result)) = fx.completed {
-            self.emit_completed(status, error, result);
+        if let Some((status, error, result, undo)) = fx.completed {
+            self.emit_completed(status, error, result, undo);
         }
         if let Some((slot, outputs, offset)) = fx.run_undo {
             self.run_undo(slot, outputs, offset);
@@ -211,7 +212,7 @@ impl Run<'_> {
 
     /// The run's completion. An ended instance's pending timers go with its
     /// Cells, as a flow relay's do on removal; the record says nothing of them.
-    fn emit_completed(&self, status: String, error: String, result: Vec<u8>) {
+    fn emit_completed(&self, status: String, error: String, result: Vec<u8>, undo: String) {
         let pending: usize = self
             .inst
             .all_slots()
@@ -227,7 +228,7 @@ impl Run<'_> {
             );
         }
         let id = self.inst.instance_id.to_string();
-        crate::runner::emit_relay_completed(id, status, error, result);
+        crate::runner::emit_relay_completed(id, status, error, result, undo);
     }
 
     /// Build a barrier's frame (the journal codecs run here), register its

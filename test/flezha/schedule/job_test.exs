@@ -27,7 +27,12 @@ defmodule Flezha.Schedule.JobTest do
   # Forward every spawn's arguments to the test process, so no call site needs
   # its own stub shape.
   defp stub_spawn(test_pid) do
-    stub(RelayManager, :start_steps, fn "default", id, factory_id, init_values, opts ->
+    stub(RelayManager, :start_steps, fn "default",
+                                        id,
+                                        factory_id,
+                                        init_values,
+                                        opts,
+                                        _start_opts ->
       send(test_pid, {:spawned, spawn_args(id, factory_id, init_values, opts)})
       {:ok, %{relay_id: id}}
     end)
@@ -97,8 +102,14 @@ defmodule Flezha.Schedule.JobTest do
     test "fires a slot inside the grace window on start, through the steps path" do
       test_pid = self()
 
-      expect(RelayManager, :start_steps, fn "default", id, factory_id, init_values, opts ->
+      expect(RelayManager, :start_steps, fn "default",
+                                            id,
+                                            factory_id,
+                                            init_values,
+                                            opts,
+                                            start_opts ->
         send(test_pid, {:spawned, spawn_args(id, factory_id, init_values, opts)})
+        send(test_pid, {:origin, start_opts[:origin]})
         {:ok, %{relay_id: id}}
       end)
 
@@ -108,6 +119,8 @@ defmodule Flezha.Schedule.JobTest do
       assert builder.factory_id == "fac"
       assert builder.init_values == %{"a" => 1}
       assert builder.id =~ ~r/^job@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/
+      "job@" <> slot = builder.id
+      assert_receive {:origin, %{kind: "schedule", schedule: "job", slot: ^slot}}
     end
 
     test "a job restarted within the grace re-fires the slot whose instance completed" do
@@ -135,7 +148,7 @@ defmodule Flezha.Schedule.JobTest do
     test "a fired instance receives the stored first message on its channel" do
       test_pid = self()
 
-      expect(RelayManager, :start_steps, fn "default", id, _factory, _init, opts ->
+      expect(RelayManager, :start_steps, fn "default", id, _factory, _init, opts, _start_opts ->
         send(test_pid, {:spawned, opts})
         {:ok, %{relay_id: id}}
       end)
@@ -153,7 +166,7 @@ defmodule Flezha.Schedule.JobTest do
     test "an entry stored without a message fires an instance that waits for one" do
       test_pid = self()
 
-      expect(RelayManager, :start_steps, fn "default", id, _factory, _init, opts ->
+      expect(RelayManager, :start_steps, fn "default", id, _factory, _init, opts, _start_opts ->
         send(test_pid, {:spawned, opts})
         {:ok, %{relay_id: id}}
       end)
@@ -167,15 +180,18 @@ defmodule Flezha.Schedule.JobTest do
     test "a manual run carries the stored first message too" do
       test_pid = self()
 
-      expect(RelayManager, :start_steps, fn "default", id, _factory, _init, opts ->
-        send(test_pid, {:spawned, opts})
+      expect(RelayManager, :start_steps, fn "default", id, _factory, _init, opts, start_opts ->
+        send(test_pid, {:spawned, opts, start_opts})
         {:ok, %{relay_id: id}}
       end)
 
       entry = Helper.entry(%{text: "hello", channel: nil})
-      assert {:ok, %{relay_id: "job@manual-1"}} = Job.spawn_instance(entry, "job@manual-1")
+      origin = %{kind: "schedule", schedule: "job", slot: "manual"}
 
-      assert_receive {:spawned, opts}, 2_000
+      assert {:ok, %{relay_id: "job@manual-1"}} =
+               Job.spawn_instance(entry, "job@manual-1", origin)
+
+      assert_receive {:spawned, opts, [origin: ^origin]}, 2_000
       assert Keyword.get(opts, :seed_input) == {"hello", %{"flz.msg_id" => "job@manual-1"}}
     end
 
@@ -206,7 +222,7 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a duplicate fire no-ops on the deterministic id and stays armed" do
-      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts, _start_opts ->
         :duplicate
       end)
 
@@ -218,7 +234,7 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a failed spawn is logged with its attempt number" do
-      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts, _start_opts ->
         {:error, %{relay_id: "x", node: node(), reason: "Factory with id fac does not exist"}}
       end)
 
@@ -281,7 +297,7 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a spec that no longer decodes starts nothing rather than a mute run" do
-      stub(RelayManager, :start_steps, fn _ns, _id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn _ns, _id, _factory, _init, _opts, _start_opts ->
         flunk("an undecodable plugin spec must not reach the start path")
       end)
 
@@ -300,7 +316,7 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a failed spawn arms a retry with the slot id and reports retrying" do
-      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts, _start_opts ->
         {:error, %{reason: "no runners"}}
       end)
 
@@ -331,7 +347,7 @@ defmodule Flezha.Schedule.JobTest do
       test_pid = self()
       {:ok, verdicts} = Agent.start_link(fn -> :fail end)
 
-      stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts, _start_opts ->
         case Agent.get(verdicts, & &1) do
           :fail ->
             {:error, %{reason: "no runners"}}
@@ -362,7 +378,7 @@ defmodule Flezha.Schedule.JobTest do
     test "a duplicate answer on retry counts as success — someone fired the slot" do
       {:ok, verdicts} = Agent.start_link(fn -> :fail end)
 
-      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn "default", _id, _factory, _init, _opts, _start_opts ->
         case Agent.get(verdicts, & &1) do
           :fail -> {:error, %{reason: "no runners"}}
           :duplicate -> :duplicate
@@ -391,7 +407,7 @@ defmodule Flezha.Schedule.JobTest do
       slot2 = ~U[2026-07-27 08:02:00Z]
       failing_id = "job@#{DateTime.to_iso8601(slot1)}"
 
-      stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts ->
+      stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts, _start_opts ->
         if id == failing_id do
           {:error, %{reason: "no runners"}}
         else

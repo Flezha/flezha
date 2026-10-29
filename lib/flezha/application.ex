@@ -136,7 +136,9 @@ defmodule Flezha.Application do
       # Its boot-time cspec hydration lands before a hub opens its `registry.dets`.
       {&DurabilityTier.children/0, :always},
       {Flezha.Service.HubManager, :always},
+      {{Phoenix.PubSub, name: Flezha.Observability.PubSub}, :always},
       {Flezha.Observability.Supervisor, :always},
+      {Flezha.Logs.Supervisor, :always},
       # After HubManager, because the drain queries the hub.
       {Coordinator, :always},
       {Flezha.Runner.FleetSupervisor, :always},

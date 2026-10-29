@@ -264,8 +264,10 @@ roles outside that line), and the namespace it is judged in:
 | Verbs | Action | Lowest role | Judged in |
 | --- | --- | --- | --- |
 | `flz boot status`, `flz boot await` | public | none | none |
-| `flz audit list`, `read`, `tail`, `stats` | `audit.read` | viewer | the caller's namespace |
-| `flz audit rotate` | `audit.rotate` | ops | the caller's namespace |
+| `flz logs kinds`, `read`, `tail`, `files`, `stats` | `logs.read` | viewer | the caller's namespace |
+| `flz logs rotate` | `logs.rotate` | ops | the caller's namespace |
+| `flz audit list`, `read`, `tail`, `stats` (and `flz logs` on the audit log) | `logs.read`, then `audit.read` | viewer | the caller's namespace |
+| `flz audit rotate` (and `flz logs rotate audit`) | `logs.rotate`, then `audit.rotate` | ops | the caller's namespace |
 | `flz auth whoami` | `authz.whoami` | viewer | the caller's namespace |
 | `flz token issue` | `authz.token_issue` | admin | the namespace named |
 | `flz token revoke` | `authz.token_revoke` | admin | the token's namespace |
@@ -480,8 +482,12 @@ land on `:platform_authz`, with the verified principal: `:authorization_denied`,
 where it was judged, `metadata.caller_roles` the roles it was judged with, and
 `caller` who asked and through which surface. A refusal carries
 `caller_roles` too, empty when it came before any role was resolved. Each of
-these sources is in the audit log's default allow-list. The `flz audit` verbs
-take `--token` like the others.
+these sources is in the audit log's default allow-list, which is also the
+only sources the audit log is handed, so no other signal waits on it. The
+`flz audit` verbs take `--token` like the others; each read of the audit log is
+itself recorded, under `audit_log`, and a read of the relay history is not.
+A viewer reads only the records of its own namespace, and `admin@_system`
+reads every one.
 
 ## Settings
 

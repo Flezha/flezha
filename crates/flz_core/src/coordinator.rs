@@ -385,7 +385,14 @@ impl Coordinator {
                 status,
                 error,
                 result,
-            } => self.write_relay_completed(relay_id, status, error, result),
+                undo,
+            } => self.write_relay_completed(PbRelayCompleted {
+                relay_id,
+                status,
+                error,
+                result,
+                undo,
+            }),
             RunnerMessage::EmitControlRequest {
                 reference_id,
                 command,
@@ -422,22 +429,12 @@ impl Coordinator {
             .set_control_stream(Some(Arc::clone(&self.control_stream)));
     }
 
-    /// The terminal `RelayCompleted`, carrying the direct-output count.
-    fn write_relay_completed(
-        &mut self,
-        relay_id: String,
-        status: String,
-        error: String,
-        result: Vec<u8>,
-    ) {
+    /// The terminal `RelayCompleted`.
+    fn write_relay_completed(&mut self, completed: PbRelayCompleted) {
+        let relay_id = completed.relay_id.clone();
         let frame = command::framed_request(
             format!("steps-completed-{}", nonce_suffix()),
-            Command::RelayCompleted(PbRelayCompleted {
-                relay_id: relay_id.clone(),
-                status,
-                error,
-                result,
-            }),
+            Command::RelayCompleted(completed),
         );
         if let Err(e) = self.write_control(frame) {
             flz_transport::notice!(Warn, "RelayCompleted write failed for {relay_id}: {e}");

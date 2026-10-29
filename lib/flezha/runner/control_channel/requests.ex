@@ -93,7 +93,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
       relay_id: relay_id,
       status: status,
       error: error,
-      result: result
+      result: result,
+      undo: undo
     } = completed
 
     :telemetry.execute(
@@ -123,7 +124,11 @@ defmodule Flezha.Runner.ControlChannel.Requests do
         finished_at: System.system_time(:second)
       })
 
-    deregister_on_completion(state, relay_id, overwatch)
+    deregister_on_completion(state, relay_id, overwatch, %{
+      status: status,
+      error: error,
+      undo: undo
+    })
   end
 
   defp report_steps_failure(state, relay_id, error) do
@@ -137,15 +142,21 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   # Tear down off the control-channel process: `stop_relay` drives a
   # RemRelay round-trip whose CommandResponse returns on THIS control
   # stream, so calling it inline would deadlock the reader.
+  # The run's own account of how it ended travels with the stop.
   defp deregister_on_completion(
          %{namespace: namespace, runner_id: runner_id},
          relay_id,
-         overwatch
+         overwatch,
+         terminal
        ) do
     DurableTasks.start(fn ->
       drain_owed_outputs(runner_id, relay_id)
 
-      case RelayManager.stop_relay(namespace, relay_id, cause: :complete, overwatch: overwatch) do
+      case RelayManager.stop_relay(namespace, relay_id,
+             cause: :complete,
+             overwatch: overwatch,
+             terminal: terminal
+           ) do
         :ok ->
           :ok
 
@@ -289,6 +300,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
     } = request
 
     namespace = state.namespace
+    parent = parent(state, request.parent_relay_id)
 
     answer_off_process(reference_id, fn ->
       judged =
@@ -300,7 +312,8 @@ defmodule Flezha.Runner.ControlChannel.Requests do
             payload,
             if_running(if_running),
             Session.runner_caller_context(namespace),
-            identity
+            identity,
+            parent_relay: parent
           )
         end)
 
@@ -327,6 +340,11 @@ defmodule Flezha.Runner.ControlChannel.Requests do
        "spawn-steps response #{outcome_name(outcome)}"}
     end)
   end
+
+  # The requesting instance, kept only when this session hosts it: a parent a
+  # runner merely names is no parent, and costs the spawn nothing.
+  defp parent(_state, ""), do: nil
+  defp parent(state, relay_id), do: if(Records.hosts?(state, relay_id), do: relay_id)
 
   defp spawn_response({:refused, error}, instance_id),
     do: %RunnerCommands.SpawnStepsResponse{

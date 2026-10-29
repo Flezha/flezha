@@ -41,10 +41,14 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     :ok
   end
 
-  # No Overwatch is admitted in these tests, so the teardown passes `overwatch: nil`.
+  # No Overwatch is admitted in these tests, so the teardown passes `overwatch: nil`;
+  # the run's own account of how it ended travels as `terminal:`.
   defp stub_stop_relay(test_pid) do
-    stub(RelayManager, :stop_relay, fn @namespace, relay_id, [cause: :complete, overwatch: nil] ->
+    stub(RelayManager, :stop_relay, fn @namespace,
+                                       relay_id,
+                                       [cause: :complete, overwatch: nil, terminal: terminal] ->
       send(test_pid, {:stop_relay_called, relay_id})
+      send(test_pid, {:terminal, relay_id, terminal})
       :ok
     end)
   end
@@ -60,6 +64,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:stop_relay_called, "task-1"}, @torn_down_within
+    assert_received {:terminal, "task-1", %{status: "ok", error: "", undo: ""}}
 
     # The terminal outcome + result payload is surfaced on `:completed`.
     assert_receive {:telemetry, [:flezha, :steps, :completed], %{count: 1}, meta}, 500
@@ -77,7 +82,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
     {control_channel, _stream_ref} = start_control_channel("exec-task-b")
 
-    payload = build_relay_completed_payload("task-2", "error", "boom", "", "ref-2")
+    payload = build_relay_completed_payload("task-2", "error", "boom", "", "ref-2", "partial")
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:telemetry, [:flezha, :steps, :failed], %{count: 1}, metadata}, 500
@@ -90,6 +95,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
     # Terminal failure deregisters exactly as success — no retry.
     assert_receive {:stop_relay_called, "task-2"}, @torn_down_within
+    assert_received {:terminal, "task-2", %{status: "error", error: "boom", undo: "partial"}}
   end
 
   test "RelayCompleted cancelled (cooperative stop) → same converged teardown + result" do
@@ -187,7 +193,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
   # No Overwatch runs here, so the namespace claim its bind would write stands
   # in for it: a relay with no ownership record is judged by that claim.
-  defp build_relay_completed_payload(relay_id, status, error, result, reference_id) do
+  defp build_relay_completed_payload(relay_id, status, error, result, reference_id, undo \\ "") do
     :ok = Paths.claim_namespace(relay_id, @namespace)
 
     ControlFrameTestHelper.encode_request(
@@ -197,7 +203,8 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
          relay_id: relay_id,
          status: status,
          error: error,
-         result: result
+         result: result,
+         undo: undo
        }}
     )
   end
@@ -279,8 +286,10 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
                                                payload,
                                                if_running,
                                                caller,
-                                               _identity ->
+                                               _identity,
+                                               opts ->
       send(test_pid, {:resolved, ns, id, factory, payload, if_running, caller})
+      send(test_pid, {:spawn_opts, opts})
       {:spawned, id}
     end)
 
@@ -288,12 +297,15 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
       instance_id: "w1",
       factory_id: "worker",
       payload: "p1",
-      if_running: "deliver"
+      if_running: "deliver",
+      parent_relay_id: "not-hosted-here"
     )
 
     assert_receive {:resolved, @namespace, "w1", "worker", "p1", :deliver, caller}
     # The identity is the connection's, never anything the frame said.
     assert %{source: :sdk, namespace: @namespace, principal: "runner@" <> @namespace} = caller
+    # A parent the frame names but this session does not host is no parent.
+    assert_received {:spawn_opts, [parent_relay: nil]}
     assert {"ref-spawn", %{outcome: "spawned", error: nil, instance_id: "w1"}} = await_response()
   end
 
@@ -304,7 +316,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
                                                _payload,
                                                _policy,
                                                _,
-                                               _identity ->
+                                               _identity,
+                                               _opts ->
       {:spawned, "worker-k7m2qzxw4pd3fn2a"}
     end)
 
@@ -321,7 +334,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
                                                _payload,
                                                :error,
                                                _,
-                                               _identity ->
+                                               _identity,
+                                               _opts ->
       {:already_running, id}
     end)
 
@@ -338,7 +352,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
                                                _payload,
                                                if_running,
                                                _,
-                                               _identity ->
+                                               _identity,
+                                               _opts ->
       assert if_running == :deliver
       {:delivered, "w1"}
     end)
@@ -355,7 +370,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
                                                _payload,
                                                _policy,
                                                _,
-                                               _identity ->
+                                               _identity,
+                                               _opts ->
       {{:refused, Flezha.Error.new("quota.exceeded", kind: "max_relays", current: 1, limit: 1)},
        id}
     end)
@@ -377,7 +393,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
                                                _payload,
                                                _policy,
                                                _,
-                                               _identity ->
+                                               _identity,
+                                               _opts ->
       send(parent, {:resolving, self()})
       NodeTestHelper.park()
       {:spawned, "w1"}

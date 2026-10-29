@@ -34,7 +34,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
   # The two domains that had a service API before this surface existed keep
   # their own suites, which drive them against live sinks.
-  @own_suites [Flezha.Service.AuditLog, Flezha.Service.Observability]
+  @own_suites [Flezha.Service.Logs, Flezha.Service.Observability]
 
   @published %{
     Controller => [

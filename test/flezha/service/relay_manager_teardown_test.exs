@@ -207,7 +207,7 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     overwatch =
       spawn_link(fn ->
         receive do
-          {:"$gen_call", from, {:cause, cause}} ->
+          {:"$gen_call", from, {:note, %{cause: cause}}} ->
             send(test_pid, {:told, cause})
             GenServer.reply(from, %{builder: %{cells: ["a"]}, runner_id: "runner-1"})
         end

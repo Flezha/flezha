@@ -1,8 +1,8 @@
 # Controller commands
 
 The groups that look after the controller itself: starting and stopping it,
-checking that it is up, the runners connected to it, its signals, and
-clearing its data.
+checking that it is up, the runners connected to it, its signals and logs,
+and clearing its data.
 
 Each section shows, for the verbs used most, a command with its answer.
 Unless a section names another page, the answers come from the echo of
@@ -202,6 +202,34 @@ signal that reports something going wrong) and, for the signals that fire in nor
 operation, a `sentence` template such as `"{runner} connected to {namespace}"`, whose
 `{key}` names a label or measurement of the signal and `{key:noun}` a count.
 
+## `flz logs`
+
+Reads the controller's durable logs, the relay history and the audit log, from every controller at once. Explained in [`running_and_testing.md`](../core/running_and_testing.md#the-relay-history), [`authorization.md`](../core/authorization.md#the-audit-trail).
+
+`flz logs help` prints the group's verbs, and the [command
+reference](command_reference.md) lists each with its usage line.
+`flz logs kinds` names each log, whether it is on, and the filters `read`
+and `tail` take for it.
+
+The last runs of a factory, newest first, each naming the controller that
+wrote it:
+
+```sh
+$ flz logs read relay_history --event ended --factory echo --limit 2
+```
+
+```output
+[2026-10-29T10:15:02.114Z] flezha@127.0.0.1 ended default/my_echo factory=echo origin=operator outcome=stopped duration_ms=61873
+[2026-10-29T10:12:40.530Z] flezha@127.0.0.1 ended default/echo-k7m2qzxw factory=echo origin=operator outcome=stopped duration_ms=5022
+next: g2gDdwlsb2dzX3JlYWR3Bm5ld2VzdGgEbgcA
+```
+
+`next` is printed while older records match; pass it back with `--before` for
+the page before. `--node` and `--file` read one controller's one file, oldest
+first, and `files`, `stats` and `rotate` answer one row per controller. A
+controller that did not answer is named on a closing `Did not answer:` line,
+and the others' records are printed.
+
 ## `flz reset`
 
 Deletes the controller's data on disk, so its next start is empty. Explained in [`running_and_testing.md`](../core/running_and_testing.md#start-from-a-clean-slate-flz-reset).
@@ -223,6 +251,7 @@ would keep  ./storage/app/dlq/                               (use --include-dlq 
 would keep  ./storage/app/schedules/                         (use --include-schedules to clear)
 would keep  ./storage/app/auth/                              (use --include-auth to clear)
 would keep  ./storage/app/audit/                             (use --include-audit to clear)
+would clear ./storage/app/relay_history/                     (0 files, 0 B)
 would keep  ./storage/app/plugins/                           (use --include-plugins to clear)
 would keep  socket directory                                 (use --include-sockets to clear)
 would keep  ./storage/logs/                                  (not reset's to clear)

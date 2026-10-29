@@ -21,18 +21,19 @@ factory can run as many relays as you need.
 4. [Watch it](#watch-it)
 5. [Diagnose a relay](#diagnose-a-relay)
 6. [Stop it](#stop-it)
-7. [From application code](#from-application-code)
-8. [Local mode](#local-mode)
+7. [The relay history](#the-relay-history)
+8. [From application code](#from-application-code)
+9. [Local mode](#local-mode)
    1. [Nothing in local mode is durable](#nothing-in-local-mode-is-durable)
    2. [How it is used](#how-it-is-used)
    3. [Example: counting words](#example-counting-words)
    4. [What you run is what you deploy](#what-you-run-is-what-you-deploy)
-9. [Check a tasklet on its own](#check-a-tasklet-on-its-own)
-10. [After a controller restart](#after-a-controller-restart)
-11. [Choosing a split behaviour](#choosing-a-split-behaviour)
-12. [Start from a clean slate: `flz reset`](#start-from-a-clean-slate-flz-reset)
-13. [Limits and gotchas](#limits-and-gotchas)
-14. [See also](#see-also)
+10. [Check a tasklet on its own](#check-a-tasklet-on-its-own)
+11. [After a controller restart](#after-a-controller-restart)
+12. [Choosing a split behaviour](#choosing-a-split-behaviour)
+13. [Start from a clean slate: `flz reset`](#start-from-a-clean-slate-flz-reset)
+14. [Limits and gotchas](#limits-and-gotchas)
+15. [See also](#see-also)
 
 ## Start a relay
 
@@ -282,6 +283,60 @@ everything down so the next start is empty, go in reverse order:
 > milliseconds: a relay may come back a step behind and send a few outputs
 > a second time. A relay on the effectively-once tier does not have that
 > gap, because its outputs wait until the change behind them is on disk.
+
+## The relay history
+
+A workflow that a tasklet spawns can start and finish between two looks at
+`flz relay list`. The relay history keeps a record of each run, so it can be
+found afterwards:
+
+```sh
+$ flz logs read relay_history --event ended --factory fan_trade --limit 10
+```
+
+Each run writes one `started` record when it is started on purpose and one
+`ended` record when it ends for good. A start that fails after the controller
+took it writes `start_failed`. Every record stands alone: it names the
+namespace, the relay, its factory, whether it runs as a stream or in steps,
+when it first started, the controller that wrote it, and its origin. An
+`ended` record adds the outcome, whether the relay was halted, how long it ran
+and a short error.
+
+The origin says who or what started the run:
+
+| Origin | Started by |
+| --- | --- |
+| `operator` | `flz relay start` or the console, with the caller's principal, surface and request id |
+| `group` | a start of a partition group, for each member |
+| `schedule` | a schedule's slot, or `flz schedule run` with its caller (slot `manual`) |
+| `spawn` | a tasklet's spawn, with the relay that asked for it once the controller has checked that the asking runner hosts it |
+| `call` | a relay's call that started its callee, with the calling relay |
+| `rescale` | a rescale, for each member it adds |
+
+The outcome says how it ended:
+
+| Outcome | When |
+| --- | --- |
+| `completed` | the run finished |
+| `undone` | the run failed and its rollback completed |
+| `failed` | the run failed; the error ends with `; rollback incomplete` when a rollback hook failed |
+| `stopped` | someone stopped it: a stop, a stop of a halted relay, or its namespace's deletion |
+| `timed_out` | it ended because its `max_duration` passed |
+| `rescaled_away` | a rescale removed the member |
+| `cancelled` | the run ended itself cancelled for any other reason |
+
+A move, a failover to another controller, a crash restart, a sleep and a wake
+write nothing: they are not a run starting or ending, and the run's `ended`
+record keeps the start time of its first start. The history works with
+observability off, and writing it never holds up a relay: past 10,000 queued
+records a record is refused and counted in `flz logs stats relay_history`.
+
+Each controller keeps its own files in `storage/app/relay_history/`, and a
+read answers from every controller, newest first. A record is about 400
+bytes, so the default cap of 1 GiB holds about 2.5 million runs; the
+`relay_history_*` keys in
+[`application_env.md`](../../configuration/application_env.md) size it, and
+`FLEZHA_RELAY_HISTORY_ENABLED=false` turns it off.
 
 ## From application code
 
@@ -763,8 +818,8 @@ notices; this release does not fence such a write.
 ## Start from a clean slate: `flz reset`
 
 `flz reset` clears a controller's durable data under `storage/app/` so that it
-boots empty: every cell's log, snapshot and outbox files and the registry by
-default, and optionally the TLS material, the dead-letter queue, schedules,
+boots empty: every cell's log, snapshot and outbox files, the registry and the
+relay history by default, and optionally the TLS material, the dead-letter queue, schedules,
 the auth store, the audit trail, installed plugins and socket files. It
 removes only the contents of each directory, never `storage/app/` itself, so bind
 mounts, volumes and file watchers stay valid. It clears nothing while the
@@ -785,6 +840,7 @@ $ flz controller start
 | `storage/app/schedules/` | each schedule | `--include-schedules` |
 | `storage/app/auth/` | tokens, role bindings, namespaces | `--include-auth` |
 | `storage/app/audit/` | the audit trail | `--include-audit` |
+| `storage/app/relay_history/` | the relay history | by default |
 | `storage/app/plugins/` | installed plugins | `--include-plugins` |
 | the resolved socket directory | Flezha's own socket files | `--include-sockets` |
 | `storage/logs/` | the controller's log file | never |
@@ -816,6 +872,7 @@ kept        ./storage/app/dlq/                               (use --include-dlq 
 kept        ./storage/app/schedules/                         (use --include-schedules to clear)
 kept        ./storage/app/auth/                              (use --include-auth to clear)
 kept        ./storage/app/audit/                             (use --include-audit to clear)
+cleared     ./storage/app/relay_history/                     (2 files, 2.1 KiB)
 kept        ./storage/app/plugins/                           (use --include-plugins to clear)
 kept        socket directory                                 (use --include-sockets to clear)
 kept        ./storage/logs/                                  (not reset's to clear)

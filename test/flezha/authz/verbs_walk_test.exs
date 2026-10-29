@@ -19,7 +19,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
 
   alias Flezha.AuthZ.{TokenStore, Verbs}
   alias Flezha.Dlq.Store, as: DlqStore
-  alias Flezha.Observability.AuditLog.{Retention, Rotation, Sink, Writer}
+  alias Flezha.Logs.{Kinds, Retention, Rotation, Sink, Writer}
   alias Flezha.Observability.TestSinks
   alias Flezha.Schedule.Store, as: ScheduleStore
   alias Flezha.Service.Cli
@@ -135,7 +135,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
              "retention[WalkClass] = 2 hours"
 
     assert capture_io(fn ->
-             Cli.call("AuditLog.stats", Jason.encode!([]), token: ctx.viewer_sys)
+             Cli.call("Logs.stats", Jason.encode!([%{kind: "audit"}]), token: ctx.viewer_sys)
            end) =~
              "record_count"
 
@@ -209,7 +209,7 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     {:ok, _} = ScheduleStore.add(ScheduleTestHelper.entry_fields(%{name: "walk-run"}))
     test = self()
 
-    stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts ->
+    stub(RelayManager, :start_steps, fn "default", id, _factory, _init, _opts, _start_opts ->
       send(test, {:spawned, id})
       {:ok, %{relay_id: id}}
     end)
@@ -293,13 +293,14 @@ defmodule Flezha.AuthZ.VerbsWalkTest do
     prev = Application.get_env(:flezha, :audit_log, [])
     Application.put_env(:flezha, :audit_log, Keyword.merge(prev, enabled: true, dir: dir))
 
-    _ =
-      Flezha.Observability.Registry.register_source(
-        Flezha.Observability.AuditLog.Supervisor.__source__()
-      )
+    _ = Flezha.Observability.Registry.register_source(Flezha.Logs.Sink.__source__())
+
+    kind = Kinds.fetch!(:audit)
 
     {:ok, sup} =
-      Supervisor.start_link([Writer, Rotation, Retention, Sink], strategy: :one_for_one)
+      Supervisor.start_link([{Writer, kind}, {Rotation, kind}, {Retention, kind}, Sink],
+        strategy: :one_for_one
+      )
 
     Process.unlink(sup)
 

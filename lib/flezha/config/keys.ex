@@ -423,7 +423,8 @@ defmodule Flezha.Config.Keys do
     {:audit_log_retention_seconds, {:custom, :days_to_seconds}, 2_592_000,
      key: {:audit_log, :retention_seconds}, env: "FLEZHA_AUDIT_RETENTION_DAYS"},
     {:audit_log_max_total_bytes, :int, 4_294_967_296, key: {:audit_log, :max_total_bytes}},
-    {:audit_log_fsync_mode, {:enum, [:per_record, :interval]}, :per_record,
+    # `:batched` is the older spelling of `:interval`.
+    {:audit_log_fsync_mode, {:enum, [:per_record, :interval, :batched]}, :per_record,
      key: {:audit_log, :fsync_mode}},
     {:audit_log_fsync_interval_ms, :ms, 100, key: {:audit_log, :fsync_interval_ms}},
     {:audit_log_rotation_check_interval_ms, :ms, 60_000,
@@ -431,6 +432,28 @@ defmodule Flezha.Config.Keys do
     {:audit_log_retention_check_interval_ms, :ms, 3_600_000,
      key: {:audit_log, :retention_check_interval_ms}},
     {:audit_log_extra_subscriptions, :term, [], key: {:audit_log, :extra_subscriptions}},
+
+    # ---- relay history ------------------------------------------------------
+    # One record per deliberate start and per end for good of a relay instance,
+    # appended to `<dir>/relay_history-current.jsonl`, group-committed. About
+    # 400 bytes a record, so the byte cap holds about 2.5 million runs.
+    {:relay_history_enabled, :bool, true,
+     key: {:relay_history, :enabled}, env: "FLEZHA_RELAY_HISTORY_ENABLED"},
+    {:relay_history_dir, :path, "storage/app/relay_history",
+     key: {:relay_history, :dir}, env: "FLEZHA_RELAY_HISTORY_DIR"},
+    {:relay_history_max_file_bytes, :int, 16_777_216, key: {:relay_history, :max_file_bytes}},
+    {:relay_history_max_file_age_seconds, :int, 86_400,
+     key: {:relay_history, :max_file_age_seconds}},
+    {:relay_history_retention_seconds, {:custom, :days_to_seconds}, 2_592_000,
+     key: {:relay_history, :retention_seconds}, env: "FLEZHA_RELAY_HISTORY_RETENTION_DAYS"},
+    {:relay_history_max_total_bytes, :int, 1_073_741_824,
+     key: {:relay_history, :max_total_bytes}},
+    # Appends queued past this are refused and counted, never waited for.
+    {:relay_history_max_pending, :int, 10_000, key: {:relay_history, :max_pending}},
+    {:relay_history_append_ms, :ms, 1_000, key: {:relay_history, :append_ms}},
+    {:relay_history_dedup_window_hours, :int, 24, key: {:relay_history, :dedup_window_hours}},
+    {:relay_history_dedup_max_entries, :int, 2_000_000,
+     key: {:relay_history, :dedup_max_entries}},
 
     # ---- dead-letter queue --------------------------------------------------
     {:dlq_dir, :path, "storage/app/dlq",

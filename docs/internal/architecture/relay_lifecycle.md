@@ -117,6 +117,7 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 | Order | Row | Does |
 |---|---|---|
 | 5 | `:calls` | answers every caller still waiting (`Flezha.Relay.Calls.Inbound.end_all/4`) |
+| 1 | `:relay_history` | `Flezha.Logs.RelayHistory`: appends the `ended` record when the Overwatch leaves for good (not a move, a crash restart, a failed start or a kept rescale member) |
 | 10 | `:bind_task` | kills an in-flight bind task (`Rebind.terminate_bind_task/1`) |
 | 20 | `:class_registry` | drops the in-memory class entry |
 | 30 | `:control_unit` | tells the runner to drop the relay and waits up to half the budget for its answer, which comes after the Cells' last changes shipped; a gone or silent runner is not an error. A relay without an input log sends its stop behind its last input (`flz.control` = `stop` on its data stream) and gives the runner half that wait to apply everything ahead of it; the answer then also waits for `{:relay_drained, id}`, which the stream channel sends once the writers have fsynced every record the runner sent before its final marker |
@@ -136,8 +137,11 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 | 40 | `:quota` | gives back the relay and its Cells |
 | 50 | `:announce` | `[:flezha, :relay, :stopped]`, which controller plugins hear; `Flezha.Observability.HookSink.stopped/4` is attached to it |
 
-The cause picks the rows (`acts?/2`): `:stop` and `:complete` run all six, `:rescale` all but
+The cause picks the rows (`acts?/2`): `:stop` and `:complete` run all six, `:rescale` and
+`:rescale_leave` (a member a rescale removes, which the relay history records ended) all but
 `:announce`, `:failed_start` only `:hub_stop`.
+A completion's stop carries the run's `terminal` facts and an operator's stop its requester,
+both set on the Overwatch (`{:note, fields}`) before the stop acts.
 
 The walk starts from the relay's pid in this node's copy of the hub. A start answers before every
 copy has the row, so a miss there asks the other members in one call bounded by
@@ -163,7 +167,7 @@ failure; finalise is the rows from 20, each failure logged and the next row run.
 |---|---|---|---|
 | 10 | `:drain` | `HubManager.Lifecycle` | `drain_hub/2` for every running namespace at once: live handover through the consent gate, then a wait for the local children to exit |
 | 20 | `:fsync` | `Flezha.State.FsyncBatcher` | syncs every pending write |
-| 30 | `:audit_log` | `Flezha.Observability.AuditLog.Writer` | closes the audit log |
+| 30 | `:logs` | `Flezha.Logs.Writer` | closes every running log kind's writer |
 | 40 | `:hubs` | `HubManager.Lifecycle` | terminates `HubManager` in `Flezha.Supervisor`, so it is not restarted |
 | 50 | `:transports` | `Flezha.Transport.Server` | terminates every transport the same way |
 

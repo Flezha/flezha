@@ -58,7 +58,7 @@ The system SHALL provide a token registry (`Flezha.AuthZ.TokenStore`) persisted 
 
 ### Requirement: Single policy point `Flezha.AuthZ.authorize/3`
 
-The system SHALL make every authorization decision in one place, `Flezha.AuthZ`, and expose it through two entry points: `Flezha.AuthZ.authorize(caller_context, action, scope) :: :ok | {:error, {:forbidden, reason}}` and `Flezha.AuthZ.allowed?(caller_context, action, scope) :: boolean()`, which SHALL answer the same decision. `action` SHALL be an atom from the `Flezha.AuthZ.Action` enumeration. `scope` SHALL be a map containing at minimum `:namespace`. Every user-action function in `Flezha.Service.Observability` and `Flezha.Service.AuditLog` SHALL call `authorize/3` before any side effect. A refusal by `authorize/3` SHALL emit an `:authorization_denied` event on `:platform_authz`. `allowed?/3` SHALL never emit that event, and SHALL be used only where the answer chooses what a permitted call shows, never to gate an act the caller asked for.
+The system SHALL make every authorization decision in one place, `Flezha.AuthZ`, and expose it through two entry points: `Flezha.AuthZ.authorize(caller_context, action, scope) :: :ok | {:error, {:forbidden, reason}}` and `Flezha.AuthZ.allowed?(caller_context, action, scope) :: boolean()`, which SHALL answer the same decision. `action` SHALL be an atom from the `Flezha.AuthZ.Action` enumeration. `scope` SHALL be a map containing at minimum `:namespace`. Every user-action function in `Flezha.Service.Observability` and `Flezha.Service.Logs` SHALL call `authorize/3` before any side effect. A refusal by `authorize/3` SHALL emit an `:authorization_denied` event on `:platform_authz`. `allowed?/3` SHALL never emit that event, and SHALL be used only where the answer chooses what a permitted call shows, never to gate an act the caller asked for.
 
 #### Scenario: Denial returns forbidden tuple
 - **WHEN** a `viewer` invokes a service function whose action requires `ops` or higher
@@ -87,7 +87,7 @@ A runner connection's roles SHALL be resolved from the role store keyed on its p
 - **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.cross_namespace_admin_denied"}}`
 
 #### Scenario: Runner role cannot read audit
-- **WHEN** an SDK Runner with role `runner` invokes any function in `Flezha.Service.AuditLog`
+- **WHEN** an SDK Runner with role `runner` invokes any function in `Flezha.Service.Logs`
 - **THEN** the call SHALL return `{:error, %Flezha.Error{code: "authz.role_insufficient"}}`
 
 #### Scenario: The runner grant is one action
@@ -199,7 +199,7 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 - **THEN** the namespace catalog SHALL contain exactly one entry named `_system`
 
 #### Scenario: Cross-namespace audit read is filtered
-- **WHEN** a caller bound to namespace `team-orders` invokes `Flezha.Service.AuditLog.read/2`
+- **WHEN** a caller bound to namespace `team-orders` invokes `Flezha.Service.Logs.read/2`
 - **THEN** the returned records SHALL contain only records whose `namespace` is `team-orders` or that have no namespace field, AND SHALL NOT include other namespaces' records (unless the caller is `admin@_system`)
 
 ### Requirement: Per-namespace quotas at allocation

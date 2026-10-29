@@ -375,7 +375,8 @@ defmodule Flezha.Convergence.Heal do
         "it has run nowhere for longer than the unmet-intent grace"
     )
 
-    case RelayManager.start_relay(namespace, relay) do
+    # The relay ran before; starting it again is neither announced nor recorded.
+    case RelayManager.start_relay(namespace, relay, announce: false, record?: false) do
       {:error, reason} ->
         Logger.warning("[convergence] start of #{relay_id} failed: #{inspect(reason)}")
         :error

@@ -606,6 +606,10 @@ pub(crate) struct Undo {
     pub(crate) then: AfterUndo,
     /// The first undo whose entry was never journaled: the undo ends `error`.
     pub(crate) error: Option<String>,
+    /// How many `compensate` hooks the plan holds, and whether one failed or
+    /// its entry was refused: what the run's `RelayCompleted.undo` reports.
+    pub(crate) planned: usize,
+    pub(crate) partial: bool,
 }
 
 pub(crate) enum UndoStep {

@@ -66,33 +66,35 @@ defmodule Flezha.Relay.PartitionGroup do
   group or singleton is drawn again rather than converged or refused.
 
   Returns `{:ok, %{group:, members:}}`. A converge additionally carries
-  `already_running:` — the member ids it left untouched.
+  `already_running:` — the member ids it left untouched. `opts` may carry
+  `origin:`, which each member's start stamps.
   """
-  @spec start(String.t(), Flezha.Relay.Builder.t(), pos_integer(), binary()) ::
+  @spec start(String.t(), Flezha.Relay.Builder.t(), pos_integer(), binary(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  def start(namespace, relay, partitions, plugins_json \\ "[]")
+  def start(namespace, relay, partitions, plugins_json \\ "[]", opts \\ [])
 
-  def start(namespace, %{id: nil} = relay, partitions, plugins_json) do
+  def start(namespace, %{id: nil} = relay, partitions, plugins_json, opts) do
     reserve = byte_size(Partition.member_suffix(max(partitions - 1, 0)))
 
     start_fresh = fn base ->
       if members(namespace, base) == [] and Validator.relay_unique(namespace, base) == :ok,
-        do: start(namespace, %{relay | id: base}, partitions, plugins_json),
+        do: start(namespace, %{relay | id: base}, partitions, plugins_json, opts),
         else: {:error, :id_taken}
     end
 
     RelayManager.with_generated_id(relay.factory_id, start_fresh, reserve: reserve)
   end
 
-  def start(namespace, relay, partitions, plugins_json) do
+  def start(namespace, relay, partitions, plugins_json, opts) do
     deadline = System.monotonic_time(:millisecond) + Durations.get(:hub_start_child_ms)
+    start_opts = Keyword.take(opts, [:origin])
 
     under_group_lock(namespace, relay.id, deadline, fn ->
-      start_or_converge(namespace, relay, partitions, plugins_json)
+      start_or_converge(namespace, relay, partitions, plugins_json, start_opts)
     end)
   end
 
-  defp start_or_converge(namespace, relay, partitions, plugins_json) do
+  defp start_or_converge(namespace, relay, partitions, plugins_json, start_opts) do
     plugins = fn member_id, partition_opts ->
       identity = Partition.identity(partition_opts)
 
@@ -104,11 +106,11 @@ defmodule Flezha.Relay.PartitionGroup do
     case members(namespace, relay.id) do
       [] ->
         with :ok <- check_partitionable(namespace, relay, partitions, 0) do
-          start_members(namespace, relay, Partition.ranges(partitions), plugins)
+          start_members(namespace, relay, Partition.ranges(partitions), plugins, start_opts)
         end
 
       members ->
-        converge(namespace, relay, partitions, members, plugins)
+        converge(namespace, relay, partitions, members, plugins, start_opts)
     end
   end
 
@@ -165,7 +167,7 @@ defmodule Flezha.Relay.PartitionGroup do
   # checks, which bound the count before any range is built and price quota on
   # the missing count alone (the rescale's own seam), then the survivors must
   # declare exactly the identity the request recomputes.
-  defp converge(namespace, relay, partitions, members, plugins_fun) do
+  defp converge(namespace, relay, partitions, members, plugins_fun, start_opts) do
     present = MapSet.new(members, & &1.partition.index)
 
     with :ok <- check_partitionable(namespace, relay, partitions, length(members)),
@@ -176,9 +178,9 @@ defmodule Flezha.Relay.PartitionGroup do
            |> Enum.with_index()
            |> Enum.reject(fn {_range, index} -> index in present end),
          {:ok, started, skipped} <-
-           run_member_starts(namespace, relay, missing, partitions, plugins_fun,
-             on_duplicate: :skip
-           ) do
+           run_member_starts(namespace, relay, missing, partitions, plugins_fun, [
+             {:on_duplicate, :skip} | start_opts
+           ]) do
       {:ok,
        %{
          group: relay.id,
@@ -209,8 +211,9 @@ defmodule Flezha.Relay.PartitionGroup do
 
   # A rescale's members are the group it moved, not relays started or
   # stopped: it starts them with `announce: false`, as it stops them with
-  # `cause: :rescale`.
-  defp start_members(namespace, relay, ranges, plugins_fun, start_opts \\ []) do
+  # `cause: :rescale`, except the members it adds (`new_from:` on), each a
+  # run of its own, recorded, with the rescale's origin.
+  defp start_members(namespace, relay, ranges, plugins_fun, start_opts) do
     with {:ok, started, _skipped} <-
            run_member_starts(
              namespace,
@@ -232,11 +235,12 @@ defmodule Flezha.Relay.PartitionGroup do
   # reaches each member's start.
   defp run_member_starts(namespace, relay, indexed_ranges, count, plugins_fun, policy) do
     on_duplicate = Keyword.fetch!(policy, :on_duplicate)
-    start_opts = Keyword.take(policy, [:announce])
+    start_opts = Keyword.take(policy, [:announce, :origin])
 
     outcomes =
       Flezha.Parallel.map(indexed_ranges, fn {range, index} ->
-        member = start_member(namespace, relay, {index, count, range}, plugins_fun, start_opts)
+        member_opts = member_start(policy, start_opts, index)
+        member = start_member(namespace, relay, {index, count, range}, plugins_fun, member_opts)
         {index, member}
       end)
 
@@ -256,6 +260,19 @@ defmodule Flezha.Relay.PartitionGroup do
     end
   end
 
+  # A member a rescale adds starts fresh and is recorded: not with the origin
+  # and first start of the member its template was read from, which a kept
+  # member's restart carries on.
+  defp member_start(policy, start_opts, index) do
+    case Keyword.get(policy, :new_from) do
+      from when is_integer(from) and index >= from ->
+        Keyword.merge(start_opts, record?: true, fresh: true)
+
+      _kept ->
+        start_opts
+    end
+  end
+
   defp member_failure({:error, reason}, _on_duplicate), do: reason
   defp member_failure({:duplicate, member_id}, :refuse), do: {:id_in_use, member_id}
 
@@ -264,13 +281,13 @@ defmodule Flezha.Relay.PartitionGroup do
   defp start_member(namespace, relay, {index, count, range}, plugins_fun, start_opts) do
     member_id = Partition.member_id(relay.id, index)
     partition_opts = Partition.member_opts(relay.id, index, count, range)
+    {fresh?, start_opts} = Keyword.pop(start_opts, :fresh, false)
+
+    base_opts =
+      if fresh?, do: Flezha.Relay.Builder.unstamped(relay.opts), else: relay.opts
 
     with {:ok, plugins} <- plugins_fun.(member_id, partition_opts) do
-      member = %{
-        relay
-        | id: member_id,
-          opts: member_opts(relay.opts, partition_opts, plugins)
-      }
+      member = %{relay | id: member_id, opts: member_opts(base_opts, partition_opts, plugins)}
 
       case RelayManager.start_relay(namespace, member, start_opts) do
         {:ok, _} -> {:ok, member_id}
@@ -345,10 +362,14 @@ defmodule Flezha.Relay.PartitionGroup do
          cell_moves = plan_moves(members, Partition.ranges(target), group_id),
          {survivors, leaving} = Enum.split_with(members, &(&1.partition.index < target)),
          sealed = sealed(template.run, survivors),
-         :ok <- stop_members(namespace, members, sealed),
+         :ok <- stop_members(namespace, members, sealed, target),
          :ok <- apply_moves(cell_moves ++ instance_moves(members)),
          {:ok, started} <-
-           start_members(namespace, template, Partition.ranges(target), plugins, announce: false) do
+           start_members(namespace, template, Partition.ranges(target), plugins,
+             announce: false,
+             new_from: length(members),
+             origin: opts[:origin]
+           ) do
       vacated = cleanup_vacated(leaving)
 
       {:ok,
@@ -577,10 +598,12 @@ defmodule Flezha.Relay.PartitionGroup do
   # `#p0` survives any N — can lose the claim to the corpse of the member it just
   # stopped. Wait for the very predicate the restart will check. Nothing durable
   # has moved yet, so giving up here costs only the stop.
-  defp stop_members(namespace, members, sealed) do
-    Enum.each(members, fn %{id: id} ->
+  # A member at or past the new size leaves for good: its end is recorded.
+  defp stop_members(namespace, members, sealed, target) do
+    Enum.each(members, fn %{id: id, partition: %{index: index}} ->
       keep = if id in sealed, do: :sealed, else: true
-      RelayManager.stop_relay(namespace, id, preserve_state: keep, cause: :rescale)
+      cause = if index >= target, do: :rescale_leave, else: :rescale
+      RelayManager.stop_relay(namespace, id, preserve_state: keep, cause: cause)
     end)
 
     await_ids_released(

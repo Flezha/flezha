@@ -139,7 +139,10 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
 
       relay = %{id: "r1", factory_id: nil, opts: %{}}
 
-      assert Init.init_relay(fn _ns, _id -> false end, namespace, relay, false) ==
+      assert Init.init_relay(fn _ns, _id -> false end, namespace, relay, %{
+               announce?: false,
+               record?: false
+             }) ==
                {:error, :no_quorum}
     end
 

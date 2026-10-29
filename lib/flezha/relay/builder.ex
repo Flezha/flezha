@@ -13,12 +13,16 @@ defmodule Flezha.Relay.Builder do
 
   Invariant: `:run` is the factory's, resolved at start from what its runners
   announced, and frozen for the relay's lifetime; a caller that sets one
-  asserts it and is refused when the factory disagrees.
+  asserts it and is refused when the factory disagrees. `:origin` and
+  `:first_started_at` are the controller's to stamp at start: a caller's are
+  dropped.
   """
 
   # What a caller may write. The run is not among them: it is the factory's,
   # announced by its runners, and the start resolves it.
   @declared [:id, :factory_id, :init_values, :opts]
+  # What only the start writes into `opts`, never a caller.
+  @stamped [:origin, :first_started_at]
 
   @type t() :: %__MODULE__{
           id: String.t() | nil,
@@ -55,6 +59,10 @@ defmodule Flezha.Relay.Builder do
       {:ok, struct!(__MODULE__, fields)}
     end
   end
+
+  @doc "`opts` without what only a start stamps (`:origin`, `:first_started_at`)."
+  @spec unstamped(keyword()) :: keyword()
+  def unstamped(opts), do: Keyword.drop(opts, @stamped)
 
   @doc """
   The `:seed_input` a first message makes: `text` on the entry channel
@@ -96,13 +104,14 @@ defmodule Flezha.Relay.Builder do
   defp resolve_opts(fields) do
     case Keyword.fetch(fields, :opts) do
       :error -> {:ok, fields}
-      {:ok, opts} when is_list(opts) -> {:ok, fields}
+      {:ok, opts} when is_list(opts) -> keyed_opts(opts, [], fields)
       {:ok, %{} = opts} -> keyed_opts(Map.to_list(opts), [], fields)
       {:ok, other} -> {:error, {:unknown_opts, other}}
     end
   end
 
-  defp keyed_opts([], done, fields), do: {:ok, Keyword.put(fields, :opts, Enum.reverse(done))}
+  defp keyed_opts([], done, fields),
+    do: {:ok, Keyword.put(fields, :opts, done |> Enum.reverse() |> unstamped())}
 
   defp keyed_opts([{key, value} | rest], done, fields) when is_binary(key) do
     keyed_opts(rest, [{String.to_existing_atom(key), value} | done], fields)
@@ -112,4 +121,6 @@ defmodule Flezha.Relay.Builder do
 
   defp keyed_opts([{key, value} | rest], done, fields) when is_atom(key),
     do: keyed_opts(rest, [{key, value} | done], fields)
+
+  defp keyed_opts([other | _rest], _done, _fields), do: {:error, {:unknown_opts, other}}
 end

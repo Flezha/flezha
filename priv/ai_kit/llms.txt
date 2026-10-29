@@ -40,7 +40,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 ## The CLI
 
 - [CLI](cli.md): `flz` is the tool a controller is operated with: starting and stopping it, starting relays and sending them messages, managing namespaces, tokens and plugins, and reading state.
-- [Controller commands](controller_commands.md): The groups that look after the controller itself: starting and stopping it, checking that it is up, the runners connected to it, its signals, and clearing its data.
+- [Controller commands](controller_commands.md): The groups that look after the controller itself: starting and stopping it, checking that it is up, the runners connected to it, its signals and logs, and clearing its data.
 - [Relay commands](relay_commands.md): The groups that work with relays: starting and stopping them, sending them input, reading their state, the inputs they gave up on, and the workflows started on a schedule.
 - [Plugin commands](plugin_commands.md): `flz plugin` installs plugin packages, enables plugins and connects relays to them.
 - [Access commands](access_commands.md): The groups that decide who may do what: namespaces and their quotas, the first admin, tokens, roles, and the audit trail that records each action.

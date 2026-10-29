@@ -298,3 +298,28 @@ who needs at most one instance, or the id on replay, passes its own id.
 - **WHEN** a reader opens any SDK page that shows `spawn_steps` or `spawnSteps`
 - **THEN** the page SHALL carry the same three dangers beside the example
 
+### Requirement: A spawn request SHALL name the relay that asked for it
+
+`SpawnStepsRequest` SHALL carry `parent_relay_id`, the instance whose tasklet invocation made
+the request, set by the runtime from the invocation it is serving. The controller SHALL accept
+it only when the requesting session hosts that instance in the request's namespace, and SHALL
+then record it as the spawned instance's origin (`kind: spawn`, `parent_relay`). An empty or
+unverifiable value SHALL leave the origin without a parent and SHALL NOT refuse the spawn. A
+relay-to-relay call that creates its callee SHALL record the calling relay as the origin's
+parent (`kind: call`).
+
+#### Scenario: A verified parent is recorded
+
+- **WHEN** a tasklet of relay `ma_fan` hosted by the requesting runner spawns `fan_trade`
+- **THEN** the spawned instance's origin SHALL name `parent_relay: "ma_fan"`
+
+#### Scenario: A parent the session does not host is not trusted
+
+- **WHEN** a spawn request names a `parent_relay_id` the requesting session does not host
+- **THEN** the spawn SHALL proceed and its origin SHALL carry no `parent_relay`
+
+#### Scenario: An older runner sends no parent
+
+- **WHEN** a runner built against an older runtime sends a request without `parent_relay_id`
+- **THEN** the spawn SHALL proceed as before and its origin SHALL carry no `parent_relay`
+

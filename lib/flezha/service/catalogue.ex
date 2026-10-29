@@ -17,10 +17,10 @@ defmodule Flezha.Service do
   alias Flezha.Plugin.ProviderBehaviour.Options
 
   @modules [
-    Flezha.Service.AuditLog,
     Flezha.Service.Controller,
     Flezha.Service.Dlq,
     Flezha.Service.Fleet,
+    Flezha.Service.Logs,
     Flezha.Service.Namespace,
     Flezha.Service.Observability,
     Flezha.Service.Relay,

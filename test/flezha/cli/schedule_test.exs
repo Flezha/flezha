@@ -212,7 +212,7 @@ defmodule Flezha.Service.Cli.ScheduleTest do
 
     add_digest()
 
-    expect(RelayManager, :start_steps, fn "default", id, factory_id, _init, _opts ->
+    expect(RelayManager, :start_steps, fn "default", id, factory_id, _init, _opts, _start_opts ->
       assert id =~ ~r/^digest@manual-\d+$/
       assert factory_id == "ai_digest"
       {:ok, %{relay_id: id}}

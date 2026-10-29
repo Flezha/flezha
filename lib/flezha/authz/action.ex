@@ -25,6 +25,9 @@ defmodule Flezha.AuthZ.Action do
     # Audit log read / mutate.
     :"audit.read",
     :"audit.rotate",
+    # Every durable log's read / rotation.
+    :"logs.read",
+    :"logs.rotate",
     # Observability read / mutate.
     :"observability.query",
     :"observability.subscribe",

@@ -21,6 +21,8 @@ const SCREENS: &[(&str, &[&str])] = &[
     ("audit-stats", &["audit", "stats", "--help"]),
     ("audit-rotate", &["audit", "rotate", "--help"]),
     ("auth", &["auth", "help"]),
+    ("logs", &["logs", "help"]),
+    ("logs-read", &["logs", "read", "--help"]),
     ("boot", &["boot", "help"]),
     ("cluster", &["cluster", "help"]),
     ("controller", &["controller", "help"]),

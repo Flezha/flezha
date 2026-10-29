@@ -187,14 +187,27 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz role list` | The role bindings the caller may see, one per identity. |
 <!-- flz-reference:end -->
 
+## [`flz logs`](controller_commands.md#flz-logs)
+
+<!-- flz-reference:begin flz logs -->
+| Command | What it does |
+| --- | --- |
+| `flz logs kinds` | Every log kind, with the filters a read takes and the columns a reader shows. |
+| `flz logs read <kind> [--namespace \| -n <namespace>] [--factory <factory_id>] [--relay <relay_id>] [--event <event>] [--outcome <outcome>] [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>] [--before <cursor>] [--node <controller>] [--file <file>]` | A kind's records from every controller, newest first, each naming its `node`. |
+| `flz logs tail <kind> [--namespace \| -n <namespace>] [--factory <factory_id>] [--relay <relay_id>] [--event <event>] [--outcome <outcome>] [--source <source>] [--name <name>] [--duration-ms <milliseconds>]` | Stream a kind's new records from every controller as they are written. |
+| `flz logs files <kind>` | A kind's rotated files on every controller, each with its record times and digest. |
+| `flz logs stats <kind>` | A kind's operational snapshot, one row per controller. |
+| `flz logs rotate <kind> [--node <controller>]` | Close a kind's current file and start a new one, on `node` or on every controller. |
+<!-- flz-reference:end -->
+
 ## [`flz audit`](access_commands.md#flz-audit)
 
 <!-- flz-reference:begin flz audit -->
 | Command | What it does |
 | --- | --- |
-| `flz audit list` | The audit log's files, each with its record times and digest. |
-| `flz audit read <file> [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>]` | The records of one audit file that match the given filters. |
-| `flz audit tail [--duration-ms <milliseconds>]` | Stream every audit record the caller may read as it is written. |
-| `flz audit stats` | The audit log's operational snapshot. |
-| `flz audit rotate` | Close the current audit file and start a new one. |
+| `flz audit list` | A kind's rotated files on every controller, each with its record times and digest. |
+| `flz audit read [<file>] [--source <source>] [--name <name>] [--since <microseconds>] [--until <microseconds>] [--limit <count>] [--before <cursor>] [--node <controller>]` | A kind's records from every controller, newest first, each naming its `node`. |
+| `flz audit tail [--source <source>] [--name <name>] [--duration-ms <milliseconds>]` | Stream a kind's new records from every controller as they are written. |
+| `flz audit stats` | A kind's operational snapshot, one row per controller. |
+| `flz audit rotate [--node <controller>]` | Close a kind's current file and start a new one, on `node` or on every controller. |
 <!-- flz-reference:end -->

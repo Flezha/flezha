@@ -25,6 +25,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Page
   alias Flezha.Config.Durations
+  alias Flezha.Logs.RelayHistory
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
@@ -324,8 +325,8 @@ defmodule Flezha.Service.Relay do
       plugins = plugins_json(extra[:plugins])
 
       if partitions >= 2,
-        do: start_group(namespace, spec, partitions, plugins),
-        else: start_one(namespace, spec, plugins)
+        do: start_group(namespace, spec, partitions, plugins, caller_context),
+        else: start_one(namespace, spec, plugins, RelayHistory.origin("operator", caller_context))
     end
   end
 
@@ -339,10 +340,11 @@ defmodule Flezha.Service.Relay do
     verb: :relay_stop,
     args: [namespace: @namespace, relay_id: @relay_id] do
     namespace = Namespace.or_default(namespace)
+    by = Map.take(caller_context, [:principal, :source])
 
     case PartitionGroup.members(namespace, relay_id) do
-      [] -> stop_one(namespace, relay_id)
-      members -> stop_group(namespace, relay_id, members)
+      [] -> stop_one(namespace, relay_id, by)
+      members -> stop_group(namespace, relay_id, members, by)
     end
   end
 
@@ -709,9 +711,11 @@ defmodule Flezha.Service.Relay do
   defp plugins_json(text) when is_binary(text), do: text
   defp plugins_json(specs), do: Jason.encode!(specs)
 
-  defp start_group(namespace, spec, partitions, plugins) do
+  defp start_group(namespace, spec, partitions, plugins, caller_context) do
+    origin = RelayHistory.origin("group", caller_context)
+
     with {:ok, %{group: group, members: members} = started} <-
-           PartitionGroup.start(namespace, spec, partitions, plugins) do
+           PartitionGroup.start(namespace, spec, partitions, plugins, origin: origin) do
       {:ok,
        %{
          id: group,
@@ -722,17 +726,18 @@ defmodule Flezha.Service.Relay do
     end
   end
 
-  defp start_one(namespace, %{id: nil} = spec, plugins) do
-    start = &start_with_plugins(namespace, %{spec | id: &1}, plugins, generated: true)
+  defp start_one(namespace, %{id: nil} = spec, plugins, origin) do
+    start =
+      &start_with_plugins(namespace, %{spec | id: &1}, plugins, generated: true, origin: origin)
 
     spec.factory_id
     |> RelayManager.with_generated_id(start)
     |> RelayManager.start_answer(nil)
   end
 
-  defp start_one(namespace, spec, plugins) do
+  defp start_one(namespace, spec, plugins, origin) do
     namespace
-    |> start_with_plugins(spec, plugins, [])
+    |> start_with_plugins(spec, plugins, origin: origin)
     |> RelayManager.start_answer(spec.id)
   end
 
@@ -748,16 +753,16 @@ defmodule Flezha.Service.Relay do
     end
   end
 
-  defp stop_one(namespace, relay_id) do
-    case RelayManager.request_stop(namespace, relay_id) do
+  defp stop_one(namespace, relay_id, by) do
+    case RelayManager.request_stop(namespace, relay_id, by: by) do
       :ok -> {:ok, %{id: relay_id, stopped: :stopped}}
       {:ok, :cooperative} -> {:ok, %{id: relay_id, stopped: :cooperative}}
       {:error, _reason} = refused -> refused
     end
   end
 
-  defp stop_group(namespace, group_id, members) do
-    results = Enum.map(members, &{&1.id, RelayManager.request_stop(namespace, &1.id)})
+  defp stop_group(namespace, group_id, members, by) do
+    results = Enum.map(members, &{&1.id, RelayManager.request_stop(namespace, &1.id, by: by)})
 
     case Enum.reject(results, fn {_id, result} -> result == :ok or match?({:ok, _}, result) end) do
       [] -> {:ok, %{id: group_id, stopped: :group, partitions: length(results)}}

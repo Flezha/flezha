@@ -68,8 +68,6 @@ defmodule Flezha.Process.SeamTest do
   # bookkeeping and folding it would hide the ref its own callers name.
   defp monitor_allow do
     [
-      # the ref is returned to the caller as its subscription handle
-      "lib/flezha/observability/audit_log/writer.ex",
       # one monitor for one owner; no map, nothing to book
       "lib/flezha/cli/socket.ex",
       "lib/flezha/plugin/installer.ex",

@@ -1,12 +1,16 @@
-flz audit - Durable audit log inspection.
+flz audit - Durable audit log inspection (`flz logs ... audit`).
 
 USAGE:
     flz audit <COMMAND>
 
 COMMANDS:
-    list    The audit log's files, each with its record times and digest.
-    read    The records of one audit file that match the given filters.
-    tail    Stream every audit record the caller may read as it is written.
-    stats   The audit log's operational snapshot.
-    rotate  Close the current audit file and start a new one.
+    list    A kind's rotated files on every controller, each with its record
+            times and digest.
+    read    A kind's records from every controller, newest first, each naming
+            its `node`.
+    tail    Stream a kind's new records from every controller as they are
+            written.
+    stats   A kind's operational snapshot, one row per controller.
+    rotate  Close a kind's current file and start a new one, on `node` or on
+            every controller.
     help    Show this help message.

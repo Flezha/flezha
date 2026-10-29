@@ -119,5 +119,6 @@ fn report(inst: &RelayInstance) {
         status.to_string(),
         String::new(),
         result,
+        String::new(),
     );
 }

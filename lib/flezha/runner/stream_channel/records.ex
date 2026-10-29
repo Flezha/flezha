@@ -199,6 +199,19 @@ defmodule Flezha.Runner.StreamChannel.Records do
   end
 
   @doc """
+  Whether the session behind `state` hosts `relay_class`: the owner its
+  ownership record names. Unlike `admit/3` it refuses nothing and reports
+  nothing, so a claim a runner merely names is judged without acting on it.
+  """
+  @spec hosts?(session(), binary()) :: boolean()
+  def hosts?(state, relay_class) do
+    case ClassRegistry.owner(relay_class) do
+      {:ok, _pid, owner} -> owner == state.identity
+      :error -> false
+    end
+  end
+
+  @doc """
   Whether the session behind `state` is the owner the relay's ownership record
   names: unlike `admit/3`, a relay with no record on this node is not its.
   """

@@ -261,8 +261,8 @@ defmodule Flezha.Service.Cli.PartitionTest do
         if id == "ohlc", do: Enum.map(members, &%{id: &1.id, partition: &1.partition}), else: []
       end)
 
-      stub(RelayManager, :request_stop, fn _ns, id ->
-        send(parent, {:stopped, id})
+      stub(RelayManager, :request_stop, fn _ns, id, [by: by] ->
+        send(parent, {:stopped, id, by})
         :ok
       end)
 
@@ -270,14 +270,15 @@ defmodule Flezha.Service.Cli.PartitionTest do
         capture_io(fn -> Cli.call("Relay.stop", Jason.encode!(["default", "ohlc"]), []) end)
 
       assert out =~ "Relay group ohlc stopped (3 partitions)"
-      assert_receive {:stopped, "ohlc#p0"}, 100
-      assert_receive {:stopped, "ohlc#p1"}, 100
-      assert_receive {:stopped, "ohlc#p2"}, 100
+      # Each member is told who asked for its stop.
+      assert_receive {:stopped, "ohlc#p0", %{source: :cli}}, 100
+      assert_receive {:stopped, "ohlc#p1", %{source: :cli}}, 100
+      assert_receive {:stopped, "ohlc#p2", %{source: :cli}}, 100
     end
 
     test "an ordinary relay takes the single-stop path" do
       stub(PartitionGroup, :members, fn _ns, _id -> [] end)
-      stub(RelayManager, :request_stop, fn _ns, "plain" -> :ok end)
+      stub(RelayManager, :request_stop, fn _ns, "plain", [by: %{source: :cli}] -> :ok end)
 
       assert capture_io(fn ->
                Cli.call("Relay.stop", Jason.encode!(["default", "plain"]), [])
@@ -292,7 +293,7 @@ defmodule Flezha.Service.Cli.PartitionTest do
         Enum.map(members, &%{id: &1.id, partition: &1.partition})
       end)
 
-      stub(RelayManager, :request_stop, fn _ns, id ->
+      stub(RelayManager, :request_stop, fn _ns, id, _opts ->
         if id == "ohlc#p1", do: {:error, {:relay_not_running, id}}, else: :ok
       end)
 

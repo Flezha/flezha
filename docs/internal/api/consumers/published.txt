@@ -27,12 +27,6 @@
 # `Flezha.Service.Controller.local_recovery_snapshot/1` and
 # `Flezha.Service.Controller.local_controller/0` are the remote halves of two
 # fan-outs.
-Flezha.Service.AuditLog.list_files/1
-Flezha.Service.AuditLog.read/2
-Flezha.Service.AuditLog.rotate/1
-Flezha.Service.AuditLog.stats/1
-Flezha.Service.AuditLog.tail/2
-Flezha.Service.AuditLog.unsubscribe/2
 Flezha.Service.Controller.boot_await/2
 Flezha.Service.Controller.boot_status/1
 Flezha.Service.Controller.cluster_status/2
@@ -59,6 +53,12 @@ Flezha.Service.Fleet.readmit_runner/3
 Flezha.Service.Fleet.runner_caller_context/2
 Flezha.Service.Fleet.runners/2
 Flezha.Service.Fleet.runners_for_factory/3
+Flezha.Service.Logs.files/2
+Flezha.Service.Logs.kinds/1
+Flezha.Service.Logs.read/2
+Flezha.Service.Logs.rotate/2
+Flezha.Service.Logs.stats/2
+Flezha.Service.Logs.tail/2
 Flezha.Service.Namespace.bind_role/4
 Flezha.Service.Namespace.bootstrap/2
 Flezha.Service.Namespace.create/3

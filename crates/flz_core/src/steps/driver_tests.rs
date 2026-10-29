@@ -1108,6 +1108,8 @@ struct Seen {
     undone: Vec<(u32, u32)>,
     undo_refs: Vec<(u32, String)>,
     done: Option<(String, String)>,
+    /// How the run's `RelayCompleted` said its rollback went.
+    undo: String,
 }
 
 /// How the fake controller answers one barrier send; a `bool` refuses on `true`.
@@ -1170,8 +1172,12 @@ fn pump_turns<A: Into<Answer>>(
                 relay_id,
                 status,
                 error,
+                undo,
                 ..
-            }) if relay_id == id => seen.done = Some((status, error)),
+            }) if relay_id == id => {
+                seen.done = Some((status, error));
+                seen.undo = undo;
+            }
             Ok(_) => {}
             Err(_) => panic!("steps {id} stalled; the controller saw {:?}", seen.iters),
         }

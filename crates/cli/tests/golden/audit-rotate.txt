@@ -1,8 +1,10 @@
-flz audit rotate - Close the current audit file and start a new one.
+flz audit rotate - Close a kind's current file and start a new one, on `node` or on every controller.
 
-Usage: flz audit rotate
+Usage: flz audit rotate [--node <controller>]
 
 OPTIONS:
+    --node <controller>      Only this controller (with --file, its file; with
+                             rotate, rotate it alone).
     --token <token>          The caller's token (default: FLEZHA_TOKEN).
     --help | -h              Print this help.
     --output | -o text|json  Output format (default: text).

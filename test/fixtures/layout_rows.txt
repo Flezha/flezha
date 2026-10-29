@@ -21,6 +21,7 @@ dlq|flag
 schedules|flag
 auth|flag
 audit|flag
+relay_history|default
 plugins|flag
 sockets|flag
 logs|never

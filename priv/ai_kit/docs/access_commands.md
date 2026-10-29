@@ -137,8 +137,11 @@ Reads the record of who did what. Explained in [`authorization.md`](../core/auth
 `flz audit help` prints the group's verbs, and the [command
 reference](command_reference.md) lists each with its usage line.
 
-`read` filters one file by source, name, time and count, which
-`flz audit read --help` lists.
+`flz audit` is [`flz logs`](controller_commands.md#flz-logs) with the audit
+kind filled in, and answers from every controller. `read` without a file
+answers the newest records first; with a file and `--node`, that one file.
+It filters by source, name, time and count, which `flz audit read --help`
+lists.
 
 The audit log is off until `FLEZHA_AUDIT_ENABLED=true`, and every verb says so:
 

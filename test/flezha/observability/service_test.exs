@@ -4,7 +4,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
   import FlezhaTest.Case, only: [refute_minted: 2]
 
-  alias Flezha.Observability.AuditLog.Codec
+  alias Flezha.Logs.{Codec, Kinds}
   alias Flezha.Observability.Bus
   alias Flezha.Observability.{Registry, RingBufferSink, Signal}
   alias Flezha.Observability.TestSinks
@@ -470,7 +470,7 @@ defmodule Flezha.Service.ObservabilityTest do
       assert json["metadata"]["n"] == 2
 
       # One rule, so the two JSON renderers of the same metadata agree.
-      {:ok, audit} = Codec.decode(Codec.encode(signal))
+      {:ok, audit} = Codec.decode(Codec.encode(Kinds.fetch!(:audit), signal))
       assert audit["metadata"] == json["metadata"]
     end
   end

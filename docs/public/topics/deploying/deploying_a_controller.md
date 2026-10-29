@@ -365,7 +365,7 @@ three phases:
    the deadline is moved by force. With no peer to move to, nothing moves, and
    the next boot restores the relays from disk
    ([`running_and_testing.md`](../core/running_and_testing.md#after-a-controller-restart)).
-3. **Finalise.** Pending disk writes are flushed, the audit log is closed,
+3. **Finalise.** Pending disk writes are flushed, the durable logs are closed,
    then the hubs stop with the relays they still host, and the transports
    stop; both stay stopped until the node ends. The flush and the close are
    bounded to 5 s each, and each hub stops its relays inside its own

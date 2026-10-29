@@ -138,7 +138,7 @@ const CASES: &[(&[&str], &str)] = &[
     ),
     (
         &["audit", "read", "--source", "x\"y", "f.log"],
-        r#"AuditLog.read [{"file":"f.log","source":"x\"y"}] {}"#,
+        r#"Logs.read [{"file":"f.log","filters":{"source":"x\"y"},"kind":"audit"}] {}"#,
     ),
 ];
 

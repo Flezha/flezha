@@ -205,3 +205,21 @@ parses as.
 - **WHEN** the lint gate reads `lib/flezha/cli/schedule.ex`
 - **THEN** no function SHALL take more parameters than the ceiling the gate enforces
 
+### Requirement: A scheduled instance SHALL record which schedule started it
+
+An instance a schedule slot spawns SHALL carry the origin `%{kind: "schedule", schedule: <name>,
+slot: <slot>}`. An instance a manual fire spawns SHALL carry `%{kind: "schedule", schedule:
+<name>, slot: "manual", principal: ..., source: ...}`, taken from the caller context the manual
+fire was authorized with.
+
+#### Scenario: A slot names its schedule
+
+- **WHEN** schedule `analyzers` fires its 10:15 slot
+- **THEN** the spawned instance's origin SHALL be `%{kind: "schedule", schedule: "analyzers",
+  slot: "2026-10-28T10:15:00Z"}`
+
+#### Scenario: A manual fire names its caller
+
+- **WHEN** principal `alice` runs `flz schedule run analyzers`
+- **THEN** the spawned instance's origin SHALL name `slot: "manual"` and `principal: "alice"`
+

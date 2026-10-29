@@ -12,6 +12,7 @@ defmodule Flezha.Service.RelayManager.Init do
   alias Flezha.Config.Durations
   alias Flezha.Config.Backoff
   alias Flezha.Identificator
+  alias Flezha.Logs.RelayHistory
   alias Flezha.Process.DurableTasks
   alias Flezha.Process.Hub
   alias Flezha.SDK.SafeCall
@@ -291,10 +292,16 @@ defmodule Flezha.Service.RelayManager.Init do
     do: [%{scope: :start, order: 40, name: :declared_start, run: &declared_start_step/2}]
 
   # Its answer, a refusal or a conceded claim included, is the start's own.
-  defp declared_start_step(%{namespace: namespace, relay: relay, announce?: announce?}, _budget),
-    do: {:ok, init_relay(&RelayManager.exist?/2, namespace, relay, announce?)}
+  defp declared_start_step(%{namespace: namespace, relay: relay} = start, _budget),
+    do: {:ok, init_relay(&RelayManager.exist?/2, namespace, relay, start)}
 
-  def init_relay(exist?, namespace, relay, announce? \\ true) do
+  @doc """
+  Start `relay` as declared intent and bind it. `start` says whether the start
+  is announced (`announce?`) and recorded in the relay history (`record?`),
+  from this process: `started` once it runs, `start_failed` when a start the
+  hub took fails; a conceded claim records nothing.
+  """
+  def init_relay(exist?, namespace, relay, start \\ %{announce?: true, record?: true}) do
     child_spec = %{
       id: relay.id,
       start: {Flezha.Relay.Overwatch, :start_link, [{namespace, relay}]},
@@ -302,7 +309,7 @@ defmodule Flezha.Service.RelayManager.Init do
     }
 
     result = start_declared(namespace, with_shutdown(child_spec), start_metadata(relay), relay.id)
-    finalize_init_relay(exist?, namespace, relay, result, announce?)
+    finalize_init_relay(exist?, namespace, relay, result, start)
   end
 
   @doc """
@@ -381,23 +388,39 @@ defmodule Flezha.Service.RelayManager.Init do
 
   defp no_response?(_result), do: false
 
-  defp finalize_init_relay(exist?, namespace, relay, result, announce?) do
+  defp finalize_init_relay(exist?, namespace, relay, result, start) do
     case result do
       %ProcessHub.StartResult{} ->
         case Enum.find(result.started || [], fn {cid, _} -> cid == relay.id end) do
           {_cid, [{relay_node, pid}]} ->
-            bind_started(namespace, relay, {relay_node, pid}, announce?)
+            namespace
+            |> bind_started(relay, {relay_node, pid}, start)
+            |> recorded(namespace, relay, start)
 
           _ ->
-            refuse_start(exist?, namespace, relay, result)
+            refuse_start(exist?, namespace, relay, result, start)
         end
 
       {:error, reason} ->
-        settle_claim(exist?, namespace, relay, reason)
+        settle_claim(exist?, namespace, relay, reason, start)
     end
   end
 
-  defp bind_started(namespace, relay, {relay_node, pid}, announce?) do
+  # A bound start is recorded once it answers, from the starter's process, so a
+  # slow history never holds the Overwatch.
+  defp recorded({:ok, _bound} = answer, namespace, relay, %{record?: true}) do
+    _ = RelayHistory.started(namespace, relay)
+    answer
+  end
+
+  defp recorded({:error, error} = answer, namespace, relay, %{record?: true}) do
+    _ = RelayHistory.start_failed(namespace, relay, error)
+    answer
+  end
+
+  defp recorded(answer, _namespace, _relay, _start), do: answer
+
+  defp bind_started(namespace, relay, {relay_node, pid}, %{announce?: announce?}) do
     # ProcessHub reports `started` as soon as `start_link/1`
     # returns; the relay's `handle_continue(:bind_runner, …)`
     # surfaces a plugin-chain failure via the `halt_reason` field
@@ -448,7 +471,7 @@ defmodule Flezha.Service.RelayManager.Init do
     end
   end
 
-  defp refuse_start(exist?, namespace, relay, result) do
+  defp refuse_start(exist?, namespace, relay, result, start) do
     reason =
       case Enum.find(result.errors || [], fn {cid, _} -> cid == relay.id end) do
         {_cid, {:error, reason}} -> reason
@@ -467,14 +490,14 @@ defmodule Flezha.Service.RelayManager.Init do
       )
 
       _ = Teardown.stop_relay(namespace, relay.id, cause: :failed_start)
-      {:error, start_failure(relay, reason)}
+      recorded({:error, start_failure(relay, reason)}, namespace, relay, start)
     end
   end
 
-  defp settle_claim(exist?, namespace, relay, reason) do
+  defp settle_claim(exist?, namespace, relay, reason, start) do
     if claim_loss?(reason),
       do: claim_lost(exist?, namespace, relay.id),
-      else: {:error, start_failure(relay, reason)}
+      else: recorded({:error, start_failure(relay, reason)}, namespace, relay, start)
   end
 
   # A failure the runner already answered with its own error is that error, as

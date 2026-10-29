@@ -433,8 +433,14 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
 - **Break-glass (emergency rebootstrap)** — with the controller stopped, `flz auth rebootstrap`
   writes `storage/app/auth/REBOOTSTRAP`; the next boot unbinds the stale `admin@_system`, revokes
   its tokens, re-enters the bootstrap flow and emits an auditable `:rebootstrap_recovery` event.
-- **Audit log** — the durable JSONL record of every authorized control-plane action
-  (`Flezha.Service.AuditLog`, `flz audit list|read|tail|stats|rotate`).
+- **Audit log** — the durable JSONL record of every authorized control-plane action: the
+  `audit` kind of the log core (`Flezha.Service.Logs`, `flz logs ... audit`, spelled
+  `flz audit list|read|tail|stats|rotate`).
+- **Relay history** — the `relay_history` kind of the log core: one `started` and one
+  `ended` record per relay run, with its origin and outcome (`Flezha.Logs.RelayHistory`).
+- **Log kind** — one durable log declared as data (`Flezha.Logs.Kind`): its directory,
+  settings, feed, filters and columns; every kind runs on the same writer, rotation,
+  retention, index, reader and codec.
 
 ## See also
 

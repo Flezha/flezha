@@ -148,6 +148,7 @@ would keep  ./storage/app/dlq/                               (use --include-dlq 
 would keep  ./storage/app/schedules/                         (use --include-schedules to clear)
 would keep  ./storage/app/auth/                              (use --include-auth to clear)
 would keep  ./storage/app/audit/                             (use --include-audit to clear)
+would clear ./storage/app/relay_history/                     (3 files, 12.4 KiB)
 would keep  ./storage/app/plugins/                           (use --include-plugins to clear)
 would keep  socket directory                                 (use --include-sockets to clear)
 would keep  ./storage/logs/                                  (not reset's to clear)

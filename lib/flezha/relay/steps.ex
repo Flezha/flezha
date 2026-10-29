@@ -21,6 +21,7 @@ defmodule Flezha.Service.Steps do
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.Logs.RelayHistory
   alias Flezha.Cluster.Page
   alias Flezha.Config
   alias Flezha.Relay.PartitionGroup
@@ -232,7 +233,8 @@ defmodule Flezha.Service.Steps do
       target: [type: :int, min: 1, doc: "The new member count."],
       opts: [type: :keyword, default: [], doc: "`quiesce_timeout_ms`."]
     ] do
-    PartitionGroup.rescale(namespace, group_id, target, opts)
+    origin = RelayHistory.origin("rescale", caller_context)
+    PartitionGroup.rescale(namespace, group_id, target, Keyword.put(opts, :origin, origin))
   end
 
   @doc """

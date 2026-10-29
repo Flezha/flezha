@@ -69,10 +69,13 @@ setting has one layer: there is no per-class map over a class's own value.
 - `:healthz_port` / `:healthz_bind`: Default: `9569` / `"0.0.0.0"` (`Flezha.Healthz.Server.default_bind/0`, the one default; `config/test.exs` binds loopback).
 - `:input_silence_timeout_ms`: How long a flow relay that produced output earlier may receive no Change before one warning is logged and `[:flezha, :state, :input_silence]` is emitted. Off by default: silence is not a fault, and the sweep cannot tell a dead upstream from a source that reports hourly. Set a positive value on a feed you know to be continuous; `FLEZHA_INPUT_SILENCE_TIMEOUT_MS` sets it from the environment. Default: `0` (off).
 
-## Observability and audit
+## Observability, audit and relay history
 
 - `:observability[:pubsub_sink_enabled]`: Default: `true` (`false` in test).
 - `:observability[:otp_backend_enabled]`: Default: `true` (`false` in test).
+- `:audit_log[:fsync_mode]`: `:per_record` syncs before each record is acknowledged, one sync serving every record queued with it; `:interval` (spelled `:batched` too) syncs every `:fsync_interval_ms`.
+- `:relay_history[:max_pending]`: Records queued past this are refused and counted in `flz logs stats relay_history`, never waited for; `:append_ms` is how long a start or stop waits for its record before counting it a timeout.
+- `:relay_history[:dedup_window_hours]`, `:relay_history[:dedup_max_entries]`: How far back, and for how many runs, each controller keeps the in-memory index that answers whether a run already happened.
 
 ## Security
 
@@ -104,7 +107,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:audit_log[:enabled]` | bool | `false` |
 | `:audit_log[:extra_subscriptions]` | term | `[]` |
 | `:audit_log[:fsync_interval_ms]` | ms | `100` |
-| `:audit_log[:fsync_mode]` | one of `per_record`, `interval` | `per_record` |
+| `:audit_log[:fsync_mode]` | one of `per_record`, `interval`, `batched` | `per_record` |
 | `:audit_log[:max_file_age_seconds]` | int | `86400` |
 | `:audit_log[:max_file_bytes]` | int | `67108864` |
 | `:audit_log[:max_total_bytes]` | int | `4294967296` |
@@ -284,6 +287,16 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:reconnect_interval` | ms | `1000` |
 | `:reconnect_max_backoff_ms` | ms | `30000` |
 | `:record_log_cut_after_bytes` | int | `65536` |
+| `:relay_history[:append_ms]` | ms | `1000` |
+| `:relay_history[:dedup_max_entries]` | int | `2000000` |
+| `:relay_history[:dedup_window_hours]` | int | `24` |
+| `:relay_history[:dir]` | path | `storage/app/relay_history` |
+| `:relay_history[:enabled]` | bool | `true` |
+| `:relay_history[:max_file_age_seconds]` | int | `86400` |
+| `:relay_history[:max_file_bytes]` | int | `16777216` |
+| `:relay_history[:max_pending]` | int | `10000` |
+| `:relay_history[:max_total_bytes]` | int | `1073741824` |
+| `:relay_history[:retention_seconds]` | seconds | `2592000` |
 | `:restore_await_timeout_ms` | ms | `15000` |
 | `:run_token` | string | unset |
 | `:runner_removal_grace_ms` | ms | `30000` |

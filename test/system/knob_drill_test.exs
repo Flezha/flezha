@@ -30,7 +30,8 @@ defmodule FlezhaTest.System.KnobDrillTest do
   alias Flezha.Dlq.Entry
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Healthz.Server, as: Healthz
-  alias Flezha.Observability.AuditLog.Writer, as: AuditWriter
+  alias Flezha.Logs.Kinds
+  alias Flezha.Logs.Writer, as: AuditWriter
   alias Flezha.Observability.Export.PrometheusHttp
   alias Flezha.Plugin.Provider.File, as: FilePlugin
   alias Flezha.Service.Cli
@@ -146,7 +147,7 @@ defmodule FlezhaTest.System.KnobDrillTest do
   # The writer creates and holds `<dir>/audit-current.jsonl`, so the directory
   # a user points at is where a record lands.
   defp audit_writes_under(dir) do
-    {:ok, pid} = AuditWriter.start_link(dir: dir)
+    {:ok, pid} = AuditWriter.start_link(Kinds.fetch!(:audit), dir: dir)
     exists? = File.exists?(Path.join(dir, "audit-current.jsonl"))
     NodeTestHelper.ensure_stopped(pid)
     exists?

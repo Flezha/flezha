@@ -37,7 +37,7 @@ defmodule Flezha.Service.Cli.PartitionRenderTest do
       started_as(self())
 
       assert capture_io(fn -> start("text", id: "demo") end) == "Started demo\n"
-      assert_received {:started, %{id: "demo"}, []}
+      assert_received {:started, %{id: "demo"}, [origin: %{kind: "operator"}]}
     end
 
     test "a first message rides the start as the instance's seed input" do
@@ -64,7 +64,9 @@ defmodule Flezha.Service.Cli.PartitionRenderTest do
       out = capture_io(fn -> start("text", []) end)
 
       assert [_, generated] = Regex.run(~r/\AStarted (candles-[a-z2-7]{16})\n\z/, out)
-      assert_received {:started, %{id: ^generated}, [generated: true]}
+
+      assert_received {:started, %{id: ^generated},
+                       [generated: true, origin: %{kind: "operator"}]}
     end
 
     test "JSON output is the one object carrying the id and the outcome" do
@@ -113,7 +115,7 @@ defmodule Flezha.Service.Cli.PartitionRenderTest do
     end
 
     test "a converge reports started and already-running members distinctly" do
-      stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
+      stub(PartitionGroup, :start, fn _ns, _op, 3, _json, [origin: %{kind: "group"}] ->
         {:ok,
          %{
            group: "ohlc",
@@ -130,7 +132,7 @@ defmodule Flezha.Service.Cli.PartitionRenderTest do
     end
 
     test "a fully-present group re-run reports the no-op" do
-      stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
+      stub(PartitionGroup, :start, fn _ns, _op, 3, _json, [origin: %{kind: "group"}] ->
         {:ok,
          %{
            group: "ohlc",
@@ -146,7 +148,7 @@ defmodule Flezha.Service.Cli.PartitionRenderTest do
     end
 
     test "a fresh group start keeps its message" do
-      stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
+      stub(PartitionGroup, :start, fn _ns, _op, 3, _json, [origin: %{kind: "group"}] ->
         {:ok, %{group: "ohlc", members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"]}}
       end)
 
@@ -157,7 +159,7 @@ defmodule Flezha.Service.Cli.PartitionRenderTest do
     end
 
     test "a group started without an id names the base it generated" do
-      stub(PartitionGroup, :start, fn _ns, %{id: nil}, 3, _json ->
+      stub(PartitionGroup, :start, fn _ns, %{id: nil}, 3, _json, [origin: %{kind: "group"}] ->
         {:ok,
          %{
            group: "candles-k7m2qzxw4pd3fn2a",

@@ -407,6 +407,7 @@ pub fn request(
             factory_id: factory_id.clone(),
             payload,
             if_running: if_running.as_wire().to_string(),
+            parent_relay_id: origin.instance_id(),
         });
 
     let deadline = Instant::now() + SPAWN_RESULT_TIMEOUT;
@@ -452,6 +453,31 @@ mod tests {
             cell_identity: b"cell-a",
             offset,
         }
+    }
+
+    /// The request names the instance its Cell serves, which the controller
+    /// records as the spawn's parent once it has seen that the requesting
+    /// session hosts it.
+    #[test]
+    fn a_spawn_request_names_the_instance_it_was_made_in() {
+        let _guard = crate::runner::env_test_guard();
+        let (tx, rx) = crossbeam::channel::unbounded();
+        crate::runner::install_reconnect_trigger(tx);
+        let cell = crate::flusher::encode_cell_identity("ma_fan", "fan", "k");
+        let origin = InvocationOrigin {
+            cell_identity: &cell,
+            offset: Some(3),
+        };
+        let _handle = request("fan_trade".into(), b"p".to_vec(), None, false, origin, 0);
+
+        let Ok(crate::runner::RunnerMessage::EmitControlRequest { command, .. }) = rx.try_recv()
+        else {
+            panic!("the spawn shipped no control request");
+        };
+        let crate::pb::command_request::Command::SpawnStepsRequest(sent) = *command else {
+            panic!("the control request is no SpawnStepsRequest");
+        };
+        assert_eq!(sent.parent_relay_id, "ma_fan");
     }
 
     #[test]

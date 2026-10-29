@@ -197,6 +197,13 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
     end
 
+    # Its own relay history too: a nested key, so it is written into the
+    # group rather than as a top-level one.
+    dir = Environment.per_run(Config.get(:run_token), index).relay_history_dir
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
+    history = Keyword.put(Application.get_env(:flezha, :relay_history, []), :dir, dir)
+    :erpc.call(node_name, Application, :put_env, [:flezha, :relay_history, history])
+
     # Peer nodes only need UDS transport (avoids QUIC port conflicts).
     :erpc.call(node_name, Application, :put_env, [:flezha, :transports, [:uds]])
 

@@ -1,50 +1,68 @@
-use crate::args::{OptSpec, Positional, DURATION_MS};
+use serde_json::Value;
+
+use crate::args::{Positional, Reading, DURATION_MS};
 use crate::dispatch::{Arg, Command, Missing, Verb};
+use crate::logs::{written_filters, BEFORE, LIMIT, NAME, NODE, SINCE, SOURCE, UNTIL};
 use crate::{help, rpc};
 
-/// The five filters `audit read` narrows a file with. Their long spelling is
-/// their own name, and the parse and its refusal are the walk's.
-const SOURCE: OptSpec =
-    OptSpec::text("--source", "--source", "<source>").doc("Match records whose source is this.");
-const NAME: OptSpec =
-    OptSpec::text("--name", "--name", "<name>").doc("Match records whose name is this.");
-const SINCE: OptSpec = OptSpec::number("--since", "--since", "<microseconds>")
-    .doc("Match records with ts_us at or after this (monotonic).");
-const UNTIL: OptSpec = OptSpec::number("--until", "--until", "<microseconds>")
-    .doc("Match records with ts_us at or before this.");
-const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<count>")
-    .doc("Return at most this many records (default 1000).");
+/// `flz audit` is `flz logs` with the audit kind filled in: every verb below
+/// calls a logs operation, and nothing here reads or prints a record.
+fn audit(_read: &Reading) -> Option<Value> {
+    Some(Value::from("audit"))
+}
+
+/// The two filters the audit verbs declare.
+fn filters(read: &Reading) -> Option<Value> {
+    written_filters(read, &["source", "name"])
+}
 
 pub(crate) const TABLE: Command = Command {
     path: "flz audit",
-    title: "Durable audit log inspection.",
+    title: "Durable audit log inspection (`flz logs ... audit`).",
     notes: None,
     verbs: &[
         Verb::door("list")
-            .calls(&["AuditLog.list_files"])
+            .sending(&[Arg::Fields(&[("kind", Arg::Built(audit))])])
+            .calls(&["Logs.files"])
             .help_word(),
         Verb::door("read")
-            .taking(&[Positional::required("<file>")])
-            .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT])
+            .taking(&[Positional::optional("<file>")])
+            .reading(&[SOURCE, NAME, SINCE, UNTIL, LIMIT, BEFORE, NODE])
             .sending(&[Arg::Fields(&[
+                ("kind", Arg::Built(audit)),
                 ("file", Arg::Pos("<file>")),
-                ("source", Arg::Opt(&SOURCE)),
-                ("name", Arg::Opt(&NAME)),
+                ("filters", Arg::Built(filters)),
                 ("since_us", Arg::Opt(&SINCE)),
                 ("until_us", Arg::Opt(&UNTIL)),
                 ("limit", Arg::Opt(&LIMIT)),
+                ("before", Arg::Opt(&BEFORE)),
+                ("node", Arg::Opt(&NODE)),
             ])])
-            .calls(&["AuditLog.read"])
+            .calls(&["Logs.read"])
             .notes(help::AUDIT_READ)
             .help_word(),
         Verb::door("tail")
-            .reading(&[DURATION_MS])
+            .reading(&[SOURCE, NAME, DURATION_MS])
+            .sending(&[Arg::Fields(&[
+                ("kind", Arg::Built(audit)),
+                ("filters", Arg::Built(filters)),
+            ])])
             .carrying(&[("duration_ms", Arg::Built(rpc::window))])
-            .calls(&["AuditLog.tail"])
-            .notes(help::AUDIT_TAIL)
+            .calls(&["Logs.tail"])
+            .notes(help::LOGS_TAIL)
             .help_word(),
-        Verb::door("stats").calls(&["AuditLog.stats"]).help_word(),
-        Verb::door("rotate").calls(&["AuditLog.rotate"]).help_word(),
+        Verb::door("stats")
+            .sending(&[Arg::Fields(&[("kind", Arg::Built(audit))])])
+            .calls(&["Logs.stats"])
+            .help_word(),
+        Verb::door("rotate")
+            .reading(&[NODE])
+            .sending(&[Arg::Fields(&[
+                ("kind", Arg::Built(audit)),
+                ("node", Arg::Opt(&NODE)),
+            ])])
+            .calls(&["Logs.rotate"])
+            .help_word(),
     ],
     missing: Missing::Screen,
     unknown_prints_help: false,

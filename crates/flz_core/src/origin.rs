@@ -33,6 +33,15 @@ impl Phase {
 }
 
 impl InvocationOrigin<'_> {
+    /// The instance the invocation serves, read from its Cell: the relay
+    /// class the Cell's identity names, which is the instance's id unless it
+    /// declared a class of its own. Empty for a call made outside a Cell.
+    pub fn instance_id(&self) -> String {
+        crate::flusher::decode_cell_identity(self.cell_identity)
+            .map(|(relay_class, _tasklet, _key)| relay_class)
+            .unwrap_or_default()
+    }
+
     /// A spawn's identity: the origin, the call's position among the
     /// invocation's spawns, the factory and the payload, which is what makes a
     /// re-run that asks for something else a new request.
@@ -100,6 +109,19 @@ mod tests {
         ] {
             assert_ne!(first, other);
         }
+    }
+
+    /// The instance is the relay class the Cell's identity names; a call
+    /// made outside a Cell names none.
+    #[test]
+    fn an_origin_names_the_instance_its_cell_serves() {
+        let cell = crate::flusher::encode_cell_identity("ma_fan", "fan", "k");
+        let inside = InvocationOrigin {
+            cell_identity: &cell,
+            offset: None,
+        };
+        assert_eq!(inside.instance_id(), "ma_fan");
+        assert_eq!(origin(Some(7)).instance_id(), "");
     }
 
     /// Nothing re-runs an invocation that took no offset, and two of its

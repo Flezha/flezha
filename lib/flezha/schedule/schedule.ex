@@ -23,6 +23,7 @@ defmodule Flezha.Service.Schedule do
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.Logs.RelayHistory
   alias Flezha.AuthZ.Namespace
   alias Flezha.Cluster.Reads
   alias Flezha.Plugin.SpecDecoder
@@ -130,14 +131,15 @@ defmodule Flezha.Service.Schedule do
     row: &stored/1,
     as: located,
     args: [name: @schedule_name] do
-    Reads.on(located.node, __MODULE__, :fire, [located.entry])
+    origin = RelayHistory.origin("schedule", caller_context, %{schedule: name, slot: "manual"})
+    Reads.on(located.node, __MODULE__, :fire, [located.entry, origin])
   end
 
   @doc false
   # The local half of `run/2`, run on the controller holding the entry.
-  @spec fire(map()) :: {:ok, map()} | {:error, term()}
-  def fire(entry) do
-    case Job.spawn_instance(entry, "#{entry.name}@manual-#{System.system_time(:second)}") do
+  @spec fire(map(), map()) :: {:ok, map()} | {:error, term()}
+  def fire(entry, origin) do
+    case Job.spawn_instance(entry, "#{entry.name}@manual-#{System.system_time(:second)}", origin) do
       {:ok, %{relay_id: id}} -> {:ok, %{relay_id: id, outcome: :spawned}}
       :duplicate -> {:ok, %{relay_id: nil, outcome: :already_running}}
       {:error, _reason} = refused -> refused

@@ -1061,7 +1061,7 @@ defmodule FlezhaTest.Runner.FleetManagerServedGroupsTest do
                &RelayManager.exist?/2,
                ns,
                relay,
-               false
+               %{announce?: false, record?: false}
              )
 
     assert %Flezha.Error{code: "relay.factory_unserved", class: :unavailable} =

@@ -53,7 +53,7 @@ A steps relay SHALL loop by declaring its loop mode (`PerInput`, one iteration p
 
 ### Requirement: A steps relay can be stopped externally
 
-`flz relay stop <id>` (and the equivalent controller-issued path) SHALL **cooperatively** cancel a steps relay (distinct from a hard removal) and drive the standard terminal teardown with completion status `cancelled`, whether the instance is awake or asleep. A sleeping (suspended) instance SHALL first be woken through the ordinary bind on a live runner, with the stop carried by that wake so `StepsStop` reaches the runner as soon as the binding is published; the manager SHALL answer `{:ok, :cooperative}` once the wake is under way. The woken instance, waiting at a committed boundary with nothing owed, SHALL end `cancelled` with nothing to roll back, exactly as an awake instance stopped at the same boundary; a message that starts a pass before the stop lands SHALL be cancelled with that pass's compensation. Its completion record SHALL be written and its state directory kept under the finished-instance retention rule. Only when no runner can take the wake, or an awake instance's runner cannot be reached, SHALL the stop fall back to the hard removal, and it SHALL do so the same way for both. A flow relay's stop SHALL remain a hard removal, awake or asleep.
+`flz relay stop <id>` (and the equivalent controller-issued path) SHALL **cooperatively** cancel a steps relay (distinct from a hard removal) and drive the standard terminal teardown with completion status `cancelled`, whether the instance is awake or asleep. Before it acts, the stop SHALL record on the instance who requested it (principal and source), so the instance's end is told apart from one its `max_duration` caused. A sleeping (suspended) instance SHALL first be woken through the ordinary bind on a live runner, with the stop carried by that wake so `StepsStop` reaches the runner as soon as the binding is published; the manager SHALL answer `{:ok, :cooperative}` once the wake is under way. The woken instance, waiting at a committed boundary with nothing owed, SHALL end `cancelled` with nothing to roll back, exactly as an awake instance stopped at the same boundary; a message that starts a pass before the stop lands SHALL be cancelled with that pass's compensation. Its completion record SHALL be written and its state directory kept under the finished-instance retention rule. A halted instance SHALL take the hard removal at once, because no runner runs it and no completion would answer a cooperative stop. Only when no runner can take the wake, or an awake instance's runner cannot be reached, SHALL the stop fall back to the hard removal, and it SHALL do so the same way for both. A flow relay's stop SHALL remain a hard removal, awake or asleep.
 
 #### Scenario: User stops a running steps relay
 
@@ -69,6 +69,16 @@ A steps relay SHALL loop by declaring its loop mode (`PerInput`, one iteration p
 
 - **WHEN** the user stops a suspended steps instance while no runner in its namespace can take it
 - **THEN** the stop SHALL take the hard removal, as it does for an awake instance whose runner cannot be reached, and SHALL NOT leave the instance suspended
+
+#### Scenario: A halted steps instance is removed hard
+
+- **WHEN** the user stops a steps instance that is halted while its runner stays connected
+- **THEN** the stop SHALL take the hard removal at once and the instance SHALL end, rather than wait for a `cancelled` completion its runner will never send
+
+#### Scenario: A stop records who asked for it
+
+- **WHEN** principal `alice` stops a running steps instance and it ends `cancelled`
+- **THEN** the instance's end SHALL be attributed to a requested stop by `alice`, not to its time limit
 
 #### Scenario: A sleeping flow relay is removed hard
 

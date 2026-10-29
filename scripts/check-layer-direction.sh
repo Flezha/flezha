@@ -131,6 +131,7 @@ LAYERS = {
     "authz": 5,
     "convergence": 5,
     "observability": 5,
+    "logs": 5,  # the durable logs: a relay's history and the audit trail the bus feeds
     # 6 — the outermost: the user and network surfaces, and the node's own
     # bring-up and tear-down. Boot starts the services and shutdown stops them,
     # so both name every layer and none may name them.

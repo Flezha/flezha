@@ -1,4 +1,4 @@
-flz audit stats - The audit log's operational snapshot.
+flz audit stats - A kind's operational snapshot, one row per controller.
 
 Usage: flz audit stats
 

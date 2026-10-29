@@ -53,8 +53,7 @@ defmodule Flezha.Observability.TestSinks do
     Flezha.Observability.TelemetryBridge,
     Flezha.Observability.DefaultSinks,
     Flezha.Observability.OtpBackend.Supervisor,
-    Flezha.Observability.Export.Supervisor,
-    Flezha.Observability.AuditLog.Supervisor
+    Flezha.Observability.Export.Supervisor
   ]
 
   @doc """
@@ -70,6 +69,11 @@ defmodule Flezha.Observability.TestSinks do
         do: :ok = Supervisor.terminate_child(sup, child)
 
     for child <- @after_registry, do: {:ok, _} = start_again(sup, child)
+
+    # The audit kind's sink registers with the registry as it starts.
+    if Supervisor.terminate_child(Flezha.Logs.Supervisor, :audit) == :ok,
+      do: {:ok, _} = Supervisor.restart_child(Flezha.Logs.Supervisor, :audit)
+
     :ok
   end
 

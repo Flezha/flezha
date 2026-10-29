@@ -1,76 +1,6 @@
 {
   "operations": [
     {
-      "name": "AuditLog.list_files",
-      "doc": "The audit log's files, each with its record times and digest.",
-      "action": "audit.read",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
-      "name": "AuditLog.read",
-      "doc": "The records of one audit file that match the given filters.",
-      "action": "audit.read",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "params",
-          "type": "keyword",
-          "required": true,
-          "doc": "`file`, `source`, `name`, `since_us`, `until_us` and `limit`."
-        }
-      ]
-    },
-    {
-      "name": "AuditLog.rotate",
-      "doc": "Close the current audit file and start a new one.",
-      "action": "audit.rotate",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
-      "name": "AuditLog.stats",
-      "doc": "The audit log's operational snapshot.",
-      "action": "audit.read",
-      "remote": true,
-      "stream": false,
-      "args": []
-    },
-    {
-      "name": "AuditLog.tail",
-      "doc": "Stream every audit record the caller may read as it is written.",
-      "action": "audit.read",
-      "remote": true,
-      "stream": true,
-      "args": [
-        {
-          "name": "params",
-          "type": "keyword",
-          "required": false,
-          "default": [],
-          "doc": "Unused."
-        }
-      ]
-    },
-    {
-      "name": "AuditLog.unsubscribe",
-      "doc": "Undo a `tail/2`.",
-      "action": "audit.read",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "ref",
-          "type": "any",
-          "required": true,
-          "doc": "The subscription `tail/2` answered."
-        }
-      ]
-    },
-    {
       "name": "Controller.boot_await",
       "doc": "Wait until the controller is ready, or the timeout passes.",
       "action": "public",
@@ -425,6 +355,89 @@
           "type": "string",
           "required": true,
           "doc": "The factory."
+        }
+      ]
+    },
+    {
+      "name": "Logs.files",
+      "doc": "A kind's rotated files on every controller, each with its record times and digest.",
+      "action": "logs.read",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`kind`."
+        }
+      ]
+    },
+    {
+      "name": "Logs.kinds",
+      "doc": "Every log kind, with the filters a read takes and the columns a reader shows.",
+      "action": "logs.read",
+      "remote": true,
+      "stream": false,
+      "args": []
+    },
+    {
+      "name": "Logs.read",
+      "doc": "A kind's records from every controller, newest first, each naming its `node`.",
+      "action": "logs.read",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`kind`, `filters`, `since_us`, `until_us`, `limit`, `before`, `node` and `file`."
+        }
+      ]
+    },
+    {
+      "name": "Logs.rotate",
+      "doc": "Close a kind's current file and start a new one, on `node` or on every controller.",
+      "action": "logs.rotate",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`kind` and `node`."
+        }
+      ]
+    },
+    {
+      "name": "Logs.stats",
+      "doc": "A kind's operational snapshot, one row per controller.",
+      "action": "logs.read",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`kind`."
+        }
+      ]
+    },
+    {
+      "name": "Logs.tail",
+      "doc": "Stream a kind's new records from every controller as they are written.",
+      "action": "logs.read",
+      "remote": true,
+      "stream": true,
+      "args": [
+        {
+          "name": "params",
+          "type": "keyword",
+          "required": true,
+          "doc": "`kind` and `filters`."
         }
       ]
     },

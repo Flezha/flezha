@@ -32,6 +32,7 @@ defmodule Flezha.Layout.Table do
           :state
           | :auth
           | :audit
+          | :relay_history
           | :dlq
           | :plugins
           | :process_hub
@@ -69,6 +70,7 @@ defmodule Flezha.Layout.Table do
     {:schedules, :schedule_dir, :plain, :flag},
     {:auth, :authz_auth_dir, :owner, :flag},
     {:audit, :audit_log_dir, :plain, :flag},
+    {:relay_history, :relay_history_dir, :plain, :default},
     {:plugins, :plugin_root, :plain, :flag},
     {:sockets, :socket_files_path, :ladder, :flag},
     {:logs, {:dirname, :log_path}, :plain, :never}

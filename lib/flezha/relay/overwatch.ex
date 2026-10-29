@@ -82,6 +82,9 @@ defmodule Flezha.Relay.Overwatch do
     cause: nil,
     # Why the relay halted, kept through a suspension or a lost binding.
     halt_reason: nil,
+    # A stop's facts: how the run said it ended (`%{status, error, undo}`), who asked.
+    terminal: nil,
+    stop_requested_by: nil,
     # Wall-clock ms at process start, for `flz relay info` uptime. Wall-clock
     # (not monotonic) so the value stays comparable when read from another node.
     started_at: nil,
@@ -351,9 +354,10 @@ defmodule Flezha.Relay.Overwatch do
   def handle_call(:get_overwatch_facts, _from, state),
     do: {:reply, %{state | init_values: nil, snapshot: nil, held_outputs: nil, seed: nil}, state}
 
-  # A stop's cause, named before the hub stops this process; `nil` undoes it.
-  def handle_call({:cause, cause}, from, %__MODULE__{} = state),
-    do: handle_call(:get_overwatch_state, from, %{state | cause: cause})
+  # A stop's `cause` and the facts it carries, named before it acts (a `nil`
+  # cause undoes one), answered with the state they were named on.
+  def handle_call({:note, fields}, from, %__MODULE__{} = state),
+    do: handle_call(:get_overwatch_state, from, struct!(state, fields))
 
   # Live read of Cell state, narrowed by `selector` (`%{}` = every Tasklet,
   # the migration/handover shape). Always answered as `{:ok, json, change_seq}`

@@ -173,6 +173,9 @@ defmodule Flezha.Service.RelayManager do
   a caller's own id never is. `generated: true` marks an id a caller drew
   through `with_generated_id/3` itself, so it gets the checks only a generated
   id gets. `:mint` replaces the generator, for a test that forces a clash.
+  `origin:` names who or what started the run (default `%{kind: "reconcile"}`),
+  `announce: false` starts it unannounced, and `record?:` (default `announce`)
+  says whether the relay history records the start.
   """
   @spec start_relay(String.t(), RelayBuilder.t(), keyword()) ::
           {:ok, map()} | :duplicate | {:error, term()}
@@ -270,7 +273,7 @@ defmodule Flezha.Service.RelayManager do
          :ok <- Admission.validate_relay(namespace, relay),
          :ok <- Admission.refuse_group_base_claim(namespace, relay),
          {:ok, relay} <- Admission.resolve_factory(namespace, relay),
-         {:ok, answer} <- start_walk(namespace, relay, Keyword.get(opts, :announce, true)) do
+         {:ok, answer} <- start_walk(namespace, stamped(relay, opts), opts) do
       answer
     else
       {:error, reason} ->
@@ -280,10 +283,30 @@ defmodule Flezha.Service.RelayManager do
     end
   end
 
+  # Who or what started the run, and when it first started, written once into
+  # the declared spec, so a restart, a failover or a move carries them on.
+  defp stamped(relay, opts) do
+    stamp =
+      relay.opts
+      |> Keyword.put_new(:origin, Keyword.get(opts, :origin, %{kind: "reconcile"}))
+      |> Keyword.put_new(:first_started_at, System.os_time(:millisecond))
+
+    %{relay | opts: stamp}
+  end
+
   # The `:start` steps take what the start holds, the declared start last; the
-  # quota take is then kept or given back by what the start answered.
-  defp start_walk(namespace, relay, announce?) do
-    target = %{namespace: namespace, relay: relay, announce?: announce?}
+  # quota take is then kept or given back by what the start answered. A start
+  # that is announced is recorded in the relay history unless `record?:` says.
+  defp start_walk(namespace, relay, opts) do
+    announce? = Keyword.get(opts, :announce, true)
+
+    target = %{
+      namespace: namespace,
+      relay: relay,
+      announce?: announce?,
+      record?: Keyword.get(opts, :record?, announce?)
+    }
+
     {_, report} = Shutdown.run(:start, target, Durations.get(:hub_start_child_ms))
 
     walked =
@@ -311,7 +334,8 @@ defmodule Flezha.Service.RelayManager do
   removal.
 
   Returns `{:ok, :cooperative}` when a cooperative stop was signalled, `:ok` after
-  a hard teardown, or `{:error, reason}`.
+  a hard teardown, or `{:error, reason}`. `by:` names who asked
+  (`%{principal, source}`), recorded on the instance before the stop acts.
   """
   @spec request_stop(String.t(), String.t(), keyword()) ::
           :ok | {:ok, :cooperative} | {:error, term()}
@@ -319,7 +343,8 @@ defmodule Flezha.Service.RelayManager do
     # Whole-call forward, unlike the pid-riding read verbs: the stop path's
     # side effects (ControlUnit lookup, plugin disable, state-dir delete,
     # quota release) are node-local and must run on the hosting node.
-    on_hub_member(namespace, relay_id, {Teardown, :request_stop, [namespace, relay_id]}, opts)
+    by = Keyword.get(opts, :by)
+    on_hub_member(namespace, relay_id, {Teardown, :request_stop, [namespace, relay_id, by]}, opts)
   end
 
   @doc """
@@ -330,8 +355,8 @@ defmodule Flezha.Service.RelayManager do
   `RelayCompleted`. `preserve_state: true` keeps the files for a rescale to
   move and `:sealed` also seals a steps relay's journal at its latest committed
   iteration; either closes the writers on the node the relay ran on.
-  `cause:` (`:stop`, `:complete`, `:rescale` or `:failed_start`) decides which
-  steps act. `overwatch:` is the Overwatch a completion was admitted against: a
+  `cause:` (`:stop`, `:complete`, `:rescale`, `:rescale_leave` or `:failed_start`)
+  decides which steps act, and `terminal:` is how a completed run said it ended. `overwatch:` is the Overwatch a completion was admitted against: a
   task can complete before the hub writes the row of the start that ran it, and
   the hub queues a stop behind a start it sent and has not yet registered. The
   fallback covers a completion handled on the node that started the relay.
@@ -501,16 +526,11 @@ defmodule Flezha.Service.RelayManager do
   tasklet's `spawn_or_deliver/6`. The duplicate verdict itself is minted by
   `start_relay/3`, the one start-authority seam.
   """
-  @spec start_steps(String.t(), String.t() | nil, String.t(), map(), Keyword.t()) ::
+  @spec start_steps(String.t(), String.t() | nil, String.t(), map(), keyword(), keyword()) ::
           {:ok, map()} | :duplicate | {:error, term()}
-  def start_steps(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
-    start_relay(namespace, %RelayBuilder{
-      id: instance_id,
-      factory_id: factory_id,
-      run: :steps,
-      init_values: init_values,
-      opts: opts
-    })
+  def start_steps(namespace, instance_id, factory_id, init_values, opts, start_opts) do
+    builder = %RelayBuilder{id: instance_id, factory_id: factory_id, run: :steps, opts: opts}
+    start_relay(namespace, %{builder | init_values: init_values}, start_opts)
   end
 
   @doc """

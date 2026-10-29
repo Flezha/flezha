@@ -39,6 +39,7 @@ SDK. A program acts on the `code` and the `class`.
    1. [internal](#internal)
    1. [kafka](#kafka)
    1. [listener](#listener)
+   1. [logs](#logs)
    1. [mcp](#mcp)
    1. [namespace](#namespace)
    1. [observability](#observability)
@@ -313,6 +314,16 @@ SDK raises or returns its one error type carrying them.
 | `listener.detached` | conflict | 6 | the listener on relay '{relay}' was disabled by another caller |  |
 | `listener.no_channels` | invalid | 2 | relay '{relay}' has no output channel a tally could count | `flz relay graph {relay} shows whether the relay announces its graph, and which channels end at an output` |
 | `listener.overrun` | unavailable | 7 | the listener on relay '{relay}' fell more than {bytes} bytes or {frames} frames behind and was ended | `flz relay listen {relay} again, or raise FLEZHA_LISTENER_PENDING_BYTES` |
+
+### logs
+
+| Code | Class | Exit | Message | Hint |
+|---|---|---|---|---|
+| `logs.kind_disabled` | unavailable | 7 | the {kind} log is disabled; enable it with {key} in the configuration |  |
+| `logs.overloaded` | unavailable | 7 | the log has more records queued than it takes; this one was refused and counted | `flz logs stats relay_history` |
+| `logs.unknown_filter` | invalid | 2 | this log kind cannot be filtered by '{field}'; it takes {known} | `flz logs kinds` |
+| `logs.unknown_kind` | invalid | 2 | there is no log kind {kind}; the kinds are {known} | `flz logs kinds` |
+| `logs.unknown_node` | invalid | 2 | {node} is not a controller of this cluster | `flz controller list` |
 
 ### mcp
 

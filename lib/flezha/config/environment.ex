@@ -185,7 +185,10 @@ defmodule Flezha.Config.Environment do
       node_base_name: "flezha_test_" <> scoped(token, peer, "_"),
       process_hub_registry_root: Path.join(state_root, "process_hub"),
       dlq_dir: Path.join(state_root, "dlq"),
-      plugin_root: Path.join(state_root, "plugins")
+      plugin_root: Path.join(state_root, "plugins"),
+      # Beside the state root, which a test wipes between scenarios while the
+      # history's writer keeps its file open.
+      relay_history_dir: Path.join([System.tmp_dir!(), "flezha_relay_history", scope])
     }
   end
 

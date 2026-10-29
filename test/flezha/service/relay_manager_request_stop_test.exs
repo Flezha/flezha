@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
   @moduledoc """
-  §5a.1: `RelayManager.request_stop/2` routes by kind — a bound `:steps`
+  §5a.1: `RelayManager.request_stop/3` routes by kind — a bound `:steps`
   relay is stopped cooperatively (`ControlUnit.steps_stop`), everything else
   takes the hard `stop_relay/2` teardown: the `:relay` walk of the
   shutdown plan, which releases BOTH the `:max_relays` and
@@ -8,7 +8,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
   (the cell-quota leak fix), and retains a finished steps relay's state.
 
   A minimal stub stands in for the Overwatch GenServer: it answers
-  `:get_overwatch_state` and a stop's `{:cause, _}` (kind / runner / cell count). The hard stop itself
+  `:get_overwatch_state` and a stop's `{:note, fields}` (kind / runner / cell count). The hard stop itself
   rides `ProcessHub.stop_children` (the hub stop path removes the declared
   entry before the child terminates), stubbed here at the ProcessHub seam.
   """
@@ -64,10 +64,34 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
       :ok
     end)
 
-    assert {:ok, :cooperative} = RelayManager.request_stop(@namespace, task_id)
+    by = %{principal: "alice", source: :cli}
+    assert {:ok, :cooperative} = RelayManager.request_stop(@namespace, task_id, by: by)
+    # Who asked is named on the instance before the stop acts.
+    assert_received {:note, %{stop_requested_by: ^by}}
     assert_receive {:steps_stop_called, ^task_id}, 500
     # Cooperative stop does not drive the hard teardown — the SDK winds down itself.
     refute_received {:stop_relay_received, _}
+  end
+
+  test "steps + halted → hard teardown, no cooperative stop" do
+    test_pid = self()
+    task_id = unique_id()
+    {:ok, stub} = start_stub(%{builder: %{run: :steps}, runner_id: "exec1", phase: :halted})
+    on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
+
+    HubManager |> stub(:get_pid, fn @namespace, ^task_id -> {:ok, stub} end)
+    Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+    stub_hub_stop(test_pid, task_id)
+
+    ControlUnit
+    |> stub(:steps_stop, fn _e, _o ->
+      send(test_pid, {:steps_stop_called, task_id})
+      :ok
+    end)
+
+    assert :ok = RelayManager.request_stop(@namespace, task_id)
+    assert_receive {:hub_stop, ^task_id}, 500
+    refute_received {:steps_stop_called, _}
   end
 
   test "stream → hard teardown (RemRelay), no cooperative stop" do
@@ -109,7 +133,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     assert :ok = RelayManager.stop_relay(@namespace, task_id)
 
     # Named before the hub stop, in the call that read the Cells.
-    assert_received {:cause, :stop}
+    assert_received {:note, %{cause: :stop}}
     assert_receive {:dealloc, :max_relays, 1}, 500
     assert_receive {:dealloc, :max_cells_per_relay, 2}, 500
   end
@@ -209,7 +233,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     stub_hub_stop(test_pid, task_id)
 
     assert :ok = RelayManager.stop_relay(@namespace, task_id)
-    assert_received {:cause, :stop}
+    assert_received {:note, %{cause: :stop}}
     assert_receive {:hub_stop, ^task_id}, 500
   end
 
@@ -283,8 +307,8 @@ defmodule StubOverwatch do
   def handle_call(:get_overwatch_state, _from, {state_reply, _notify} = s),
     do: {:reply, state_reply, s}
 
-  def handle_call({:cause, cause}, _from, {state_reply, notify} = s) do
-    send(notify, {:cause, cause})
+  def handle_call({:note, fields}, _from, {state_reply, notify} = s) do
+    send(notify, {:note, fields})
     {:reply, state_reply, s}
   end
 end

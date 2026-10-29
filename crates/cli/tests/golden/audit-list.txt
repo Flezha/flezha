@@ -1,4 +1,4 @@
-flz audit list - The audit log's files, each with its record times and digest.
+flz audit list - A kind's rotated files on every controller, each with its record times and digest.
 
 Usage: flz audit list
 

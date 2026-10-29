@@ -58,14 +58,14 @@ defmodule Flezha.Schedule.Job do
   the running controller) and attached AT SPAWN: a plugin attached after the
   spawn misses whatever the instance already ran.
   """
-  @spec spawn_instance(Store.entry(), String.t(), pos_integer()) ::
+  @spec spawn_instance(Store.entry(), String.t(), map(), pos_integer()) ::
           {:ok, map()} | :duplicate | {:error, term()}
-  def spawn_instance(entry, instance_id, attempt \\ 1) do
+  def spawn_instance(entry, instance_id, origin, attempt \\ 1) do
     # A run without its output channel spends and reports nothing, which is
     # worse than a visibly skipped slot — so an undecodable spec starts nothing.
     case instance_plugins(entry, instance_id) do
       {:ok, plugins} ->
-        start(entry, instance_id, plugins, attempt)
+        start(entry, instance_id, plugins, origin, attempt)
 
       {:error, reason} ->
         failed(entry, instance_id, reason, :decode_plugin_spec, attempt)
@@ -83,7 +83,7 @@ defmodule Flezha.Schedule.Job do
   # entry channel the entry names or the first declared one. The slot's
   # instance id is its message id, so a retry of the slot over the input an
   # earlier attempt journaled is absorbed by the input log.
-  defp start(entry, instance_id, plugins, attempt) do
+  defp start(entry, instance_id, plugins, origin, attempt) do
     opts = if plugins == [], do: [], else: [bindings: plugins]
 
     opts =
@@ -100,7 +100,8 @@ defmodule Flezha.Schedule.Job do
            instance_id,
            entry.factory_id,
            entry.init_values,
-           opts
+           opts,
+           origin: origin
          ) do
       {:ok, _} = ok ->
         :telemetry.execute([:flezha, :schedule, :fired], %{count: 1}, %{
@@ -261,9 +262,11 @@ defmodule Flezha.Schedule.Job do
   # racing any other fire attempt no-ops on `:duplicate` — which IS success:
   # someone fired the slot.
   defp attempt_slot(state, slot, attempt) do
-    instance_id = "#{state.entry.name}@#{DateTime.to_iso8601(slot)}"
+    slot_iso = DateTime.to_iso8601(slot)
+    instance_id = "#{state.entry.name}@#{slot_iso}"
+    origin = %{kind: "schedule", schedule: state.entry.name, slot: slot_iso}
 
-    case spawn_instance(state.entry, instance_id, attempt) do
+    case spawn_instance(state.entry, instance_id, origin, attempt) do
       {:ok, _} ->
         record_fire(state, instance_id, :ok)
 

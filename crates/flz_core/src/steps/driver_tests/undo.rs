@@ -34,12 +34,19 @@ fn saga_json(id: &str) -> String {
     )
 }
 
-fn saga_host(edges: [u32; 2]) -> FakeHost {
+/// Every `compensate` succeeds, or fails with `hook_fails` when it names a reason.
+fn saga_host(edges: [u32; 2], hook_fails: Option<&'static str>) -> FakeHost {
     FakeHost::answering(move |payload, applied| match payload {
         EnginePayload::Command {
             kind: schema::ActivationKind::CompensateRun { .. },
             ..
-        } => schema::ActivationOutcome::Work(vec![effect(schema::Verdict::Ok, b"undone")]),
+        } => match hook_fails {
+            None => schema::ActivationOutcome::Work(vec![effect(schema::Verdict::Ok, b"undone")]),
+            Some(reason) => schema::ActivationOutcome::Failed(schema::WorkError {
+                message: reason.to_string(),
+                non_retryable: true,
+            }),
+        },
         EnginePayload::Work { slot, items, .. } => schema::ActivationOutcome::Work(
             items
                 .iter()
@@ -88,6 +95,16 @@ fn saga(
     ack_timeout_ms: Option<&str>,
     answer: impl Fn(&Command, &[String]) -> Answer,
 ) -> (Seen, Vec<String>) {
+    saga_hooked(id, ack_timeout_ms, None, answer)
+}
+
+/// [`saga`] whose `compensate` hooks fail with `hook_fails` when it names a reason.
+fn saga_hooked(
+    id: &str,
+    ack_timeout_ms: Option<&str>,
+    hook_fails: Option<&'static str>,
+    answer: impl Fn(&Command, &[String]) -> Answer,
+) -> (Seen, Vec<String>) {
     const ACK_TIMEOUT: &str = "FLEZHA_STEPS_ACK_TIMEOUT_MS";
     let (_env, _sink, rx) = turn_env();
     if let Some(ms) = ack_timeout_ms {
@@ -99,7 +116,7 @@ fn saga(
         .expect("the saga class registers");
     let topology = crate::relay::registry::get_class(&factory).expect("registered");
     let edge = |name| topology.lookup_channel_id(name).expect("an edge channel");
-    let _host = saga_host([edge("m1"), edge("m2")]);
+    let _host = saga_host([edge("m1"), edge("m2")], hook_fails);
     let mut node = RunnerNode::new("test-ns".to_string());
     bind_turns(&mut node, &factory, id, None);
     feed_at(&node.get_relay(id).expect("bound"), b"order", 0);
@@ -150,6 +167,10 @@ fn a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_end
             && error.contains("compensation of tasklet `b` was not journaled: "),
         "{error}"
     );
+    assert_eq!(
+        seen.undo, "partial",
+        "a refused entry leaves the rollback incomplete"
+    );
 }
 
 #[test]
@@ -173,6 +194,16 @@ fn a_compensation_refused_once_is_sent_again_and_marked_after_its_ack() {
         error.contains("out of stock") && !error.contains("compensation"),
         "the planned end: {error}"
     );
+    assert_eq!(seen.undo, "complete", "every hook ran and was journaled");
+}
+
+#[test]
+fn a_failing_hook_reports_the_rollback_partial() {
+    let (seen, _marks) = saga_hooked("saga-hook-fails", None, Some("refund declined"), |_, _| {
+        Answer::Ack
+    });
+    let (status, _error) = seen.done.expect("the run ended");
+    assert_eq!((status.as_str(), seen.undo.as_str()), ("error", "partial"));
 }
 
 #[test]
@@ -193,4 +224,5 @@ fn a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked() {
             && error.contains("ack timed out after 3 attempt(s)"),
         "{error}"
     );
+    assert_eq!(seen.undo, "partial");
 }

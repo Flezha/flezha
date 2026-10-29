@@ -57,7 +57,7 @@ that has moved on.
 The controller SHALL expose, for each domain a declared consumer reads or mutates, a
 service-API module whose every public function takes a `Flezha.Service.CallerContext` as
 its last argument, authorizes through it before any effect, and answers **data** rather
-than rendered text. `Flezha.Service.AuditLog` and `Flezha.Service.Observability` are the
+than rendered text. `Flezha.Service.Logs` and `Flezha.Service.Observability` are the
 existing instances of this shape and SHALL remain its reference.
 
 A function that renders text for a terminal SHALL NOT be the only way to reach a fact,

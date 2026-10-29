@@ -726,10 +726,15 @@ lets in-flight work unwind, runs any saga compensation, then emits the normal
 
 ### RelayCompleted
 
-`RelayCompleted { relay_id, status, error, result: bytes }` travels
+`RelayCompleted { relay_id, status, error, result: bytes, undo: string }` travels
 runner → controller, one-way, when an instance reaches an exit
 trigger. `status` is `"ok"` (a steps run's clean end), `"completed"` (a flow
-instance's `complete`), `"error"` (with `error`) or `"cancelled"`; `result` is the terminal payload. The controller
+instance's `complete`), `"error"` (with `error`) or `"cancelled"`; `result` is the terminal payload.
+`undo` is how the run's compensation pass went, set by the core that ran it: `"complete"` when
+every `compensate` hook it planned succeeded and its `compensated` entry was journaled,
+`"partial"` when a hook failed or an entry was refused, and empty when no pass ran or it planned
+no hook. The controller records the run `undone` or `failed` by it in the relay history; an
+older runner sends it empty, read as `failed`. The controller
 drives the single stop/teardown path (deregister-on-completion) so a finished
 instance leaves the durable registry and is never replayed on boot; an errored
 one is torn down identically (terminal — the platform never re-runs it; a
@@ -935,7 +940,7 @@ of the factory rows a call reads, and `Relay.graph` reads it.
 ### SpawnStepsRequest
 
 `SpawnStepsRequest { instance_id, factory_id, payload: bytes, if_running:
-string, identity: string }` travels runner → controller (tag 34) when a tasklet asks for a
+string, identity: string, parent_relay_id: string }` travels runner → controller (tag 34) when a tasklet asks for a
 steps instance (`ctx.spawn_steps` / `ctx.spawnSteps`). The controller
 spawns `factory_id` under `instance_id` when free, with `payload` as its first
 message (empty = spawn only): an ordinary entry message naming no channel, so
@@ -956,6 +961,12 @@ that took no offset and for a spawn from outside a tasklet. A generated id is
 derived from it, and a delivered payload carries it as its `flz.msg_id`, so a
 request whose identity was already resolved answers the relay the first one
 started, running or completed, and delivers nothing twice.
+
+`parent_relay_id` is the instance the requesting invocation serves: the relay
+class its Cell's identity names, set by the core. The controller records it as
+the spawned instance's parent only when the requesting session is the owner of
+that class; any other value, or an empty one from an older runner, leaves the
+parent out and refuses nothing.
 
 **The namespace is not carried**: the controller takes it from the control
 channel the request arrived on, which makes cross-namespace spawning impossible
