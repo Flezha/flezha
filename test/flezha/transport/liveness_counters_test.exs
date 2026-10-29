@@ -30,7 +30,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
 
   test "relay counters advance and surface in snapshot" do
     relay = "relay_#{System.unique_integer([:positive])}"
-    ref = LivenessCounters.register_relay(relay)
+    ref = LivenessCounters.register_relay("default", relay)
 
     LivenessCounters.bump_relay(ref, :io_in_received)
     LivenessCounters.bump_relay(ref, :filtered_nil)
@@ -44,7 +44,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
 
   test "a relay's byte counters add the amounts given, forwarded bytes being the rest" do
     relay = "relay_#{System.unique_integer([:positive])}"
-    ref = LivenessCounters.register_relay(relay)
+    ref = LivenessCounters.register_relay("default", relay)
 
     LivenessCounters.add_relay(ref, :bytes_in, 5)
     LivenessCounters.add_relay(ref, :bytes_in, 7)
@@ -55,10 +55,26 @@ defmodule Flezha.Transport.LivenessCountersTest do
     assert LivenessCounters.add_relay(nil, :bytes_in, 3) == :ok
   end
 
+  test "the same relay id in two namespaces keeps two rows, each with its own counts" do
+    {a, b} =
+      {"ns_a_#{System.unique_integer([:positive])}", "ns_b_#{System.unique_integer([:positive])}"}
+
+    LivenessCounters.add_relay(LivenessCounters.register_relay(a, "orders"), :io_in_received, 3)
+    LivenessCounters.add_relay(LivenessCounters.register_relay(b, "orders"), :io_in_received, 5)
+
+    counts =
+      for %{relay_id: "orders", namespace: ns} = row <- LivenessCounters.snapshot_all().relays,
+          ns in [a, b],
+          into: %{},
+          do: {ns, row.io_in_received}
+
+    assert counts == %{a => 3, b => 5}
+  end
+
   # Owned by a relay or channel, the table and every other relay's counters
   # would go when that one stopped.
   test "the table is owned by the observability supervisor, not a registrant" do
-    LivenessCounters.register_relay("op_#{System.unique_integer([:positive])}")
+    LivenessCounters.register_relay("default", "op_#{System.unique_integer([:positive])}")
 
     assert :ets.info(:flezha_liveness_counters, :owner) ==
              Process.whereis(Flezha.Observability.Supervisor)
@@ -77,7 +93,7 @@ defmodule Flezha.Transport.LivenessCountersTest do
 
     {:ok, pid} =
       Task.start(fn ->
-        LivenessCounters.register_relay(relay)
+        LivenessCounters.register_relay("default", relay)
         send(parent, :registered)
 
         receive do

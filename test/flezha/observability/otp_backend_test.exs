@@ -204,7 +204,7 @@ defmodule Flezha.Observability.OtpBackendTest do
       runner = "obs_decl_#{System.unique_integer([:positive])}"
       relay = "obs_decl_rel_#{System.unique_integer([:positive])}"
       channel_ref = LivenessCounters.register_channel(runner, :secondary_1)
-      relay_ref = LivenessCounters.register_relay(relay)
+      relay_ref = LivenessCounters.register_relay("default", relay)
 
       # A distinct value per slot, so a row reading another row's value is a
       # failure rather than a coincidence.

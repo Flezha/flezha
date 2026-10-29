@@ -138,13 +138,37 @@ A paged enabled-plugin list SHALL filter by provider, by a bound relay and by a 
 
 ### Requirement: Liveness counters SHALL be readable for named relays
 
-The liveness counters SHALL take an optional `opts` of `filter: [relays: [{namespace, relay_id}]]` alone, at most 500 relays, and SHALL refuse any other key as `invalid`. They SHALL then answer, across the cluster and in the same `channels`, `relays` and `unreachable` shape, only those relays' counters and the channel counters of the runners those relays are bound to.
+The liveness counters SHALL key every relay by its namespace and id, and every relay row SHALL carry its `namespace`. Two relays with the same id in different namespaces SHALL keep separate counters.
+
+The liveness counters SHALL take an optional `opts` of `filter` with either `relays: [{namespace, relay_id}]` (at most 500 relays) or `namespace: ns`, and `limit`. Any other key, and `relays` together with `namespace`, SHALL be refused as `invalid`. They SHALL then answer, across the cluster and in the same `channels`, `relays` and `unreachable` shape:
+
+- for `relays`: only those relays' counters, matched on namespace and id, and the channel counters of the runners those relays are bound to;
+- for `namespace`: every relay of that namespace and the channel counters of the runners they are bound to;
+- for `namespace` with `limit: 0`: no rows, and `totals`, each counted relay slot summed over the namespace's relays on every controller.
 
 #### Scenario: Rates for one page
 
 - **GIVEN** a cluster running 5,000 relays
 - **WHEN** a caller asks for the counters of the 20 relays on its page
 - **THEN** the answer SHALL hold those 20 relays' counters and their runners' channel counters, and no other relay's
+
+#### Scenario: The same id in two namespaces
+
+- **GIVEN** a relay `orders` in namespace `a` and another `orders` in namespace `b` on one controller, each having received a different number of records
+- **WHEN** a caller reads the liveness counters
+- **THEN** the answer SHALL hold two rows for `orders`, one per namespace, each with its own counts
+
+#### Scenario: A namespace's flow without its rows
+
+- **GIVEN** a namespace running 5,000 relays across two controllers
+- **WHEN** a caller reads the liveness counters with `filter: [namespace: "trade"]` and `limit: 0`
+- **THEN** the answer SHALL hold no relay or channel rows
+- **AND** its `totals` SHALL equal, slot by slot, the sum of the counted slots of that namespace's relay rows read without `limit: 0` at the same moment
+
+#### Scenario: One scope per read
+
+- **WHEN** a caller passes both `relays` and `namespace`
+- **THEN** the read SHALL be refused as `invalid`
 
 ### Requirement: The undelivered input-log records SHALL be countable without reading them
 

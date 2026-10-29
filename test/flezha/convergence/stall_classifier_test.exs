@@ -608,6 +608,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
   defp relay(opts) do
     %{
+      namespace: Keyword.get(opts, :namespace, "ns"),
       relay_id: Keyword.get(opts, :relay_id, "relay-1"),
       io_in_received: Keyword.get(opts, :io_in_received, 0),
       forwarded: Keyword.get(opts, :forwarded, 0),

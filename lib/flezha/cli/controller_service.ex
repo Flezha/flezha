@@ -201,41 +201,80 @@ defmodule Flezha.Service.Controller do
 
   @doc """
   Every data-plane liveness counter the cluster's controllers hold. Each row
-  carries the `node` that holds it; `unreachable` names the controllers that
-  did not answer.
+  carries the `node` that holds it and a relay row its `namespace`;
+  `unreachable` names the controllers that did not answer.
 
-  `opts` takes only `filter: [relays: [{namespace, relay_id}]]`, at most 500:
-  the counters of those relays and of the channels of the runners they are
-  bound to, each controller reading only those keys.
+  `opts` takes `filter` with one scope, each controller reading only its keys:
+  `relays: [{namespace, relay_id}]` (at most 500) for those relays, or
+  `namespace: ns` for every relay of that namespace, each answered with the
+  channel counters of the runners those relays are bound to. `limit: 0`
+  answers no rows, only `totals`: each counted relay slot summed over the
+  relays in scope on every controller.
   """
   @spec liveness_counters(keyword(), caller_context()) :: {:ok, term()} | {:error, term()}
   verb liveness_counters(opts \\ [], caller_context),
     verb: :controller_status,
     args: [opts: Page.arg()] do
-    with {:ok, only} <- liveness_keys(opts), do: {:ok, LivenessCounters.snapshot_cluster(only)}
+    with {:ok, only, answer} <- liveness_keys(opts),
+         do: {:ok, LivenessCounters.snapshot_cluster(only, answer)}
   end
 
   defp liveness_keys(opts) do
-    declared = [sorts: [relay: :asc], filters: [:relays], keys: [:filter]]
+    declared = [
+      sorts: [relay: :asc],
+      filters: [:relays, :namespace],
+      keys: [:filter, :limit],
+      limit: {nil, 0}
+    ]
 
     case Page.parse(opts, :liveness_counters, declared) do
-      {:ok, %Page{filter: filter}} -> relay_keys(Map.get(filter, :relays, []))
-      other -> other
+      {:ok, nil} ->
+        {:ok, nil, :rows}
+
+      {:ok, %Page{filter: filter, limit: limit}} ->
+        answer = if limit == 0, do: :totals, else: :rows
+        with {:ok, only} <- liveness_scope(filter, answer), do: {:ok, only, answer}
+
+      refused ->
+        refused
     end
   end
 
-  defp relay_keys(written) do
+  defp liveness_scope(%{relays: _, namespace: _} = filter, _answer),
+    do: Page.invalid("filter", Map.to_list(filter))
+
+  defp liveness_scope(%{namespace: namespace}, answer) when is_binary(namespace) do
+    runners = bound_runners(namespace, {HubManager, :relay_rows, [namespace]}, answer)
+    {:ok, {{:namespace, namespace}, runners}}
+  end
+
+  defp liveness_scope(%{namespace: written}, _answer),
+    do: Page.invalid("filter.namespace", written)
+
+  defp liveness_scope(%{relays: written}, answer) do
     with {:ok, relays} <- named_relays(written) do
       runners =
         for {namespace, ids} <- Enum.group_by(relays, &elem(&1, 0), &elem(&1, 1)),
-            row <-
-              elem(Info.hub_read(namespace, {HubManager, :relay_rows_of, [namespace, ids]}), 0),
-            row.runner != nil,
+            runner <-
+              bound_runners(namespace, {HubManager, :relay_rows_of, [namespace, ids]}, answer),
             uniq: true,
-            do: row.runner
+            do: runner
 
-      {:ok, {relays |> Enum.map(&elem(&1, 1)) |> Enum.uniq(), runners}}
+      {:ok, {Enum.uniq(relays), runners}}
     end
+  end
+
+  defp liveness_scope(_filter, _answer), do: {:ok, nil}
+
+  # Read from the namespace's hub, which knows each relay's runner; a totals
+  # read answers no channel rows, so it skips the read.
+  defp bound_runners(_namespace, _call, :totals), do: []
+
+  defp bound_runners(namespace, call, :rows) do
+    for row <- elem(Info.hub_read(namespace, call), 0),
+        row.runner != nil,
+        uniq: true,
+        do: row.runner
   end
 
   defp named_relays(written) do

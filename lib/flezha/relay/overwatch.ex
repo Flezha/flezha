@@ -288,7 +288,7 @@ defmodule Flezha.Relay.Overwatch do
       builder: relay,
       started_at: System.system_time(:millisecond),
       started_mono: System.monotonic_time(:millisecond),
-      liveness_ref: LivenessCounters.register_relay(relay.id)
+      liveness_ref: LivenessCounters.register_relay(namespace, relay.id)
     }
 
     Plugins.warn_old_rows(relay)

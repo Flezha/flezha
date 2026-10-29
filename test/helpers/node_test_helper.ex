@@ -22,6 +22,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Service.PluginRecords
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
+  alias Flezha.Transport.LivenessCounters
 
   @doc """
   The name this run's node is distributed under: `<base>@<host>` from the two
@@ -463,6 +464,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       {:DOWN, ^monitor, :process, _pid, reason} ->
         raise "#{step} on #{node} gave no answer: #{Exception.format_exit(reason)}"
     end
+  end
+
+  @doc """
+  A relay's liveness counters registered on `node`, owned by a process that
+  stays alive with the peer, `received` messages counted in.
+  """
+  def count_relay_remote(node, namespace, relay_id, received),
+    do: on_peer(node, :count_relay_recv, [namespace, relay_id, received])
+
+  def count_relay_recv(namespace, relay_id, received, reply_to) do
+    ref = LivenessCounters.register_relay(namespace, relay_id)
+    LivenessCounters.add_relay(ref, :io_in_received, received)
+    reply(reply_to, :ok)
   end
 
   def start_runner_recv(namespace, reply_to), do: reply(reply_to, start_runner(namespace))

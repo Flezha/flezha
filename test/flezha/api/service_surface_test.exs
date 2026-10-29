@@ -17,6 +17,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ.Verbs
+  alias Flezha.Cluster.Reads
   alias Flezha.Service.Controller
   alias Flezha.Service.Cli
   alias Flezha.Service.Dlq
@@ -264,7 +265,12 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     @tag :multi_node
     test "the liveness read includes a relay held by another controller" do
       relay = "relay_#{System.unique_integer([:positive])}"
-      LivenessCounters.bump_relay(LivenessCounters.register_relay(relay), :io_in_received)
+
+      LivenessCounters.bump_relay(
+        LivenessCounters.register_relay("default", relay),
+        :io_in_received
+      )
+
       {peer_pid, peer} = NodeTestHelper.start_peer_node(:liveness_peer)
       on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
       here = node()
@@ -278,6 +284,26 @@ defmodule Flezha.Api.ServiceSurfaceTest do
                :erpc.call(peer, LivenessCounters, :snapshot_cluster, [])
 
       assert %{io_in_received: 1, node: ^here} = Enum.find(relays, &(&1.relay_id == relay))
+    end
+
+    @tag :multi_node
+    test "a namespace's totals add up its relays on every controller" do
+      namespace = "totals_#{System.unique_integer([:positive])}"
+      here = LivenessCounters.register_relay(namespace, "here")
+      LivenessCounters.add_relay(here, :io_in_received, 3)
+      {peer_pid, peer} = NodeTestHelper.start_peer_node(:liveness_totals_peer)
+      on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
+      :ok = NodeTestHelper.count_relay_remote(peer, namespace, "there", 4)
+
+      assert NodeTestHelper.wait_until(
+               fn -> peer in Reads.controllers() end,
+               10_000
+             )
+
+      context = %{source: :ui, principal: "console@_system"}
+
+      assert {:ok, %{relays: [], totals: %{io_in_received: 7}, unreachable: []}} =
+               Controller.liveness_counters([filter: [namespace: namespace], limit: 0], context)
     end
   end
 

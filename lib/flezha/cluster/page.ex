@@ -36,7 +36,7 @@ defmodule Flezha.Cluster.Page do
   @type direction :: :asc | :desc
   @type t :: %__MODULE__{
           read: atom(),
-          limit: non_neg_integer(),
+          limit: non_neg_integer() | nil,
           sort: atom(),
           direction: direction(),
           after: term() | nil,
@@ -66,7 +66,8 @@ defmodule Flezha.Cluster.Page do
   the first the default), `filters` (the filter keys it takes) and, for a read
   that only filters, `keys` (the options it takes), or the refusal of the first
   key, value or cursor it does not accept. A read with bounds of its own names
-  them as `limit: {default, max}`, and the option its cursor comes back in as
+  them as `limit: {default, max}`; a `nil` default leaves `limit` `nil` when
+  the caller gives none. The option its cursor comes back in is named as
   `cursor:` (`:after` unless named). Empty `opts` ask no page: `nil`, and the
   read answers what it answers without them.
   """
@@ -81,7 +82,7 @@ defmodule Flezha.Cluster.Page do
     opts = Map.new(opts, fn {key, value} -> {to_string(key), value} end)
 
     with :ok <- known(Map.keys(opts), Enum.map(declared[:keys] || @keys, &to_string/1)),
-         {:ok, limit} <- limit(Map.get(opts, "limit", default), max),
+         {:ok, limit} <- limit(Map.fetch(opts, "limit"), default, max),
          {:ok, sort} <- sort(Map.get(opts, "sort"), sorts),
          {:ok, filter} <- filter(Map.get(opts, "filter", []), declared[:filters] || []),
          {:ok, cursor} <- cursor(Map.get(opts, cursor_key), read, sort, cursor_key) do
@@ -170,8 +171,9 @@ defmodule Flezha.Cluster.Page do
     end
   end
 
-  defp limit(n, max) when is_integer(n) and n >= 0 and n <= max, do: {:ok, n}
-  defp limit(written, _max), do: invalid("limit", written)
+  defp limit(:error, default, _max), do: {:ok, default}
+  defp limit({:ok, n}, _default, max) when is_integer(n) and n >= 0 and n <= max, do: {:ok, n}
+  defp limit({:ok, written}, _default, _max), do: invalid("limit", written)
 
   defp sort(nil, [{default, _direction} | _]), do: {:ok, default}
 

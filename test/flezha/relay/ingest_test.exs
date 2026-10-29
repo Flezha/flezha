@@ -686,7 +686,7 @@ defmodule FlezhaTest.Relay.IngestTest do
 
   test "an ingested message counts its bytes in, and forwarded unless it is filtered" do
     inst = instance_id()
-    ref = LivenessCounters.register_relay(inst)
+    ref = LivenessCounters.register_relay("default", inst)
     state = state(inst, channel: fake_channel(:ok), liveness_ref: ref) |> with_filter("drop-me")
 
     assert {:reply, :ok, state} = Overwatch.handle_call({:ingest, "hello", %{}}, self(), state)
@@ -710,7 +710,7 @@ defmodule FlezhaTest.Relay.IngestTest do
 
   test "the parked cast's drop is counted, so the loss shows in the liveness metrics" do
     inst = instance_id()
-    ref = LivenessCounters.register_relay(inst)
+    ref = LivenessCounters.register_relay("default", inst)
 
     state =
       state(inst,

@@ -18,6 +18,77 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
 
   alias Flezha.Transport.LivenessCounters
 
+  # What each liveness metric says, as a running total the poller reads every
+  # tick: a channel row is summed over every runner, a relay row over every relay.
+  # A metric `LivenessCounters.surfaces(:metric)` names without words here fails
+  # the build, so it cannot register unexplained.
+  @liveness_words %{
+    channel_io_in_received:
+      {"Messages received", "Messages the controller has received from runners."},
+    channel_send_frame_calls: {"Messages sent", "Messages the controller has sent to runners."},
+    channel_nil_drops:
+      {"Lost: stream gone",
+       "Messages dropped because the runner's stream was gone; above zero is a loss."},
+    channel_flz_data_received:
+      {"Data received", "Data messages the controller has received from runners."},
+    heartbeat_frames: {"Heartbeats", "Heartbeats runners have sent to show they are alive."},
+    dispatches: {"Work finished", "Pieces of work runners report they have finished."},
+    credit_parked:
+      {"Waiting for allowance",
+       "Sends runners are holding back until the controller allows more."},
+    inflight: {"Work in progress", "Pieces of work runners hold that are not finished yet."},
+    inflight_oldest_ms:
+      {"Oldest unfinished work",
+       "How long the oldest unfinished piece of work has waited, in milliseconds."},
+    mailbox_blocked:
+      {"Waited for room", "Times a sender waited because a relay's inbox was full."},
+    mailbox_drops_newest:
+      {"Dropped on arrival",
+       "Messages a full relay inbox dropped as they arrived; above zero is a loss."},
+    mailbox_drops_oldest:
+      {"Dropped to make room",
+       "Older messages a full relay inbox dropped to make room; above zero is a loss."},
+    mailbox_pending_pushes:
+      {"Held back", "Messages runners are holding back until there is room to send them."},
+    pending_push_oldest_ms:
+      {"Oldest held-back message",
+       "How long the oldest held-back message has waited, in milliseconds."},
+    restore_discarded_inputs:
+      {"Thrown away on takeover",
+       "Input runners threw away when they took over a relay; above zero is a loss."},
+    timers_armed: {"Timers set", "Timers relays have set and are waiting on."},
+    timers_fired: {"Timers fired", "Timers that have gone off."},
+    parts_sent: {"Previews sent", "Partial results runners have sent ahead of a full result."},
+    parts_dropped_no_stream:
+      {"Previews lost: no stream",
+       "Partial results dropped because there was no stream to send them on."},
+    parts_dropped_refused: {"Previews refused", "Partial results the receiver refused."},
+    parts_dropped_too_large:
+      {"Previews too large", "Partial results dropped for being too large."},
+    credit_active_sessions:
+      {"Paced connections", "Runner connections that pace their sending by an allowance."},
+    credit_ledger_level:
+      {"Allowance left", "How much more runners may send before they must wait."},
+    credit_overrun_total:
+      {"Sent past allowance",
+       "Messages runners sent beyond their allowance; above zero is a runner fault."},
+    send_gate_held:
+      {"Senders held", "Times a sender waited because a stream's send buffer was full."},
+    relay_io_in_received: {"Messages in", "Messages relays have received."},
+    relay_filtered_nil:
+      {"Filtered out", "Messages relays have filtered out without passing them on."},
+    relay_bytes_in: {"Bytes in", "Bytes of messages relays have received."},
+    relay_bytes_filtered: {"Bytes filtered out", "Bytes of messages relays have filtered out."},
+    relay_forwarded: {"Messages passed on", "Messages relays have passed on."},
+    relay_bytes_forwarded: {"Bytes passed on", "Bytes of messages relays have passed on."},
+    relay_halted_drops:
+      {"Lost: relay halted",
+       "Messages dropped because their relay was halted; above zero is a loss."},
+    relay_not_started_drops:
+      {"Lost: not started",
+       "Messages dropped because their target was not started; above zero is a loss."}
+  }
+
   use Flezha.Observability.OtpBackend.Poller,
     source: :flezha_transport,
     cardinality_budget: 40,
@@ -55,7 +126,11 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
            meaning: "Messages the transport has lost; anything above zero is a defect."},
         driver_streams:
           {:metric, label: "Open streams", meaning: "Streams the transport's driver holds open."}
-      ] ++ LivenessCounters.metric_signals()
+      ] ++
+        Enum.map(LivenessCounters.surfaces(:metric), fn {_group, _row, name} ->
+          {label, meaning} = Map.fetch!(@liveness_words, name)
+          {name, {:metric, label: label, meaning: meaning}}
+        end)
 
   alias Flezha.Transport.Server, as: TransportServer
 

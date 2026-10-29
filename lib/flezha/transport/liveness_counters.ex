@@ -52,6 +52,8 @@ defmodule Flezha.Transport.LivenessCounters do
 
   @table :flezha_liveness_counters
 
+  @type only :: {[{String.t(), term()}] | {:namespace, String.t()}, [term()]}
+
   # `hb_count` counts heartbeat FRAMES, so it is a per-channel count rather
   # than a mirrored runner fact — which is why it alone among the `hb_` slots
   # is scoped `:channel`.
@@ -348,6 +350,10 @@ defmodule Flezha.Transport.LivenessCounters do
 
   @heartbeat_keys Enum.map(@heartbeat_pairs, &elem(&1, 0))
 
+  @counted_relay_slots for row <- @relay_rows,
+                           Keyword.fetch!(row, :kind) == :count,
+                           do: Keyword.fetch!(row, :name)
+
   @doc """
   The heartbeat keys this controller mirrors, derived from the rows that
   declare one.
@@ -383,88 +389,6 @@ defmodule Flezha.Transport.LivenessCounters do
         do: {group, row, payload}
   end
 
-  # What each surfaced metric says, as a running total the poller reads every
-  # tick: a channel row is summed over every runner, a relay row over every relay.
-  @metric_words %{
-    channel_io_in_received:
-      {"Messages received", "Messages the controller has received from runners."},
-    channel_send_frame_calls: {"Messages sent", "Messages the controller has sent to runners."},
-    channel_nil_drops:
-      {"Lost: stream gone",
-       "Messages dropped because the runner's stream was gone; above zero is a loss."},
-    channel_flz_data_received:
-      {"Data received", "Data messages the controller has received from runners."},
-    heartbeat_frames: {"Heartbeats", "Heartbeats runners have sent to show they are alive."},
-    dispatches: {"Work finished", "Pieces of work runners report they have finished."},
-    credit_parked:
-      {"Waiting for allowance",
-       "Sends runners are holding back until the controller allows more."},
-    inflight: {"Work in progress", "Pieces of work runners hold that are not finished yet."},
-    inflight_oldest_ms:
-      {"Oldest unfinished work",
-       "How long the oldest unfinished piece of work has waited, in milliseconds."},
-    mailbox_blocked:
-      {"Waited for room", "Times a sender waited because a relay's inbox was full."},
-    mailbox_drops_newest:
-      {"Dropped on arrival",
-       "Messages a full relay inbox dropped as they arrived; above zero is a loss."},
-    mailbox_drops_oldest:
-      {"Dropped to make room",
-       "Older messages a full relay inbox dropped to make room; above zero is a loss."},
-    mailbox_pending_pushes:
-      {"Held back", "Messages runners are holding back until there is room to send them."},
-    pending_push_oldest_ms:
-      {"Oldest held-back message",
-       "How long the oldest held-back message has waited, in milliseconds."},
-    restore_discarded_inputs:
-      {"Thrown away on takeover",
-       "Input runners threw away when they took over a relay; above zero is a loss."},
-    timers_armed: {"Timers set", "Timers relays have set and are waiting on."},
-    timers_fired: {"Timers fired", "Timers that have gone off."},
-    parts_sent: {"Previews sent", "Partial results runners have sent ahead of a full result."},
-    parts_dropped_no_stream:
-      {"Previews lost: no stream",
-       "Partial results dropped because there was no stream to send them on."},
-    parts_dropped_refused: {"Previews refused", "Partial results the receiver refused."},
-    parts_dropped_too_large:
-      {"Previews too large", "Partial results dropped for being too large."},
-    credit_active_sessions:
-      {"Paced connections", "Runner connections that pace their sending by an allowance."},
-    credit_ledger_level:
-      {"Allowance left", "How much more runners may send before they must wait."},
-    credit_overrun_total:
-      {"Sent past allowance",
-       "Messages runners sent beyond their allowance; above zero is a runner fault."},
-    send_gate_held:
-      {"Senders held", "Times a sender waited because a stream's send buffer was full."},
-    relay_io_in_received: {"Messages in", "Messages relays have received."},
-    relay_filtered_nil:
-      {"Filtered out", "Messages relays have filtered out without passing them on."},
-    relay_bytes_in: {"Bytes in", "Bytes of messages relays have received."},
-    relay_bytes_filtered: {"Bytes filtered out", "Bytes of messages relays have filtered out."},
-    relay_forwarded: {"Messages passed on", "Messages relays have passed on."},
-    relay_bytes_forwarded: {"Bytes passed on", "Bytes of messages relays have passed on."},
-    relay_halted_drops:
-      {"Lost: relay halted",
-       "Messages dropped because their relay was halted; above zero is a loss."},
-    relay_not_started_drops:
-      {"Lost: not started",
-       "Messages dropped because their target was not started; above zero is a loss."}
-  }
-
-  @doc """
-  Each metric this layout surfaces, as a signal declaration for its source. A
-  surfaced metric without words here fails `metric_signals/0`, so its source
-  cannot register it unexplained.
-  """
-  @spec metric_signals() :: [{atom(), {:metric, keyword()}}]
-  def metric_signals() do
-    for {_group, _row, name} <- surfaces(:metric) do
-      {label, meaning} = Map.fetch!(@metric_words, name)
-      {name, {:metric, label: label, meaning: meaning}}
-    end
-  end
-
   @doc """
   The metric readings a snapshot carries: `{name, measurements}` per row whose
   declared surface is a metric.
@@ -481,14 +405,13 @@ defmodule Flezha.Transport.LivenessCounters do
     rows = %{channels: Map.values(by_runner(channels)), relays: relays}
 
     for {group, row, name} <- surfaces(:metric) do
-      slot = Keyword.fetch!(row, :name)
-
-      value =
-        Enum.reduce(Map.fetch!(rows, group), 0, &reduce(group, slot, &2, Map.fetch!(&1, slot)))
-
+      value = fold(group, Map.fetch!(rows, group), Keyword.fetch!(row, :name))
       {name, %{CounterTable.measurement(row) => value}}
     end
   end
+
+  defp fold(group, rows, slot),
+    do: Enum.reduce(rows, 0, &reduce(group, slot, &2, Map.fetch!(&1, slot)))
 
   defp reduce(:channels, slot, a, b), do: channel_reduce(slot, a, b)
   defp reduce(:relays, slot, a, b), do: relay_reduce(slot, a, b)
@@ -558,14 +481,15 @@ defmodule Flezha.Transport.LivenessCounters do
   end
 
   @doc """
-  Register a relay's counter array, keyed by `relay_id`. Pass `self()` as the
-  owner. Returns the `:counters` ref.
+  Register a relay's counter array, keyed by `{namespace, relay_id}`, since a
+  relay id is unique only within its namespace. Pass `self()` as the owner.
+  Returns the `:counters` ref.
   """
-  @spec register_relay(term()) :: :counters.counters_ref()
-  def register_relay(relay_id) do
+  @spec register_relay(String.t(), term()) :: :counters.counters_ref()
+  def register_relay(namespace, relay_id) do
     ensure_table()
     ref = relay_new()
-    :ets.insert(@table, {{:relay, relay_id}, ref, self()})
+    :ets.insert(@table, {{:relay, namespace, relay_id}, ref, self()})
     ref
   end
 
@@ -632,9 +556,11 @@ defmodule Flezha.Transport.LivenessCounters do
   @doc """
   Snapshot every live channel and relay counter array, pruning entries whose
   owner has died. Returns `%{channels: [...], relays: [...]}`. `only`,
-  `{relay_ids, runner_ids}`, reads those relays and those runners' channels.
+  `{relays, runner_ids}`, reads those relays and those runners' channels, where
+  `relays` is a list of `{namespace, relay_id}` or `{:namespace, namespace}`
+  for every relay of one namespace.
   """
-  @spec snapshot_all({[term()], [term()]} | nil) :: %{channels: [map()], relays: [map()]}
+  @spec snapshot_all(only() | nil) :: %{channels: [map()], relays: [map()]}
   def snapshot_all(only \\ nil) do
     case :ets.whereis(@table) do
       :undefined ->
@@ -650,8 +576,9 @@ defmodule Flezha.Transport.LivenessCounters do
                 {:channel, runner_id, name} ->
                   {[channel_snapshot(ref, %{runner_id: runner_id, name: name}) | chans], rels}
 
-                {:relay, relay_id} ->
-                  {chans, [ref |> relay_snapshot(%{relay_id: relay_id}) |> derive_relay() | rels]}
+                {:relay, namespace, relay_id} ->
+                  row = relay_snapshot(ref, %{namespace: namespace, relay_id: relay_id})
+                  {chans, [derive_relay(row) | rels]}
 
                 # Driver server refs are polled via `driver_refs/0`, not here.
                 {:driver, _runner_id, _type} ->
@@ -667,27 +594,54 @@ defmodule Flezha.Transport.LivenessCounters do
     end
   end
 
-  defp entries_of({relay_ids, runner_ids}),
+  defp entries_of({relays, runner_ids}),
     do:
-      Enum.flat_map(relay_ids, &:ets.lookup(@table, {:relay, &1})) ++
+      relay_entries(relays) ++
         Enum.flat_map(runner_ids, &:ets.match_object(@table, {{:channel, &1, :_}, :_, :_}))
+
+  defp relay_entries({:namespace, namespace}),
+    do: :ets.match_object(@table, {{:relay, namespace, :_}, :_, :_})
+
+  defp relay_entries(pairs),
+    do:
+      Enum.flat_map(pairs, fn {namespace, id} -> :ets.lookup(@table, {:relay, namespace, id}) end)
+
+  @doc """
+  Each counted relay slot summed over the relays `only` selects on this node,
+  as `snapshot_all/1` reads them. Gauges and stamps have no meaningful sum, so
+  only `kind: :count` slots are totalled.
+  """
+  @spec totals(only() | nil) :: %{atom() => non_neg_integer()}
+  def totals(only), do: sum_counted(snapshot_all(only).relays)
+
+  defp sum_counted(rows), do: Map.new(@counted_relay_slots, &{&1, fold(:relays, rows, &1)})
 
   @doc """
   `snapshot_all/1` on every controller of the cluster, rows joined, each with
   the `node` that holds it. A relay's counters live on the controller running
   it, so a reader pinned to one controller needs this to see a relay placed on
   another. A controller that does not answer in time is named in `unreachable`.
+
+  With `:totals`, each controller answers `totals/1` instead of its rows, and
+  the answer holds no rows and `totals`, the controllers' sums added up.
   """
-  @spec snapshot_cluster({[term()], [term()]} | nil) :: %{
-          channels: [map()],
-          relays: [map()],
-          unreachable: [node()]
+  @spec snapshot_cluster(only() | nil, :rows | :totals) :: %{
+          required(:channels) => [map()],
+          required(:relays) => [map()],
+          required(:unreachable) => [node()],
+          optional(:totals) => %{atom() => non_neg_integer()}
         }
-  def snapshot_cluster(only \\ nil) do
-    %{answers: answers, unreachable: unreachable} =
-      Reads.ask(Reads.controllers(), __MODULE__, :snapshot_all, [only],
-        timeout: Durations.get(:transport_stats_call_ms)
-      )
+  def snapshot_cluster(only \\ nil, answer \\ :rows)
+
+  def snapshot_cluster(only, :totals) do
+    %{answers: answers, unreachable: unreachable} = ask_controllers(:totals, only)
+
+    totals = answers |> Enum.map(&elem(&1, 1)) |> sum_counted()
+    %{channels: [], relays: [], totals: totals, unreachable: unreachable}
+  end
+
+  def snapshot_cluster(only, :rows) do
+    %{answers: answers, unreachable: unreachable} = ask_controllers(:snapshot_all, only)
 
     for {node, snapshot} <- answers,
         group <- [:channels, :relays],
@@ -698,6 +652,12 @@ defmodule Flezha.Transport.LivenessCounters do
     |> Map.update!(:channels, &Enum.reverse/1)
     |> Map.update!(:relays, &Enum.reverse/1)
   end
+
+  defp ask_controllers(fun, only),
+    do:
+      Reads.ask(Reads.controllers(), __MODULE__, fun, [only],
+        timeout: Durations.get(:transport_stats_call_ms)
+      )
 
   @doc """
   The five facts about one runner, side by side: how long its control session

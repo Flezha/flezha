@@ -61,7 +61,7 @@ defmodule Flezha.Plugin.Provider.NotStartedTest do
 
   test "a plain output is dropped and counted on its relay's liveness counters" do
     :ok = Telemetry.capture([:flezha, :plugin, :not_started, :dropped])
-    table = not_started_sink(LivenessCounters.register_relay("not_started_op"))
+    table = not_started_sink(LivenessCounters.register_relay("default", "not_started_op"))
 
     assert {:ok, _ctx} = dispatch(table, "plain", %{})
     assert {:ok, _ctx} = dispatch(table, "plain", %{})

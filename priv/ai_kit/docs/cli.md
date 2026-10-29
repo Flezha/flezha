@@ -121,8 +121,10 @@ The operations behind them, and the steps reads, take the same page as a
 trailing `opts` argument (`limit`, `after`, `sort`, `filter`), and answer
 `rows`, `total`, `next` and `unreachable`. A paged `Relay.list` also answers
 the namespace's `summary`: its rows by health, the faulted partition groups,
-and the factories whose relays wait for a runner. The
-[command reference](command_reference.md) lists each flag.
+and the factories whose relays wait for a runner.
+`Controller.liveness_counters` takes a `filter` of named `relays` or one
+`namespace`, and with `limit: 0` answers only `totals`, the relays' counts
+summed. The [command reference](command_reference.md) lists each flag.
 
 ## When a verb fails
 

@@ -8,6 +8,13 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- Relay liveness counters are kept per namespace, so two relays with the same
+  id in different namespaces no longer share one row. Each relay row of
+  `Controller.liveness_counters` carries its `namespace`, and the read takes
+  `filter: [namespace: ns]` for every relay of one namespace; with `limit: 0`
+  it answers no rows, only `totals`, each relay count summed over those relays
+  on every controller. A reader that keys relay rates by `relay_id` alone
+  should key them by namespace and id.
 - A finished relay keeps nothing by default: its state directory is deleted
   when it ends, flow and steps alike, and `flz relay info` answers its status
   and error from the relay history. A class that needs its Cells, journal or

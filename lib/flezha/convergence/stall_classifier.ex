@@ -382,10 +382,10 @@ defmodule Flezha.Convergence.StallClassifier do
   end
 
   defp relay_not_forwarding(current, previous) do
-    prev_index = index_by(previous.relays, fn r -> r.relay_id end)
+    prev_index = index_by(previous.relays, &{&1.namespace, &1.relay_id})
 
     find_first(current.relays, fn r ->
-      case Map.get(prev_index, r.relay_id) do
+      case Map.get(prev_index, {r.namespace, r.relay_id}) do
         nil ->
           nil
 
