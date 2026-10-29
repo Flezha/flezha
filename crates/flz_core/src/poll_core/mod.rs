@@ -393,7 +393,9 @@ impl PollCore {
             // can immediately become the next drainer.
             slot.drain_active.store(false, Ordering::Release);
             slot.mailbox.release_inflight();
-            if slot.mailbox.is_empty() {
+            // A slice closed while this round held inflight: its broadcast
+            // could not claim the round, so nothing else will flush it.
+            if slot.mailbox.is_empty() && !closed_slice_pending(slot) {
                 return None;
             }
             if !slot.mailbox.claim_inflight() {

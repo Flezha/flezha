@@ -153,6 +153,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A replayed slice that closed while its Cell was between rounds is no longer
+  left buffered: the Cell delivers it instead of waiting for input that may
+  never come. It affected every SDK built on the shared core.
 - A run that completed while its relay was being bound to a runner again no
   longer ends as `stopped`: the rebind keeps the stop's cause and outcome.
 - Stopping a halted steps relay removes it at once, instead of waiting for an
