@@ -131,6 +131,14 @@ defmodule FlezhaTest.Plugin.ControllerPluginMultinodeTest do
     everywhere = Enum.sort([node(), ctx.p1, p2, p3])
     assert NodeTestHelper.wait_until(fn -> copies("hook_joined") == everywhere end, 10_000)
 
+    # With durable starts off, as here, the plugin's one record is its home's
+    # registry row. The join may move the home, and its row reaches this node
+    # once the move's registry sync lands.
+    assert NodeTestHelper.wait_until(
+             fn -> match?({:ok, _}, HubManager.plugin_entry(@namespace, "hook_joined")) end,
+             10_000
+           )
+
     assert {:ok, _} = PluginManager.disable_plugin(@namespace, "hook_joined")
     assert NodeTestHelper.wait_until(fn -> copies("hook_joined") == [] end, 5_000)
   end
