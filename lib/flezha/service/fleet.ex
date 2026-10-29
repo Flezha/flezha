@@ -16,6 +16,7 @@ defmodule Flezha.Service.Fleet do
   @namespace [type: :string, doc: "The namespace."]
   @runner_id [type: :string, doc: "The runner's id, as `runners/2` lists it."]
 
+  alias Flezha.Cluster.Reads
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Providers
   alias Flezha.Runner.DropMarks
@@ -132,33 +133,42 @@ defmodule Flezha.Service.Fleet do
   end
 
   @doc """
-  Every plugin package this controller loaded or refused at boot. It also lists
-  what the controller's plugin root holds since boot.
+  Every plugin package each controller loaded or refused at boot, each row with
+  its `node`. It also lists what each controller's plugin root holds since boot.
   """
-  @spec installed_plugins(caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @spec installed_plugins(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb installed_plugins(caller_context), verb: :list_installed_plugins do
-    {:ok, Enum.map(Installer.list(), &installed/1)}
+    {:ok, Reads.rows(Reads.controllers(), __MODULE__, :local_installed, [])}
   end
 
   @doc """
-  Every plugin provider this controller can enable. Each comes with its module,
-  its type and `feeds` (whether it injects records into a relay, as its
-  declaration says). The answer also counts the plugin packages the controller
-  refused at boot.
+  Every plugin provider any controller can enable, one row per provider. Each
+  comes with its module, its type, `feeds` (whether it injects records into a
+  relay, as its declaration says) and the `nodes` that can enable it. The
+  answer also counts, per controller, the plugin packages it refused at boot
+  (`refused`).
   """
   @spec providers(caller_context()) :: {:ok, map()} | {:error, term()}
   verb providers(caller_context), verb: :plugin_list do
+    %{answers: answers, unreachable: unreachable} =
+      Reads.ask(Reads.controllers(), __MODULE__, :local_providers, [])
+
+    rows =
+      for {node, %{providers: providers}} <- answers,
+          row <- providers,
+          do: Map.put(row, :node, node)
+
+    joined = Reads.grouped(%{rows: rows, unreachable: unreachable}, & &1.id, &provider_row/1)
+
     {:ok,
-     %{
-       providers: Providers.describe_all(),
-       refused: Enum.count(Installer.list(), &(&1.status == :refused))
-     }}
+     Map.put(joined, :refused, Map.new(answers, fn {node, answer} -> {node, answer.refused} end))}
   end
 
   @doc """
   One plugin provider's help text, type, hooks and options. It answers the
   provider's help text, its plugin type, whether it feeds a relay (`feeds`), the
-  hooks it supports and its options as typed rows.
+  hooks it supports and its options as typed rows, from a controller that can
+  enable it.
 
   `options` holds one map per public option, in declaration order: `name`,
   `type`, `required` and `doc`, and `default`, `values`, `min`, `max`, `live` and
@@ -169,8 +179,30 @@ defmodule Flezha.Service.Fleet do
   verb provider(provider_id, caller_context),
     verb: :plugin_info,
     args: [provider_id: [type: :string, doc: "The provider's id."]] do
-    Providers.help(provider_id)
+    # No controller holding it: this controller's own refusal says why.
+    case Reads.find(Reads.controllers(), Providers, :help, [provider_id]) do
+      {:ok, _node, help} -> help
+      {:error, _unreachable} -> Providers.help(provider_id)
+    end
   end
+
+  @doc false
+  # The local half of `installed_plugins/1`.
+  @spec local_installed() :: [map()]
+  def local_installed, do: Enum.map(Installer.list(), &installed/1)
+
+  @doc false
+  # The local half of `providers/1`.
+  @spec local_providers() :: map()
+  def local_providers do
+    %{
+      providers: Providers.describe_all(),
+      refused: Enum.count(Installer.list(), &(&1.status == :refused))
+    }
+  end
+
+  defp provider_row([first | _] = rows),
+    do: first |> Map.delete(:node) |> Map.put(:nodes, Enum.map(rows, & &1.node))
 
   # A refusal is carried as its fields, which every surface can render.
   defp installed(%{error: %Flezha.Error{} = error} = row),

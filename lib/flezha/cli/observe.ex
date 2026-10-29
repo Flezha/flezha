@@ -8,48 +8,37 @@ defmodule Flezha.Service.Cli.Observe do
   alias Flezha.Service.Cli
   alias Flezha.Service.Cli.Context
 
-  @doc "`flz observe sources`."
-  def sources(sources, _args, _opts) do
-    IO.puts(Enum.join(["name", "status", "kinds", "budget", "title", "description"], "\t"))
-
-    Enum.each(sources, fn source ->
-      IO.puts(
-        Enum.map_join(
-          [
-            source.name,
-            source.status,
-            Enum.join(source.kinds, ","),
-            source.cardinality_budget,
-            Map.get(source, :title),
-            Map.get(source, :description)
-          ],
-          "\t",
-          &to_string/1
-        )
-      )
+  @doc "`flz observe sources`: one line per source, its status on each controller."
+  def sources(answer, _args, _opts) do
+    tsv(answer, ~w(name status kinds budget title description), fn source ->
+      [
+        source.name,
+        Enum.map_join(source.statuses, ",", fn {node, status} -> "#{node}=#{status}" end),
+        Enum.join(source.kinds, ","),
+        source.cardinality_budget,
+        Map.get(source, :title),
+        Map.get(source, :description)
+      ]
     end)
   end
 
-  @doc "`flz observe sinks`."
-  def sinks(sinks, _args, _opts) do
-    IO.puts(Enum.join(["name", "module", "overflow", "watermark"], "\t"))
-
-    Enum.each(sinks, fn sink ->
-      IO.puts(
-        Enum.map_join(
-          [sink.name, inspect(sink.module), sink.overflow, sink.mailbox_high_watermark],
-          "\t",
-          &to_string/1
-        )
-      )
+  @doc "`flz observe sinks`: every controller's sinks, each with its controller."
+  def sinks(answer, _args, _opts) do
+    tsv(answer, ~w(name node module overflow watermark), fn sink ->
+      [sink.name, sink.node, inspect(sink.module), sink.overflow, sink.mailbox_high_watermark]
     end)
   end
 
   @doc "`flz observe enable`."
-  def enable(:ok, [source | _], _opts), do: IO.puts("source #{source} enabled")
+  def enable(switched, [source | _], _opts), do: switched(switched, source, "enabled")
 
   @doc "`flz observe disable`."
-  def disable(:ok, [source | _], _opts), do: IO.puts("source #{source} disabled")
+  def disable(switched, [source | _], _opts), do: switched(switched, source, "disabled")
+
+  defp switched(%{applied: applied, unreachable: unreachable}, source, done) do
+    IO.puts("source #{source} #{done} on #{Enum.join(applied, ", ")}")
+    Context.unreachable(unreachable)
+  end
 
   @doc """
   `flz observe tail <source>`: print each signal as one line (one JSON
@@ -67,12 +56,25 @@ defmodule Flezha.Service.Cli.Observe do
     end
   end
 
+  # A header line and one tab-separated line per row.
+  defp tsv(answer, header, fields) do
+    Context.rows(answer, fn rows ->
+      IO.puts(Enum.join(header, "\t"))
+
+      Enum.each(
+        rows,
+        &IO.puts(Enum.map_join(fields.(&1), "\t", fn field -> to_string(field) end))
+      )
+    end)
+  end
+
   defp print_signal(signal, "json") do
     %{
       kind: signal.kind,
       source: signal.source,
       name: signal.name,
-      ts: signal.ts,
+      node: signal.node,
+      at_us: signal.at_us,
       measurements: signal.measurements,
       metadata: signal.metadata
     }
@@ -82,7 +84,7 @@ defmodule Flezha.Service.Cli.Observe do
 
   defp print_signal(signal, _text) do
     IO.puts(
-      "[#{signal.ts}] #{signal.source}.#{signal.name} kind=#{signal.kind} " <>
+      "[#{signal.at_us} #{signal.node}] #{signal.source}.#{signal.name} kind=#{signal.kind} " <>
         "measurements=#{inspect(signal.measurements)} metadata=#{inspect(signal.metadata)}"
     )
   end

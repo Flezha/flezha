@@ -68,7 +68,7 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
 
   describe "the role the action is granted to" do
     test "still reads the dead-letter queue", ctx do
-      assert {:ok, entries} = Dlq.list(nil, @ops)
+      assert {:ok, %{rows: entries}} = Dlq.list(nil, @ops)
       assert Enum.any?(entries, &(&1["relay_class"] == @class))
       assert {:ok, _entries} = Dlq.list(@class, @ops)
       assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @ops)

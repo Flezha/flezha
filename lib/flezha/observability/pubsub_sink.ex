@@ -5,7 +5,8 @@ defmodule Flezha.Observability.PubSubSink do
   topic-per-source: `flezha.observability.source.<source-atom>`.
 
   Subscribers receive `{:flezha_signal, %Flezha.Observability.Signal{}}`
-  messages. Use `Flezha.Observability.subscribe/1` and
+  messages, the signal located (`Signal.located/1`) before the broadcast, which
+  reaches the subscribers on every connected controller. Use `Flezha.Observability.subscribe/1` and
   `Flezha.Observability.unsubscribe/1` from caller code.
 
   The sink can be disabled via the `:pubsub_sink_enabled` knob in
@@ -17,6 +18,8 @@ defmodule Flezha.Observability.PubSubSink do
   use GenServer, restart: :transient
 
   @behaviour Flezha.Observability.Sink
+
+  alias Flezha.Observability.Signal
 
   @pubsub Flezha.Observability.PubSub
 
@@ -49,7 +52,11 @@ defmodule Flezha.Observability.PubSubSink do
   @impl true
   def handle_info({:signal, signal}, state) do
     if Process.whereis(@pubsub) do
-      Phoenix.PubSub.broadcast(@pubsub, topic_for(signal.source), {:flezha_signal, signal})
+      Phoenix.PubSub.broadcast(
+        @pubsub,
+        topic_for(signal.source),
+        {:flezha_signal, Signal.located(signal)}
+      )
     end
 
     {:noreply, state}

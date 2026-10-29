@@ -90,9 +90,10 @@ defmodule Flezha.Service.Cli.Controller do
 
   defp progress_line(_event, _measurements, _metadata), do: nil
 
-  @doc "`flz controller status`."
-  def status(status, _args, _opts) do
-    IO.puts("node:                          #{status.node}")
+  @doc "`flz controller status`: one block per controller."
+  def status(answer, _args, _opts), do: Context.per_controller(answer, &block/1)
+
+  defp block(status) do
     IO.puts("shutdown_in_progress:          #{status.shutdown_in_progress}")
     IO.puts("shutdown_phase:                #{inspect(status.shutdown_phase)}")
     IO.puts("signal_handler_status:         #{status.signal_handler_status}")

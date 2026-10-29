@@ -8,6 +8,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Cluster.Directory
   alias Flezha.Cluster.GroupedHashing
+  alias Flezha.Cluster.Reads
   alias Flezha.Config.Durations
   alias Flezha.Convergence.RecoveryGate
   alias Flezha.Convergence.Snapshot
@@ -266,14 +267,11 @@ defmodule Flezha.Service.HubManager do
       hub_nodes ->
         if node() in hub_nodes,
           do: apply(module, function, args),
-          else: on_other_hub_node(hd(hub_nodes), module, function, args)
+          else:
+            Reads.on(hd(hub_nodes), module, function, args,
+              on_error: fn _failed -> {:error, :registry_unavailable} end
+            )
     end
-  end
-
-  defp on_other_hub_node(hub_node, module, function, args) do
-    :erpc.call(hub_node, module, function, args, Durations.get(:route_call_timeout_ms))
-  catch
-    _kind, _reason -> {:error, :registry_unavailable}
   end
 
   def get_running_namespaces() do

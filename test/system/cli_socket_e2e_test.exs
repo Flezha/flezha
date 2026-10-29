@@ -184,7 +184,7 @@ defmodule FlezhaTest.System.CliSocketE2ETest do
                [:quic, :uds]
 
       {0, status, ""} = flz(ctx, ["controller", "status"], sockets)
-      assert status =~ "node:                          #{node}"
+      assert status =~ "controller #{node}\nshutdown_in_progress:"
 
       # A data root of the test's own: the probe reads the peer's socket, the
       # reset acts on this tree alone.

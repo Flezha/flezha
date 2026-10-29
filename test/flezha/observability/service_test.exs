@@ -38,10 +38,10 @@ defmodule Flezha.Service.ObservabilityTest do
 
   describe "list_sources / list_sinks" do
     test "lists from Registry", %{src: src} do
-      {:ok, sources} = Observability.list_sources(%{source: :internal})
+      {:ok, %{rows: sources}} = Observability.list_sources(%{source: :internal})
       assert Enum.any?(sources, &(&1.name == src))
 
-      {:ok, sinks} = Observability.list_sinks(%{source: :internal})
+      {:ok, %{rows: sinks}} = Observability.list_sinks(%{source: :internal})
       assert Enum.any?(sinks, &(&1.name == :ring_buffer))
     end
   end
@@ -100,7 +100,7 @@ defmodule Flezha.Service.ObservabilityTest do
   end
 
   defp listed(name, context) do
-    {:ok, sources} = Observability.list_sources(context)
+    {:ok, %{rows: sources}} = Observability.list_sources(context)
     Enum.find(sources, &(&1.name == name))
   end
 
@@ -116,9 +116,9 @@ defmodule Flezha.Service.ObservabilityTest do
 
       TestSinks.settle(RingBufferSink)
 
-      {:ok, results} =
+      {:ok, %{rows: results}} =
         Observability.query(
-          %{source: src, from_ts: 0},
+          %{source: src, since_us: 0},
           %{source: :ui}
         )
 
@@ -142,7 +142,9 @@ defmodule Flezha.Service.ObservabilityTest do
       TestSinks.settle(RingBufferSink)
 
       context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
-      assert {:ok, [%Signal{name: :own}]} = Observability.query(%{source: src, limit: 2}, context)
+
+      assert {:ok, %{rows: [%Signal{name: :own}]}} =
+               Observability.query(%{source: src, limit: 2}, context)
     end
 
     test "missing :source param returns error" do
@@ -156,7 +158,7 @@ defmodule Flezha.Service.ObservabilityTest do
       _ = RingBufferSink.query(:observability_service, 0)
       before_ts = System.monotonic_time(:microsecond)
 
-      :ok =
+      {:ok, %{applied: [_]}} =
         Observability.disable_source(src, %{source: :cli, request_id: "req-123"})
 
       TestSinks.settle(RingBufferSink)
@@ -169,7 +171,7 @@ defmodule Flezha.Service.ObservabilityTest do
                  s.metadata[:caller_source] == :cli and s.metadata[:request_id] == "req-123"
              end)
 
-      :ok = Observability.enable_source(src, %{source: :ui})
+      {:ok, %{applied: [_]}} = Observability.enable_source(src, %{source: :ui})
       {:ok, %{status: :active}} = Registry.lookup_source(src)
     end
 
@@ -215,9 +217,9 @@ defmodule Flezha.Service.ObservabilityTest do
     end
 
     test "an ops caller bound to _system still switches a source", %{src: src} do
-      assert :ok = Observability.disable_source(src, @system_ops)
+      assert {:ok, %{applied: [_]}} = Observability.disable_source(src, @system_ops)
       assert {:ok, %{status: :disabled}} = Registry.lookup_source(src)
-      assert :ok = Observability.enable_source(src, @system_ops)
+      assert {:ok, %{applied: [_]}} = Observability.enable_source(src, @system_ops)
       assert {:ok, %{status: :active}} = Registry.lookup_source(src)
     end
   end
@@ -284,7 +286,7 @@ defmodule Flezha.Service.ObservabilityTest do
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :door_query}))
       TestSinks.settle(RingBufferSink)
 
-      assert {:ok, [%Signal{name: :door_query}]} =
+      assert {:ok, %{rows: [%Signal{name: :door_query}]}} =
                Admin.run(
                  "Observability.query",
                  ~s([{"source": "#{src}"}]),
@@ -390,14 +392,19 @@ defmodule Flezha.Service.ObservabilityTest do
         ExUnit.CaptureIO.capture_io(fn -> Cli.call("Observability.list_sources", "[]", []) end)
 
       assert text =~ "name\tstatus\tkinds\tbudget\ttitle\tdescription"
-      assert text =~ "#{described}\tactive\tevent\t1000\tProbe\tA described probe."
+      assert text =~ "#{described}\t#{node()}=active\tevent\t1000\tProbe\tA described probe."
 
       json =
         ExUnit.CaptureIO.capture_io(fn ->
           Cli.call("Observability.list_sources", "[]", output: "json")
         end)
 
-      entry = json |> Jason.decode!() |> Enum.find(&(&1["name"] == to_string(described)))
+      entry =
+        json
+        |> Jason.decode!()
+        |> Map.fetch!("rows")
+        |> Enum.find(&(&1["name"] == to_string(described)))
+
       assert entry["title"] == "Probe"
       assert entry["description"] == "A described probe."
       assert entry["area"] == "relays"

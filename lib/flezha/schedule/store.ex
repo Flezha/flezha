@@ -109,8 +109,11 @@ defmodule Flezha.Schedule.Store do
   @impl true
   def handle_call({:add, entry}, _from, state) do
     case DetsStore.put_new(@table, @cache, entry.name, entry) do
-      :ok -> {:reply, {:ok, entry}, state}
-      {:error, :already_exists} -> {:reply, {:error, {:schedule_exists, entry.name}}, state}
+      :ok ->
+        {:reply, {:ok, entry}, state}
+
+      {:error, :already_exists} ->
+        {:reply, {:error, {:schedule_exists, entry.name, node()}}, state}
     end
   end
 

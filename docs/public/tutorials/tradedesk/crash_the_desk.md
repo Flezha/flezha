@@ -118,8 +118,8 @@ The typed `Trade` record cannot be read, so the entry channel refuses the
 trade before any tasklet sees it:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/trades/307bcbd6439a080f                           _entry          trades      1    3s        java.lang.IllegalArgumentException: entry channel: JSON dese
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/trades/307bcbd6439a080f                    flezha@127.0.0.1                   _entry          trades      1    3s        java.lang.IllegalArgumentException: entry channel: JSON dese
 ```
 
 ### Rust
@@ -137,8 +137,8 @@ in cell `_entry`, and its error is serde's reason, as the runner logs it:
 `track_prices` reads the trade as a plain object and refuses the price itself:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              flezha@127.0.0.1            EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
 ```
 
 ### Python
@@ -146,8 +146,8 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 `track_prices` reads the trade as a dict and refuses the price itself:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    5s        TypeError: the price is not a number: 'one euro'
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              flezha@127.0.0.1            EUR/USD         trades      1    5s        TypeError: the price is not a number: 'one euro'
 ```
 
 ### Ruby
@@ -155,8 +155,8 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 `track_prices` reads the trade as a Hash and refuses the price itself:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    6s        ArgumentError: the price is not a number: "one euro"
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              flezha@127.0.0.1            EUR/USD         trades      1    6s        ArgumentError: the price is not a number: "one euro"
 ```
 
 ### PHP
@@ -164,8 +164,8 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 `track_prices` reads the trade as an array and refuses the price itself:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    3s        InvalidArgumentException: the price is not a number: "one eu
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              flezha@127.0.0.1            EUR/USD         trades      1    3s        InvalidArgumentException: the price is not a number: "one eu
 ```
 
 ### Elixir
@@ -174,8 +174,8 @@ trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trad
 runner logs each retry as a warning:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/239d0c721a1951a6              EUR/USD         trades      1    0s        the price is not a number: "one euro"
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/239d0c721a1951a6              flezha@127.0.0.1            EUR/USD         trades      1    0s        the price is not a number: "one euro"
 ```
 
 The tasklet was handed a decoded map rather than bytes, so this entry can be
@@ -187,8 +187,8 @@ The typed `Trade` struct cannot be read, so the entry channel refuses the
 trade before any tasklet sees it. The error is `encoding/json`'s reason:
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/trades/307bcbd6439a080f                    _entry          trades      1    0s        json: cannot unmarshal string into Go struct field Trade.dat
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/trades/307bcbd6439a080f                    flezha@127.0.0.1            _entry          trades      1    0s        json: cannot unmarshal string into Go struct field Trade.dat
 ```
 
 <!-- tabs-close -->

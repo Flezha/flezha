@@ -89,7 +89,7 @@
     },
     {
       "name": "Controller.boot_status",
-      "doc": "The readiness verdict and every precondition behind it.",
+      "doc": "Each controller's readiness verdict and every precondition behind it, one row per controller.",
       "action": "public",
       "remote": true,
       "stream": false,
@@ -120,7 +120,7 @@
     },
     {
       "name": "Controller.durability_breaches",
-      "doc": "The durability breaches recorded since the controller started.",
+      "doc": "The durability breaches every controller recorded since it started, each with the `node` that recorded it.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -128,7 +128,7 @@
     },
     {
       "name": "Controller.durability_status",
-      "doc": "The durability shipper's own status.",
+      "doc": "Every controller's durability shipper status, each row with its `node`.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -144,7 +144,7 @@
     },
     {
       "name": "Controller.mem_top",
-      "doc": "One snapshot of the controller's memory hot spots.",
+      "doc": "One snapshot of each controller's memory hot spots, one row per controller.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -152,7 +152,7 @@
     },
     {
       "name": "Controller.status",
-      "doc": "The controller's status: node, clock, shutdown and durability.",
+      "doc": "Each controller's status, one row per controller: node, clock, shutdown and durability.",
       "action": "controller.status",
       "remote": true,
       "stream": false,
@@ -191,7 +191,7 @@
     },
     {
       "name": "Dlq.get",
-      "doc": "One parked entry, with its payload bytes if it carries any.",
+      "doc": "One parked entry, with the `node` holding it and its payload bytes if it carries any.",
       "action": "dlq.show",
       "remote": true,
       "stream": false,
@@ -206,7 +206,7 @@
     },
     {
       "name": "Dlq.list",
-      "doc": "Parked entries, nearest-to-expiry first.",
+      "doc": "Every controller's parked entries, nearest-to-expiry first, each with the `node` holding it.",
       "action": "dlq.list",
       "remote": true,
       "stream": false,
@@ -237,7 +237,7 @@
     },
     {
       "name": "Dlq.stats",
-      "doc": "Entry and byte counts per parked tasklet.",
+      "doc": "Entry and byte counts per parked tasklet on every controller, each with its `node`.",
       "action": "dlq.list",
       "remote": true,
       "stream": false,
@@ -245,7 +245,7 @@
     },
     {
       "name": "Dlq.tasklets",
-      "doc": "The `{relay_class, tasklet_id}` pairs that hold parked entries.",
+      "doc": "The tasklets that hold parked entries on every controller, each as `relay_class`, `tasklet_id` and `node`.",
       "action": "dlq.list",
       "remote": true,
       "stream": false,
@@ -312,7 +312,7 @@
     },
     {
       "name": "Fleet.installed_plugins",
-      "doc": "Every plugin package this controller loaded or refused at boot.",
+      "doc": "Every plugin package each controller loaded or refused at boot, each row with its `node`.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -335,7 +335,7 @@
     },
     {
       "name": "Fleet.providers",
-      "doc": "Every plugin provider this controller can enable.",
+      "doc": "Every plugin provider any controller can enable, one row per provider.",
       "action": "plugin.list",
       "remote": true,
       "stream": false,
@@ -559,7 +559,7 @@
     },
     {
       "name": "Namespace.quota",
-      "doc": "One namespace's current count and ceiling for `kind`.",
+      "doc": "One namespace's usage of `kind` across the cluster: the `total`, the usage on each controller in `by_node`, and the controllers that did not answer (`unreachable`).",
       "action": "authz.namespace_show",
       "remote": true,
       "stream": false,
@@ -711,7 +711,7 @@
     },
     {
       "name": "Observability.disable_source",
-      "doc": "Disable an observability source.",
+      "doc": "Disable an observability source on every controller.",
       "action": "observability.disable_source",
       "remote": true,
       "stream": false,
@@ -726,7 +726,7 @@
     },
     {
       "name": "Observability.enable_source",
-      "doc": "Enable an observability source.",
+      "doc": "Enable an observability source on every controller.",
       "action": "observability.enable_source",
       "remote": true,
       "stream": false,
@@ -741,7 +741,7 @@
     },
     {
       "name": "Observability.list_sinks",
-      "doc": "Every registered observability sink.",
+      "doc": "Every controller's registered observability sinks, each with its `node`.",
       "action": "observability.query",
       "remote": true,
       "stream": false,
@@ -749,7 +749,7 @@
     },
     {
       "name": "Observability.list_sources",
-      "doc": "Every registered observability source and what it said recently.",
+      "doc": "Every observability source registered on any controller and what it said recently, one row per source.",
       "action": "observability.query",
       "remote": true,
       "stream": false,
@@ -757,7 +757,7 @@
     },
     {
       "name": "Observability.query",
-      "doc": "The signals the ring buffer holds for `params.source`.",
+      "doc": "The signals every controller's ring buffer holds for `params.source`, recorded at or after `params.since_us` (wall clock, microseconds), merged by `at_us` and the newest `params.limit` of them kept.",
       "action": "observability.query",
       "remote": true,
       "stream": false,
@@ -766,7 +766,7 @@
           "name": "params",
           "type": "keyword",
           "required": true,
-          "doc": "`source`, `from_ts` and `limit`."
+          "doc": "`source`, `since_us` and `limit`."
         }
       ]
     },
@@ -1413,7 +1413,7 @@
     },
     {
       "name": "Schedule.list",
-      "doc": "Every stored schedule, by name, with what the hub holds for it.",
+      "doc": "Every controller's stored schedules, by name, each with the `node` holding it and what the hub holds for it.",
       "action": "schedule.list",
       "remote": true,
       "stream": false,
@@ -1421,7 +1421,7 @@
     },
     {
       "name": "Schedule.remove",
-      "doc": "Forget a schedule and retract it from the hub.",
+      "doc": "Forget a schedule on the controller holding it and retract it from the hub.",
       "action": "schedule.remove",
       "remote": true,
       "stream": false,
@@ -1436,7 +1436,7 @@
     },
     {
       "name": "Schedule.run",
-      "doc": "Fire a schedule once, now.",
+      "doc": "Fire a schedule once, now, on the controller holding it.",
       "action": "relay.start",
       "remote": true,
       "stream": false,

@@ -238,5 +238,6 @@ defmodule Flezha.Service.Cli.ScheduleTest do
   defp listed_json() do
     capture_io(fn -> Cli.call("Schedule.list", Jason.encode!([]), output: "json") end)
     |> Jason.decode!()
+    |> Map.fetch!("rows")
   end
 end

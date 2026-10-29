@@ -230,7 +230,7 @@ defmodule Flezha.Service.ConsoleAnswersTest do
     end
 
     test "the listing and a provider's help say which providers feed a relay" do
-      assert {:ok, %{providers: providers}} = Fleet.providers(%{source: :cli})
+      assert {:ok, %{rows: providers}} = Fleet.providers(%{source: :cli})
       feeds = Map.new(providers, &{&1.id, &1.feeds})
 
       for {id, fed} <- [

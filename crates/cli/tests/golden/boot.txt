@@ -4,7 +4,8 @@ USAGE:
     flz boot <COMMAND>
 
 COMMANDS:
-    status  The readiness verdict and every precondition behind it.
+    status  Each controller's readiness verdict and every precondition behind
+            it, one row per controller.
     await   Wait until the controller is ready, or the timeout passes.
     help    Show this help message.
 

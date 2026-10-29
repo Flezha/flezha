@@ -4,6 +4,8 @@ defmodule Flezha.Service.Cli.Schedule do
   relay starts.
   """
 
+  alias Flezha.Service.Cli.Context
+
   # Error reasons truncate to the column; the full reason stays in
   # log/telemetry.
   @schedule_result_width 48
@@ -25,10 +27,15 @@ defmodule Flezha.Service.Cli.Schedule do
     )
   end
 
-  @doc "`flz schedule list`."
-  def list([], _args, _opts), do: IO.puts("no schedules")
+  @doc """
+  `flz schedule list`: every controller's schedules, each with the controller
+  holding it and the one firing it.
+  """
+  def list(answer, _args, _opts), do: Context.rows(answer, &entries/1)
 
-  def list(entries, _args, _opts) do
+  defp entries([]), do: IO.puts("no schedules")
+
+  defp entries(entries) do
     IO.puts(
       row([
         "NAME",
@@ -37,6 +44,7 @@ defmodule Flezha.Service.Cli.Schedule do
         "FACTORY",
         "NAMESPACE",
         "NODE",
+        "FIRES ON",
         "NEXT FIRE (UTC)",
         "LAST FIRE (UTC)",
         "LAST RESULT"
@@ -51,7 +59,8 @@ defmodule Flezha.Service.Cli.Schedule do
           entry.timezone,
           entry.factory_id,
           entry.namespace,
-          if(entry.node, do: to_string(entry.node), else: "-"),
+          to_string(entry.node),
+          if(entry.fires_on, do: to_string(entry.fires_on), else: "-"),
           next_fire(entry.next_fire),
           last_fire_at(entry.last_fire),
           last_result(entry.last_fire)
@@ -83,11 +92,11 @@ defmodule Flezha.Service.Cli.Schedule do
 
   defp last_result(_), do: "-"
 
-  # The first eight columns padded; the last is printed raw.
+  # The first nine columns padded; the last is printed raw.
   defp row(fields) do
-    {padded, [last]} = Enum.split(fields, 8)
+    {padded, [last]} = Enum.split(fields, 9)
 
-    Enum.zip_with(padded, [24, 18, 20, 24, 14, 22, 22, 22], &String.pad_trailing/2)
+    Enum.zip_with(padded, [24, 18, 20, 24, 14, 22, 22, 22, 22], &String.pad_trailing/2)
     |> Enum.join()
     |> Kernel.<>(last)
   end

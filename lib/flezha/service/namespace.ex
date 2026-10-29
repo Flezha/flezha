@@ -25,10 +25,12 @@ defmodule Flezha.Service.Namespace do
   alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
   alias Flezha.AuthZ.TokenStore
+  alias Flezha.Cluster.Reads
   alias Flezha.Runner.FleetManager.Cluster
   alias Flezha.Service.Admin
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Relay.Info
 
   @type caller_context :: CallerContext.t()
 
@@ -62,15 +64,20 @@ defmodule Flezha.Service.Namespace do
     {:ok, QuotaCounters.kinds()}
   end
 
-  @doc "One namespace's current count and ceiling for `kind`."
-  @spec quota(String.t(), atom(), caller_context()) :: {:ok, term()} | {:error, term()}
+  @doc """
+  One namespace's usage of `kind` across the cluster: the `total`, the usage
+  on each controller in `by_node`, and the controllers that did not answer
+  (`unreachable`). Relays are counted once from the namespace's relay registry,
+  by hosting node; every other kind is summed over the controllers' counters.
+  """
+  @spec quota(String.t(), atom(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb quota(name, kind, caller_context) when is_binary(name) and is_atom(kind),
     verb: :namespace_show,
     args: [
       name: @name,
       kind: [type: :enum, values: QuotaCounters.kinds(), doc: "The quota kind."]
     ] do
-    {:ok, QuotaCounters.get(name, kind)}
+    {:ok, usage(name, kind)}
   end
 
   @doc """
@@ -295,6 +302,27 @@ defmodule Flezha.Service.Namespace do
   end
 
   # ---------- Helpers ----------
+
+  defp usage(name, :relays) do
+    %{rows: rows, unreachable: unreachable} = Info.rows(name)
+
+    %{
+      total: length(rows),
+      by_node: Enum.frequencies_by(rows, & &1.node),
+      unreachable: unreachable
+    }
+  end
+
+  defp usage(name, kind) do
+    %{answers: answers, unreachable: unreachable} =
+      Reads.ask(Reads.controllers(), QuotaCounters, :get, [name, kind])
+
+    %{
+      total: answers |> Enum.map(&elem(&1, 1)) |> Enum.sum(),
+      by_node: Map.new(answers),
+      unreachable: unreachable
+    }
+  end
 
   defp actor(caller_context), do: Map.get(caller_context, :principal)
 

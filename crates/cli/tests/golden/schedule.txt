@@ -5,9 +5,11 @@ USAGE:
 
 COMMANDS:
     add     Store a schedule and assert it on the hub.
-    list    Every stored schedule, by name, with what the hub holds for it.
-    remove  Forget a schedule and retract it from the hub.
-    run     Fire a schedule once, now.
+    list    Every controller's stored schedules, by name, each with the `node`
+            holding it and what the hub holds for it.
+    remove  Forget a schedule on the controller holding it and retract it from
+            the hub.
+    run     Fire a schedule once, now, on the controller holding it.
     help    Show this help message.
 
 add refuses a factory a connected runner announced as flow. run fires one

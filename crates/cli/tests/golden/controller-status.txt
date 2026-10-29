@@ -1,4 +1,4 @@
-flz controller status - The controller's status: node, clock, shutdown and durability.
+flz controller status - Each controller's status, one row per controller: node, clock, shutdown and durability.
 
 Usage: flz controller status
 

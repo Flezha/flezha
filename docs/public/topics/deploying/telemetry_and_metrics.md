@@ -17,8 +17,9 @@ says.
 
 ## Where signals go
 
-`flz observe sources` lists every source the controller has registered, with its signals and
-what each one says, and `flz observe tail <source>` shows its signals as they happen. The
+`flz observe sources` lists every source the controllers of the cluster have registered, with
+its signals and what each one says, and `flz observe tail <source>` shows its signals as they
+happen, from every controller, each with the controller that recorded it. The
 machine sources (`beam_vm`, `host`, `processhub`, `flezha_transport`) and the access-control,
 audit-log and export sources are listed there too; they are not part of the tables below.
 

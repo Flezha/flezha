@@ -5,8 +5,15 @@ defmodule Flezha.Service.Cli.Boot do
   `GET /readyz` and the container layer cannot disagree.
   """
 
-  @doc "`flz boot status`: the verdict, its preconditions, and each visible namespace's recovery."
-  def status(status, _args, _opts) do
+  alias Flezha.Service.Cli.Context
+
+  @doc """
+  `flz boot status`: for each controller, the verdict, its preconditions, and
+  each visible namespace's recovery.
+  """
+  def status(answer, _args, _opts), do: Context.per_controller(answer, &block/1)
+
+  defp block(status) do
     IO.puts("readiness: #{status.readiness}")
 
     Enum.each(status.preconditions, fn %{key: key, met: met} ->

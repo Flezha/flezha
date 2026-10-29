@@ -248,6 +248,7 @@ SDK raises or returns its one error type carrying them.
 | `dlq.bad_entry_ref` | invalid | 2 | '{entry}' is not an entry reference; write it as `<relay>/<tasklet>/<entry-id>` | `flz dlq list` |
 | `dlq.not_found` | not_found | 5 | no parked entry '{entry}' | `flz dlq list` |
 | `dlq.payload_not_replayable` | conflict | 6 | entry '{entry}' carries no payload bytes (an input between tasklets), so it cannot be replayed; show it or drop it | `flz dlq drop {entry}` |
+| `dlq.unreachable` | not_found | 5 | no controller that answered holds parked entry '{entry}'; these did not answer: {unreachable} | `flz controller list` |
 
 ### durability
 
@@ -650,7 +651,7 @@ SDK raises or returns its one error type carrying them.
 
 | Code | Class | Exit | Message | Hint |
 |---|---|---|---|---|
-| `schedule.already_exists` | conflict | 6 | a schedule named '{schedule}' already exists | `flz schedule list` |
+| `schedule.already_exists` | conflict | 6 | a schedule named '{schedule}' already exists on {node} | `flz schedule list` |
 | `schedule.cron_field_count` | invalid | 2 | cron expression '{cron}' must have 5 fields (minute hour day month weekday), got {fields} |  |
 | `schedule.cron_invalid_field` | invalid | 2 | cron expression '{cron}': the {field} field has an invalid element '{element}' (allowed {min}-{max}) |  |
 | `schedule.cron_required` | invalid | 2 | a schedule needs a cron expression |  |
@@ -662,6 +663,7 @@ SDK raises or returns its one error type carrying them.
 | `schedule.not_found` | not_found | 5 | schedule '{schedule}' does not exist | `flz schedule list` |
 | `schedule.plugins_not_array` | invalid | 2 | a schedule's plugins must be a JSON array of plugin specs |  |
 | `schedule.timezone_required` | invalid | 2 | a schedule needs a time zone |  |
+| `schedule.unreachable` | unavailable | 7 | schedule '{schedule}' could not be looked up on these controllers, which did not answer: {unreachable} | `flz controller list` |
 
 ### shutdown
 

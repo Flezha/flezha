@@ -3,6 +3,8 @@ defmodule Flezha.Service.Cli.Dlq do
   `flz dlq` — the text forms of list, show, replay and drop for parked records.
   """
 
+  alias Flezha.Service.Cli.Context
+
   @doc "`flz dlq replay`."
   def replay(%{outcome: :removed}, [entry_ref | _], _opts),
     do: IO.puts("replay succeeded; #{entry_ref} removed")
@@ -13,12 +15,18 @@ defmodule Flezha.Service.Cli.Dlq do
   @doc "`flz dlq drop`."
   def drop(:ok, [entry_ref | _], _opts), do: IO.puts("dropped #{entry_ref}")
 
-  @doc "`flz dlq list`: parked entries, nearest-to-expiry first."
-  def list([], _args, _opts), do: IO.puts("dead-letter queue is empty")
+  @doc """
+  `flz dlq list`: every controller's parked entries, nearest-to-expiry first,
+  each with its controller.
+  """
+  def list(answer, _args, _opts), do: Context.rows(answer, &entries/1)
 
-  def list(entries, _args, _opts) do
+  defp entries([]), do: IO.puts("dead-letter queue is empty")
+
+  defp entries(entries) do
     IO.puts(
       String.pad_trailing("ENTRY", 60) <>
+        String.pad_trailing("NODE", 28) <>
         String.pad_trailing("CELL", 16) <>
         String.pad_trailing("CHANNEL", 12) <>
         String.pad_trailing("GEN", 5) <>
@@ -31,6 +39,7 @@ defmodule Flezha.Service.Cli.Dlq do
 
       IO.puts(
         String.pad_trailing(ref, 60) <>
+          String.pad_trailing(to_string(e.node), 28) <>
           String.pad_trailing(e["cell_key"] || "", 16) <>
           String.pad_trailing(e["channel"] || "", 12) <>
           String.pad_trailing(Integer.to_string(e["generation"] || 1), 5) <>
@@ -47,6 +56,8 @@ defmodule Flezha.Service.Cli.Dlq do
         IO.puts(String.pad_trailing(key, 18) <> to_string(inspect(entry[key])))
       end
     )
+
+    IO.puts(String.pad_trailing("node", 18) <> to_string(entry.node))
 
     render_payload(payload)
   end

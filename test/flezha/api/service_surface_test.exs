@@ -248,7 +248,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       context = %{source: :ui, principal: "console@_system"}
 
       before = System.monotonic_time(:microsecond)
-      assert {:ok, %{monotonic_us: clock}} = Controller.status(context)
+      assert {:ok, %{rows: [%{monotonic_us: clock}]}} = Controller.status(context)
       assert clock >= before and clock <= System.monotonic_time(:microsecond)
 
       assert {:ok, %{rows: factories, unreachable: []}} = Fleet.factories("default", context)

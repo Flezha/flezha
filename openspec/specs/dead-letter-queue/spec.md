@@ -58,7 +58,7 @@ The controller SHALL store parked payloads under `storage/app/dlq/<relay_class>/
 
 ### Requirement: CLI surface for inspect, replay, and drop
 
-The CLI SHALL provide `flz dlq list <relay>` (entries with cell, channel, error, age — nearest-to-expiry first), `flz dlq show <entry>` (metadata + payload preview), `flz dlq replay <entry>` (re-dispatch through the normal input path; tier on mints fresh output identity by construction — the replay is journaled as a new input, so its effect records carry fresh WAL seqs; a failing replay re-parks with an incremented generation), and `flz dlq drop <entry>` (delete entry + blob, emitting an audit event). Replay SHALL be explicit-only — the system SHALL NOT automatically re-drive parked payloads.
+The CLI SHALL provide `flz dlq list <relay>` (entries with cell, channel, error, age — nearest-to-expiry first), `flz dlq show <entry>` (metadata + payload preview), `flz dlq replay <entry>` (re-dispatch through the normal input path; tier on mints fresh output identity by construction — the replay is journaled as a new input, so its effect records carry fresh WAL seqs; a failing replay re-parks with an incremented generation), and `flz dlq drop <entry>` (delete entry + blob, emitting an audit event). Replay SHALL be explicit-only — the system SHALL NOT automatically re-drive parked payloads. `flz dlq list` SHALL list the entries of every controller, each with the controller that holds it, and `show`, `replay` and `drop` SHALL act on an entry whichever controller holds it.
 
 #### Scenario: Replay re-enters the normal path
 
@@ -74,6 +74,12 @@ The CLI SHALL provide `flz dlq list <relay>` (entries with cell, channel, error,
 
 - **WHEN** a user runs `flz dlq drop`
 - **THEN** the entry and payload are deleted and an audit event records the drop with the entry's identity
+
+#### Scenario: An entry parked on another controller
+
+- **GIVEN** an entry parked on controller B
+- **WHEN** a user connected to controller A runs `flz dlq list` and then `flz dlq drop` on it
+- **THEN** the list shows the entry with B, and the drop deletes it from B
 
 ### Requirement: A parked entry SHALL be built by one constructor
 

@@ -12,9 +12,9 @@ rows as `flz <group> help`, which prints them on the command line, and
 | --- | --- |
 | `flz controller start [--mode \| -m attached\|daemon\|attached_iex\|daemon_iex]` | Start the flezha controller. |
 | `flz controller stop [--timeout-ms <ms>] [--no-wait] [--force]` | Drain this controller and stop it. |
-| `flz controller status` | The controller's status: node, clock, shutdown and durability. |
+| `flz controller status` | Each controller's status, one row per controller: node, clock, shutdown and durability. |
 | `flz controller list` | Every controller the cluster directory lists, the one that answered first. |
-| `flz controller mem-top` | One snapshot of the controller's memory hot spots. |
+| `flz controller mem-top` | One snapshot of each controller's memory hot spots, one row per controller. |
 <!-- flz-reference:end -->
 
 ## [`flz boot`](controller_commands.md#flz-boot)
@@ -22,7 +22,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 <!-- flz-reference:begin flz boot -->
 | Command | What it does |
 | --- | --- |
-| `flz boot status` | The readiness verdict and every precondition behind it. |
+| `flz boot status` | Each controller's readiness verdict and every precondition behind it, one row per controller. |
 | `flz boot await [--timeout \| -t <seconds>]` | Wait until the controller is ready, or the timeout passes. |
 <!-- flz-reference:end -->
 
@@ -51,11 +51,11 @@ rows as `flz <group> help`, which prints them on the command line, and
 <!-- flz-reference:begin flz observe -->
 | Command | What it does |
 | --- | --- |
-| `flz observe sources` | Every registered observability source and what it said recently. |
-| `flz observe sinks` | Every registered observability sink. |
+| `flz observe sources` | Every observability source registered on any controller and what it said recently, one row per source. |
+| `flz observe sinks` | Every controller's registered observability sinks, each with its `node`. |
 | `flz observe tail <source> [--duration-ms <milliseconds>]` | Stream the live signals of one source that the caller may see. |
-| `flz observe enable <source>` | Enable an observability source. |
-| `flz observe disable <source>` | Disable an observability source. |
+| `flz observe enable <source>` | Enable an observability source on every controller. |
+| `flz observe disable <source>` | Disable an observability source on every controller. |
 <!-- flz-reference:end -->
 
 ## [`flz reset`](controller_commands.md#flz-reset), [`flz mcp`](../core/mcp_server.md) and `flz help`
@@ -110,8 +110,8 @@ rows as `flz <group> help`, which prints them on the command line, and
 <!-- flz-reference:begin flz dlq -->
 | Command | What it does |
 | --- | --- |
-| `flz dlq list [<relay_class>]` | Parked entries, nearest-to-expiry first. |
-| `flz dlq show <relay/tasklet/entry-id>` | One parked entry, with its payload bytes if it carries any. |
+| `flz dlq list [<relay_class>]` | Every controller's parked entries, nearest-to-expiry first, each with the `node` holding it. |
+| `flz dlq show <relay/tasklet/entry-id>` | One parked entry, with the `node` holding it and its payload bytes if it carries any. |
 | `flz dlq replay <relay/tasklet/entry-id>` | Re-dispatch a parked payload to its relay. |
 | `flz dlq drop <relay/tasklet/entry-id>` | Discard a parked entry and its payload. |
 <!-- flz-reference:end -->
@@ -122,9 +122,9 @@ rows as `flz <group> help`, which prints them on the command line, and
 | Command | What it does |
 | --- | --- |
 | `flz schedule add <name> --cron <expr> --tz <iana> --factory <factory_id> [--namespace \| -n <namespace>] [--init-values <json>] [--text \| -t <payload>] [--channel \| -c <ch>] [--plugins \| -p <json>]` | Store a schedule and assert it on the hub. |
-| `flz schedule list` | Every stored schedule, by name, with what the hub holds for it. |
-| `flz schedule remove <name>` | Forget a schedule and retract it from the hub. |
-| `flz schedule run <name>` | Fire a schedule once, now. |
+| `flz schedule list` | Every controller's stored schedules, by name, each with the `node` holding it and what the hub holds for it. |
+| `flz schedule remove <name>` | Forget a schedule on the controller holding it and retract it from the hub. |
+| `flz schedule run <name>` | Fire a schedule once, now, on the controller holding it. |
 <!-- flz-reference:end -->
 
 ## [`flz plugin`](plugin_commands.md#flz-plugin)

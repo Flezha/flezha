@@ -29,12 +29,12 @@ defmodule Flezha.Service.ControllerRecoveryAuthzTest do
   # Fails when: the boot status table lists every running namespace, so any
   # caller of the public verb learns every tenant on the node.
   test "boot status lists only the namespace a viewer is bound to" do
-    assert {:ok, %{namespaces: rows}} = boot_status(viewer(@own))
+    assert {:ok, %{rows: [%{namespaces: rows}]}} = boot_status(viewer(@own))
     assert Enum.map(rows, & &1.namespace) == [@own]
   end
 
   test "boot status gives a caller with no identity the readiness verdict and no tenant" do
-    assert {:ok, %{readiness: readiness, preconditions: [_ | _], namespaces: rows}} =
+    assert {:ok, %{rows: [%{readiness: readiness, preconditions: [_ | _], namespaces: rows}]}} =
              boot_status(%{source: :http})
 
     assert is_atom(readiness)
@@ -43,7 +43,7 @@ defmodule Flezha.Service.ControllerRecoveryAuthzTest do
 
   test "boot status lists every running namespace to an admin of _system" do
     admin = %{source: :http, principal: "root", namespace: "_system", role: :admin}
-    assert {:ok, %{namespaces: rows}} = boot_status(admin)
+    assert {:ok, %{rows: [%{namespaces: rows}]}} = boot_status(admin)
     assert MapSet.subset?(MapSet.new([@own, @other]), MapSet.new(rows, & &1.namespace))
   end
 end

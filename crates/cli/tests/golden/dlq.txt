@@ -4,8 +4,10 @@ USAGE:
     flz dlq <COMMAND>
 
 COMMANDS:
-    list    Parked entries, nearest-to-expiry first.
-    show    One parked entry, with its payload bytes if it carries any.
+    list    Every controller's parked entries, nearest-to-expiry first, each
+            with the `node` holding it.
+    show    One parked entry, with the `node` holding it and its payload bytes
+            if it carries any.
     replay  Re-dispatch a parked payload to its relay.
     drop    Discard a parked entry and its payload.
     help    Show this help message.

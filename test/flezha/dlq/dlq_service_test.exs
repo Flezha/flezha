@@ -93,14 +93,15 @@ defmodule Flezha.Service.DlqTest do
     test "list, get, stats and tasklets", %{entry: entry, relay_class: relay_class} do
       {:ok, ref} = Store.append(entry)
 
-      assert {:ok, [listed]} = DlqSvc.list(relay_class, context())
+      assert {:ok, %{rows: [listed], unreachable: []}} = DlqSvc.list(relay_class, context())
+      assert listed.node == node()
       assert listed["id"]
       assert listed["error"] == "kaboom"
 
       assert {:ok, got, "poison-bytes"} = DlqSvc.get(ref, context())
       assert got["relay_class"] == relay_class
 
-      assert {:ok, stats} = DlqSvc.stats(context())
+      assert {:ok, %{rows: stats}} = DlqSvc.stats(context())
 
       assert Enum.any?(
                stats,
@@ -108,8 +109,8 @@ defmodule Flezha.Service.DlqTest do
                    &1.entries == 1)
              )
 
-      assert {:ok, tasklets} = DlqSvc.tasklets(relay_class, context())
-      assert {relay_class, "task"} in tasklets
+      assert {:ok, %{rows: tasklets}} = DlqSvc.tasklets(relay_class, context())
+      assert %{relay_class: relay_class, tasklet_id: "task", node: node()} in tasklets
     end
   end
 

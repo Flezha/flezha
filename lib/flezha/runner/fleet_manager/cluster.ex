@@ -20,15 +20,9 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   """
   @spec global_factories(String.t()) :: Reads.rows()
   def global_factories(namespace) do
-    answer = across_runner_nodes(namespace, :factory_rows)
-
-    merged =
-      answer.rows
-      |> Enum.group_by(& &1.id)
-      |> Enum.map(fn {_id, rows} -> merge_factory(rows) end)
-      |> Enum.sort_by(& &1.id)
-
-    %{answer | rows: merged}
+    namespace
+    |> across_runner_nodes(:factory_rows)
+    |> Reads.grouped(& &1.id, &merge_factory/1)
   end
 
   defp merge_factory(rows) do

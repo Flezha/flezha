@@ -169,7 +169,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
     assert printed =~ "#{steps}=local"
 
     json = capture_io(fn -> :ok = Cli.call("Controller.status", "[]", output: "json") end)
-    assert %{^steps => "local"} = levels = Jason.decode!(json)["durability_levels"]
+    assert %{"rows" => [%{"durability_levels" => levels}]} = Jason.decode!(json)
+    assert %{^steps => "local"} = levels
     assert levels[ctx.rc] == "remote"
   end
 

@@ -279,7 +279,7 @@ defmodule FlezhaTest.System.PluginPackageReleaseTest do
 
   defp installed(ctx) do
     {out, 0} = flz(ctx, ["plugin", "list", "--installed", "--json"])
-    out |> String.split("\n", trim: true) |> List.last() |> Jason.decode!()
+    out |> String.split("\n", trim: true) |> List.last() |> Jason.decode!() |> Map.fetch!("rows")
   end
 
   defp start!(ctx) do

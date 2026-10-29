@@ -321,8 +321,8 @@ $ flz dlq list 'trade_watcher#p1'
 ```
 
 ```output
-ENTRY                                                       CELL            CHANNEL     GEN  AGE       ERROR
-trade_watcher#p1/track_prices/307bcbd6439a080f              EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
+ENTRY                                                       NODE                        CELL            CHANNEL     GEN  AGE       ERROR
+trade_watcher#p1/track_prices/307bcbd6439a080f              flezha@127.0.0.1            EUR/USD         trades      1    8s        TypeError: the price is not a number: "one euro"
 ```
 
 ## `flz schedule`

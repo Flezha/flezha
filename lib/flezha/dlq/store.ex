@@ -149,6 +149,18 @@ defmodule Flezha.Dlq.Store do
   @spec stats(pid() | atom()) :: [map()]
   def stats(server \\ __MODULE__), do: call(server, :stats)
 
+  @doc """
+  The relay class, tasklet and id an entry reference names, or
+  `{:error, {:bad_entry_ref, entry_ref}}` when it is not one.
+  """
+  @spec parse_ref(String.t()) :: {:ok, String.t(), String.t(), String.t()} | {:error, term()}
+  def parse_ref(entry_ref) do
+    case String.split(entry_ref, "/") do
+      [rc, sh, id] when rc != "" and sh != "" and id != "" -> {:ok, rc, sh, id}
+      _ -> {:error, {:bad_entry_ref, entry_ref}}
+    end
+  end
+
   @doc "Run a retention sweep now (tests / CLI)."
   @spec sweep(pid() | atom()) :: :ok
   def sweep(server \\ __MODULE__),
@@ -480,13 +492,6 @@ defmodule Flezha.Dlq.Store do
   defp blob_path(rc, sh, id), do: Path.join(task_dir(rc, sh), id <> ".bin")
 
   defp ref(rc, sh, id), do: "#{rc}/#{sh}/#{id}"
-
-  defp parse_ref(entry_ref) do
-    case String.split(entry_ref, "/") do
-      [rc, sh, id] when rc != "" and sh != "" and id != "" -> {:ok, rc, sh, id}
-      _ -> {:error, {:bad_entry_ref, entry_ref}}
-    end
-  end
 
   # Path-safety: identity components come off the wire; never let them climb
   # out of the DLQ root. The character class permits `.` and `-`, so a

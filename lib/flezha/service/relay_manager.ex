@@ -80,12 +80,7 @@ defmodule Flezha.Service.RelayManager do
         nodes ->
           target = Placement.pick_runner(nodes, key)
 
-          route_call(
-            target,
-            :on_hub_member,
-            [namespace, key, call, [routed: true]],
-            &{:error, &1}
-          )
+          Reads.on(target, __MODULE__, :on_hub_member, [namespace, key, call, [routed: true]])
       end
     end
   end
@@ -104,9 +99,9 @@ defmodule Flezha.Service.RelayManager do
         apply(module, function, args)
 
       {:ok, holder} ->
-        route_call(holder, module, function, args, fn _failed ->
-          {:error, {:state_unreachable, instance_id, [holder]}}
-        end)
+        Reads.on(holder, module, function, args,
+          on_error: fn _failed -> {:error, {:state_unreachable, instance_id, [holder]}} end
+        )
 
       {:error, []} ->
         apply(module, function, args)
@@ -134,19 +129,6 @@ defmodule Flezha.Service.RelayManager do
       {:ok, relay_pid} -> fun.(relay_pid)
       err -> err
     end
-  end
-
-  # One steps relay forward; an unreachable or crashed peer maps through `on_error`
-  # instead of raising into the caller. Must exceed the remote start's own
-  # internal budget (ProcessHub's 15s wait plus the :no_response retry ladder).
-
-  defp route_call(target, fun, args, on_error),
-    do: route_call(target, __MODULE__, fun, args, on_error)
-
-  defp route_call(target, module, fun, args, on_error) do
-    :erpc.call(target, module, fun, args, Durations.get(:route_call_timeout_ms))
-  catch
-    kind, reason -> on_error.({:routed_call_failed, target, kind, reason})
   end
 
   @doc """
@@ -272,12 +254,11 @@ defmodule Flezha.Service.RelayManager do
       nodes ->
         target = Placement.pick_runner(nodes, relay.id)
 
-        route_call(
-          target,
-          :start_relay,
-          [namespace, relay, Keyword.put(opts, :routed, true)],
-          &{:error, &1}
-        )
+        Reads.on(target, __MODULE__, :start_relay, [
+          namespace,
+          relay,
+          Keyword.put(opts, :routed, true)
+        ])
     end
   end
 
@@ -637,14 +618,16 @@ defmodule Flezha.Service.RelayManager do
     cond do
       read =
           host.runner && host.node &&
-            route_call(host.node, FleetManager, fun, args ++ [host.runner], fn _ -> nil end) ->
+            Reads.on(host.node, FleetManager, fun, args ++ [host.runner],
+              on_error: fn _ -> nil end
+            ) ->
         read
 
       FleetManager.runners_for_factory(namespace, factory_id) != [] ->
         apply(FleetManager, fun, args)
 
       target = List.first(capable_nodes(namespace, factory_id)) ->
-        route_call(target, FleetManager, fun, args, &{:error, &1})
+        Reads.on(target, FleetManager, fun, args)
 
       true ->
         none

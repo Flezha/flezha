@@ -221,6 +221,7 @@ $ flz boot status
 ```
 
 ```output
+controller flezha@127.0.0.1
 readiness: ready
   met    boot_sequence_complete
   met    hubs_recovered

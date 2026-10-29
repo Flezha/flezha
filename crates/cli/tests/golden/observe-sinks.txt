@@ -1,4 +1,4 @@
-flz observe sinks - Every registered observability sink.
+flz observe sinks - Every controller's registered observability sinks, each with its `node`.
 
 Usage: flz observe sinks
 

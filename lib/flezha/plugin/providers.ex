@@ -16,6 +16,7 @@ defmodule Flezha.Plugin.Providers do
   spec decode.
   """
 
+  alias Flezha.Cluster.Reads
   alias Flezha.Config.Durations
   alias Flezha.Plugin.Installer
   alias Flezha.Plugin.Provider
@@ -128,16 +129,13 @@ defmodule Flezha.Plugin.Providers do
   """
   @spec lacking([node()], binary()) :: [node()]
   def lacking(peers, provider_id) do
-    answers =
-      :erpc.multicall(
-        peers,
-        __MODULE__,
-        :fetch,
-        [provider_id],
-        Durations.get(:plugin_peer_check_ms)
+    %{answers: answers} =
+      Reads.ask(peers, __MODULE__, :fetch, [provider_id],
+        timeout: Durations.get(:plugin_peer_check_ms)
       )
 
-    for {peer, answer} <- Enum.zip(peers, answers), not match?({:ok, {:ok, _}}, answer), do: peer
+    holding = for {peer, {:ok, _module}} <- answers, do: peer
+    Enum.reject(peers, &(&1 in holding))
   end
 
   defp provider_help(module, provider_id) do

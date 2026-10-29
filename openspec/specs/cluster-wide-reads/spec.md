@@ -159,3 +159,123 @@ finished relay on any controller.
 - **WHEN** a caller connected to controller A reads the namespace's relay info
 - **THEN** the finished relay is listed with `node` B
 
+### Requirement: Dead letters SHALL be read and acted on across the cluster
+
+`Dlq.list/2`, `Dlq.stats/1` and `Dlq.tasklets/2` SHALL answer the parked entries of every
+controller in the cluster answer shape, each row carrying the `node` whose store holds it.
+`Dlq.list/2` SHALL keep its order, nearest-to-expiry first, across controllers. `Dlq.get/2`,
+`Dlq.drop/2` and `Dlq.replay/2` SHALL find the entry on whichever controller holds it, judge the
+caller against the entry's namespace as they do today, and act on that controller. An entry no
+answering controller holds SHALL be refused as not found, naming the controllers that did not
+answer.
+
+#### Scenario: Dead letters parked on two controllers
+
+- **GIVEN** one entry parked on controller A and two on controller B
+- **WHEN** a caller connected to A lists the dead letters
+- **THEN** all three are listed, each with its node
+
+#### Scenario: Replaying an entry held by another controller
+
+- **GIVEN** an entry parked on controller B
+- **WHEN** a caller connected to A replays it
+- **THEN** B re-dispatches it through the ordinary input path and the entry is removed from B
+
+### Requirement: Schedules SHALL be read and acted on across the cluster
+
+`Schedule.list/1` SHALL answer the schedule definitions of every controller in the cluster
+answer shape, each row carrying the `node` that holds the definition and `fires_on`, the node
+whose job fires it. `Schedule.run/2` and
+`Schedule.remove/2` SHALL act on the controller that holds the named definition. `Schedule.add/2`
+SHALL refuse a name that any answering controller already holds, and SHALL refuse while a
+controller that might hold it does not answer, naming that controller.
+
+#### Scenario: A schedule added through another controller
+
+- **GIVEN** schedule `nightly` added through controller B
+- **WHEN** a caller connected to A lists the schedules
+- **THEN** `nightly` is listed with node B, the node firing it, its next fire and its last result
+
+#### Scenario: Removing a schedule held by another controller
+
+- **GIVEN** schedule `nightly` held by controller B
+- **WHEN** a caller connected to A removes it
+- **THEN** B forgets it and it stops firing
+
+#### Scenario: A duplicate name is refused
+
+- **GIVEN** schedule `nightly` held by controller B
+- **WHEN** a caller connected to A adds another schedule named `nightly`
+- **THEN** the add is refused naming the existing schedule and B, and nothing is stored on A
+
+### Requirement: An observability signal SHALL say where and when it was recorded
+
+Every signal answered by `Observability.query/2` or handed on by `Observability.tail/2` SHALL carry
+`node`, the controller that recorded it, and `at_us`, the wall-clock time in microseconds at which
+it was recorded, computed on that controller from its own clock. A consumer SHALL be able to order
+signals from several controllers by `at_us` without knowing any controller's monotonic clock.
+
+#### Scenario: Two controllers record signals
+
+- **GIVEN** controller A records a signal at 12:00:01 and controller B one at 12:00:02, wall clock
+- **WHEN** a caller queries the source
+- **THEN** both signals are answered, A's first, each carrying its node and its `at_us`
+
+### Requirement: Observability reads and switches SHALL cover every controller
+
+`Observability.query/2` SHALL read the ring buffer of every controller, filter each by the
+caller's namespace before the limit, merge the signals by `at_us` and answer the newest up to the
+limit, in the cluster answer shape. It SHALL take its lower bound as `since_us`, a wall-clock time
+each controller converts to its own clock. `Observability.list_sources/1` SHALL answer one row per
+source with its status on each controller and its recent activity summed across controllers.
+`Observability.list_sinks/1` SHALL answer each controller's sinks with their `node`.
+`Observability.enable_source/2` and `Observability.disable_source/2` SHALL apply the change on
+every controller and answer the controllers that applied it (`applied`) and `unreachable`.
+`Observability.tail/2` SHALL hand on the signals of every controller.
+
+#### Scenario: A source disabled across the cluster
+
+- **GIVEN** two controllers with source `flezha_relay` enabled
+- **WHEN** a caller connected to A disables it
+- **THEN** both controllers stop emitting it and the answer names both as applied
+
+#### Scenario: A tail sees another controller's signals
+
+- **GIVEN** a tail opened through controller A on source `flezha_relay`
+- **WHEN** a relay hosted on controller B starts
+- **THEN** the tail hands on B's `relay_started` signal carrying node B
+
+### Requirement: Quota usage SHALL be the cluster's total
+
+`Namespace.quota/3` SHALL answer the namespace's usage of a quota kind across the cluster: the
+`total`, the usage per controller in `by_node`, and `unreachable`. The relay count SHALL be read
+once from the namespace's relay registry and not summed per controller. Connected runners, Cells,
+mailbox bytes and disk bytes SHALL be summed across controllers.
+
+#### Scenario: Runners on two controllers
+
+- **GIVEN** namespace `trader` with two runners connected to A and one to B
+- **WHEN** a caller reads `trader`'s runner quota usage
+- **THEN** the total is 3, with A at 2 and B at 1
+
+### Requirement: Per-controller facts SHALL be answered for every controller
+
+`Controller.status/1`, `Controller.boot_status/1` and `Controller.mem_top/1` SHALL answer one row
+per controller, each with its `node`, in the cluster answer shape. `Controller.durability_breaches/1`,
+`Controller.durability_status/1` and `Fleet.installed_plugins/1` SHALL answer the rows of every
+controller, each with the `node` that holds it, in the cluster answer shape.
+`Fleet.providers/1` SHALL answer one row per provider with the `nodes` that can enable it, and the
+count of refused packages per controller (`refused`). `Fleet.provider/2` SHALL answer from a
+controller that holds the provider.
+
+#### Scenario: Plugin packages differ between controllers
+
+- **GIVEN** the `rabbitmq` package installed on controller A only
+- **WHEN** a caller connected to B lists the providers
+- **THEN** the `rabbitmq` providers are listed with `nodes: [A]`
+
+#### Scenario: Status of a two-controller cluster
+
+- **WHEN** a caller reads the controller status of a two-controller cluster
+- **THEN** two rows are answered, one per controller, each with its node
+

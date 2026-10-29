@@ -20,6 +20,11 @@ defmodule Flezha.Service.Dlq do
   only for a caller that is bound and whose role grants the action: an unbound
   caller is not told whether a reference exists.
 
+  Each controller parks into its own store. The listings answer every
+  controller's entries in the cluster answer shape (`rows`, each with its
+  `node`, and `unreachable`), and `show`, `replay` and `drop` find the entry
+  on whichever controller holds it and act there.
+
   """
 
   use Flezha.AuthZ.Verb
@@ -31,8 +36,9 @@ defmodule Flezha.Service.Dlq do
     doc: "The relay whose entries to read; every relay when absent."
   ]
 
-  alias Flezha.Config.Durations
   alias Flezha.AuthZ.Namespace
+  alias Flezha.Cluster.Reads
+  alias Flezha.Config.Durations
   alias Flezha.Dlq.Store
   alias Flezha.Relay.Lookup
   alias Flezha.Plugin.Host
@@ -51,16 +57,19 @@ defmodule Flezha.Service.Dlq do
 
   # ---------- Reads ----------
 
-  @doc "Parked entries, nearest-to-expiry first. A `relay_class` of `nil` reads every class."
-  @spec list(String.t() | nil, caller_context()) :: {:ok, [entry()]} | {:error, term()}
+  @doc """
+  Every controller's parked entries, nearest-to-expiry first, each with the
+  `node` holding it. A `relay_class` of `nil` reads every class.
+  """
+  @spec list(String.t() | nil, caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb list(relay_class, caller_context),
     verb: :dlq_list,
     row: &class_scope/1,
     args: [relay_class: @relay_class] do
-    {:ok, Store.list(relay_class)}
+    {:ok, Reads.controllers() |> Reads.rows(Store, :list, [relay_class]) |> by_expiry()}
   end
 
-  @doc "One parked entry, with its payload bytes if it carries any."
+  @doc "One parked entry, with the `node` holding it and its payload bytes if it carries any."
   @spec get(String.t(), caller_context()) ::
           {:ok, entry(), binary() | nil} | {:error, term()}
   verb get(entry_ref, caller_context),
@@ -71,20 +80,22 @@ defmodule Flezha.Service.Dlq do
     {:ok, located.entry, located.payload}
   end
 
-  @doc "Entry and byte counts per parked tasklet."
-  @spec stats(caller_context()) :: {:ok, [map()]} | {:error, term()}
+  @doc "Entry and byte counts per parked tasklet on every controller, each with its `node`."
+  @spec stats(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb stats(caller_context), verb: :dlq_stats do
-    {:ok, Store.stats()}
+    {:ok, Reads.rows(Reads.controllers(), Store, :stats, [])}
   end
 
-  @doc "The `{relay_class, tasklet_id}` pairs that hold parked entries."
-  @spec tasklets(String.t() | nil, caller_context()) ::
-          {:ok, [{String.t(), String.t()}]} | {:error, term()}
+  @doc """
+  The tasklets that hold parked entries on every controller, each as
+  `relay_class`, `tasklet_id` and `node`.
+  """
+  @spec tasklets(String.t() | nil, caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb tasklets(relay_class, caller_context),
     verb: :dlq_list,
     row: &class_scope/1,
     args: [relay_class: @relay_class] do
-    {:ok, Store.tasklets(relay_class)}
+    {:ok, Reads.rows(Reads.controllers(), __MODULE__, :local_tasklets, [relay_class])}
   end
 
   # ---------- Mutations ----------
@@ -97,8 +108,9 @@ defmodule Flezha.Service.Dlq do
   verb drop(entry_ref, caller_context),
     verb: :dlq_drop,
     row: &locate/1,
+    as: located,
     args: [entry_ref: @entry_ref] do
-    Store.drop(entry_ref)
+    Reads.on(located.node, Store, :drop, [entry_ref])
   end
 
   @doc """
@@ -115,27 +127,22 @@ defmodule Flezha.Service.Dlq do
     row: &locate/1,
     as: located,
     args: [entry_ref: @entry_ref] do
-    redrive(entry_ref, located.entry, located.payload)
+    Reads.on(located.node, __MODULE__, :redrive, [entry_ref, located.entry, located.payload])
   end
 
-  # ---------- The rows and the re-drive ----------
+  # ---------- The local halves ----------
 
-  defp locate([entry_ref]) do
-    case Store.get(entry_ref) do
-      {:ok, entry, payload} ->
-        {:ok, %{namespace: class_namespace(entry["relay_class"]), entry: entry, payload: payload}}
-
-      {:error, :not_found} ->
-        {:error, {:entry_not_found, entry_ref}}
-
-      {:error, _reason} = refused ->
-        refused
-    end
+  @doc false
+  # The local half of `tasklets/2`.
+  @spec local_tasklets(String.t() | nil) :: [map()]
+  def local_tasklets(relay_class) do
+    for {rc, sh} <- Store.tasklets(relay_class), do: %{relay_class: rc, tasklet_id: sh}
   end
 
-  defp class_scope([relay_class]), do: {:ok, %{namespace: class_namespace(relay_class)}}
-
-  defp redrive(entry_ref, entry, payload) do
+  @doc false
+  # The local half of `replay/2`, run on the controller holding the entry.
+  @spec redrive(String.t(), entry(), binary() | nil) :: {:ok, replay_outcome()} | {:error, term()}
+  def redrive(entry_ref, entry, payload) do
     with :ok <- replayable(entry_ref, payload),
          {:ok, overwatch} <- resolve_overwatch(entry["relay_class"]) do
       generation_before = entry["generation"] || 1
@@ -149,6 +156,31 @@ defmodule Flezha.Service.Dlq do
        end}
     end
   end
+
+  # ---------- The rows ----------
+
+  # The entry on whichever controller holds it. A reference no answering
+  # controller holds is not found, naming the controllers that did not answer.
+  defp locate([entry_ref]) do
+    with {:ok, _rc, _sh, _id} <- Store.parse_ref(entry_ref) do
+      case Reads.find(Reads.controllers(), Store, :get, [entry_ref]) do
+        {:ok, node, {:ok, entry, payload}} ->
+          namespace = class_namespace(entry["relay_class"])
+          entry = Map.put(entry, :node, node)
+          {:ok, %{namespace: namespace, entry: entry, payload: payload, node: node}}
+
+        {:error, []} ->
+          {:error, {:entry_not_found, entry_ref}}
+
+        {:error, unreachable} ->
+          {:error, {:entry_unreachable, entry_ref, unreachable}}
+      end
+    end
+  end
+
+  defp class_scope([relay_class]), do: {:ok, %{namespace: class_namespace(relay_class)}}
+
+  defp by_expiry(rows), do: Reads.newest(rows, & &1["ts_ms"], nil)
 
   # A verb that names a class is judged in that class's namespace; one that
   # names none reads across every namespace, which is a `_system` read.

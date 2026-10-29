@@ -12,14 +12,10 @@ defmodule Flezha.Observability.AuditLog.Codec do
   missing `:principal` renders as JSON `null`, not absent.
 
   `:ts` on a `Flezha.Observability.Signal` is `System.monotonic_time(:microsecond)`;
-  the `:ts_iso` field is computed via a process-wide cached
-  `System.time_offset/0` so wall-clock derivation is fast and does
-  not drift mid-run.
+  the `:ts_iso` field is its wall-clock time, `Signal.wall_us/1`.
   """
 
   alias Flezha.Observability.Signal
-
-  @offset_key {__MODULE__, :time_offset_native}
 
   @doc """
   Encode a `Signal.t()` to a binary line ending in `\\n`.
@@ -69,14 +65,11 @@ defmodule Flezha.Observability.AuditLog.Codec do
 
   @doc """
   Map a monotonic microsecond timestamp to ISO-8601 UTC with
-  millisecond precision. The monotonic→system offset is cached in the
-  process dictionary on first call to avoid mid-run drift.
+  millisecond precision, through `Signal.wall_us/1`.
   """
   @spec iso_from_monotonic(integer()) :: String.t()
   def iso_from_monotonic(ts_us) when is_integer(ts_us) do
-    offset_us = cached_offset_us()
-    system_us = ts_us + offset_us
-    {:ok, dt} = DateTime.from_unix(system_us, :microsecond)
+    {:ok, dt} = DateTime.from_unix(Signal.wall_us(ts_us), :microsecond)
 
     ms = div(elem(dt.microsecond, 0), 1_000)
     dt = %{dt | microsecond: {ms * 1_000, 3}}
@@ -84,19 +77,6 @@ defmodule Flezha.Observability.AuditLog.Codec do
 
     # DateTime.to_iso8601/1 emits `+00:00` for UTC; the spec requires `Z`.
     String.replace(iso, "+00:00", "Z")
-  end
-
-  defp cached_offset_us() do
-    case Process.get(@offset_key) do
-      nil ->
-        offset_native = System.time_offset()
-        offset_us = System.convert_time_unit(offset_native, :native, :microsecond)
-        Process.put(@offset_key, offset_us)
-        offset_us
-
-      cached ->
-        cached
-    end
   end
 
   defp build_caller(metadata) when is_map(metadata) do

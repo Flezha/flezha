@@ -42,7 +42,13 @@ flowchart LR
   row names its `node`, and a controller that does not answer in time is named in the
   answer's `unreachable` (the CLI prints it on a closing `Did not answer:` line) instead of
   failing the read. A steps instance's journal, inbox and Cells are read on the controller
-  that holds its state.
+  that holds its state. The same holds for dead letters, schedules, observability signals,
+  quota usage and each controller's own status: `flz dlq list` and `flz schedule list` show
+  every controller's entries with the one holding each, and `show`, `replay`, `drop`, `run`
+  and `remove` act where the entry is. A schedule name is unique across the cluster. A
+  signal carries the controller that recorded it and its wall-clock time (`at_us`), and
+  `flz controller status`, `flz controller mem-top` and `flz boot status` print one block per
+  controller.
 - **The state copy.** A durability backend (PostgreSQL, S3 or a path that outlives the node's
   disk) holds a copy of each controller's state, which a relay that moves is restored
   from. For a relay at `durable: local` the copy is made in the background, every

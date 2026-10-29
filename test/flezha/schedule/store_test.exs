@@ -60,7 +60,8 @@ defmodule Flezha.Schedule.StoreTest do
 
   test "a duplicate name is rejected" do
     assert {:ok, _} = Store.add(fields())
-    assert {:error, {:schedule_exists, _name}} = Store.add(fields())
+    assert {:error, {:schedule_exists, _name, holder}} = Store.add(fields())
+    assert holder == node()
   end
 
   test "validation failures store nothing and name the invalid field" do

@@ -1,11 +1,15 @@
 defmodule Flezha.Service.Cli.MemTop do
   @moduledoc """
-  `flz controller mem-top` — the text form of the controller's memory snapshot.
+  `flz controller mem-top` — the text form of each controller's memory snapshot.
   """
 
-  @doc "`flz controller mem-top`."
-  def mem_top(snapshot, _args, _opts) do
-    IO.puts("Controller memory snapshot — #{snapshot.captured_at} (#{snapshot.node})")
+  alias Flezha.Service.Cli.Context
+
+  @doc "`flz controller mem-top`: one snapshot per controller."
+  def mem_top(answer, _args, _opts), do: Context.per_controller(answer, &snapshot/1)
+
+  defp snapshot(snapshot) do
+    IO.puts("Controller memory snapshot — #{snapshot.captured_at}")
 
     Enum.each(
       [

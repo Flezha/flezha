@@ -289,12 +289,7 @@ defmodule Flezha.Observability.Export.OtlpCodec do
     end
   end
 
-  defp signal_time_ns(%Signal{ts: ts}) when is_integer(ts) do
-    # Signal.ts is a monotonic-time microsecond. Add the system time
-    # offset to convert to absolute Unix time (also in microseconds),
-    # then scale to nanoseconds for OTLP.
-    (ts + System.time_offset(:microsecond)) * 1_000
-  end
+  defp signal_time_ns(%Signal{ts: ts}) when is_integer(ts), do: Signal.wall_us(ts) * 1_000
 
   defp signal_time_ns(_), do: System.system_time(:nanosecond)
 

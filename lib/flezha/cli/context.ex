@@ -24,6 +24,33 @@ defmodule Flezha.Service.Cli.Context do
     IO.puts("  Did not answer: #{Enum.join(nodes, ", ")}")
   end
 
+  @doc "A cluster read's rows printed by `render`, then the closing unreachable line."
+  @spec rows(%{rows: [term()], unreachable: [node()]}, ([term()] -> term())) :: :ok
+  def rows(%{rows: rows, unreachable: unreachable}, render) do
+    render.(rows)
+    unreachable(unreachable)
+  end
+
+  @doc """
+  A read of each controller's own facts: one block per controller, each under
+  a line naming it and printed by `block`, then the closing unreachable line.
+  """
+  @spec per_controller(%{rows: [map()], unreachable: [node()]}, (map() -> term())) :: :ok
+  def per_controller(answer, block) do
+    rows(answer, fn rows ->
+      rows
+      |> Enum.intersperse(:gap)
+      |> Enum.each(fn
+        :gap ->
+          IO.puts("")
+
+        row ->
+          IO.puts("controller #{row.node}")
+          block.(row)
+      end)
+    end)
+  end
+
   @doc """
   The caller context a verb's trailing options describe. Identity comes ONLY
   from a verified token (`flz --token` / `FLEZHA_TOKEN`, threaded through as

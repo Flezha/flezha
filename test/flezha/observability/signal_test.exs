@@ -148,4 +148,23 @@ defmodule Flezha.Observability.SignalTest do
       end
     end
   end
+
+  describe "located/1" do
+    test "a signal is built unlocated and located with this node and its wall-clock time" do
+      signal = Signal.new(%{kind: :event, source: :s, name: :n})
+      assert %Signal{node: nil, at_us: nil} = signal
+
+      before = System.os_time(:microsecond)
+      located = Signal.located(signal)
+
+      assert located.node == node()
+      assert located.at_us in (before - 1_000_000)..(System.os_time(:microsecond) + 1_000_000)
+      assert located.at_us == Signal.wall_us(signal.ts)
+    end
+
+    test "monotonic_us undoes wall_us" do
+      ts = System.monotonic_time(:microsecond)
+      assert ts |> Signal.wall_us() |> Signal.monotonic_us() == ts
+    end
+  end
 end

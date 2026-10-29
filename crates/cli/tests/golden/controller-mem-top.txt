@@ -1,4 +1,4 @@
-flz controller mem-top - One snapshot of the controller's memory hot spots.
+flz controller mem-top - One snapshot of each controller's memory hot spots, one row per controller.
 
 Usage: flz controller mem-top
 

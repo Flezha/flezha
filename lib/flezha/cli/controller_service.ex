@@ -51,28 +51,28 @@ defmodule Flezha.Service.Controller do
   # ---------- Reads ----------
 
   @doc """
-  The readiness verdict and every precondition behind it. It also answers the
-  recovery state and persistent-registry row count of each running namespace the
+  Each controller's readiness verdict and every precondition behind it, one
+  row per controller. Each also answers the recovery state and
+  persistent-registry row count of each namespace running there that the
   caller may see (`Flezha.AuthZ.Namespace.visible/3`). The verb is public, so a
-  caller with no identity gets the verdict and only `_system`'s row. Answers at
-  once; `boot_await/2` waits.
+  caller with no identity gets the verdicts and only `_system`'s rows. Answers
+  at once; `boot_await/2` waits, for this controller.
   """
-  @spec boot_status(caller_context()) :: {:ok, map()} | {:error, term()}
+  @spec boot_status(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb boot_status(caller_context) do
-    {verdict, rows} = Readiness.verdict()
+    %{rows: rows} = answer = Reads.rows(Reads.controllers(), __MODULE__, :local_boot_status, [])
 
-    namespaces =
-      for namespace <- Namespace.visible(HubManager.get_running_namespaces(), caller_context) do
-        hub_id = Identificator.hub(namespace)
+    visible =
+      rows
+      |> Enum.flat_map(fn row -> Enum.map(row.namespaces, & &1.namespace) end)
+      |> Namespace.visible(caller_context)
 
-        %{
-          namespace: namespace,
-          recovery_state: safe(fn -> Recovery.recovery_state(hub_id) end, :unknown),
-          registry_rows: safe(fn -> hub_id |> ProcessHub.registry_dump() |> Enum.count() end, 0)
-        }
-      end
+    rows =
+      Enum.map(rows, fn row ->
+        %{row | namespaces: Enum.filter(row.namespaces, &(&1.namespace in visible))}
+      end)
 
-    {:ok, %{readiness: verdict, preconditions: rows, namespaces: namespaces}}
+    {:ok, %{answer | rows: rows}}
   end
 
   @doc """
@@ -96,31 +96,22 @@ defmodule Flezha.Service.Controller do
   end
 
   @doc """
-  The controller's status: node, clock, shutdown and durability. In full: its
-  node and its monotonic clock, its shutdown state and settings, its durability,
-  its state root and the folder file plugins may use.
+  Each controller's status, one row per controller: node, clock, shutdown and
+  durability. In full: its node and its monotonic clock, its shutdown state and
+  settings, its durability, its state root and the folder file plugins may use.
 
   `monotonic_us` is the node's `System.monotonic_time(:microsecond)`, the clock
-  observability signals are stamped with, so a consumer on another node can age
-  a signal against it.
+  observability signals are stamped with.
   """
-  @spec status(caller_context()) :: {:ok, map()} | {:error, term()}
+  @spec status(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb status(caller_context), verb: :controller_status do
-    {:ok,
-     shutdown_snapshot()
-     |> Map.merge(durability_snapshot())
-     |> Map.merge(%{
-       node: node(),
-       monotonic_us: System.monotonic_time(:microsecond),
-       state_root: Paths.state_root(),
-       file_plugin_root: Storage.Config.shown_root()
-     })}
+    {:ok, Reads.rows(Reads.controllers(), __MODULE__, :local_status, [])}
   end
 
-  @doc "One snapshot of the controller's memory hot spots."
-  @spec mem_top(caller_context()) :: {:ok, map()} | {:error, term()}
+  @doc "One snapshot of each controller's memory hot spots, one row per controller."
+  @spec mem_top(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb mem_top(caller_context), verb: :controller_mem_top do
-    {:ok, MemTop.snapshot()}
+    {:ok, Reads.rows(Reads.controllers(), MemTop, :snapshot, [])}
   end
 
   @doc """
@@ -192,16 +183,19 @@ defmodule Flezha.Service.Controller do
      }}
   end
 
-  @doc "The durability breaches recorded since the controller started."
-  @spec durability_breaches(caller_context()) :: {:ok, term()} | {:error, term()}
+  @doc """
+  The durability breaches every controller recorded since it started, each
+  with the `node` that recorded it.
+  """
+  @spec durability_breaches(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb durability_breaches(caller_context), verb: :controller_status do
-    {:ok, DurabilityTier.breaches()}
+    {:ok, Reads.rows(Reads.controllers(), DurabilityTier, :breaches, [])}
   end
 
-  @doc "The durability shipper's own status."
-  @spec durability_status(caller_context()) :: {:ok, term()} | {:error, term()}
+  @doc "Every controller's durability shipper status, each row with its `node`."
+  @spec durability_status(caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
   verb durability_status(caller_context), verb: :controller_status do
-    {:ok, DurabilityTier.status()}
+    {:ok, Reads.rows(Reads.controllers(), DurabilityTier, :status, [])}
   end
 
   @doc """
@@ -256,6 +250,40 @@ defmodule Flezha.Service.Controller do
     emit.({:progress, event, measurements, metadata})
   rescue
     _ -> :ok
+  end
+
+  @doc false
+  # The local half of `boot_status/1`: every namespace running here.
+  @spec local_boot_status() :: map()
+  def local_boot_status do
+    {verdict, rows} = Readiness.verdict()
+
+    namespaces =
+      for namespace <- HubManager.get_running_namespaces() do
+        hub_id = Identificator.hub(namespace)
+
+        %{
+          namespace: namespace,
+          recovery_state: safe(fn -> Recovery.recovery_state(hub_id) end, :unknown),
+          registry_rows: safe(fn -> hub_id |> ProcessHub.registry_dump() |> Enum.count() end, 0)
+        }
+      end
+
+    %{readiness: verdict, preconditions: rows, namespaces: namespaces}
+  end
+
+  @doc false
+  # The local half of `status/1`.
+  @spec local_status() :: map()
+  def local_status do
+    shutdown_snapshot()
+    |> Map.merge(durability_snapshot())
+    |> Map.merge(%{
+      node: node(),
+      monotonic_us: System.monotonic_time(:microsecond),
+      state_root: Paths.state_root(),
+      file_plugin_root: Storage.Config.shown_root()
+    })
   end
 
   @doc false

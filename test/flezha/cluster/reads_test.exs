@@ -48,4 +48,49 @@ defmodule Flezha.Cluster.ReadsTest do
     assert Reads.find([node()], __MODULE__, :answer, [nil]) == {:error, []}
     assert Reads.find([node()], __MODULE__, :raise_here, []) == {:error, [node()]}
   end
+
+  test "find reads a plain lookup's :error and {:error, _} as not held" do
+    for absent <- [false, :error, {:error, :not_found}] do
+      assert Reads.find([node()], __MODULE__, :answer, [absent]) == {:error, []}
+    end
+
+    assert Reads.find([node()], __MODULE__, :answer, [{:ok, 1}]) == {:ok, node(), {:ok, 1}}
+  end
+
+  test "a node answering one map gives one row" do
+    assert Reads.rows([node()], __MODULE__, :answer, [%{up: true}]) ==
+             %{rows: [%{up: true, node: node()}], unreachable: []}
+  end
+
+  test "newest merges oldest first and keeps the newest limit" do
+    answer = %{rows: [%{at: 3}, %{at: 1}, %{at: 2}], unreachable: [:gone]}
+
+    assert Reads.newest(answer, & &1.at, 2) == %{rows: [%{at: 2}, %{at: 3}], unreachable: [:gone]}
+    assert Reads.newest(answer, & &1.at, nil).rows == [%{at: 1}, %{at: 2}, %{at: 3}]
+  end
+
+  test "grouped joins the rows of one key into one, sorted by key" do
+    answer = %{rows: [%{id: :b, n: 1}, %{id: :a, n: 2}, %{id: :b, n: 3}], unreachable: []}
+
+    merged =
+      Reads.grouped(
+        answer,
+        & &1.id,
+        &%{id: hd(&1).id, n: Enum.sum(Enum.map(&1, fn r -> r.n end))}
+      )
+
+    assert merged.rows == [%{id: :a, n: 2}, %{id: :b, n: 4}]
+  end
+
+  test "on runs in place here, and a peer that cannot be reached goes through on_error" do
+    assert Reads.on(node(), __MODULE__, :answer, [:here]) == :here
+
+    assert {:error, {:routed_call_failed, :"nowhere@127.0.0.1", :error, _}} =
+             Reads.on(:"nowhere@127.0.0.1", __MODULE__, :answer, [:here])
+
+    assert Reads.on(:"nowhere@127.0.0.1", __MODULE__, :answer, [:here],
+             on_error: fn _ -> :mapped end
+           ) ==
+             :mapped
+  end
 end

@@ -8,9 +8,16 @@ defmodule Flezha.Observability.Signal do
   tags, `:source` and `:name` the identity, `:ts` the emit time as
   `System.monotonic_time(:microsecond)`.
 
+  `:node` and `:at_us` say where and when the signal was recorded: the
+  controller, and the wall-clock time in microseconds on that controller's
+  clock. Both are `nil` until `located/1` sets them where a signal leaves its
+  node, so the sinks inside the controller pay nothing for them.
+
   Construct via `new/1`, which validates the field shapes and fills
   `:ts` when it is omitted.
   """
+
+  @offset_key {__MODULE__, :time_offset_us}
 
   @enforce_keys [:kind, :source, :name]
   defstruct [
@@ -18,6 +25,8 @@ defmodule Flezha.Observability.Signal do
     :source,
     :name,
     :ts,
+    :node,
+    :at_us,
     measurements: %{},
     metadata: %{}
   ]
@@ -32,7 +41,9 @@ defmodule Flezha.Observability.Signal do
           name: atom(),
           measurements: map(),
           metadata: map(),
-          ts: integer()
+          ts: integer(),
+          node: node() | nil,
+          at_us: integer() | nil
         }
 
   @doc """
@@ -72,6 +83,30 @@ defmodule Flezha.Observability.Signal do
       metadata: metadata,
       ts: ts
     }
+  end
+
+  @doc "`signal` with this node and its wall-clock `at_us`, as it leaves this node."
+  @spec located(t()) :: t()
+  def located(%__MODULE__{ts: ts} = signal), do: %{signal | node: node(), at_us: wall_us(ts)}
+
+  @doc """
+  The wall-clock time, in microseconds since the Unix epoch, of the monotonic
+  microsecond time `ts` on this node. The time offset is read once per process
+  and kept, so every conversion a process makes agrees and none drifts mid-run.
+  """
+  @spec wall_us(integer()) :: integer()
+  def wall_us(ts) when is_integer(ts), do: ts + offset_us()
+
+  @doc "The monotonic microsecond time on this node of the wall-clock time `at_us`: `wall_us/1` undone."
+  @spec monotonic_us(integer()) :: integer()
+  def monotonic_us(at_us) when is_integer(at_us), do: at_us - offset_us()
+
+  defp offset_us() do
+    with nil <- Process.get(@offset_key) do
+      offset = System.time_offset(:microsecond)
+      Process.put(@offset_key, offset)
+      offset
+    end
   end
 
   @doc """

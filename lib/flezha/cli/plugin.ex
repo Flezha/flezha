@@ -5,6 +5,8 @@ defmodule Flezha.Service.Cli.Plugin do
   packages.
   """
 
+  alias Flezha.Service.Cli.Context
+
   @doc "`flz plugin enable`."
   def enable(enabled, _args, _opts) do
     case enabled.outcome do
@@ -81,8 +83,10 @@ defmodule Flezha.Service.Cli.Plugin do
   end
 
   @doc "`flz plugin list --installed`."
-  def installed([], _args, _opts), do: IO.puts("No plugin packages installed.")
-  def installed(rows, _args, _opts), do: Enum.each(rows, &IO.puts(installed_line(&1)))
+  def installed(answer, _args, _opts), do: Context.rows(answer, &installed_lines/1)
+
+  defp installed_lines([]), do: IO.puts("No plugin packages installed.")
+  defp installed_lines(rows), do: Enum.each(rows, &IO.puts("#{&1.node}  #{installed_line(&1)}"))
 
   defp installed_line(%{status: :loaded} = row),
     do: "#{row.id} #{row.version}  loaded  providers: #{Enum.join(row.providers, ", ")}"
@@ -102,7 +106,7 @@ defmodule Flezha.Service.Cli.Plugin do
     do: "#{row.id} #{row.version}  removed  unloads at next restart"
 
   @doc "`flz plugin list --providers`."
-  def providers(%{providers: providers, refused: refused}, _args, _opts) do
+  def providers(%{rows: providers, refused: refused, unreachable: unreachable}, _args, _opts) do
     IO.puts("Available Plugin Providers:")
     IO.puts("==========================")
 
@@ -110,14 +114,19 @@ defmodule Flezha.Service.Cli.Plugin do
       IO.puts("  #{provider.id}")
       IO.puts("    Module: #{provider.module}")
       if provider.type, do: IO.puts("    Type: #{provider.type}")
+      IO.puts("    Controllers: #{Enum.join(provider.nodes, ", ")}")
       IO.puts("")
     end)
 
     IO.puts("Use 'flz plugin help <provider_id>' for detailed help on a specific plugin.")
 
-    if refused > 0,
-      do:
-        IO.puts("#{refused} plugin package(s) were refused at boot: flz plugin list --installed")
+    for {node, count} <- refused, count > 0 do
+      IO.puts(
+        "#{count} plugin package(s) were refused at boot on #{node}: flz plugin list --installed"
+      )
+    end
+
+    Context.unreachable(unreachable)
   end
 
   @doc "`flz plugin help <provider_id>`."

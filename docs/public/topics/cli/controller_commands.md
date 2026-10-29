@@ -22,14 +22,15 @@ reference](command_reference.md) lists each with its usage line.
 `daemon`, `attached_iex` or `daemon_iex`, each described by
 `flz controller start --help`.
 
-The controller's settings, as the controller of Up and running printed them:
+Each controller's settings, one block per controller of the cluster, as the controller of
+Up and running printed them:
 
 ```sh
 $ flz controller status
 ```
 
 ```output
-node:                          flezha@127.0.0.1
+controller flezha@127.0.0.1
 shutdown_in_progress:          false
 shutdown_phase:                nil
 signal_handler_status:         ok
@@ -83,6 +84,7 @@ $ flz boot status
 ```
 
 ```output
+controller flezha@127.0.0.1
 readiness: ready
   met    boot_sequence_complete
   met    hubs_recovered
@@ -181,17 +183,20 @@ $ flz observe sources
 
 ```output
 name	status	kinds	budget	title	description
-flezha_http_push	active	metric,event	1000	HTTP push plugin	The plugin that sends a relay's output to a URL.
-flezha_plugin	active	event	1000	Plugin lifecycle	Plugins moving between the phases of their life.
-flezha_dlq	active	metric	1000	Dead letters	Messages that failed and were set aside in dead-letter queues, and those that expired.
-flezha_correction	active	event	1000	Refused corrections	Corrections to a relay that the controller would not apply.
-flezha_transport	active	metric	40	Message flow (low-level)	Runner connections and the running totals of messages moving between runners and relays.
+flezha_http_push	flezha@127.0.0.1=active	metric,event	1000	HTTP push plugin	The plugin that sends a relay's output to a URL.
+flezha_plugin	flezha@127.0.0.1=active	event	1000	Plugin lifecycle	Plugins moving between the phases of their life.
+flezha_dlq	flezha@127.0.0.1=active	metric	1000	Dead letters	Messages that failed and were set aside in dead-letter queues, and those that expired.
+flezha_correction	flezha@127.0.0.1=active	event	1000	Refused corrections	Corrections to a relay that the controller would not apply.
+flezha_transport	flezha@127.0.0.1=active	metric	40	Message flow (low-level)	Runner connections and the running totals of messages moving between runners and relays.
 ...
 ```
 
-`--json` answers each source with its `area`, every signal it can emit (`signals`), and
-what it said recently (`recent`): per signal name, how many the ring buffer holds within
-its window and how long ago the newest one arrived. Each signal carries its kind, its
+The list covers every controller of the cluster: `status` is the source's status on each
+controller, and `flz observe enable` and `disable` switch a source on every controller,
+naming the ones that applied it. `--json` answers each source with its `area`, every signal
+it can emit (`signals`), and what it said recently (`recent`): per signal name, how many
+the controllers' ring buffers hold within their window and how long ago the newest one
+arrived. Each signal carries its kind, its
 meaning (`description`), a plain `label`, an `outcome` (`normal`, or `failure` for a
 signal that reports something going wrong) and, for the signals that fire in normal
 operation, a `sentence` template such as `"{runner} connected to {namespace}"`, whose

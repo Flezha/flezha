@@ -126,10 +126,7 @@ defmodule Flezha.Service.Cli.Listing do
   # table. Only the two texts and the columns differ, so the shape is written
   # once and each listing declares its own. A cluster read closes with the
   # controllers that did not answer.
-  defp table(%{rows: rows, unreachable: unreachable}, spec) do
-    table(rows, spec)
-    Context.unreachable(unreachable)
-  end
+  defp table(%{rows: _} = answer, spec), do: Context.rows(answer, &table(&1, spec))
 
   defp table([], %{empty: empty}), do: IO.puts(empty)
 

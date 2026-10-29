@@ -1,4 +1,4 @@
-flz observe disable - Disable an observability source.
+flz observe disable - Disable an observability source on every controller.
 
 Usage: flz observe disable <source>
 

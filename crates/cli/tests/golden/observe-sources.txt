@@ -1,4 +1,4 @@
-flz observe sources - Every registered observability source and what it said recently.
+flz observe sources - Every observability source registered on any controller and what it said recently, one row per source.
 
 Usage: flz observe sources
 

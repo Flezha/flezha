@@ -535,10 +535,11 @@ pub(crate) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
 /// Whether a controller is serving on this node — `flz reset` and
 /// `flz auth rebootstrap` both refuse to run while one is.
 ///
-/// A `boot_status` request — a liveness read served to any caller — that
-/// exits 0 with a non-empty answer inside the timeout means up; every other
-/// outcome (no socket, a refused connection, no acceptance, the timeout) means
-/// not up, so the caller proceeds. `FLEZHA_RESET_PROBE_OVERRIDE`
+/// A `boot_await` request that does not wait, a readiness read of this
+/// controller alone served to any caller, answered with any exit code inside
+/// the timeout means up: a controller still starting answers not ready, and is
+/// up all the same. Every other outcome (no socket, a refused connection, no
+/// acceptance, the timeout) means not up, so the caller proceeds. `FLEZHA_RESET_PROBE_OVERRIDE`
 /// short-circuits it to `up` or `down` for both callers' tests.
 pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
     if let Some(v) = flz_transport::env::env_raw("FLEZHA_RESET_PROBE_OVERRIDE") {
@@ -551,18 +552,18 @@ pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
 
     let timeout = Duration::from_millis(probe_timeout_ms.max(1));
     let deadline = Instant::now() + timeout;
-    let probe = cli_request("Controller.boot_status", &[], Map::new(), None);
+    let probe = cli_request("Controller.boot_await", &[json!(0)], Map::new(), None);
     let Ok(stream) = open(&probe, timeout) else {
         return false;
     };
 
-    let mut status = Vec::new();
+    let mut verdict = Vec::new();
     let ended = answer(
         stream,
-        Out::Capture(&mut status),
+        Out::Capture(&mut verdict),
         Some(&|| Instant::now() >= deadline),
     );
-    matches!(ended, Ended::Exit(0)) && !String::from_utf8_lossy(&status).trim().is_empty()
+    matches!(ended, Ended::Exit(_))
 }
 
 #[cfg(test)]

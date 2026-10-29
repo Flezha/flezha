@@ -1,4 +1,4 @@
-flz observe enable - Enable an observability source.
+flz observe enable - Enable an observability source on every controller.
 
 Usage: flz observe enable <source>
 

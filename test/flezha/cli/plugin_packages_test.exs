@@ -58,7 +58,7 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
     assert text =~ "(plugin.runtime_mismatch)"
 
     json = capture_io(fn -> Cli.call("Fleet.installed_plugins", "[]", output: "json") end)
-    rows = Map.new(Jason.decode!(json), &{&1["id"], &1})
+    rows = Map.new(Jason.decode!(json)["rows"], &{&1["id"], &1})
 
     assert %{
              "status" => "loaded",
@@ -79,7 +79,9 @@ defmodule Flezha.Service.Cli.PluginPackagesTest do
     out = capture_io(fn -> Cli.call("Fleet.providers", "[]", []) end)
     assert out =~ "example_stamp"
     refute out =~ "flz_refused_stamp"
-    assert out =~ "1 plugin package(s) were refused at boot: flz plugin list --installed"
+
+    assert out =~
+             "1 plugin package(s) were refused at boot on #{node()}: flz plugin list --installed"
   end
 
   test "enabling a refused package's provider names the package and its refusal" do

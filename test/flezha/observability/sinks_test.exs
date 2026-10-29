@@ -80,7 +80,7 @@ defmodule Flezha.Observability.IntegrationTest do
     assert length(pubsub_first) == 100
 
     # Phase 2: disable. Emit 100 more, none should reach observers.
-    :ok = ObsSvc.disable_source(src, %{source: :internal})
+    {:ok, %{applied: [_]}} = ObsSvc.disable_source(src, %{source: :internal})
 
     Enum.each(1..100, fn i ->
       Bus.emit(
@@ -102,7 +102,7 @@ defmodule Flezha.Observability.IntegrationTest do
     assert pubsub_second == []
 
     # Phase 3: re-enable, emit 100 more, expect them again.
-    :ok = ObsSvc.enable_source(src, %{source: :internal})
+    {:ok, %{applied: [_]}} = ObsSvc.enable_source(src, %{source: :internal})
 
     Enum.each(1..100, fn i ->
       Bus.emit(

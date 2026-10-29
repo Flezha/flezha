@@ -65,9 +65,9 @@ The command SHALL be idempotent: a missing root directory is success, not error.
 
 `flz reset` SHALL detect a running Controller and refuse to act, exiting with the error `reset.controller_running` (class `conflict`, exit 6) whose hint is `flz controller stop`.
 
-Detection SHALL send `Controller.boot_status` as a request over the control socket (the same path used by `flz controller stop`/`status`). The probe is bounded by `--probe-timeout-ms` (default `1000`).
+Detection SHALL send `Controller.boot_await` with a timeout of `0` as a request over the control socket (the same path used by `flz controller stop`/`status`): a readiness read this Controller answers alone, without asking its peers. The probe is bounded by `--probe-timeout-ms` (default `1000`).
 
-The probe SHALL be considered "Controller is up" when the request is accepted and answers exit code 0 with a non-empty status. Any other outcome (no socket, a refused connection, no acceptance, a non-zero code, the timeout) SHALL be treated as "Controller is not up" and the reset SHALL proceed.
+The probe SHALL be considered "Controller is up" when the request is accepted and answers with any exit code: a Controller still starting answers that it is not ready, and is up. Any other outcome (no socket, a refused connection, no acceptance, the timeout) SHALL be treated as "Controller is not up" and the reset SHALL proceed.
 
 This guard answers about **this** Controller's node, and SHALL NOT be widened to cover a Controller colocated on the same machine: a peer is a different node with its own durable state, and its state is not this reset's to protect. What the peer shares is the socket directory, and that is guarded where it is touched.
 

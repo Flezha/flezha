@@ -25,6 +25,28 @@ v0.1.0-alpha.1 pre-release.
   `Controller.cluster_status` no longer answers `leader`, `is_leader` or
   `local_node`, and its node rows no `leader`; it answers `answered_by`.
   `Fleet.factories` rows gain `nodes`.
+- The operational reads answer for the whole cluster too
+  ([Clustering](docs/public/topics/deploying/clustering.md#how-it-works)).
+  `Dlq.list`, `Dlq.stats` and `Dlq.tasklets` answer every controller's dead
+  letters as `{rows, unreachable}`, each row with its `node`, and
+  `Dlq.tasklets` rows are maps; `Dlq.get`, `Dlq.drop` and `Dlq.replay` act on
+  the entry wherever it is parked. `Schedule.list` answers `{rows,
+  unreachable}`, each row with the `node` holding the definition and
+  `fires_on`, the node whose job fires it (formerly `node`); `Schedule.run` and
+  `Schedule.remove` act on the controller holding it, and `Schedule.add`
+  refuses a name any controller holds, naming that controller
+  (`schedule.already_exists` gains `node`). `Observability.query` takes
+  `since_us`, a wall-clock bound in microseconds, instead of `from_ts`, and
+  answers `{rows, unreachable}` merged across controllers; every signal it or
+  a tail hands on carries `node` and `at_us`. `Observability.list_sources`
+  answers one row per source with `statuses` per controller in place of
+  `status`, `list_sinks` answers `{rows, unreachable}`, and `enable_source` and
+  `disable_source` apply on every controller and answer `{applied,
+  unreachable}`. `Namespace.quota` answers `{total, by_node, unreachable}`.
+  `Controller.status`, `boot_status`, `mem_top`, `durability_breaches`,
+  `durability_status` and `Fleet.installed_plugins` answer `{rows,
+  unreachable}`; `Fleet.providers` answers `{rows, refused, unreachable}`,
+  each provider with its `nodes` and `refused` per controller.
 - Relays move between controllers by cold swap by default: a relay stops on the
   controller it leaves before it starts on the new one, which copies its saved
   state first, so only one copy ever runs. During the move the relay answers
