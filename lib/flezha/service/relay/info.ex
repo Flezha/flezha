@@ -26,9 +26,8 @@ defmodule Flezha.Service.Relay.Info do
   alias Flezha.Relay.KeyGroup
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
-  alias Flezha.State.Completion
+  alias Flezha.Service.Steps
   alias Flezha.State.Paths
-  alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
 
   @sorts [id: :asc, severity: :asc]
@@ -275,9 +274,9 @@ defmodule Flezha.Service.Relay.Info do
         {:live, state}
 
       {:error, reason} when elem(reason, 0) in [:relay_not_found, :hub_down] ->
-        case Reads.find(Reads.controllers(), __MODULE__, :local_finished, [namespace, relay_id]) do
-          {:ok, _node, row} -> {:finished, row}
-          {:error, _unreachable} -> {:error, {:relay_not_found, namespace, relay_id}}
+        case Steps.outcome(namespace, relay_id) do
+          {:ok, record} -> {:finished, finished(relay_id, record)}
+          :error -> {:error, {:relay_not_found, namespace, relay_id}}
         end
 
       # A bare reason is the bounded call's refusal of a pid the hub resolved.
@@ -342,42 +341,16 @@ defmodule Flezha.Service.Relay.Info do
   end
 
   @doc false
-  # The local half of `report/1`'s finished relays: this node's completion
-  # records still inside their retention window, of classes `live_ids` does not
-  # name. A class dir is named for its relay's id.
+  # The local half of `report/1`'s finished relays: this node's kept relays
+  # still inside their retention window, of classes `live_ids` does not name.
+  # A class dir is named for its relay's id.
   @spec local_retained(String.t(), [String.t()]) :: [map()]
   def local_retained(namespace, live_ids) do
     for relay_id <- Paths.relay_classes(),
         relay_id not in live_ids,
-        row = local_finished(namespace, relay_id),
-        row != nil,
-        do: row
-  end
-
-  @doc false
-  # The local half of `relay/2`'s lookup of a finished relay, with this `node`.
-  @spec local_finished(String.t(), String.t()) :: map() | nil
-  def local_finished(namespace, relay_id) do
-    case retained_record(namespace, relay_id, System.system_time(:second)) do
-      nil -> nil
-      record -> relay_id |> finished(record) |> Map.put(:node, node())
-    end
-  end
-
-  # A finished relay's class dir is named for its id, and the window is the
-  # class's, the one `Retention` sweeps by.
-  defp retained_record(namespace, relay_class, now) do
-    case Completion.read(relay_class) do
-      {:ok, %{namespace: ^namespace, finished_at: finished_at} = record}
-      when is_integer(finished_at) ->
-        expires_at =
-          finished_at + PersistenceResolver.completed_retention_hours(relay_class) * 3600
-
-        if expires_at >= now, do: Map.put(record, :expires_at, expires_at)
-
-      _ ->
-        nil
-    end
+        record = Steps.local_kept(namespace, relay_id),
+        record != nil,
+        do: finished(relay_id, record)
   end
 
   defp finished(relay_id, record) do
@@ -390,8 +363,10 @@ defmodule Flezha.Service.Relay.Info do
       error: nil_if_empty(Map.get(record, :error)),
       result: encode_result(Map.get(record, :result)),
       finished_at: Map.get(record, :finished_at),
-      expires_at: Map.get(record, :expires_at)
+      expires_at: Map.get(record, :expires_at),
+      state_kept: Map.get(record, :state_kept, false)
     }
+    |> Map.merge(Map.take(record, [:node]))
   end
 
   defp group(report) do

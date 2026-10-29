@@ -17,6 +17,8 @@ defmodule Flezha.Service.RelayManager.Spawn do
   alias Flezha.State.Completion
   alias Flezha.State.InputLog
 
+  require Logger
+
   @typedoc """
   How a request resolved: `:spawned` or `:delivered`, or the refusal that
   stopped it, carrying the code a `flz relay start` would get. A call's
@@ -114,23 +116,63 @@ defmodule Flezha.Service.RelayManager.Spawn do
 
   # What a run of the same invocation already got, for a tasklet's request: a
   # generated id is the identity's, so a repeat finds its own instance, and a
-  # named instance keeps the identity with the payload it took. Otherwise the
-  # id to ask for, and `:repeat` when a generated id's start may find it taken.
+  # named instance keeps the identity with the payload it took. An instance that
+  # has ended is found in its kept record or in the relay history's dedup
+  # window. Otherwise the id to ask for, and `:repeat` when a generated id's
+  # start may find it taken.
   defp earlier_answer(_namespace, instance_id, _factory_id, ""), do: {:ask, instance_id, nil}
 
   defp earlier_answer(namespace, "", factory_id, identity) do
     id = Identificator.mint(:relay, factory_id, seed: identity)
 
-    if RelayManager.exist?(namespace, id) or Completion.exists?(id),
-      do: {:answered, {:spawned, id}},
-      else: {:ask, id, :repeat}
+    if RelayManager.exist?(namespace, id) or Completion.exists?(id) do
+      {:answered, {:spawned, id}}
+    else
+      with :none <- history(namespace, {:relay, id}, id), do: {:ask, id, :repeat}
+    end
   end
 
-  defp earlier_answer(_namespace, instance_id, _factory_id, identity) do
+  defp earlier_answer(namespace, instance_id, _factory_id, identity) do
     case InputLog.msg_offset(instance_id, identity) do
-      0 -> {:answered, {:spawned, instance_id}}
-      offset when is_integer(offset) -> {:answered, {:delivered, instance_id}}
-      nil -> {:ask, instance_id, nil}
+      0 ->
+        {:answered, {:spawned, instance_id}}
+
+      offset when is_integer(offset) ->
+        {:answered, {:delivered, instance_id}}
+
+      nil ->
+        with :none <- history(namespace, {:spawn_identity, identity}, instance_id),
+             do: {:ask, instance_id, nil}
+    end
+  end
+
+  # Whether the relay history saw `instance_id` under `key`: a lookup it cannot
+  # finish is refused, and one it does not keep, or another id, is no answer.
+  defp history(namespace, key, instance_id) do
+    case RelayHistory.seen(namespace, key) do
+      {_event, ^instance_id, _ts} ->
+        {:answered, {:spawned, instance_id}}
+
+      {:unknown, nodes} ->
+        {:answered, {refused({:history_unreachable, nodes}), instance_id}}
+
+      :disabled ->
+        warn_undeduplicated()
+        :none
+
+      _none_or_another ->
+        :none
+    end
+  end
+
+  defp warn_undeduplicated() do
+    unless :persistent_term.get({__MODULE__, :warned}, false) do
+      :persistent_term.put({__MODULE__, :warned}, true)
+
+      Logger.warning(
+        "[spawn] the relay history is off, so a spawn repeated after its instance ended " <>
+          "is not deduplicated"
+      )
     end
   end
 

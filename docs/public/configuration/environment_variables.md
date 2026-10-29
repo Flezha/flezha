@@ -83,7 +83,8 @@ Notes on the area's variables:
 - `FLEZHA_EFFECT_MAX_BYTES`: The largest `ctx.effect` result the controller keeps; runners read the same variable ([recorded effects](../topics/core/effectively_once.md#recorded-effects)). Default: `4194304` (4 MiB).
 - `FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`: A floor; a declared `correction_ms` raises its own hold above it.
 - `FLEZHA_INPUT_SILENCE_TIMEOUT_MS`: A flow or awake steps relay that produced output and then receives no Change for this long logs one warning and emits `[:flezha, :state, :input_silence]`. Set it on a controller whose feeds are continuous. Default: `0` (off).
-- `FLEZHA_STEPS_RETENTION_HOURS`: How long the record and state of a finished instance are kept, a completed flow instance's as well as a steps one's.
+- `FLEZHA_STEPS_RETENTION_HOURS`: How long the record and state of a finished instance are kept when its class declares `keep_finished: true`, or declares nothing under `FLEZHA_KEEP_FINISHED_BY_DEFAULT=true`; a flow instance's as well as a steps one's.
+- `FLEZHA_KEEP_FINISHED_BY_DEFAULT`: `true` keeps the state of every finished instance whose class does not declare `keep_finished`, for the `FLEZHA_STEPS_RETENTION_HOURS` window. By default a finished instance keeps nothing and `flz relay info` reads its outcome from the relay history ([relay settings](relay_settings.md)).
 - `FLEZHA_DURABILITY_BACKEND`: `none`, `postgres`, `s3`, `local_path`; any other spelling resolves to `none` and warns. A selected backend missing an option it cannot work without refuses the boot naming it. A class at `durable: local` ships to it asynchronously; one at `durable: remote` needs it and waits on it before each acknowledgement. Default: `none` (prod warns when it was defaulted).
 - `FLEZHA_DURABILITY_WRITER_ID`: Read at runtime by `Flezha.State.DurabilityTier.writer_id/0`; the stable lineage-writer identity for a controller whose node name changes on reschedule. Default: `node()`.
 - `FLEZHA_DURABILITY_PATH`: `backend_opts[:path]` for `local_path` — a directory that outlives the node's own disk.
@@ -258,6 +259,7 @@ skipped as a block.
 | `FLEZHA_K8S_SELECTOR` | string | `app=flezha` |
 | `FLEZHA_K8S_SERVICE_ACCOUNT_PATH` | path | `/var/run/secrets/kubernetes.io/serviceaccount` |
 | `FLEZHA_K8S_SERVICE_NAME` | string | `flezha` |
+| `FLEZHA_KEEP_FINISHED_BY_DEFAULT` | bool | `false` |
 | `FLEZHA_LISTENER_PENDING_BYTES` | positive_int | `4194304` |
 | `FLEZHA_LISTENER_PENDING_FRAMES` | positive_int | `4096` |
 | `FLEZHA_LOG_KEEP_FILES` | positive_int | `5` |

@@ -242,6 +242,7 @@ defmodule Flezha.Runner.FleetManager.Factories do
     %{
       durable: decoded.durable,
       sleep_after_ms: decoded.sleep_after_ms,
+      keep_finished: decoded.keep_finished,
       max_duration_ms: decoded.max_duration_ms,
       effectively_once: if(flow?, do: decoded.effectively_once),
       ack: if(flow?, do: ack(decoded.ack_checkpoint)),

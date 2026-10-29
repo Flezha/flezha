@@ -20,7 +20,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.RelayManager
-  alias Flezha.State.{Completion, Paths}
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.ControlFrameTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
@@ -147,28 +147,6 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     # ...and the teardown proceeds only once it answers.
     send(teardown, :release)
     assert_receive {:stop_relay_called, "task-direct"}, @torn_down_within
-  end
-
-  test "RelayCompleted writes a durable completion record for finished-job retention" do
-    test_pid = self()
-
-    stub_stop_relay(test_pid)
-
-    {control_channel, _stream_ref} = start_control_channel("exec-task-rec")
-
-    before = System.system_time(:second)
-    payload = build_relay_completed_payload("task-rec", "ok", "", "the-answer", "ref-rec")
-    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
-
-    # The record is written synchronously in `handle_relay_completed` BEFORE the
-    # off-process teardown, so once teardown is observed the record must exist.
-    assert_receive {:stop_relay_called, "task-rec"}, @torn_down_within
-
-    assert {:ok, rec} = Completion.read("task-rec")
-    assert rec.namespace == @namespace
-    assert rec.status == "ok"
-    assert rec.result == "the-answer"
-    assert is_integer(rec.finished_at) and rec.finished_at >= before
   end
 
   defp start_control_channel(suffix) do

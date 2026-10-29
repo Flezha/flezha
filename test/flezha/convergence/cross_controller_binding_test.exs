@@ -98,7 +98,7 @@ defmodule FlezhaTest.Convergence.CrossControllerBinding do
 
     StepsResumeHarness.spend_window(@ns, op)
     {_, 0} = System.cmd("kill", ["-KILL", Integer.to_string(os_pid)], stderr_to_stdout: true)
-    StepsResumeHarness.await_status(op, "cancelled", 150_000)
+    StepsResumeHarness.await_status(@ns, op, "cancelled", 150_000)
 
     NodeTestHelper.stop_peer_node(peer_pid, peer)
   end

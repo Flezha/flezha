@@ -11,10 +11,11 @@ assistant alike.
 catalogue operation judged as `relay.list`, writing no audit record. It SHALL read only the
 convergence loop's published verdicts for the relay, its runner and its bound plugins, the
 runners announcing the relay's factory, the relay's dead letters, its input log's waiting
-inputs and, for a finished relay, its completion record, and SHALL answer
+inputs and, for a finished relay, its kept completion record or, when its state was not kept,
+its newest `ended` record in the relay history, and SHALL answer
 `{relay, verdict, findings}` with `verdict` one of `ok`, `warning`, `problem` (the highest finding level, `ok` when only notes) and each finding
 `{level, code, message, details, hint}` with `message` and `hint` from the error catalogue. A
-relay neither live nor retained SHALL answer `relay.not_found`. A relay its hub holds whose
+relay neither live, nor kept, nor in the relay history SHALL answer `relay.not_found`. A relay its hub holds whose
 Overwatch does not answer SHALL be answered from its published verdict, with `live_read` naming
 the failed read's error code and its runner, factory and plugins as the hub's registry recorded
 them; a runner, node or provider nobody recorded SHALL be absent from the details and named
@@ -96,9 +97,15 @@ dead letters SHALL be read only when the relay runs on the controller that answe
 
 #### Scenario: A relay its hub no longer holds
 
-- **WHEN** a relay with a published verdict, no longer held by its hub and with no completion
-  record, is diagnosed
+- **WHEN** a relay with a published verdict, no longer held by its hub, with no completion
+  record and no `ended` record in the relay history, is diagnosed
 - **THEN** the call answers `relay.not_found`
+
+#### Scenario: A finished run that kept nothing
+
+- **WHEN** a `fan_trade` instance that ended `error` and kept nothing is diagnosed
+- **THEN** the answer carries the `diagnose.finished` finding with the status and error from
+  its `ended` record in the relay history
 
 ### Requirement: Every verdict reason and state SHALL map to one finding
 

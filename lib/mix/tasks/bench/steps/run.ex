@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
   alias Flezha.Identificator
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
-  alias Flezha.State.Completion
+  alias Flezha.Service.Steps
   alias Flezha.State.InputLog
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
@@ -376,7 +376,7 @@ defmodule Mix.Tasks.Bench.Steps.Run do
 
         IO.puts(
           "  #{id}: journal=#{inspect(journal)} undelivered=#{inspect(undelivered)} " <>
-            "completion=#{inspect(Completion.read(id))} overwatch=#{inspect(overwatch)}"
+            "completion=#{inspect(Steps.outcome(@namespace, id))} overwatch=#{inspect(overwatch)}"
         )
       end
     end

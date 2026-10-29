@@ -321,6 +321,20 @@ defmodule Flezha.State.DeleteCellTest do
     refute List.keymember?(Metrics.snapshot_all(), pid, 0)
   end
 
+  test "deleting a class forgets every Cell of it in memory, and no other's" do
+    class = "del_class_" <> uniq()
+    other = {"del_other_" <> uniq(), "t", "k"}
+    for key <- ["k1", "k2"], do: Metrics.for_cell({class, "t", key})
+    Metrics.for_cell(other)
+
+    assert length(Metrics.cells_of(class)) == 2
+    assert :ok = Supervisor.delete_class(class)
+
+    assert Metrics.cells_of(class) == []
+    assert Metrics.cells_of(elem(other, 0)) == [other]
+    Metrics.drop_cell(other)
+  end
+
   test "deleting a never-seen cell is idempotent (returns :ok)", %{cell_id: pid} do
     assert Supervisor.lookup(pid) == :error
     assert {:ok, %{cell_id: ^pid, status: :ok}} = Supervisor.delete_cell(pid)
@@ -386,6 +400,7 @@ defmodule Flezha.State.RetentionTest do
 
   alias Flezha.State.{
     Completion,
+    Durable,
     Frame,
     Lineage,
     Paths,
@@ -521,7 +536,7 @@ defmodule Flezha.State.RetentionTest do
     end
   end
 
-  describe "finished-job retention (steps)" do
+  describe "finished-relay retention" do
     test "retains a completion record within the window, reclaims it after" do
       now = System.system_time(:second)
       on_exit(TestHelpers.override_env(:default_relay_completed_retention_hours, 1))
@@ -551,6 +566,21 @@ defmodule Flezha.State.RetentionTest do
       assert Completion.exists?("bnd_live")
       refute Completion.exists?("bnd_old")
       refute File.dir?(Paths.class_dir("bnd_old"))
+    end
+
+    test "a delete a write in flight held back is finished by the next sweep" do
+      class = "held_" <> uniq()
+      in_flight = Path.join([Paths.class_dir(class), "task", "seg.wal" <> hd(Durable.suffixes())])
+      File.mkdir_p!(Path.dirname(in_flight))
+      File.write!(in_flight, "x")
+
+      :ok = Paths.delete_class_dir(class)
+      assert Paths.deleting?(Paths.class_dir(class))
+
+      File.rm!(in_flight)
+      :ok = Retention.sweep_now()
+
+      refute File.dir?(Paths.class_dir(class))
     end
   end
 

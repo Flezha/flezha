@@ -36,6 +36,7 @@ defmodule Flezha.Relay.ClassRegistry do
   @remote_sidecar "remote"
   @persistence_off_sidecar "persistence_off"
   @sleep_sidecar "sleep_after_ms"
+  @keep_finished_sidecar "keep_finished_h"
   @established [:sdk_lang, :run, :each, :on_failure]
 
   # Every per-class SDK declaration, keyed `{relay_class, key}` in the ETS
@@ -50,6 +51,7 @@ defmodule Flezha.Relay.ClassRegistry do
     :remote,
     :persistence_off,
     :sleep_after_ms,
+    :keep_finished_h,
     :parked
   ]
 
@@ -105,6 +107,7 @@ defmodule Flezha.Relay.ClassRegistry do
           on_failure: :undo_all | :keep_progress | nil,
           durable: :memory | :local | :remote,
           sleep_after_ms: pos_integer() | nil,
+          keep_finished: pos_integer() | :default | nil,
           max_duration_ms: pos_integer() | nil,
           effectively_once: boolean(),
           keyless: boolean(),
@@ -148,6 +151,7 @@ defmodule Flezha.Relay.ClassRegistry do
       on_failure: established.on_failure,
       durable: durable,
       sleep_after_ms: parse_window(Map.get(metadata, "sleep_after_ms")),
+      keep_finished: parse_kept(Map.get(metadata, "keep_finished_h")),
       max_duration_ms: parse_window(Map.get(metadata, "max_duration_ms")),
       effectively_once: Map.get(metadata, "exactly") == "effectively_once",
       # The SDK declares `keyed` only when it is false — a class with no keyed
@@ -197,6 +201,10 @@ defmodule Flezha.Relay.ClassRegistry do
 
   defp parse_window(_raw), do: nil
 
+  # Hours, or `:default` for the controller's window.
+  defp parse_kept("default"), do: :default
+  defp parse_kept(raw), do: parse_window(raw)
+
   # ---------- declarations: persist ----------
 
   @doc """
@@ -221,6 +229,7 @@ defmodule Flezha.Relay.ClassRegistry do
     put_remote(relay_class, declarations.durable == :remote)
     put_persistent(relay_class, declarations.persistent)
     put_sleep_after(relay_class, declarations.sleep_after_ms)
+    put_keep_finished(relay_class, declarations.keep_finished)
   end
 
   @doc """
@@ -260,6 +269,20 @@ defmodule Flezha.Relay.ClassRegistry do
   def sleep_after_ms(relay_class) when is_binary(relay_class) do
     declaration(relay_class, :sleep_after_ms, @sleep_sidecar, &parse_window/1)
   end
+
+  @doc """
+  Record how long `relay_class`'s finished instances keep their state: hours,
+  `:default` for the controller's window, or `nil` when the class declares
+  nothing. Durable so the teardown and the sweeper resolve it with no runner.
+  """
+  @spec put_keep_finished(binary(), pos_integer() | :default | nil) :: :ok
+  def put_keep_finished(relay_class, keep_finished) when is_binary(relay_class),
+    do: put_declaration(relay_class, :keep_finished_h, @keep_finished_sidecar, keep_finished)
+
+  @doc "`relay_class`'s finished-state retention: ETS → durable sidecar → `nil` (undeclared)."
+  @spec keep_finished(binary()) :: pos_integer() | :default | nil
+  def keep_finished(relay_class) when is_binary(relay_class),
+    do: declaration(relay_class, :keep_finished_h, @keep_finished_sidecar, &parse_kept/1)
 
   @doc "Whether `relay_class`'s instances sleep when idle."
   @spec sleeps?(binary()) :: boolean()
@@ -710,6 +733,7 @@ defmodule Flezha.Relay.ClassRegistry do
   end
 
   defp encode_declaration(true), do: "true"
+  defp encode_declaration(:default), do: "default"
   defp encode_declaration(tasks) when is_list(tasks), do: Enum.join(tasks, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
 

@@ -67,7 +67,7 @@ runs on the same fake controller.
 | Module | What it holds |
 | --- | --- |
 | `Flezha.Runner.ControlChannel.Commits` | one process per runner that journals each `TaskCommit` and `IterCommit` and acks it |
-| `Flezha.Runner.ControlChannel.Requests` | `RelayCompleted` (the completion record and the teardown), `IterPark` |
+| `Flezha.Runner.ControlChannel.Requests` | `RelayCompleted` (the outcome handed to the teardown), `IterPark` |
 | `Flezha.State.TaskJournal` | the per-instance journal: append, fold, cut, the rewind marker, what is committed and owed |
 | `Flezha.State.TaskJournal.Codec` | the entry types and their bytes, laid out in [`../state_persistence.md`](../state_persistence.md) |
 | `Flezha.State.TaskJournal.Records` | the effect records a stage entry names: the wait for them, their release, what the writers still owe |
@@ -235,13 +235,14 @@ runs. A reconnect of the same runner process (the same `incarnation`) only moves
 
 ### Owed outputs settle before the teardown
 
-Every exit converges on one `RelayCompleted`. The controller writes the completion record, then
+Every exit converges on one `RelayCompleted`. The controller hands its outcome to the stop, then
 tears down under `Flezha.Process.DurableTasks`, off the control-channel reader, after settling
 two debts. The data stream is flushed (`StreamPool.flush_channels/2`, one bounded call per stream
 channel), so a class kept in memory has its last direct output routed before its Overwatch stops.
 The Cells' outboxes are waited for, up to `drain_owed_ms` (60 s), polling every 50 ms, until
-`TaskJournal.Records.owed_outputs/1` is zero; a deadline hit is logged (`... still owed`) and the
-retained WAL keeps the debt (window C10). An `error` ends the same way: there is no automatic
+`TaskJournal.Records.owed_outputs/1` is zero; a deadline hit is logged (`... still owed`), and
+the WAL keeps the debt only while a class that declares `keep_finished` keeps its state (window
+C10). An `error` ends the same way: there is no automatic
 re-run of a failed tasklet.
 
 ### No behaviour follows from the run alone
@@ -273,7 +274,7 @@ Paths in the Test column are under `test/system/` unless they name a crate.
 | C7 | an undo's `compensated` record refused or never acknowledged | re-sent under its reference id within the three sends; the done marker follows only an ack; once the sends run out the Cell stays unmarked, the rest of the plan runs and the run ends `error` naming the tasklet | `BarrierFor::on_refusal`, `Decide::resend`, `undo_journaled` | `crates/flz_core/src/steps/driver_tests/undo.rs` `a_compensation_the_controller_always_refuses_leaves_its_cell_unmarked_and_ends_error`, `a_compensation_refused_once_is_sent_again_and_marked_after_its_ack`, `a_compensation_never_acked_ends_error_and_the_other_cell_is_still_marked` |
 | C8 | a failed turn parked, crash before its `dead_lettered` entry | the bind removes the unrecorded entry and the turn runs again, so the message is parked at most once | `TaskJournal.Turns.drop_unrecorded_turns/1` | `steps_failed_turn_e2e_test.exs` "after the park and before the record re-runs the turn, and parks it once", "after the record and before the undo is journaled undoes the turn once, on the rebind" |
 | C9 | intent markers sent, crash before the barrier frame they precede | with a journal, intents start no compensation without a done marker; the stage runs again | the order inside `act`; `open_gate` | `steps_crash_resume_e2e_test.exs` "durable saga steps resumes compensation after a SIGKILL mid-rollback" |
-| C10 | `RelayCompleted` written, the drain of owed outboxes times out | the teardown goes on, the warning names what is still owed, the retained WAL keeps the debt; a finished relay is not started again | `drain_owed_ms`, `DurableTasks` | `test/flezha/runner/control_channel_steps_test.exs` "the teardown flushes the runner's stream channels before it deregisters" (the flush); none for the timeout |
+| C10 | `RelayCompleted` written, the drain of owed outboxes times out | the teardown goes on, the warning names what is still owed, and the WAL keeps the debt only when the class keeps finished state; a finished relay is not started again | `drain_owed_ms`, `DurableTasks` | `test/flezha/runner/control_channel_steps_test.exs` "the teardown flushes the runner's stream channels before it deregisters" (the flush); none for the timeout |
 | C11 | a bind's Cell restores do not all land | the run ends `error` after 30 s naming how many landed; a stop or `max_duration` meanwhile ends it `cancelled`; no tasklet or hook runs, and the journal and state stay | `Deadline::RestoreGate` and `stop` in `Phase::Gated` | `crates/flz_core/src/steps/run_tests.rs` `a_restore_gate_timeout_ends_the_run_error`, `a_stop_at_the_restore_gate_ends_the_run_cancelled`; the teardown that follows: `test/flezha/runner/control_channel_steps_test.exs` "RelayCompleted error → failure telemetry + identical teardown" |
 
 Every window also runs end to end on each SDK runtime, over UDS and QUIC, in

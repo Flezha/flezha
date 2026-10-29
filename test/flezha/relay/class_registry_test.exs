@@ -184,7 +184,8 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
         compact_after_bytes: 4_194_304,
         durable: :remote,
         persistent: false,
-        sleep_after_ms: 2_000
+        sleep_after_ms: 2_000,
+        keep_finished: 24
       })
 
     assert ClassRegistry.effectively_once?(class)
@@ -195,6 +196,10 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     assert ClassRegistry.remote?(class)
     refute ClassRegistry.persistent?(class)
     assert ClassRegistry.sleep_after_ms(class) == 2_000
+    assert ClassRegistry.keep_finished(class) == 24
+    # Read back from its sidecar once the bind's entry is evicted.
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.keep_finished(class) == 24
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
@@ -207,7 +212,8 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
         compact_after_bytes: nil,
         durable: :local,
         persistent: true,
-        sleep_after_ms: nil
+        sleep_after_ms: nil,
+        keep_finished: nil
       })
 
     refute ClassRegistry.effectively_once?(class)
@@ -218,6 +224,7 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     refute ClassRegistry.remote?(class)
     assert ClassRegistry.persistent?(class)
     refute ClassRegistry.sleeps?(class)
+    refute ClassRegistry.keep_finished(class)
   end
 
   test "the declarations decode from the metadata, and the run from what is established" do
@@ -228,7 +235,8 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
         metadata: %{
           "durable" => "remote",
           "sleep_after_ms" => "2000",
-          "max_duration_ms" => "60000"
+          "max_duration_ms" => "60000",
+          "keep_finished_h" => "default"
         }
       })
 
@@ -241,9 +249,13 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
              durable: :remote,
              persistent: true,
              sleep_after_ms: 2_000,
+             keep_finished: :default,
              max_duration_ms: 60_000,
              effectively_once: false
            } = ClassRegistry.decode_declarations(raw, established)
+
+    assert %{keep_finished: 6} =
+             ClassRegistry.declarations_of(%{"keep_finished_h" => "6"}, established)
 
     assert %{run: :flow, durable: :local, sleep_after_ms: nil, persistent: true} =
              ClassRegistry.decode_declarations(<<>>, %{run: nil, each: nil, on_failure: nil})

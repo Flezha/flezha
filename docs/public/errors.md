@@ -519,6 +519,7 @@ SDK raises or returns its one error type carrying them.
 | `relay.group_not_found` | not_found | 5 | no partition group '{group}' in namespace '{namespace}' | `flz relay list --namespace {namespace}` |
 | `relay.group_partition_mismatch` | conflict | 6 | group '{group}' cannot converge to {partitions} partitions: its live member '{member}' declares {declared}, and a start never moves Cell state | `flz relay scale {group} {partitions}` |
 | `relay.group_stop_partial` | unavailable | 7 | partition group '{group}' did not stop completely: {failed} did not stop |  |
+| `relay.history_unreachable` | unavailable | 7 | whether this spawn already ran could not be checked, because these controllers did not answer the relay history lookup: {unreachable}; nothing was started | `retry the request once they answer: flz controller list` |
 | `relay.id_too_long` | invalid | 2 | relay id '{relay}' is longer than {limit} bytes |  |
 | `relay.input_refused` | unavailable | 7 | relay '{relay}' refused the input because its durable append failed |  |
 | `relay.iteration_not_committed` | invalid | 2 | iteration {iteration} has not committed, so there is no boundary to rewind to there |  |

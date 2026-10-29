@@ -409,6 +409,16 @@ defmodule Flezha.Convergence.LoopTest do
       assert {["btc_feed"], _} = Intent.intent_mismatch(intent_for([]), nil)
     end
 
+    test "a finished relay whose delete a write in flight held back is not evidence", %{
+      root: root
+    } do
+      seed_cell(root, "btc_feed", "op", "k1")
+      seed_cell(root, "held_steps", "op", "k1")
+      File.write!(Path.join([root, "_system", "held_steps", ".deleting"]), "")
+
+      assert {["btc_feed"], _} = Intent.intent_mismatch(intent_for([]), nil)
+    end
+
     test "a leftover class costs one file check, and a completed one is still dropped", %{
       root: root
     } do

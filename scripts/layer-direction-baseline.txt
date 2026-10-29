@@ -68,7 +68,6 @@ lib/flezha/runner/control_channel/commits.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Relay.Suspend
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.Admin
 lib/flezha/runner/control_channel/requests.ex -> Flezha.Service.RelayManager
-lib/flezha/runner/control_channel/requests.ex -> Flezha.State.Completion
 lib/flezha/runner/control_channel/requests.ex -> Flezha.State.TaskJournal
 lib/flezha/runner/control_unit.ex -> Flezha.Partition
 lib/flezha/runner/fleet_manager.ex -> Flezha.Service.HubManager

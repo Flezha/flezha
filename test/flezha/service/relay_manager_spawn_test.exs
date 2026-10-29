@@ -16,6 +16,7 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Cluster.Directory
+  alias Flezha.Logs.RelayHistory
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -216,6 +217,59 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
       assert {:spawned, "w1"} = identified("w1", "p", :error, "seeded")
       assert {:delivered, "w1"} = identified("w1", "p", :error, "delivered")
       assert FakeStartRegistry.started() == []
+    end
+  end
+
+  describe "a tasklet's request after its instance ended and kept nothing" do
+    defp ended(id), do: {:ended, id, System.os_time(:microsecond)}
+
+    test "a generated id the relay history recorded is answered, starting nothing", %{
+      registry: registry
+    } do
+      {:spawned, id} = identified("", "p1", :deliver, "origin-h1")
+      [_] = FakeStartRegistry.started()
+      :ets.delete(registry, id)
+      stub(RelayHistory, :seen, fn @namespace, {:relay, ^id} -> ended(id) end)
+
+      assert {:spawned, ^id} = identified("", "p1", :deliver, "origin-h1")
+      assert FakeStartRegistry.started() == []
+    end
+
+    test "a named instance whose log is gone is answered from the identity's history" do
+      stub(RelayHistory, :seen, fn
+        @namespace, {:spawn_identity, "origin-h2"} -> ended("w1")
+        @namespace, {:spawn_identity, _other} -> :none
+      end)
+
+      assert {:spawned, "w1"} = identified("w1", "p", :deliver, "origin-h2")
+      assert FakeStartRegistry.started() == []
+
+      assert {:spawned, "w1"} = identified("w1", "p", :deliver, "origin-h3")
+      assert [%{id: "w1"}] = FakeStartRegistry.started()
+    end
+
+    test "a lookup some controller cannot answer refuses the spawn as retryable" do
+      stub(RelayHistory, :seen, fn _ns, _key -> {:unknown, [:peer@host]} end)
+
+      assert {{:refused, %Flezha.Error{code: "relay.history_unreachable"} = error}, _id} =
+               identified("", "p1", :deliver, "origin-h4")
+
+      assert error.message =~ "peer@host"
+      assert FakeStartRegistry.started() == []
+    end
+
+    test "with the relay history off the spawn is judged by the registry alone, warned once" do
+      stub(RelayHistory, :seen, fn _ns, _key -> :disabled end)
+      :persistent_term.erase({Flezha.Service.RelayManager.Spawn, :warned})
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          assert {:spawned, _id} = identified("", "p1", :deliver, "origin-h5")
+          assert {:spawned, _id} = identified("", "p1", :deliver, "origin-h6")
+        end)
+
+      assert length(String.split(log, "is not deduplicated")) == 2
     end
   end
 

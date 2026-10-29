@@ -130,7 +130,7 @@ not answer SHALL be named in the refusal.
 
 #### Scenario: A retained finished instance on another controller
 
-- **GIVEN** a finished steps instance whose retained state is on controller B
+- **GIVEN** a finished steps instance whose state its class keeps, retained on controller B
 - **WHEN** a caller connected to controller A reads its completion
 - **THEN** the completion record B holds is answered
 

@@ -48,6 +48,8 @@ defmodule Flezha.Cluster.ReadsMultiNodeTest do
     {peer_pid, peer} = NodeTestHelper.start_healing_peer(:reads_outside)
     on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
 
+    # The finished run's state stays on the peer, to be read from here.
+    :erpc.call(peer, Application, :put_env, [:flezha, :keep_finished_by_default, true])
     _runner = NodeTestHelper.start_runner_remote(peer, ns)
     :erpc.call(peer, NodeTestHelper, :await_serving, [peer, ns, @factory])
     id = start_on(peer, ns)
@@ -97,12 +99,16 @@ defmodule Flezha.Cluster.ReadsMultiNodeTest do
 
     StepsResumeHarness.send_turn(ns, id, "bye", "in")
 
+    # Named by its namespace: this test's dead-letter directory sits under the
+    # state root, where a namespace lookup by relay id would also find it.
     assert NodeTestHelper.wait_until(
-             fn -> match?({:ok, %{status: _}}, :erpc.call(peer, Completion, :read, [id])) end,
+             fn -> match?({:ok, %{state_kept: true}}, Steps.outcome(ns, id)) end,
              30_000
            )
 
-    assert Steps.completion(id, @context) == :erpc.call(peer, Completion, :read, [id])
+    {:ok, kept} = :erpc.call(peer, Completion, :read, [id])
+    assert {:ok, %{node: ^peer} = outcome} = Steps.outcome(ns, id)
+    assert Map.take(outcome, Map.keys(kept)) == kept
 
     # Read once the relay is gone: an Overwatch read racing its exit is no
     # cluster question.

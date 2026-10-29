@@ -278,7 +278,7 @@ defmodule FlezhaTest.System.SleepAfterE2ETest do
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 20_000)
       spend_window(namespace, id)
       send_turn(namespace, id, "late")
-      await_status(id, "cancelled", 60_000)
+      await_status(namespace, id, "cancelled", 60_000)
     end
   end
 

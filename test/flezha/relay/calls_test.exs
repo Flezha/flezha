@@ -17,7 +17,7 @@ defmodule FlezhaTest.Relay.CallsTest do
   alias Flezha.Relay.Calls.Token
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host, as: PluginHost
-  alias Flezha.State.{Completion, InputLog, TestHelpers, WriterRegistry}
+  alias Flezha.State.{InputLog, TestHelpers, WriterRegistry}
   alias FlezhaTest.Helper.CallHarness
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.OverwatchHost, as: Host
@@ -636,10 +636,10 @@ defmodule FlezhaTest.Relay.CallsTest do
       {_, r2} = c2 = from()
       {_t1, calls} = admit(%Inbound{}, c1)
       {_t2, calls} = admit(calls, c2)
-      :ok = Completion.write(inst, %{namespace: "default", status: "error"})
+      terminal = %{status: "error", error: "boom", undo: ""}
 
       ExUnit.CaptureLog.capture_log(fn ->
-        Lifecycle.terminate(bare(inst, calls: calls), :normal)
+        Lifecycle.terminate(bare(inst, calls: calls, terminal: terminal), :normal)
       end)
 
       for ref <- [r1, r2] do

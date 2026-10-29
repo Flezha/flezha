@@ -39,19 +39,43 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  How many hours a finished steps relay's data (retained Cell state +
-  completion record) is kept before the retention sweeper reclaims it.
-  Precedence: instance metadata → global
-  `:default_relay_completed_retention_hours` (`72`, env
-  `FLEZHA_STEPS_RETENTION_HOURS`).
+  How many hours a finished instance of `relay_class` keeps its state
+  (retained Cells and completion record) before the retention sweeper reclaims
+  it; `0` keeps nothing. Its class's `keep_finished` hours, or for `true` the
+  controller's window (`:default_relay_completed_retention_hours`, env
+  `FLEZHA_STEPS_RETENTION_HOURS`). A class that declares nothing keeps for that
+  window only when `:keep_finished_by_default` is set; a memory-only class
+  keeps nothing.
   """
-  @spec completed_retention_hours(binary(), map()) :: non_neg_integer()
-  def completed_retention_hours(relay_class, metadata \\ %{})
-      when is_binary(relay_class) do
-    resolve(metadata, :relay_completed_retention_hours, &non_neg_int?/1, fn ->
-      Config.get(:default_relay_completed_retention_hours)
-    end)
+  @spec completed_retention_hours(binary()) :: non_neg_integer()
+  def completed_retention_hours(relay_class) when is_binary(relay_class) do
+    declared = ClassRegistry.keep_finished(relay_class)
+
+    cond do
+      is_integer(declared) -> declared
+      not ClassRegistry.persistent?(relay_class) -> 0
+      declared == :default or Config.get(:keep_finished_by_default) -> window()
+      true -> 0
+    end
   end
+
+  @doc """
+  When a kept completion record of `relay_class` stamped `finished_at` expires,
+  in Unix seconds: after its declared hours, else the controller's window,
+  because a record exists only for state that was kept.
+  """
+  @spec kept_until(binary(), integer()) :: integer()
+  def kept_until(relay_class, finished_at) when is_binary(relay_class) do
+    hours =
+      case ClassRegistry.keep_finished(relay_class) do
+        hours when is_integer(hours) -> hours
+        _default_or_undeclared -> window()
+      end
+
+    finished_at + hours * 3600
+  end
+
+  defp window(), do: Config.get(:default_relay_completed_retention_hours)
 
   @doc """
   The per-Cell WAL size at which the Watchdog triggers a compaction, per

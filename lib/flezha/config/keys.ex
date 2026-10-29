@@ -348,11 +348,11 @@ defmodule Flezha.Config.Keys do
     # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
     # every session to the legacy CellMailboxStatus and shed path.
     {:credit_flow_control_enabled, :bool, true, key: true, env: "FLEZHA_CREDIT_FLOW_CONTROL"},
-    # The `%{class => hours}` store `Steps.set_retention/3` writes, read ahead
-    # of the global default.
+    # `Steps.set_retention/3`'s `%{class => hours}` store, read before the default.
     {:time_travel_retention_hours, :term, %{}, key: true},
     {:default_relay_completed_retention_hours, :int, 72,
      key: true, env: "FLEZHA_STEPS_RETENTION_HOURS"},
+    {:keep_finished_by_default, :bool, false, key: true, env: "FLEZHA_KEEP_FINISHED_BY_DEFAULT"},
 
     # ---- remote durability tier ---------------------------------------------
     # `backend: :none` wires nothing into the supervision tree and leaves every

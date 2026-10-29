@@ -37,6 +37,7 @@ setting has one layer: there is no per-class map over a class's own value.
 - `:compaction_timeout_ms`: `0` disables the compaction-timeout sweep.
 - `:record_log_cut_after_bytes`: `0` rewrites at every release.
 - `:time_travel_retention_hours`: The `%{"RelayClass" => hours}` store `flz state retention` writes, read ahead of `:default_time_travel_retention_hours`. Default: `%{}`.
+- `:keep_finished_by_default`: Set by `FLEZHA_KEEP_FINISHED_BY_DEFAULT`, explained in [Controller environment variables](environment_variables.md).
 - `:source_credit_window_bytes`: The bytes a source's input log admits before its writers wait. Default: the high watermark (derived).
 - `:wal_high_watermark_bytes`: The one Cell-scale payload bound.
 - `:wal_low_watermark_bytes`: Default: half the high watermark (derived).
@@ -220,6 +221,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:k8s_selector` | string | `app=flezha` |
 | `:k8s_service_account_path` | path | `/var/run/secrets/kubernetes.io/serviceaccount` |
 | `:k8s_service_name` | string | `flezha` |
+| `:keep_finished_by_default` | bool | `false` |
 | `:listener_pending_bytes` | positive_int | `4194304` |
 | `:listener_pending_frames` | positive_int | `4096` |
 | `:listener_release_check_ms` | ms | `5000` |

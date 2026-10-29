@@ -127,7 +127,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     ],
     Steps => [
       {:completion, ["instance"]},
-      {:completed_retention_hours, ["rc", %{}]},
+      {:completed_retention_hours, ["rc"]},
       {:journal, ["instance"]},
       {:committed_iterations, ["instance"]},
       {:consumed_offset, ["instance"]},
@@ -239,8 +239,8 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       assert {:ok, counters} = Controller.liveness_counters(context)
       assert is_map(counters) or is_list(counters)
 
-      assert {:ok, hours} = Steps.completed_retention_hours("rc", %{}, context)
-      assert is_integer(hours) and hours > 0
+      # A class that declares nothing keeps nothing once it ends.
+      assert {:ok, 0} = Steps.completed_retention_hours("rc", context)
     end
 
     # A consumer on another node ages a signal against the controller's clock,

@@ -12,7 +12,7 @@ defmodule Flezha.Logs.Local do
   being `{order_us, node, file, offset}`, the order the page's cursor is in.
   """
 
-  alias Flezha.Cluster.Page
+  alias Flezha.Cluster.{Page, Reads}
   alias Flezha.Logs.{Codec, Kind, Kinds, Reader, Seen, Writer}
 
   @typedoc """
@@ -36,6 +36,17 @@ defmodule Flezha.Logs.Local do
       end
 
     Page.answer(rows, length(rows), false, page, &key/1)
+  end
+
+  @doc """
+  `read/3` asked of every controller and merged into one page, newest first,
+  naming in `unreachable` each one that did not answer.
+  """
+  @spec everywhere(atom(), query(), Page.t()) :: map()
+  def everywhere(kind_id, query, %Page{} = page) do
+    Reads.controllers()
+    |> Reads.rows(__MODULE__, :read, [kind_id, query, page])
+    |> Page.merge(page, &key/1)
   end
 
   @doc "The page sort key of a row `read/3` answers."

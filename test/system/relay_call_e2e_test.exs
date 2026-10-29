@@ -16,9 +16,11 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
       tasklet's channel ends only in the call: no runtime journals a handoff
       for it;
 
-  and the crash drills of a durable pair, each asserting exactly one outcome
-  per call and one committed turn: the runner killed while a turn runs, and
-  the gateway's Overwatch and Cell writers killed while a call waits.
+  a call waiting on a session that ends `cancelled` and keeps nothing,
+  answered with that status; and the crash drills of a durable pair, each
+  asserting exactly one outcome per call and one committed turn: the runner
+  killed while a turn runs, and the gateway's Overwatch and Cell writers killed
+  while a call waits.
 
   Every outcome is one sink line, `<request>=ok:<answer>@<target>/<created>`
   or `<request>=error:<code>@<target>/<created>`.
@@ -30,6 +32,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
 
   import FlezhaTest.Helper.StepsResumeHarness,
     only: [
+      await_status: 4,
       boot_runner: 4,
       collect_loop: 1,
       collected_with_meta: 1,
@@ -55,7 +58,7 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
   alias Flezha.Service.{Listener, RelayManager}
   alias Flezha.Service.RelayManager.Teardown
   alias Flezha.Service.Steps.Journal
-  alias Flezha.State.{InputLog, TaskJournal}
+  alias Flezha.State.{InputLog, Paths, TaskJournal}
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.RelayTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
@@ -340,6 +343,51 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
              "#{anna}:again=ok:answer:#{anna}:again@#{anna}/true"
 
     assert InputLog.last_offset(anna) == 1
+  end
+
+  # A session stopped while a call waits behind its running turn ends
+  # `cancelled` and keeps nothing: the waiting call is answered with that
+  # status, which the teardown carries in memory, not `stopped`.
+  test "a call waiting on a session that ends cancelled and keeps nothing is answered cancelled",
+       ctx do
+    boot(ctx)
+    gateway = start(ctx.namespace, "call_gateway", :flow, unique("gateway"), ctx.collector)
+    anna = session("anna")
+    test = self()
+
+    send_in(ctx.namespace, gateway, "#{anna}:hello")
+    assert lines(ctx.collector, 1) == ["#{anna}:hello=ok:answer:#{anna}:hello@#{anna}/true"]
+
+    calls =
+      spawn(fn ->
+        Listener.listen(
+          ctx.namespace,
+          anna,
+          [direction: :calls, window_ms: 60_000, before: fn -> send(test, :watching) && :ok end],
+          &(send(test, {:calls, &1}) && :continue)
+        )
+      end)
+
+    assert_receive :watching, 30_000
+    queued = "#{anna}:queued"
+    send_in(ctx.namespace, gateway, "#{anna}:slow")
+    send_in(ctx.namespace, gateway, queued)
+
+    assert_receive {:calls, {:call, ^queued, %{"flz.call_id" => call_id}}}, 30_000
+    assert {:ok, :cooperative} = RelayManager.request_stop(ctx.namespace, anna)
+
+    assert_receive {:calls, {:refused, refusal, %{"flz.call_id" => ^call_id}}}, 30_000
+
+    assert %Flezha.Error{code: "call.callee_ended", details: %{"status" => "cancelled"}} = refusal
+
+    assert "#{queued}=error:call.callee_ended@#{anna}/false" in lines(ctx.collector, 3)
+
+    assert %{state_kept: false} = await_status(ctx.namespace, anna, "cancelled", 30_000)
+
+    assert NodeTestHelper.wait_until(fn -> not File.exists?(Paths.class_dir(anna)) end, 15_000),
+           "the cancelled session's state directory was kept"
+
+    Process.exit(calls, :kill)
   end
 
   describe "a durable pair's crash drills" do

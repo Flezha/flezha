@@ -1,7 +1,7 @@
 defmodule Flezha.State.PersistenceResolverTest do
   @moduledoc """
   The per-class resolvers: compaction thresholds, the remote switch and the
-  finished-job retention window.
+  finished-relay retention window.
   """
   # async: false: writes Application env.
   use FlezhaTest.Case, fixtures: [:env, :tmp_app_data], async: false
@@ -81,20 +81,62 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
   end
 
-  describe "completed_retention_hours/2" do
-    test "defaults to 72" do
-      assert PersistenceResolver.completed_retention_hours("c") == 72
+  describe "completed_retention_hours/1 and kept_until/2" do
+    setup do
+      ClassRegistry.ensure_table()
+      class = "kept-#{System.unique_integer([:positive])}"
+      Application.put_env(:flezha, :default_relay_completed_retention_hours, 72)
+
+      on_exit(fn ->
+        ClassRegistry.delete(class)
+        Application.delete_env(:flezha, :keep_finished_by_default)
+      end)
+
+      %{class: class}
     end
 
-    test "honours the global default override" do
+    defp declare(class, keep_finished, persistent? \\ true) do
+      :ok = ClassRegistry.put_keep_finished(class, keep_finished)
+      :ok = ClassRegistry.put_persistent(class, persistent?)
+    end
+
+    test "a class that declares nothing keeps nothing", %{class: class} do
+      declare(class, nil)
+      assert PersistenceResolver.completed_retention_hours(class) == 0
+    end
+
+    test "declared hours win over every default", %{class: class} do
+      declare(class, 24)
+      Application.put_env(:flezha, :keep_finished_by_default, true)
+      assert PersistenceResolver.completed_retention_hours(class) == 24
+    end
+
+    test "`true` keeps for the controller's window", %{class: class} do
+      declare(class, :default)
       Application.put_env(:flezha, :default_relay_completed_retention_hours, 5)
-      assert PersistenceResolver.completed_retention_hours("c") == 5
+      assert PersistenceResolver.completed_retention_hours(class) == 5
     end
 
-    test "honours an instance-metadata override" do
-      assert PersistenceResolver.completed_retention_hours("c", %{
-               "relay_completed_retention_hours" => 3
-             }) == 3
+    test "the controller-wide default keeps an undeclared class for the window",
+         %{class: class} do
+      declare(class, nil)
+      Application.put_env(:flezha, :keep_finished_by_default, true)
+      assert PersistenceResolver.completed_retention_hours(class) == 72
+    end
+
+    test "a memory-only class keeps nothing whatever the default", %{class: class} do
+      declare(class, nil, false)
+      Application.put_env(:flezha, :keep_finished_by_default, true)
+      assert PersistenceResolver.completed_retention_hours(class) == 0
+    end
+
+    test "a directory that already holds a record expires after the declared hours or the window",
+         %{class: class} do
+      declare(class, nil)
+      assert PersistenceResolver.kept_until(class, 100) == 100 + 72 * 3600
+
+      declare(class, 6)
+      assert PersistenceResolver.kept_until(class, 100) == 100 + 6 * 3600
     end
   end
 

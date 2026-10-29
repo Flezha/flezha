@@ -22,7 +22,7 @@ defmodule Flezha.Service.Steps do
   use Flezha.AuthZ.Verb
 
   alias Flezha.Logs.RelayHistory
-  alias Flezha.Cluster.Page
+  alias Flezha.Cluster.{Page, Reads}
   alias Flezha.Config
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Relay.Suspend
@@ -52,30 +52,65 @@ defmodule Flezha.Service.Steps do
 
   # ---------- Reads ----------
 
-  @doc "One steps instance's completion record."
-  @spec completion(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
+  @doc """
+  How one finished steps instance ended (`outcome/2`), or `:error` while it
+  runs or when nothing records its end.
+  """
+  @spec completion(String.t(), caller_context()) :: {:ok, map()} | :error | {:error, term()}
   verb completion(instance_id, caller_context),
     verb: :state_journal,
     row: &instance_row/1,
+    as: located,
     args: [instance_id: @instance_id] do
-    RelayManager.on_state_node(instance_id, Completion, :read, [instance_id])
+    outcome(located.namespace, instance_id)
   end
 
   @doc """
-  How long a completed instance of `relay_class` is retained, in hours.
-
-  `metadata` is the instance's own, which takes precedence over the global
-  default and is overridden in turn by a user setting.
+  How the finished instance `instance_id` of `namespace` ended: its kept
+  completion record, on whichever controller holds it (`state_kept: true`, with
+  `expires_at`), else, while no instance of that id runs, the newest `ended`
+  record the relay history holds for it (`state_kept: false`), else `:error`.
   """
-  @spec completed_retention_hours(String.t(), map(), caller_context()) ::
+  @spec outcome(String.t(), String.t()) :: {:ok, map()} | :error
+  def outcome(namespace, instance_id) do
+    case Reads.find(Reads.controllers(), __MODULE__, :local_kept, [namespace, instance_id]) do
+      {:ok, _node, record} ->
+        {:ok, record}
+
+      {:error, _unreachable} ->
+        if RelayManager.exist?(namespace, instance_id),
+          do: :error,
+          else: RelayHistory.last_outcome(namespace, instance_id)
+    end
+  end
+
+  @doc false
+  # `outcome/2`'s kept record on this node, while its window lasts.
+  @spec local_kept(String.t(), String.t()) :: map() | nil
+  def local_kept(namespace, instance_id) do
+    case Completion.read(instance_id) do
+      {:ok, %{namespace: ^namespace, finished_at: finished_at} = record}
+      when is_integer(finished_at) ->
+        expires_at = PersistenceResolver.kept_until(instance_id, finished_at)
+
+        if expires_at >= System.system_time(:second),
+          do: Map.merge(record, %{expires_at: expires_at, state_kept: true, node: node()})
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc """
+  How long a finished instance of `relay_class` keeps its state, in hours, as
+  its class's `keep_finished` resolves; `0` keeps nothing.
+  """
+  @spec completed_retention_hours(String.t(), caller_context()) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  verb completed_retention_hours(relay_class, metadata, caller_context),
+  verb completed_retention_hours(relay_class, caller_context),
     verb: :retention_default,
-    args: [
-      relay_class: [type: :string, doc: "The relay class."],
-      metadata: [type: :map, default: %{}, doc: "The instance's own metadata."]
-    ] do
-    {:ok, PersistenceResolver.completed_retention_hours(relay_class, metadata)}
+    args: [relay_class: @relay_class] do
+    {:ok, PersistenceResolver.completed_retention_hours(relay_class)}
   end
 
   @doc """
@@ -88,9 +123,15 @@ defmodule Flezha.Service.Steps do
   verb journal(instance_id, opts \\ [], caller_context),
     verb: :state_journal,
     row: &instance_row/1,
+    as: located,
     args: [instance_id: @instance_id, opts: Page.arg()] do
     with {:ok, page} <- Page.parse(opts, :journal, sorts: [seq: :desc]),
-         do: RelayManager.on_state_node(instance_id, Journal, :report, [instance_id, page])
+         do:
+           RelayManager.on_state_node(instance_id, Journal, :report, [
+             instance_id,
+             page,
+             located.namespace
+           ])
   end
 
   @doc "The iterations the instance's journal has committed; with `opts`, paged newest first."
@@ -473,11 +514,12 @@ defmodule Flezha.Service.Steps do
   @doc false
   # The row a Cell with persisted state is judged by: its class's namespace. A
   # controller that adopted the relay may hold it only remotely, so a Cell
-  # missing locally is hydrated, one key's artifacts, never the whole tasklet.
+  # missing locally is hydrated, one key's artifacts, never the whole tasklet;
+  # only for a relay that runs or is kept, never one whose state went with it.
   @spec persisted_cell(String.t()) :: {:ok, map()} | {:error, term()}
   def persisted_cell(path) do
     with {:ok, {class, tasklet, key} = cell_id} <- split_cell(path) do
-      if persisted?(cell_id) or hydrated?(class, tasklet, key),
+      if persisted?(cell_id) or (held?(class) and hydrated?(class, tasklet, key)),
         do: {:ok, %{namespace: RelayManager.namespace_of_class(class), cell_id: cell_id}},
         else: {:error, {:no_persisted_state, path}}
     end
@@ -556,6 +598,8 @@ defmodule Flezha.Service.Steps do
   end
 
   defp persisted?(cell_id), do: cell_id in Paths.all_cells()
+
+  defp held?(class), do: RelayManager.namespace_of(class) != :error or Completion.exists?(class)
 
   defp hydrated?(class, tasklet, key) do
     DurabilityTier.hydrate_cells(class, tasklet, [key])
@@ -650,7 +694,17 @@ defmodule Flezha.Service.Steps do
   end
 
   # An instance's namespace is its class's: the registry's answer while it
-  # runs, the state root's afterwards.
-  defp instance_row([instance_id | _]) when is_binary(instance_id),
-    do: {:ok, %{namespace: RelayManager.namespace_of_class(instance_id)}}
+  # runs, the state root's while it is kept, the relay history's afterwards.
+  defp instance_row([instance_id | _]) when is_binary(instance_id) do
+    case RelayManager.namespace_of_class(instance_id) do
+      "_system" = unknown ->
+        case RelayHistory.last_outcome(:all, instance_id) do
+          {:ok, %{namespace: namespace}} -> {:ok, %{namespace: namespace}}
+          :error -> {:ok, %{namespace: unknown}}
+        end
+
+      namespace ->
+        {:ok, %{namespace: namespace}}
+    end
+  end
 end

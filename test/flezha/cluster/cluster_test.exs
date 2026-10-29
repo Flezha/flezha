@@ -123,8 +123,10 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
   @moduletag timeout: 120_000
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
+  alias Flezha.State.Completion
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -163,6 +165,19 @@ defmodule Flezha.Cluster.DirectoryTwoNodeTest do
 
     # Stop forwards whole-call, so its node-local cleanup runs on the peer.
     assert :ok = RelayManager.stop_relay(@ns, "xnode_routed")
+
+    # A completion handled here for a relay whose state is on the peer writes
+    # its record beside that state, on the peer.
+    kept = RelayFixture.get("xnode_kept", @factory_do_nothing)
+    assert {:ok, %{node: ^peer_node}} = RelayManager.start_relay(@ns, kept)
+    :ok = :erpc.call(peer_node, ClassRegistry, :put_keep_finished, ["xnode_kept", 24])
+    terminal = %{status: "ok", error: "", result: "r", undo: "", finished_at: 1}
+
+    assert :ok =
+             RelayManager.stop_relay(@ns, "xnode_kept", cause: :complete, terminal: terminal)
+
+    assert {:ok, %{status: "ok", result: "r", namespace: @ns}} =
+             :erpc.call(peer_node, Completion, :read, ["xnode_kept"])
 
     NodeTestHelper.stop_runner_remote(peer_node, @ns, runner_id)
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)

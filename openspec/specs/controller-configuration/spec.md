@@ -267,7 +267,7 @@ included.
 
 #### Scenario: The relay list and the sweep agree
 
-- **GIVEN** a finished steps relay and the default `:default_relay_completed_retention_hours`
+- **GIVEN** a finished steps relay whose class declares `keep_finished: true`, and the default `:default_relay_completed_retention_hours`
 - **WHEN** `flz relay list` and the retention sweeper each judge whether it is retained
 - **THEN** both SHALL read the same window
 

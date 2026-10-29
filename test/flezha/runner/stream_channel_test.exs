@@ -628,16 +628,6 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   # fails when: an off-tier park stops telling the Overwatch, once its entry is
   # durable, that the input it parked is dead-lettered, with the call waiting on
   # it if there is one.
-  test "an instance under a class override reads how it runs from its class" do
-    id = "records_run_#{System.unique_integer([:positive])}"
-    class = id <> "_class"
-    :ok = ClassRegistry.put(class, :steps)
-    :ok = ClassRegistry.put_state_keys(id, class)
-    on_exit(fn -> ClassRegistry.delete(class) end)
-
-    assert Flezha.Runner.StreamChannel.Records.run_of(id) == :steps
-  end
-
   test "a park frame is announced once its entry is durable" do
     FlezhaTest.Helper.DlqFixtures.isolated_dir()
     set_mimic_global_until_exit()

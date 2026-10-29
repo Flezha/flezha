@@ -194,17 +194,20 @@ defmodule Flezha.Convergence.Intent do
     {dirs, cache} = state_root_dirs(cache)
     evidence = MapSet.union(MapSet.new(Map.keys(dirs)), HubManager.durable_relay_ids())
 
-    # A finished steps relay's state is retained for inspection on purpose
-    # (`Flezha.State.Completion`): intent fulfilled, not intent lost. Its record
-    # lives in the class directory, so a class with none on disk holds none.
+    # A finished relay's state kept on request (`Flezha.State.Completion`), or
+    # one whose delete a write in flight held back, is intent fulfilled, not
+    # intent lost. Both are marked in the class directory, so a class with none
+    # on disk holds neither.
     mismatch =
       evidence
       |> MapSet.difference(live)
-      |> Enum.reject(&(Map.has_key?(dirs, &1) and Completion.exists_in?(dirs[&1])))
+      |> Enum.reject(&(Map.has_key?(dirs, &1) and finished_dir?(dirs[&1])))
       |> Enum.sort()
 
     {mismatch, cache}
   end
+
+  defp finished_dir?(dir), do: Completion.exists_in?(dir) or Paths.deleting?(dir)
 
   @doc false
   def note_intent_mismatch_transition(same, same), do: :ok

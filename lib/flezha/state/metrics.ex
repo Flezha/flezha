@@ -87,6 +87,15 @@ defmodule Flezha.State.Metrics do
     :ok
   end
 
+  @doc "Every Cell of `relay_class` that holds counters on this node."
+  @spec cells_of(String.t()) :: [Paths.cell_id()]
+  def cells_of(relay_class) do
+    ensure_table()
+
+    for [tasklet, key] <- :ets.match(@table, {{relay_class, :"$1", :"$2"}, :_}),
+        do: {relay_class, tasklet, key}
+  end
+
   @doc """
   Snapshot every Cell's counter set. Returns
   `[{cell_id, %{counter_name => value}}]`. Used by the metrics

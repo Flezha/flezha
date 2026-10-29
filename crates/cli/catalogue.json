@@ -1558,7 +1558,7 @@
     },
     {
       "name": "Steps.completed_retention_hours",
-      "doc": "How long a completed instance of `relay_class` is retained, in hours.",
+      "doc": "How long a finished instance of `relay_class` keeps its state, in hours, as its class's `keep_finished` resolves; `0` keeps nothing.",
       "action": "public",
       "remote": true,
       "stream": false,
@@ -1568,19 +1568,12 @@
           "type": "string",
           "required": true,
           "doc": "The relay class."
-        },
-        {
-          "name": "metadata",
-          "type": "map",
-          "required": false,
-          "default": {},
-          "doc": "The instance's own metadata."
         }
       ]
     },
     {
       "name": "Steps.completion",
-      "doc": "One steps instance's completion record.",
+      "doc": "How one finished steps instance ended (`outcome/2`), or `:error` while it runs or when nothing records its end.",
       "action": "state.records",
       "remote": true,
       "stream": false,

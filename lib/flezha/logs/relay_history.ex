@@ -38,7 +38,7 @@ defmodule Flezha.Logs.RelayHistory do
          meaning: "The relay history refused records because its queue was full."}
     ]
 
-  alias Flezha.Cluster.Reads
+  alias Flezha.Cluster.{Page, Reads}
   alias Flezha.Logs
   alias Flezha.Logs.{Kinds, Local, Seen}
 
@@ -104,6 +104,45 @@ defmodule Flezha.Logs.RelayHistory do
         end
     end
   end
+
+  @doc """
+  How `relay_id` in `namespace` (`:all` for any) ended, as the completion
+  record its newest `ended` record stands for (`state_kept: false`), read on
+  every controller; `:error` when none answered one. The inverse of
+  `outcome/2`.
+  """
+  @spec last_outcome(String.t() | :all, String.t()) :: {:ok, map()} | :error
+  def last_outcome(namespace, relay_id) do
+    query = %{
+      filters: %{"event" => "ended", "relay" => relay_id},
+      since_us: nil,
+      until_us: nil,
+      namespace: namespace
+    }
+
+    {:ok, page} = Page.parse(%{limit: 1}, :relay_history, sorts: [newest: :desc], keys: [:limit])
+
+    case Local.everywhere(:relay_history, query, page) do
+      %{rows: [{_key, record} | _]} -> {:ok, completion(record)}
+      %{rows: []} -> :error
+    end
+  end
+
+  defp completion(record) do
+    %{
+      namespace: record["namespace"],
+      run: record["run"],
+      status: status(record["outcome"]),
+      error: record["error"] || "",
+      result: "",
+      finished_at: div(record["ts_us"], 1_000_000),
+      state_kept: false
+    }
+  end
+
+  defp status("completed"), do: "ok"
+  defp status(failed) when failed in ["failed", "undone"], do: "error"
+  defp status(_stopped), do: "cancelled"
 
   @doc """
   The kind's encode: a record map's wall-clock time and its fields after

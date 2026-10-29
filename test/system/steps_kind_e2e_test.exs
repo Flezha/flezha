@@ -15,14 +15,22 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
 
   import FlezhaTest.Helper.StepsResumeHarness,
-    only: [collect_loop: 1, forward_sink: 2, await_outputs: 3, send_turn: 3]
+    only: [
+      collect_loop: 1,
+      forward_sink: 2,
+      await_outputs: 3,
+      await_status: 4,
+      keep_finished: 0,
+      send_turn: 3
+    ]
 
   alias Flezha.Identificator
   alias Flezha.Relay.Builder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias Flezha.Service.Logs
   alias Flezha.Service.RelayManager
-  alias Flezha.State.Completion
+  alias Flezha.State.Paths
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.MimicGlobal
   alias FlezhaTest.Helper.NodeTestHelper
@@ -206,6 +214,8 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   # only place the spawn result and the pass are observable.
   test "a once steps spawned by a tasklet runs its pass on the payload and completes ok" do
     namespace = "spawn_once_e2e"
+    # The result is read from the kept record.
+    keep_finished()
     {port, _runner_id} = NodeTestHelper.start_runner_port(namespace)
 
     on_exit(fn ->
@@ -233,14 +243,8 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
     assert [{spawned, "spawned"}] = once_results(seen), "no spawn result in:\n#{seen}"
     assert seen =~ "once_ran ticket-7", "the spawned pass never ran on its payload:\n#{seen}"
 
-    assert wait_until(
-             fn -> match?({:ok, %{status: "ok"}}, Completion.read(spawned)) end,
-             30_000
-           ),
-           "the spawned once steps did not complete ok: " <>
-             inspect(Completion.read(spawned))
-
-    assert {:ok, %{result: "ticket-7"}} = Completion.read(spawned)
+    assert %{result: "ticket-7"} =
+             await_status(namespace, spawned, %{status: "ok", state_kept: true}, 30_000)
 
     assert wait_until(
              fn ->
@@ -285,6 +289,59 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
 
     assert [{^first, _outcome}] = hold_results(seen),
            "the re-run did not resolve to #{first}:\n#{seen}"
+  end
+
+  # The same re-run once the worker ended and kept nothing: the relay history
+  # still names it, so the identical spawn resolves to it and starts nothing.
+  # Only the reference runner's requester spawns a worker that ends
+  # (`FLEZHA_SPAWN_HOLD_ONCE`).
+  @tag reference_runtime: true
+  test "a crash re-run of a spawn whose worker ended and kept nothing starts nothing" do
+    namespace = "spawn_rerun_ended_e2e_#{System.unique_integer([:positive])}"
+    id_path = TierE2EHarness.unique_id_path()
+    runner_env = [{"FLEZHA_RUNNER_ID_PATH", id_path}, {"FLEZHA_SPAWN_HOLD_ONCE", "1"}]
+    {port_a, _runner_a} = NodeTestHelper.start_runner_port(namespace, env: runner_env)
+    requester = "spawn_hold_requester_#{System.unique_integer([:positive])}"
+    on_exit(fn -> TierE2EHarness.cleanup(namespace, requester, id_path) end)
+
+    assert {:ok, _} =
+             RelayManager.start_relay(namespace, %Builder{
+               id: requester,
+               factory_id: "spawn_hold_requester"
+             })
+
+    assert :ok = RelayManager.send_io_confirming(requester, namespace, "job-1", %{})
+
+    seen = NodeTestHelper.read_port(port_a, &(hold_results(&1) != []), 60_000)
+    assert [{worker, "spawned"}] = hold_results(seen), "no spawn result in:\n#{seen}"
+
+    assert %{state_kept: false} = await_status(namespace, worker, "ok", 30_000)
+
+    assert wait_until(fn -> not File.exists?(Paths.class_dir(worker)) end, 15_000),
+           "the ended worker's state directory was kept"
+
+    TierE2EHarness.sigkill(TierE2EHarness.os_pid(port_a))
+
+    {port_b, _runner_b} =
+      NodeTestHelper.start_runner_port(namespace,
+        env: [{"FLEZHA_STEPS_E2E_RELEASE", "1"} | runner_env]
+      )
+
+    on_exit(fn -> ensure_port_dead(port_b) end)
+    seen = NodeTestHelper.read_port(port_b, &(hold_results(&1) != []), 60_000)
+
+    assert [{^worker, "spawned"}] = hold_results(seen),
+           "the re-run did not resolve to #{worker}:\n#{seen}"
+
+    refute RelayManager.exist?(namespace, worker)
+    assert started_count(worker) == 1, "the re-run started the ended worker again"
+  end
+
+  defp started_count(relay_id) do
+    {:ok, %{records: records}} =
+      Logs.read(%{kind: "relay_history", filters: %{relay: relay_id}}, %{source: :internal})
+
+    Enum.count(records, &(&1["event"] == "started"))
   end
 
   defp hold_results(seen) do

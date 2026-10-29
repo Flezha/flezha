@@ -20,8 +20,11 @@ defmodule FlezhaTest.Service.RelayInfoTest do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Intent
   alias Flezha.Convergence.Snapshot
+  alias Flezha.Logs.RelayHistory
+  alias Flezha.Relay.Builder
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Overwatch
   alias Flezha.Service.Cli
   alias Flezha.Service.Relay.Info
   alias Flezha.Service.RelayManager
@@ -367,11 +370,48 @@ defmodule FlezhaTest.Service.RelayInfoTest do
 
     # Kept until the end of its retention window, on both the listing and the
     # single-relay read.
-    kept_until =
-      finished_at + PersistenceResolver.completed_retention_hours("done-1") * 3600
+    kept_until = PersistenceResolver.kept_until("done-1", finished_at)
 
     assert proc["expires_at"] == kept_until
-    assert {:finished, %{expires_at: ^kept_until}} = Info.relay(@namespace, "done-1")
+    assert proc["state_kept"] == true
+
+    assert {:finished, %{expires_at: ^kept_until, state_kept: true}} =
+             Info.relay(@namespace, "done-1")
+  end
+
+  test "a finished run that kept nothing is answered from the relay history, never listed" do
+    stub(RelayManager, :get_relay_ids, fn _ns -> {:ok, []} end)
+    id = "fan_trade-#{System.unique_integer([:positive])}"
+
+    :ok =
+      RelayHistory.ended(
+        %Overwatch{
+          id: id,
+          namespace: @namespace,
+          factory_id: "fan_trade",
+          builder: %Builder{id: id, factory_id: "fan_trade", run: :steps},
+          terminal: %{status: "error", error: "boom", undo: ""}
+        },
+        fn -> nil end
+      )
+
+    assert {:finished,
+            %{
+              status: "error",
+              error: "boom",
+              run: "steps",
+              state_kept: false,
+              finished_at: finished_at
+            }} = Info.relay(@namespace, id)
+
+    assert_in_delta finished_at, System.system_time(:second), 5
+
+    out =
+      capture_io(fn -> Cli.call("Relay.info", Jason.encode!([@namespace]), output: "json") end)
+
+    assert %{"relays" => procs} = Jason.decode!(out)
+    refute Enum.find(procs, &(&1["id"] == id))
+    assert {:error, {:relay_not_found, _, _}} = Info.relay("other-ns", id)
   end
 
   test "a finished relay outside the retention window is not surfaced" do

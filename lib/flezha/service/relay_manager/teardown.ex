@@ -2,7 +2,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
   @moduledoc """
   What a relay stop owes, as the `:relay` steps of the shutdown plan:
   the runner's stream channels flushed, the child stopped through the hub, the
-  state directory reclaimed, the quota released and the stop announced — each
+  state directory kept or deleted, the quota released and the stop announced — each
   once, in that order, as far as its cause owes them. The `:namespace` walk
   stops every child of a namespace through the same seam. `request_stop/2` and `stop_relay/3` run the stop verbs there.
   """
@@ -21,7 +21,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
   alias Flezha.Service.RelayManager.Admission
   alias Flezha.Shutdown
   alias Flezha.State.Completion
-  alias Flezha.State.Paths
+  alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
 
   @behaviour Flezha.Shutdown.Step
@@ -30,7 +30,8 @@ defmodule Flezha.Service.RelayManager.Teardown do
   The `:relay` walk's target: the relay, its Overwatch (`nil` for a start that
   never ran one), the runner it is bound to (or `nil`), whether its state stays
   on disk (a rescale moving it, `:sealed` for a steps relay survivor), why it
-  stops, and the Cell count its start allocated.
+  stops, how a run that ended by itself ended (`terminal`, else `nil`), how it
+  runs, and the Cell count its start allocated.
   """
   @type target :: %{
           namespace: binary(),
@@ -39,6 +40,8 @@ defmodule Flezha.Service.RelayManager.Teardown do
           runner_id: binary() | nil,
           preserve_state?: boolean() | :sealed,
           cause: :stop | :complete | :rescale | :rescale_leave | :failed_start,
+          terminal: map() | nil,
+          run: atom() | nil,
           cell_count: non_neg_integer()
         }
 
@@ -105,26 +108,51 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   # The state and its writers are on the node the Overwatch ran on, which a
   # stop issued from another controller is not.
-  defp state_dir_step(target, budget) do
-    :erpc.call(
-      node(target.overwatch),
-      __MODULE__,
-      :reclaim_state_dir,
-      [target.relay_id, target.preserve_state?],
-      budget
-    )
+  defp state_dir_step(%{preserve_state?: false} = target, budget),
+    do: on_state_node(target, :finish_state_dir, [target.relay_id, completion(target)], budget)
+
+  defp state_dir_step(target, budget),
+    do:
+      on_state_node(target, :reclaim_state_dir, [target.relay_id, target.preserve_state?], budget)
+
+  defp on_state_node(target, function, args, budget),
+    do: :erpc.call(node(target.overwatch), __MODULE__, function, args, budget)
+
+  # The completion record of a run that ended by itself.
+  defp completion(%{cause: :complete, terminal: %{status: _} = terminal} = target) do
+    terminal
+    |> Map.take([:status, :error, :result, :finished_at])
+    |> Map.merge(%{namespace: target.namespace, run: target.run && Atom.to_string(target.run)})
+  end
+
+  defp completion(_target), do: nil
+
+  @doc """
+  What a stop that is no move owes the relay's state on this node: its writers
+  close, then a run that ended by itself (`record`, else `nil`) whose class
+  keeps finished state (`PersistenceResolver.completed_retention_hours/1`) has
+  its completion record written beside the state, which the retention sweeper
+  reclaims once the window passes. Any other state is deleted.
+  """
+  @spec finish_state_dir(binary(), Completion.t() | nil) :: :ok
+  def finish_state_dir(relay_id, record) do
+    Flezha.State.Supervisor.close_writers(relay_id)
+
+    if record != nil and PersistenceResolver.completed_retention_hours(relay_id) > 0,
+      do: Completion.write(relay_id, record),
+      else: Flezha.State.Supervisor.delete_class(relay_id)
   end
 
   @doc """
-  What a stop owes the relay's state on this node. A stop that is a move —
-  a rescale taking the group down to redistribute its Cells — keeps the files:
+  What a stop that is a move owes the relay's state on this node. A move (a
+  rescale taking the group down to redistribute its Cells) keeps the files:
   they are the state about to be handed to another member, not garbage. Its
   writers close all the same, so the member restarted under this id opens the
   files where the move left them. `:sealed` first cuts a steps relay's journal to
   its latest committed iteration (`TaskJournal.cut/2`), the history boundary a
   surviving member of a rescale resumes from.
   """
-  @spec reclaim_state_dir(binary(), boolean() | :sealed) :: :ok
+  @spec reclaim_state_dir(binary(), true | :sealed) :: :ok
   def reclaim_state_dir(relay_id, :sealed) do
     :ok = TaskJournal.cut(relay_id, seal: true)
     reclaim_state_dir(relay_id, true)
@@ -132,8 +160,6 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   def reclaim_state_dir(relay_id, true),
     do: Flezha.State.Supervisor.close_writers(relay_id)
-
-  def reclaim_state_dir(relay_id, false), do: delete_relay_state_dir(relay_id)
 
   # Released symmetrically with the start: the relay, and the Cells its
   # class declared.
@@ -175,7 +201,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
       |> Enum.each(&stream_flush_step(%{runner_id: &1}, remaining(deadline)))
 
       _ = hub_stop_children(namespace, relay_ids, remaining(deadline))
-      Enum.each(relay_ids, &delete_relay_state_dir/1)
+      Enum.each(relay_ids, &finish_state_dir(&1, nil))
     end
 
     :ok
@@ -253,19 +279,6 @@ defmodule Flezha.Service.RelayManager.Teardown do
     end
   end
 
-  # On explicit stop, delete the on-disk state directories owned by the
-  # relay. The relay_id is used as the relay_class identifier — the SDK
-  # convention is that each relay's cell frames carry the relay_id
-  # as relay_class. A finished steps relay keeps its state and
-  # completion record for the retention window so the outcome stays
-  # inspectable; `Flezha.State.Retention` reclaims it once the window elapses.
-  def delete_relay_state_dir(relay_id) do
-    # Retained or deleted, the writer processes go with the relay.
-    Flezha.State.Supervisor.close_writers(relay_id)
-
-    if Completion.exists?(relay_id), do: :ok, else: Paths.delete_class_dir(relay_id)
-  end
-
   @doc """
   `RelayManager.request_stop/3` on the hosting node. The instance is told who
   asked (`by`) before the stop acts, so the end it reports is told apart from
@@ -317,7 +330,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
       # Told why it ends and read in one call: the flush needs its runner, the
       # quota step the Cells its start allocated.
       facts = opts |> Keyword.take([:terminal]) |> Map.new() |> Map.put(:cause, cause)
-      {runner_id, cell_count} = stop_facts(namespace, relay_id, relay_pid, facts)
+      {runner_id, cell_count, run} = stop_facts(namespace, relay_id, relay_pid, facts)
 
       target = %{
         namespace: namespace,
@@ -326,6 +339,8 @@ defmodule Flezha.Service.RelayManager.Teardown do
         runner_id: runner_id,
         preserve_state?: Keyword.get(opts, :preserve_state, false),
         cause: cause,
+        terminal: facts[:terminal],
+        run: run,
         cell_count: cell_count
       }
 
@@ -373,7 +388,7 @@ defmodule Flezha.Service.RelayManager.Teardown do
     end)
   end
 
-  defp stop_facts(_namespace, _relay_id, nil, _facts), do: {nil, 0}
+  defp stop_facts(_namespace, _relay_id, nil, _facts), do: {nil, 0, nil}
 
   defp stop_facts(namespace, relay_id, relay_pid, facts) do
     {runner_id, relay} =
@@ -389,6 +404,6 @@ defmodule Flezha.Service.RelayManager.Teardown do
           end
       end
 
-    {if(is_binary(runner_id), do: runner_id), Admission.cell_count(relay)}
+    {if(is_binary(runner_id), do: runner_id), Admission.cell_count(relay), Map.get(relay, :run)}
   end
 end

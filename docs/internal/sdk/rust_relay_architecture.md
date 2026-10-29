@@ -127,7 +127,9 @@ Every class carries `durable` in its `RelaySettings`: `Durable::Memory`,
 `sleep_after`: `SleepAfter::RunDefault` (the default: a flow class never sleeps,
 a steps class after six hours), `SleepAfter::Never` or `SleepAfter::After(d)`. An instance whose
 class sleeps is evicted after that much idleness and wakes on its next message
-with its Cells restored.
+with its Cells restored. Both also carry `keep_finished`: `KeepFinished::Nothing`
+(the default: a finished instance's state is deleted), `KeepFinished::Hours(n)` or
+`KeepFinished::ControllerWindow`.
 
 ## Public API
 

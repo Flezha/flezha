@@ -33,7 +33,6 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   alias Flezha.Service.Cli
   alias Flezha.Service.RelayManager
   alias Flezha.Service.Steps.Journal
-  alias Flezha.State.Completion
   alias Flezha.State.Paths
   alias Flezha.State.InputLog
   alias Flezha.State.TaskJournal
@@ -43,6 +42,9 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   @moduletag :steps_crash_resume
   # A loop, a rewind or a retry ladder runs many turns through a live runner.
   @moduletag timeout: 180_000
+
+  # Every scenario reads the run's journal, Cells or result after it ended.
+  setup do: keep_finished()
 
   describe "durable loop + suspension (uds)" do
     @describetag transport: :uds, scenario: :uds_loop
@@ -297,7 +299,8 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
     # A stop answers the same whether the loop is asleep or awake: the sleeper
     # is woken onto a runner, `StepsStop` follows the bind, and it ends
-    # `cancelled` with its record and directory kept.
+    # `cancelled` with its record and directory kept, as the controller's
+    # `keep_finished_by_default` asks.
     test "a suspended loop is woken and ends cancelled with its directory kept", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
       namespace = unique("steps_stop_sleeping")
@@ -322,7 +325,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, relay_id) end, 20_000)
 
       assert {:ok, :cooperative} = RelayManager.request_stop(namespace, relay_id)
-      await_status(relay_id, "cancelled", 30_000)
+      await_status(namespace, relay_id, %{status: "cancelled", state_kept: true}, 30_000)
       assert File.dir?(Paths.class_dir(relay_id))
     end
   end
@@ -357,14 +360,8 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
 
       for turn <- ["one", "two", "three", "bye"], do: send_turn(namespace, relay_id, turn)
 
-      assert NodeTestHelper.wait_until(
-               fn -> match?({:ok, %{status: _}}, Completion.read(relay_id)) end,
-               60_000
-             ),
-             "the loop did not end on bye; committed iterations: " <>
-               inspect(committed_iters(relay_id))
-
-      assert {:ok, %{status: "ok", result: "3"}} = Completion.read(relay_id)
+      assert %{status: "ok", result: "3"} =
+               await_status(namespace, relay_id, %{state_kept: true}, 60_000)
 
       # The completing turn still ran its whole iteration, reply included.
       assert replies(collector, 4, relay_id) ==
@@ -422,8 +419,9 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       assert [_one] = DlqStore.list(relay_id)
 
       send_turn(namespace, relay_id, ~s({"text":"after"}), "order")
-      await_status(relay_id, "ok", 60_000)
-      assert {:ok, %{result: "after"}} = Completion.read(relay_id)
+
+      assert %{result: "after"} =
+               await_status(namespace, relay_id, %{status: "ok", state_kept: true}, 60_000)
     end
   end
 
@@ -654,7 +652,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
         plugins: [forward_sink("branch_sink", collector)]
       )
 
-      await_status(relay_id, "error", 30_000)
+      await_status(namespace, relay_id, "error", 30_000)
 
       # Forward output of the three completed tasklets, then their undo — the
       # branches in reverse of whichever committed first, the shared root last.
@@ -721,7 +719,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       boot_runner(namespace, ctx, id_path, release?: true)
       start_steps(namespace, relay_id, "keyed_saga_steps", first_message: "a,b,c")
 
-      await_status(relay_id, "error", 30_000)
+      await_status(namespace, relay_id, "error", 30_000)
 
       # The markers come on the data stream and the status on the control
       # stream, so a marker can land just after the status.
@@ -781,7 +779,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
       plugins: [forward_sink("retry_sink", collector)]
     )
 
-    await_status(relay_id, terminal_status, 30_000)
+    await_status(namespace, relay_id, terminal_status, 30_000)
 
     relay_id
   end

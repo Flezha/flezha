@@ -221,15 +221,42 @@ impl SleepAfter {
     }
 }
 
+/// How long a finished instance keeps its state: nothing by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeepFinished {
+    #[default]
+    Nothing,
+    /// The controller's window for kept runs (`keep_finished: true`).
+    ControllerWindow,
+    Hours(u64),
+}
+
+impl KeepFinished {
+    /// The `keep_finished_h` metadata value; `None` when nothing is kept.
+    pub fn metadata(self) -> Option<String> {
+        match self {
+            KeepFinished::Nothing => None,
+            KeepFinished::ControllerWindow => Some("default".to_string()),
+            KeepFinished::Hours(hours) => Some(hours.to_string()),
+        }
+    }
+}
+
 /// Where an instance's work is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Durable {
     /// In memory only: a crash starts over.
     Memory,
     /// On the controller's disk.
-    Local { sleep_after: SleepAfter },
+    Local {
+        sleep_after: SleepAfter,
+        keep_finished: KeepFinished,
+    },
     /// In the remote copy before the commit point is acknowledged.
-    Remote { sleep_after: SleepAfter },
+    Remote {
+        sleep_after: SleepAfter,
+        keep_finished: KeepFinished,
+    },
 }
 
 impl Default for Durable {
@@ -243,6 +270,7 @@ impl Durable {
     pub const fn local() -> Self {
         Durable::Local {
             sleep_after: SleepAfter::RunDefault,
+            keep_finished: KeepFinished::Nothing,
         }
     }
 
@@ -250,6 +278,7 @@ impl Durable {
     pub const fn remote() -> Self {
         Durable::Remote {
             sleep_after: SleepAfter::RunDefault,
+            keep_finished: KeepFinished::Nothing,
         }
     }
 
@@ -266,7 +295,19 @@ impl Durable {
     pub fn declared_sleep_after(&self) -> Option<SleepAfter> {
         match self {
             Durable::Memory => None,
-            Durable::Local { sleep_after } | Durable::Remote { sleep_after } => Some(*sleep_after),
+            Durable::Local { sleep_after, .. } | Durable::Remote { sleep_after, .. } => {
+                Some(*sleep_after)
+            }
+        }
+    }
+
+    /// How long a finished instance keeps its state; `Nothing` for `Memory`.
+    pub fn keep_finished(&self) -> KeepFinished {
+        match self {
+            Durable::Memory => KeepFinished::Nothing,
+            Durable::Local { keep_finished, .. } | Durable::Remote { keep_finished, .. } => {
+                *keep_finished
+            }
         }
     }
 
@@ -488,7 +529,7 @@ pub fn parse_durable(value: Option<&Value>) -> Parsed<Durable> {
         only("false", &members, &[])?;
         return Ok(Durable::Memory);
     }
-    only(&name, &members, &["sleep_after"])?;
+    only(&name, &members, &["sleep_after", "keep_finished"])?;
     let sleep_after = match members.get("sleep_after") {
         None => SleepAfter::RunDefault,
         Some(Value::Bool(false)) => SleepAfter::Never,
@@ -503,10 +544,34 @@ pub fn parse_durable(value: Option<&Value>) -> Parsed<Durable> {
             })
         }
     };
+    let keep_finished = parse_keep_finished(members.get("keep_finished"))?;
     Ok(match name.as_str() {
-        "local" => Durable::Local { sleep_after },
-        _ => Durable::Remote { sleep_after },
+        "local" => Durable::Local {
+            sleep_after,
+            keep_finished,
+        },
+        _ => Durable::Remote {
+            sleep_after,
+            keep_finished,
+        },
     })
+}
+
+/// `durable.<level>.keep_finished`: hours, `true` for the controller's window,
+/// or `false` (the default) for nothing.
+fn parse_keep_finished(value: Option<&Value>) -> Parsed<KeepFinished> {
+    match value {
+        None | Some(Value::Bool(false)) => Ok(KeepFinished::Nothing),
+        Some(Value::Bool(true)) => Ok(KeepFinished::ControllerWindow),
+        Some(Value::Number(n)) if n.as_u64().is_some_and(|hours| hours > 0) => {
+            Ok(KeepFinished::Hours(n.as_u64().expect("checked")))
+        }
+        Some(other) => Err(SettingIssue::InvalidSetting {
+            setting: "keep_finished".to_string(),
+            value: other.to_string(),
+            expected: "a positive whole number of hours, true or false".to_string(),
+        }),
+    }
 }
 
 /// `run` as a host declaration writes it.
@@ -551,17 +616,34 @@ fn exactly_json(exactly: &Exactly) -> Value {
 }
 
 /// `durable` as a host declaration writes it; the run's default leaves
-/// `sleep_after` out.
+/// `sleep_after` out, and keeping nothing leaves `keep_finished` out.
 pub fn durable_json(durable: &Durable) -> Value {
     let Some(sleep_after) = durable.declared_sleep_after() else {
         return Value::Bool(false);
     };
+    let mut members = Map::new();
     match sleep_after {
-        SleepAfter::RunDefault => json!(durable.as_str()),
-        SleepAfter::Never => json!({ durable.as_str(): { "sleep_after": false } }),
-        SleepAfter::After(after) => {
-            json!({ durable.as_str(): { "sleep_after": after.as_millis() as u64 } })
+        SleepAfter::RunDefault => {}
+        SleepAfter::Never => {
+            members.insert("sleep_after".into(), json!(false));
         }
+        SleepAfter::After(after) => {
+            members.insert("sleep_after".into(), json!(after.as_millis() as u64));
+        }
+    }
+    match durable.keep_finished() {
+        KeepFinished::Nothing => {}
+        KeepFinished::ControllerWindow => {
+            members.insert("keep_finished".into(), json!(true));
+        }
+        KeepFinished::Hours(hours) => {
+            members.insert("keep_finished".into(), json!(hours));
+        }
+    }
+    if members.is_empty() {
+        json!(durable.as_str())
+    } else {
+        json!({ durable.as_str(): members })
     }
 }
 
@@ -585,6 +667,57 @@ mod tests {
             assert_eq!(each.carries_leaf(), carries, "{each:?}");
             assert_eq!(each.calls_allowed(), calls, "{each:?}");
             assert_eq!(each.partitionable(), partitions, "{each:?}");
+        }
+    }
+
+    #[test]
+    fn keep_finished_reads_every_spelling_and_writes_it_back() {
+        let table = [
+            (json!("local"), KeepFinished::Nothing),
+            (
+                json!({"local": {"keep_finished": false}}),
+                KeepFinished::Nothing,
+            ),
+            (
+                json!({"local": {"keep_finished": true}}),
+                KeepFinished::ControllerWindow,
+            ),
+            (
+                json!({"remote": {"keep_finished": 24, "sleep_after": 2000}}),
+                KeepFinished::Hours(24),
+            ),
+        ];
+        for (tree, kept) in table {
+            let durable = parse_durable(Some(&tree)).expect("a valid tree");
+            assert_eq!(durable.keep_finished(), kept, "{tree}");
+            assert_eq!(
+                parse_durable(Some(&durable_json(&durable))),
+                Ok(durable),
+                "{tree}"
+            );
+        }
+        assert_eq!(KeepFinished::Nothing.metadata(), None);
+        assert_eq!(
+            KeepFinished::ControllerWindow.metadata().as_deref(),
+            Some("default")
+        );
+        assert_eq!(KeepFinished::Hours(6).metadata().as_deref(), Some("6"));
+    }
+
+    #[test]
+    fn keep_finished_refuses_by_name() {
+        for value in [json!(0), json!(-1), json!(1.5), json!("24")] {
+            let tree = json!({ "local": { "keep_finished": value } });
+            match parse_durable(Some(&tree)) {
+                Err(SettingIssue::InvalidSetting { setting, .. }) => {
+                    assert_eq!(setting, "keep_finished", "{tree}")
+                }
+                other => panic!("{tree}: {other:?}"),
+            }
+        }
+        match parse_durable(Some(&json!({ "false": { "keep_finished": 24 } }))) {
+            Err(SettingIssue::UnknownField { fields, .. }) => assert_eq!(fields, "keep_finished"),
+            other => panic!("{other:?}"),
         }
     }
 

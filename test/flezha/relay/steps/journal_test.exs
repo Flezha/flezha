@@ -9,7 +9,7 @@ defmodule FlezhaTest.Relay.Steps.JournalTest do
 
   alias Flezha.Service.Cli
   alias Flezha.Service.Steps.Journal
-  alias Flezha.State.{Completion, TaskJournal}
+  alias Flezha.State.{Completion, Paths, TaskJournal}
 
   defp instance_id(), do: "journal_report_#{System.unique_integer([:positive])}"
 
@@ -19,7 +19,7 @@ defmodule FlezhaTest.Relay.Steps.JournalTest do
 
   defp complete(inst, status, error) do
     Completion.write(inst, %{
-      namespace: "default",
+      namespace: Paths.namespace_of_class(inst),
       run: "steps",
       status: status,
       error: error,

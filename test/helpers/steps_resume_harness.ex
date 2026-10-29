@@ -5,8 +5,9 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   process, and the full SIGKILL-mid-run to respawn to resume flow.
 
   Boots on `ctx.transport` rather than the UDS the tier harness pins, and waits
-  on the terminal completion record rather than on a replacement Overwatch — a
-  resumed chain can run to completion and deregister between two polls.
+  on the run's outcome (`Flezha.Service.Steps.outcome/2`) rather than on a
+  replacement Overwatch — a resumed chain can run to completion and deregister
+  between two polls.
   """
 
   import ExUnit.Assertions
@@ -21,7 +22,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.RelayTestHelper
   alias Flezha.Service.RelayManager.Init
-  alias Flezha.State.Completion
+  alias Flezha.Service.Steps
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias Flezha.State.TaskJournal.Records
@@ -200,13 +201,31 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
   def send_input(namespace, relay_id, text),
     do: :ok = RelayTestHelper.cast_io(relay_id, namespace, text, %{})
 
-  # Wait for the run's terminal completion record to carry `status`.
-  def await_status(relay_id, status, timeout_ms) do
-    assert NodeTestHelper.wait_until(
-             fn -> match?({:ok, %{status: ^status}}, Completion.read(relay_id)) end,
-             timeout_ms
-           ),
-           "run never completed with status #{inspect(status)}"
+  # Wait for the run's outcome to carry `status`, or every field of a map
+  # (`state_kept`, `result`, ...), and return it.
+  def await_status(namespace, relay_id, status, timeout_ms) when is_binary(status),
+    do: await_status(namespace, relay_id, %{status: status}, timeout_ms)
+
+  def await_status(namespace, relay_id, fields, timeout_ms) do
+    reached? = fn ->
+      case Steps.outcome(namespace, relay_id) do
+        {:ok, outcome} -> Map.take(outcome, Map.keys(fields)) == fields
+        :error -> false
+      end
+    end
+
+    assert NodeTestHelper.wait_until(reached?, timeout_ms),
+           "run never ended with #{inspect(fields)}: #{inspect(Steps.outcome(namespace, relay_id))}"
+
+    {:ok, outcome} = Steps.outcome(namespace, relay_id)
+    outcome
+  end
+
+  # Keep every finished run's state for the calling test, for the scenarios
+  # that read a run's journal, Cells or result after it ended.
+  def keep_finished do
+    on_exit(Flezha.State.TestHelpers.override_env(:keep_finished_by_default, true))
+    :ok
   end
 
   # Move the run window's recorded end into the past, as if the window ran out
@@ -260,7 +279,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     assert NodeTestHelper.wait_until(fn -> mid_run?.(relay_id) end, 30_000),
            "relay never reached its durable mid-run point on the first runner"
 
-    refute Completion.exists?(relay_id),
+    assert Steps.outcome(namespace, relay_id) == :error,
            "relay terminated before the crash — it did not block mid-chain"
 
     assert registered?(namespace, relay_id)
@@ -275,7 +294,7 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     )
 
     # The resumed relay completes with the expected terminal status.
-    await_status(relay_id, terminal_status, 60_000)
+    await_status(namespace, relay_id, terminal_status, 60_000)
 
     assert NodeTestHelper.wait_until(fn -> not registered?(namespace, relay_id) end, 15_000),
            "completed relay was never deregistered"

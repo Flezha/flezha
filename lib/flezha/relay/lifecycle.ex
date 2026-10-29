@@ -718,11 +718,11 @@ defmodule Flezha.Relay.Lifecycle do
   defp calls_step({state, _reason}, _budget) do
     callee = Overwatch.callee(state)
 
-    case RelayManager.completion(Overwatch.relay_class(state)) do
-      {:ok, %{status: status}} ->
+    case state.terminal do
+      %{status: status} ->
         Inbound.end_all(state.calls, callee, status, Ingest.undelivered_calls(state))
 
-      _no_terminal_record ->
+      nil ->
         calls =
           if Replay.floor_reporter(state), do: Inbound.outside(state.calls), else: state.calls
 

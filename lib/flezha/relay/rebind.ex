@@ -188,8 +188,17 @@ defmodule Flezha.Relay.Rebind do
 
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 
-    # The bound runner's state supersedes a snapshot stored before the bind.
-    adopted = %{recovered | bind_task: nil, snapshot: nil}
+    # The bound runner's state supersedes a snapshot stored before the bind; a
+    # stop noted meanwhile (its cause, who asked, how the run ended) is newer.
+    adopted =
+      %{
+        recovered
+        | bind_task: nil,
+          snapshot: nil,
+          cause: state.cause,
+          terminal: state.terminal,
+          stop_requested_by: state.stop_requested_by
+      }
 
     case state.bind_task do
       %{reforward: true} ->

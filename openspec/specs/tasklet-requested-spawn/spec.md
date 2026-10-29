@@ -126,6 +126,8 @@ A replayed invocation, the correction re-run the controller marks as a replay, S
 
 A crash re-run is not a replay: an input that was not durably consumed runs live, and its spawn SHALL be issued again. Every spawn requested from a tasklet invocation SHALL carry an identity made of the requesting instance, the input's `flz.offset`, the call's position within the invocation, the factory and a hash of the payload. A request whose identity was already resolved SHALL resolve to the same relay the first request did and SHALL NOT start a second instance or deliver its payload a second time: without an id, the generated id SHALL be derived from the identity; with an id and `if_running: :deliver`, the delivered payload SHALL carry the identity as its `flz.msg_id`. A re-run whose request differs in factory or payload SHALL get a new identity and a new spawn, never another request's answer. Spawns requested from outside a tasklet (the CLI, the admin API, a schedule) SHALL carry no identity and are unchanged.
 
+Whether an identity was already resolved SHALL be judged from the live registry and, for an instance that is no longer live, from its kept completion record or the relay history's lookup (`seen`, `keep-a-relay-history`). A generated id is judged by `{:relay, id}`. A named id whose input log no longer exists is judged by `{:spawn_identity, identity}`. The judgement SHALL hold while the instance is live or kept, and for the relay history's dedup window after it ended. A lookup answered `{:unknown, nodes}` SHALL refuse the request as retryable (`relay.history_unreachable`, naming those controllers) and start nothing. A lookup answered `:disabled` SHALL be judged from the registry and the kept record alone, and the controller SHALL log once that ended instances are not deduplicated.
+
 #### Scenario: Controller unreachable
 
 - **WHEN** a tasklet calls the spawn while the control plane is down
@@ -150,6 +152,16 @@ A crash re-run is not a replay: an input that was not durably consumed runs live
 
 - **WHEN** a tasklet spawns `worker` with no id while taking offset 7, the spawn is answered `{id: "worker-<suffix>", outcome: spawned}`, and the runner dies before offset 7 is durably consumed
 - **THEN** the re-run's identical request SHALL resolve to `worker-<suffix>` and no second instance SHALL exist
+
+#### Scenario: A crash re-run after the worker finished and kept nothing
+
+- **WHEN** a tasklet spawns `worker` with no id while taking offset 7, `worker-<suffix>` ends `ok` and keeps nothing, and the re-run of offset 7 issues the identical request within the history's dedup window
+- **THEN** the request SHALL resolve to `worker-<suffix>` with outcome `spawned` and no instance SHALL start
+
+#### Scenario: The history cannot answer
+
+- **WHEN** an identity's lookup misses locally and one controller does not answer it
+- **THEN** the request SHALL be refused as `relay.history_unreachable` naming that controller, and no instance SHALL start
 
 #### Scenario: A crash before the request reached the controller loses no worker
 

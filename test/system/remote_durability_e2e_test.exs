@@ -43,11 +43,12 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.RelayManager
-  alias Flezha.State.Completion
+  alias Flezha.Service.Steps
   alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
   alias Flezha.State.{InputLog, Paths, TaskJournal}
   alias FlezhaTest.Fixtures.RelayFixture
   alias FlezhaTest.Helper.NodeTestHelper
+  alias FlezhaTest.Helper.StepsResumeHarness
 
   @moduletag :postgres_integration
   @moduletag timeout: 300_000
@@ -66,6 +67,8 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     id_path = unique_id_path()
 
     on_exit(fn -> cleanup(namespace, relay_id, id_path) end)
+    # The journal is read after the run ended.
+    StepsResumeHarness.keep_finished()
 
     # Runner A blocks in task B, so the crash lands with task A committed and
     # the chain unfinished.
@@ -102,7 +105,8 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
            ),
            "the committed barrier never reached the durability backend"
 
-    refute Completion.exists?(relay_id), "the run finished before the drill could start"
+    assert Steps.outcome(namespace, relay_id) == :error,
+           "the run finished before the drill could start"
 
     # --- the drill: the controller's disk for this relay is gone ---------
     sigkill(os_pid(port_a))
@@ -120,11 +124,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     # Zero loss: the bind hydrated the journal out of the manifest, so the
     # resumed run SKIPS task A and completes.
-    assert wait_until(
-             fn -> match?({:ok, %{status: "ok"}}, Completion.read(relay_id)) end,
-             120_000
-           ),
-           "the resumed run never completed after hydrating from the remote store"
+    StepsResumeHarness.await_status(namespace, relay_id, "ok", 120_000)
 
     {:ok, entries} = TaskJournal.read(relay_id)
     committed = for %{type: :task_committed, task_idx: idx} <- entries, do: idx

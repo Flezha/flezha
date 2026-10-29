@@ -831,7 +831,7 @@ finished-job window. The files decide inspectability; the processes go with
 the relay.
 
 #### Scenario: A finished steps relay retains its files, not its writers
-- **WHEN** a durable steps relay completes and its state is retained for `relay_completed_retention_hours`
+- **WHEN** a durable steps relay whose class declares `keep_finished` completes and its state is retained for its window
 - **THEN** its WAL and journal files SHALL stay on disk and no `WalWriter` process SHALL remain registered for its cells
 
 #### Scenario: A deleted state directory has no writer under it

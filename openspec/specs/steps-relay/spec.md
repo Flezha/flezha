@@ -153,8 +153,9 @@ mechanism of the steps relay's own. A message SHALL reach its member by key as a
 the SDK's key-group guard SHALL apply to a steps relay member unchanged. Each member SHALL end and
 compensate itself only: a member's exit trigger (`ctx.complete` in one of its passes, its
 `max_duration`, a stop, a terminal failure) SHALL end that member alone, emitting its own
-`RelayCompleted`, driving its own teardown and writing its own completion record under its
-member id, while the other members run on; a member's rollback, in either mode, SHALL undo that
+`RelayCompleted`, driving its own teardown and recording its own outcome under its member id
+(a completion record when its class keeps finished state, the relay history's `ended` record
+always), while the other members run on; a member's rollback, in either mode, SHALL undo that
 member's passes and no other member's. There SHALL be no group-wide end, no group `complete`
 result and no group rollback. The member count SHALL change only between passes, when every
 member is quiet, and a rescale SHALL be a history boundary for each surviving member. A `once`
@@ -171,9 +172,9 @@ would reach one member while the others waited for nothing.
 #### Scenario: One member ends itself and the other runs on
 
 - **WHEN** a tasklet of `orders#p1` calls `ctx.complete(result)` and the iteration commits
-- **THEN** `orders#p1` emits `RelayCompleted` with status `ok` and `result`, is torn down and
-  keeps its completion record under `orders#p1`, and `orders#p0` receives and runs its next
-  message unaffected
+- **THEN** `orders#p1` emits `RelayCompleted` with status `ok` and `result`, is torn down,
+  its outcome is read under `orders#p1`, and `orders#p0` receives and runs its next message
+  unaffected
 
 #### Scenario: One member fails and compensates itself only
 

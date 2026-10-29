@@ -116,7 +116,7 @@ Flezha.Service.Schedule.remove/2
 Flezha.Service.Schedule.run/2
 Flezha.Service.Steps.cells/2
 Flezha.Service.Steps.committed_iterations/2
-Flezha.Service.Steps.completed_retention_hours/3
+Flezha.Service.Steps.completed_retention_hours/2
 Flezha.Service.Steps.completion/2
 Flezha.Service.Steps.consumed_offset/2
 Flezha.Service.Steps.delete/2

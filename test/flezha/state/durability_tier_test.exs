@@ -21,7 +21,7 @@ defmodule Flezha.State.DurabilityTierTest do
   alias Flezha.Service.Cli
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
-  alias Flezha.State.{InputLog, Lineage, Paths, TaskJournal, TestHelpers}
+  alias Flezha.State.{Completion, InputLog, Lineage, Paths, TaskJournal, TestHelpers}
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
   alias FlezhaTest.Helper.NodeTestHelper
@@ -330,6 +330,20 @@ defmodule Flezha.State.DurabilityTierTest do
 
       assert File.exists?(Paths.wal_path(ctx.cell_id))
       refute File.exists?(Paths.wal_path(other))
+    end
+
+    test "a read of a finished relay brings its Cells back only while it is kept", ctx do
+      assert :ok = Shipper.ship_now({:cell, ctx.cell_id})
+      TestHelpers.wipe_cell(ctx.cell_id)
+      path = "#{ctx.class}/task/k1"
+
+      assert {:error, {:no_persisted_state, ^path}} = Flezha.Service.Steps.persisted_cell(path)
+      refute File.exists?(Paths.wal_path(ctx.cell_id))
+
+      :ok = Completion.write(ctx.class, %{namespace: "ns", status: "ok", finished_at: 0})
+      assert {:ok, %{cell_id: cell_id}} = Flezha.Service.Steps.persisted_cell(path)
+      assert cell_id == ctx.cell_id
+      assert File.exists?(Paths.wal_path(ctx.cell_id))
     end
   end
 

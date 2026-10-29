@@ -56,20 +56,6 @@ When a durable steps relay's runner or controller restarts mid-run, the relay SH
 - **WHEN** a steps relay's cell error is non-retryable or has exhausted the retry ladder
 - **THEN** the relay SHALL compensate completed tasklets and terminate with status `error`, and the platform SHALL NOT automatically re-run the relay
 
-### Requirement: A finished steps relay's data is retained for a window
-
-On terminal teardown (status `ok | error | cancelled`), a durable steps relay's data SHALL NOT be deleted immediately. The controller SHALL record a completion record (status, result/error payload, finished-at) alongside the retained final state and SHALL retain them for a configurable window — default **3 days** (`:default_relay_completed_retention_hours = 72`, env `FLEZHA_STEPS_RETENTION_HOURS`, or the value the start's instance metadata carries; no per-class map) — after which the existing retention sweeper SHALL delete them. During the window, `flz relay info <id>` SHALL report the finished relay's terminal status, result/error, and finish time.
-
-#### Scenario: Finished-job data survives until the window elapses
-
-- **WHEN** a durable steps relay terminates and the retention window has not elapsed
-- **THEN** its final state and completion record SHALL remain on disk and `flz relay info <id>` SHALL report its terminal status and result
-
-#### Scenario: Retention sweeper cleans up after the window
-
-- **WHEN** a finished steps relay's `finished_at` plus the retention window is in the past
-- **THEN** the retention sweeper SHALL delete its retained state and completion record
-
 ### Requirement: A restore gate that times out SHALL fail the run
 
 A resumed steps run SHALL NOT start a pass while any restore its bind announced

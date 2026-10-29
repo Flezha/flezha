@@ -87,7 +87,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   For a steps relay the replacement is what `force_fresh_rebind/2`
   cannot wait on: a resumed chain can run to completion and deregister between
   two polls, so "a live replacement pid" is a state the test may legitimately
-  never see. The terminal completion record is the thing to wait on instead.
+  never see. The run's outcome (`Flezha.Service.Steps.outcome/2`) is the thing to
+  wait on instead.
   """
   def kill_overwatch(namespace, relay_id) do
     {:ok, pid} = RelayManager.get_relay_pid(namespace, relay_id)

@@ -219,15 +219,6 @@ defmodule Flezha.Runner.StreamChannel.Records do
   def owned?(state, relay_class, kind),
     do: match?({:owner, _pid}, ownership(state, relay_class, kind))
 
-  @doc """
-  How the instance `relay_id` runs, read from its class's record, which this
-  module already consults for ownership. An `:relay_class` override names a
-  class other than the id, and the record is the class's.
-  """
-  @spec run_of(binary()) :: :flow | :steps
-  def run_of(relay_id),
-    do: relay_id |> ClassRegistry.state_keys() |> List.last() |> ClassRegistry.get()
-
   # The one read of the ownership record: the session owns the relay and
   # the record names its Overwatch, no record exists on this node and the
   # relay's state belongs to the session's namespace, or the frame is refused.

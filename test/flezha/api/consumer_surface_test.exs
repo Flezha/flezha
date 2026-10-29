@@ -47,7 +47,10 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     {Flezha.Service.AuditLog, :read, 2} => :moved,
     {Flezha.Service.AuditLog, :rotate, 1} => :moved,
     {Flezha.Service.AuditLog, :stats, 1} => :moved,
-    {Flezha.Service.AuditLog, :tail, 2} => :moved
+    {Flezha.Service.AuditLog, :tail, 2} => :moved,
+    # Retention is the class's `keep_finished` declaration now, so the verb
+    # takes no instance metadata; the console drops its `%{}` argument.
+    {Flezha.Service.Steps, :completed_retention_hours, 3} => :withdrawn
   }
 
   setup_all do

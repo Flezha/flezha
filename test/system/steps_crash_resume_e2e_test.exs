@@ -62,8 +62,8 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
   alias Flezha.Relay.Replay
   alias Flezha.Runner.FleetManager
-  alias Flezha.State.Completion
   alias Flezha.Service.Cli
+  alias Flezha.Service.Steps
   alias Flezha.Service.Steps.Journal
   alias Flezha.State.Paths
   alias Flezha.State.Wire
@@ -76,6 +76,9 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   # Two live runner lifecycles + a SIGKILL + a resume per test; QUIC first
   # connects can be slow, so give each scenario a generous budget.
   @moduletag timeout: 180_000
+
+  # Every scenario reads the run's journal, WAL or markers after it ended.
+  setup do: keep_finished()
 
   for transport <- NodeTestHelper.transports() do
     describe "transport=#{transport}" do
@@ -199,7 +202,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
           plugins: [forward_sink("diamond_sink", collector)]
         )
 
-        await_status(relay_id, "ok", 60_000)
+        await_status(namespace, relay_id, "ok", 60_000)
 
         seed = ~s({"seed":"go"})
         delivered = collector |> await_outputs(5, relay_id) |> Enum.map(&elem(&1, 0))
@@ -459,7 +462,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
            ),
            "the root never committed ahead of the iteration on the first runner"
 
-    refute Completion.exists?(relay_id)
+    assert Steps.outcome(namespace, relay_id) == :error
 
     sigkill(os_pid(port_a))
     {_port_b, exec_b} = boot_runner(namespace, ctx, id_path, release?: true)
@@ -631,7 +634,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
       assert seq in Enum.map(effect_records(relay_id, "commit_a"), &elem(&1, 0)),
              "the journal names record #{seq}, which the Cell's WAL does not hold"
 
-      await_status(relay_id, "ok", 30_000)
+      await_status(namespace, relay_id, "ok", 30_000)
       assert [{@a_out, _md}] = await_outputs(collector, 1, relay_id)
     end
 
@@ -651,7 +654,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
         first_message: "a,b"
       )
 
-      await_status(relay_id, "error", 30_000)
+      await_status(namespace, relay_id, "error", 30_000)
 
       # The record rides the stream channel and the failure the control
       # channel, so the failure can land first.

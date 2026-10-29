@@ -5,7 +5,8 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
   takes the hard `stop_relay/2` teardown: the `:relay` walk of the
   shutdown plan, which releases BOTH the `:max_relays` and
   `:max_cells_per_relay` quota, symmetrically with `start_relay/2`
-  (the cell-quota leak fix), and retains a finished steps relay's state.
+  (the cell-quota leak fix), and keeps a completed run's state only when its
+  class keeps finished state.
 
   A minimal stub stands in for the Overwatch GenServer: it answers
   `:get_overwatch_state` and a stop's `{:note, fields}` (kind / runner / cell count). The hard stop itself
@@ -21,6 +22,7 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.ControlUnit
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -161,41 +163,59 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     refute_received {:dealloc, :max_cells_per_relay, _}
   end
 
-  test "stop_relay retains state + record for a finished steps relay" do
-    task_id = unique_id()
+  # A completed run's state goes unless its class keeps finished state.
+  defp complete(task_id, keep_finished) do
     {:ok, stub} = start_stub(%{builder: %{run: :steps}})
     on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> ClassRegistry.delete(task_id) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^task_id -> {:ok, stub} end)
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
     stub_hub_stop(self(), task_id)
 
-    # Simulate what `handle_relay_completed` wrote before teardown: a completion
-    # record + retained Cell state.
-    :ok =
-      Completion.write(task_id, %{
-        namespace: @namespace,
-        status: "ok",
-        error: "",
-        result: "",
-        finished_at: System.system_time(:second)
-      })
-
     wal = Paths.wal_path({task_id, "op0", "seg"})
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, "x")
+    :ok = ClassRegistry.put_keep_finished(task_id, keep_finished)
 
-    assert :ok = RelayManager.stop_relay(@namespace, task_id)
+    terminal = %{status: "error", error: "boom", result: "r", undo: "", finished_at: 1_700}
 
-    # Retain-not-delete: the record and the WAL survive teardown for the window.
-    assert Completion.exists?(task_id)
-    assert File.exists?(wal)
+    assert :ok =
+             RelayManager.stop_relay(@namespace, task_id, cause: :complete, terminal: terminal)
+
+    wal
   end
 
-  test "stop_relay deletes state when there is no completion record" do
+  test "a completed run whose class keeps finished state keeps it with its record" do
+    task_id = unique_id()
+    wal = complete(task_id, 24)
+
+    assert File.exists?(wal)
+
+    assert {:ok,
+            %{
+              namespace: @namespace,
+              run: "steps",
+              status: "error",
+              error: "boom",
+              result: "r",
+              finished_at: 1_700
+            }} = Completion.read(task_id)
+  end
+
+  test "a completed run whose class declares nothing leaves no state" do
+    task_id = unique_id()
+    complete(task_id, nil)
+
+    refute File.dir?(Paths.class_dir(task_id))
+    assert Completion.read(task_id) == :error
+  end
+
+  test "a hard stop deletes the state even of a class that keeps finished state" do
     task_id = unique_id()
     {:ok, stub} = start_stub(%{builder: %{run: :flow}})
     on_exit(fn -> NodeTestHelper.ensure_stopped(stub) end)
+    on_exit(fn -> ClassRegistry.delete(task_id) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^task_id -> {:ok, stub} end)
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
@@ -204,10 +224,10 @@ defmodule FlezhaTest.Service.RelayManagerRequestStopTest do
     wal = Paths.wal_path({task_id, "op0", "seg"})
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, "x")
+    :ok = ClassRegistry.put_keep_finished(task_id, 24)
 
     assert :ok = RelayManager.stop_relay(@namespace, task_id)
 
-    # No completion record → the class dir is deleted as before.
     refute File.dir?(Paths.class_dir(task_id))
   end
 

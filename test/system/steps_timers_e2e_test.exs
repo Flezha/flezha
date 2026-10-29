@@ -27,7 +27,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
 
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.FleetManager
-  alias Flezha.State.Completion
+  alias Flezha.Service.Steps
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 180_000
@@ -39,7 +39,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
       {namespace, id, collector} = start_timer_loop(ctx, [])
 
       send_turn(namespace, id, "after:300")
-      at = armed_at(collector, id)
+      at = armed_at(collector, namespace, id)
 
       assert await_sink(collector, ["tock:armed:#{at}", "tock:fired:#{at}"]),
              "the firing never reached the sink: #{inspect(collected(collector))}"
@@ -53,7 +53,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
       # send to reach the instance first on a loaded runner.
       send_turn(namespace, id, "after:500")
       send_turn(namespace, id, "slow:1500")
-      at = armed_at(collector, id)
+      at = armed_at(collector, namespace, id)
 
       assert await_sink(collector, [
                "tock:armed:#{at}",
@@ -68,7 +68,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
         start_timer_loop(ctx, extra_env: [{"FLEZHA_FIXTURE_SLEEP_AFTER_MS", "200"}])
 
       send_turn(namespace, id, "after:2000")
-      at = armed_at(collector, id)
+      at = armed_at(collector, namespace, id)
 
       assert NodeTestHelper.wait_until(fn -> suspended?(namespace, id) end, 10_000),
              "the idle instance with a pending timer never slept"
@@ -91,7 +91,7 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
       start_loop(namespace, id, "timer_loop_steps", collector)
 
       send_turn(namespace, id, "after:4000")
-      at = armed_at(collector, id)
+      at = armed_at(collector, namespace, id)
 
       sigkill(os_pid(port_a))
       boot_runner(namespace, ctx, id_path, release?: false)
@@ -145,9 +145,9 @@ defmodule FlezhaTest.System.StepsTimersE2ETest do
   end
 
   # The timestamp `tick` armed, read off the first thing the sink received.
-  defp armed_at(collector, id) do
+  defp armed_at(collector, namespace, id) do
     assert NodeTestHelper.wait_until(fn -> collected(collector) != [] end, 30_000),
-           "nothing reached the sink; completion: #{inspect(Completion.read(id))}"
+           "nothing reached the sink; outcome: #{inspect(Steps.outcome(namespace, id))}"
 
     ["tock:armed:" <> at | _] = collected(collector)
     String.to_integer(at)

@@ -430,10 +430,12 @@ the start. It ends on the first of:
   to wake on is removed at once.
 
 Every one of them ends in one `RelayCompleted` with a status (`ok`, `error` or `cancelled`), an
-error and a result. The controller writes the completion record, waits for the outputs still
-owed (up to 60 s), and then tears the instance down. A failed run is not started again
-automatically. The record and the state are kept for the retention window
-(`FLEZHA_STEPS_RETENTION_HOURS`, 72 hours by default), during which `flz relay info` shows the
+error and a result. The controller hands that outcome to the instance's Overwatch with the
+teardown, waits for the outputs still owed (up to 60 s), and then tears the instance down. A
+failed run is not started again automatically. The relay history's `ended` record keeps the
+status and error. The state is deleted unless the class declares `keep_finished`; a kept
+instance's completion record and state stay for its window (`FLEZHA_STEPS_RETENTION_HOURS`,
+72 hours by default, for `keep_finished: true`), during which `flz relay info` shows the
 instance as `finished` with its status, result and finish time
 ([after it ends](../topics/core/workflows.md#after-it-ends)).
 

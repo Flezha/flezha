@@ -10,9 +10,10 @@ defmodule Flezha.State.Retention do
   `retention_hours = 0` disables time-travel for that Relay class: the WAL
   is truncated to the latest snapshot's seq on every pass — compact and forget.
 
-  On the same tick it also runs the **finished-job** sweep: a finished steps
-  relay's retained state and completion record (`Flezha.State.Completion`)
-  are removed once `finished_at + completed_retention_hours` is past.
+  On the same tick it also runs the **finished-relay** sweep: a kept finished
+  relay's state and completion record (`Flezha.State.Completion`) are removed
+  once its window (`PersistenceResolver.kept_until/2`) is past, and a class directory
+  whose delete a write in flight held back (`Paths.deleting?/1`) is deleted.
 
   Holds its own sweep timer, `:time_travel_retention_check_interval_ms`.
   """
@@ -21,7 +22,9 @@ defmodule Flezha.State.Retention do
   use Flezha.Process.Timer, keys: [:sweep]
 
   alias Flezha.Config.Durations
+  alias Flezha.Relay.Lookup
   alias Flezha.State.InputLog.Sweep
+  alias Flezha.State.Supervisor, as: StateSupervisor
 
   alias Flezha.State.WalWriter.{Epoch, RemoteGate}
 
@@ -90,23 +93,32 @@ defmodule Flezha.State.Retention do
     end)
   end
 
-  # Finished-job retention: reclaim a finished steps relay's retained
-  # state + completion record once `finished_at + completed_retention_hours`
-  # is in the past. A finished relay is fully torn down (no live writer), so
-  # the whole class dir goes, through the one guard every state deletion passes.
+  # Finished-relay retention: reclaim a kept relay's state and completion
+  # record once `finished_at` plus its window is in the past, and finish a
+  # delete a write in flight held back. A finished relay is fully torn down (no
+  # live writer), so the whole class dir goes, through the one guard every
+  # state deletion passes.
   defp sweep_completed() do
     now = System.system_time(:second)
 
     Enum.each(Paths.class_dirs(), fn {relay_class, dir} ->
-      with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
-             Completion.read_in(dir),
-           window = PersistenceResolver.completed_retention_hours(relay_class),
-           true <- finished_at + window * 3600 < now do
-        Paths.delete_class_dir(relay_class)
-      else
-        _ -> :ok
-      end
+      if unfinished_delete?(relay_class, dir) or expired?(relay_class, dir, now),
+        do: StateSupervisor.delete_class(relay_class)
     end)
+  end
+
+  # A relay started again under the id since owns the directory now.
+  defp unfinished_delete?(relay_class, dir),
+    do: Paths.deleting?(dir) and match?({:error, _}, Lookup.overwatch(relay_class))
+
+  defp expired?(relay_class, dir, now) do
+    case Completion.read_in(dir) do
+      {:ok, %{finished_at: finished_at}} when is_integer(finished_at) ->
+        PersistenceResolver.kept_until(relay_class, finished_at) < now
+
+      _not_finished ->
+        false
+    end
   end
 
   # Effectively-once tier: truncate each relay's input-log below its

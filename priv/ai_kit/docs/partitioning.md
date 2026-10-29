@@ -317,7 +317,7 @@ forward, or by member id (`flz relay send orders#p1 ...`); a key the member does
 parks under the entry channel and starts no pass. What a steps relay adds:
 
 - **Each member ends and undoes its own work.** `ctx.complete`, `max_duration`, a stop or a
-  final failure ends that member alone, with its own completion record, and its rollback undoes
+  final failure ends that member alone, with its own outcome, and its rollback undoes
   its own passes. There is no group-wide end, result or rollback. A member that ended leaves a
   gap in `flz relay info` until a converge restarts it.
 - **Per member, by member id**: `flz relay rewind`, `flz state journal`, `flz state inbox`.

@@ -1026,6 +1026,13 @@ instance the first request resolved to:
   so the instance's input log drops the second delivery and the instance receives the payload
   once.
 
+An instance that has ended and kept nothing is found in the relay history's index of recent runs
+(`:relay_history[:dedup_window_hours]`, 24 hours by default), so a re-run inside that window still
+starts nothing. A controller that does not answer
+that lookup makes the request fail as retryable (`relay.history_unreachable`) rather than start a
+second instance. With the relay history off, an ended instance is found only while its state is
+kept, and the controller logs that once.
+
 A re-run that asks for a different factory or payload at the same position is a new request and
 spawns anew. An invocation that took no input offset (a timer firing, or an input to a relay
 with no durable input log) carries no identity, and neither does a start from the CLI, the
@@ -1075,16 +1082,26 @@ an instance sleeps and wakes: [the relay lifecycle](https://github.com/flezha/fl
 
 ## After it ends
 
-A finished instance's completion record (status, error, result, finish time)
-and state are kept for a while: `flz relay info <id>` shows phase
-`finished` with the status, result and finish time. They are removed once the
-retention window has passed.
+A finished instance keeps nothing by default: its state directory is deleted
+when it ends. `flz relay info <id>` still shows phase `finished` with its status
+and error, read from the relay history's `ended` record, for as long as the
+history keeps it.
+
+A class that needs the state after the end (its Cells, its journal, its result)
+declares `keep_finished` beside `sleep_after`, in hours, or `true` for the
+controller's window
+([relay settings](../../configuration/relay_settings.md)). Its completion
+record (status, error, result, finish time) and state are then kept, and
+`flz relay info` shows the result and when they expire. They are removed once
+the window has passed.
 
 `FLEZHA_STEPS_RETENTION_HOURS` sets `:default_relay_completed_retention_hours`,
-the retention every class takes; `flz relay list` keeps a finished instance for
-the same window.
+the window `keep_finished: true` takes, for flow and steps classes alike;
+`flz relay list` keeps a kept instance for the same window.
+`FLEZHA_KEEP_FINISHED_BY_DEFAULT=true` keeps every class that declares nothing,
+as finished instances were kept before.
 
-Its type and default are in [Controller environment variables](../../configuration/environment_variables.md#every-variable)
+Their types and defaults are in [Controller environment variables](../../configuration/environment_variables.md#every-variable)
 and [Application env keys](../../configuration/application_env.md#every-key).
 
 A workflow's cell keeps point-in-time history for

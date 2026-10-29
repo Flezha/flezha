@@ -131,6 +131,36 @@ defmodule FlezhaTest.Runner.ControlChannelBindingTest do
     assert Completion.read(op) == :error
   end
 
+  test "the owning runner's RelayCompleted writes no record and hands the outcome to the stop",
+       ctx do
+    test_pid = self()
+    %{relay_id: op} = ctx
+
+    RelayManager
+    |> stub(:stop_relay, fn @ns, id, opts ->
+      send(test_pid, {:stop_relay_called, id, opts})
+      :ok
+    end)
+
+    before = System.system_time(:second)
+
+    write_frame(
+      start_channel(ctx.runner_a),
+      {:relay_completed,
+       %RunnerCommands.RelayCompleted{relay_id: op, status: "error", error: "boom", result: "r"}}
+    )
+
+    assert_receive {:stop_relay_called, ^op, opts}, 2_000
+    assert opts[:cause] == :complete
+    assert Completion.read(op) == :error
+    refute File.exists?(Paths.class_dir(op))
+
+    assert %{status: "error", error: "boom", result: "r", undo: "", finished_at: finished_at} =
+             opts[:terminal]
+
+    assert finished_at >= before
+  end
+
   test "KB-210: runner B's IterPark neither journals a park nor suspends A's instance", ctx do
     %{relay_id: op, runner_b: runner_b} = ctx
 

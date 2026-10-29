@@ -20,6 +20,8 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
   alias Flezha.Dlq.Store
+  alias Flezha.Logs.RelayHistory
+  alias Flezha.Relay.{Builder, Overwatch}
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.Cli
@@ -436,6 +438,31 @@ defmodule FlezhaTest.Service.RelayDiagnoseTest do
                "namespace" => @namespace,
                "relay" => "op-1"
              }
+    end
+
+    test "a finished run that kept nothing is a note from its relay history record" do
+      id = "fan_trade-#{System.unique_integer([:positive])}"
+
+      :ok =
+        RelayHistory.ended(
+          %Overwatch{
+            id: id,
+            namespace: @namespace,
+            factory_id: "fan_trade",
+            builder: %Builder{id: id, factory_id: "fan_trade", run: :steps},
+            terminal: %{status: "error", error: "boom", undo: ""}
+          },
+          fn -> nil end
+        )
+
+      out =
+        capture_io(fn ->
+          Cli.call("Relay.diagnose", Jason.encode!([@namespace, id]), output: "json")
+        end)
+
+      assert %{"verdict" => "ok", "findings" => [done]} = Jason.decode!(out)
+      assert done["code"] == "diagnose.finished"
+      assert %{"status" => "error", "error" => "boom"} = done["details"]
     end
 
     test "an id that never ran is relay.not_found" do

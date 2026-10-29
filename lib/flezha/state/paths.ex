@@ -34,6 +34,7 @@ defmodule Flezha.State.Paths do
         }
 
   @safe_chars ~r/^[A-Za-z0-9_.-]+$/
+  @deleting ".deleting"
 
   @journal_cell_key "_task_journal"
 
@@ -192,22 +193,31 @@ defmodule Flezha.State.Paths do
   passes: a tasklet directory holding a file under any in-progress suffix
   `Flezha.State.Durable` declares has a write in flight, and truncating it
   would corrupt the rename ceremony, so it is skipped (with WARN) and the class
-  directory, with its namespace claim, stays until it is empty.
+  directory, with its namespace claim, stays until it is empty. A skip leaves
+  the class directory marked (`deleting?/1`), so the retention sweep finishes it.
   """
   @spec delete_class_dir(binary()) :: :ok
   def delete_class_dir(relay_class) when is_binary(relay_class) do
     class_dir = class_dir(relay_class)
 
     with {:ok, names} <- File.ls(class_dir) do
-      Enum.each(names, fn name ->
-        path = Path.join(class_dir, name)
-        if File.dir?(path), do: maybe_delete_tasklet(path), else: File.rm(path)
-      end)
+      {tasklets, files} =
+        names |> Enum.map(&Path.join(class_dir, &1)) |> Enum.split_with(&File.dir?/1)
+
+      Enum.each(files, &File.rm/1)
+
+      unless tasklets |> Enum.map(&maybe_delete_tasklet/1) |> Enum.all?(),
+        do: File.write(Path.join(class_dir, @deleting), "")
     end
 
     prune_class_dir(relay_class)
   end
 
+  @doc "Whether a delete of the class directory `class_dir` is still to be finished."
+  @spec deleting?(binary()) :: boolean()
+  def deleting?(class_dir), do: File.exists?(Path.join(class_dir, @deleting))
+
+  # Whether the tasklet directory is gone.
   defp maybe_delete_tasklet(tasklet_dir) do
     case File.ls(tasklet_dir) do
       {:ok, names} ->
@@ -216,12 +226,15 @@ defmodule Flezha.State.Paths do
             "[state] skipping state dir #{tasklet_dir}: write in flight " <>
               "(#{Enum.join(Durable.suffixes(), " / ")} present)"
           )
+
+          false
         else
           _ = File.rm_rf(tasklet_dir)
+          true
         end
 
       {:error, _} ->
-        :ok
+        true
     end
   end
 

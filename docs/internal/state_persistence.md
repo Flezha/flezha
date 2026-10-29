@@ -27,7 +27,8 @@ decided.
     {relay_class}/
       run  effectively_once  ack_checkpoint  compact_after_bytes ...   # class sidecars
       input.log                      # durable input log (effectively-once tier, durable steps relay)
-      completion.record              # a finished steps relay
+      completion.record              # a finished relay kept by `keep_finished`
+      .deleting                      # a delete a write in flight held back
       {tasklet_id}/
         {cell_key}.wal
         {cell_key}.snap.{seq}
@@ -77,7 +78,7 @@ on the effectively-once tier writes.
 | `Flezha.State.PersistenceResolver` | Per-class knobs: user map → instance metadata → SDK declaration → global default. |
 | `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
 | `Flezha.State.Watchdog` | Sensor: compaction triggers and timeouts, output stalls, disk-quota and RPO alarms. |
-| `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, finished steps relays (`completion.record`) and input logs. |
+| `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, kept finished relays (`completion.record`), held-back deletes (`.deleting`) and input logs. |
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
 | `Flezha.State.TaskJournal` | Steps relay step journal over the reserved writer: the markers `task_committed`, `iter_committed`, `dead_lettered`, `compensated` and `rewound`, the park of a failed turn (`park_turn_async/4`) and the bind's removal of one that never reached its record (`drop_unrecorded_turns/1`), the committed record ranges per Cell a writer and a bind re-derive (`committed_records/1`), the channels the rewind guard reads (`staged_channels_above/2`), and the reporter of each consumed offset into the input log's watermark (`release_input/2`). It holds no output: the Cells' writers own delivery. |
 | `Flezha.State.WalTransfer` | Destination-pulled copy of one Cell's files between controllers. |
@@ -409,9 +410,10 @@ resets the strike.
   snapshot with mtime `≤ now - retention_hours * 3600` is kept, older ones reaped, and the WAL
   keeps `seq > kept_seq`. The rewrite is `cell.wal.rewriting → rename`, so a mid-rewrite crash
   leaves the original intact; a writer with nothing below the cut answers at once.
-- **Finished steps relays** — a class whose `completion.record` is older than
-  `PersistenceResolver.completed_retention_hours/1` (default 72 h) loses its retained
-  state and record.
+- **Finished relays** — a class kept by `keep_finished` whose `completion.record` is past
+  `PersistenceResolver.kept_until/2` (its declared hours, else 72 h) loses its retained state
+  and record, and a class directory whose delete a write in flight held back (a `.deleting`
+  marker, `Paths.deleting?/1`) is deleted, unless an Overwatch runs under that id again.
 - **Input logs** — `InputLog.Sweep.run/1` per state key, for either kind: a cast that truncates
   below `min(watermark, now - hold_window)`, rewriting the file only once the prefix below the
   floor exceeds `:record_log_cut_after_bytes`, and emits
@@ -716,7 +718,8 @@ writes. The boot refuses a key no row reads and a value its row's type refuses
 | `:default_output_stall_timeout_ms` | `60_000` | Output-staleness window; `0` disables. |
 | `:time_travel_retention_check_interval_ms` | `60_000` (`FLEZHA_RETENTION_CHECK_INTERVAL_MS`) | Retention tick. |
 | `:time_travel_retention_hours` / `:default_time_travel_retention_hours` | `%{}` / `6` | Snapshot history kept; `0` keeps only the latest. |
-| `:default_relay_completed_retention_hours` | `72` (`FLEZHA_STEPS_RETENTION_HOURS`) | Finished steps relay data kept before the sweeper reclaims it; `flz relay list` keeps the same window. |
+| `:default_relay_completed_retention_hours` | `72` (`FLEZHA_STEPS_RETENTION_HOURS`) | How long a finished relay kept by `keep_finished: true` (or by the default below) keeps its data before the sweeper reclaims it; `flz relay list` keeps the same window. |
+| `:keep_finished_by_default` | `false` (`FLEZHA_KEEP_FINISHED_BY_DEFAULT`) | Keep every finished relay whose class declares no `keep_finished`; a memory-only class keeps nothing. |
 | `:source_credit_window_bytes` | `wal_high_watermark_bytes` | Bytes a source's input log admits before its writers wait. |
 | `:input_log_hold_window_ms` | `0` (`FLEZHA_INPUT_LOG_HOLD_WINDOW_MS`) | Floor on how long a consumed input stays in `input.log`; a declared correction window raises it. |
 

@@ -4,24 +4,32 @@ defmodule Flezha.Service.Steps.Journal do
   it: one row per entry in append order (seq, type, task index, iteration, the
   cells that ran with the effect records each wrote and the channels they wrote
   on, and the handoff), and the run's `outcome`: the status and error the
-  engine completed it with (`Flezha.State.Completion`), or `nil` while it runs.
+  engine completed it with (`Flezha.Service.Steps.outcome/2`), or `nil` while it
+  runs.
   """
 
   alias Flezha.Cluster.Page
-  alias Flezha.State.Completion
+  alias Flezha.Service.RelayManager
+  alias Flezha.Service.Steps
   alias Flezha.State.Wire
   alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
 
   @doc """
-  The journal report for `instance_id`; with a `Flezha.Cluster.Page`, its
-  entries paged by seq under `rows`, only the page's rows built.
+  The journal report for `instance_id` of `namespace` (its class's when `nil`);
+  with a `Flezha.Cluster.Page`, its entries paged by seq under `rows`, only the
+  page's rows built.
   """
-  @spec report(String.t(), Page.t() | nil) :: {:ok, map()} | {:error, term()}
-  def report(instance_id, page \\ nil) do
+  @spec report(String.t(), Page.t() | nil, String.t() | nil) :: {:ok, map()} | {:error, term()}
+  def report(instance_id, page \\ nil, namespace \\ nil) do
+    namespace = namespace || RelayManager.namespace_of_class(instance_id)
+
     with {:ok, entries} <- TaskJournal.read(instance_id) do
       {:ok,
-       Map.merge(%{instance: instance_id, outcome: outcome(instance_id)}, rows(entries, page))}
+       Map.merge(
+         %{instance: instance_id, outcome: outcome(namespace, instance_id)},
+         rows(entries, page)
+       )}
     end
   end
 
@@ -32,8 +40,8 @@ defmodule Flezha.Service.Steps.Journal do
     %{answer | rows: Enum.map(kept, &journal_row/1)}
   end
 
-  defp outcome(instance_id) do
-    case Completion.read(instance_id) do
+  defp outcome(namespace, instance_id) do
+    case Steps.outcome(namespace, instance_id) do
       {:ok, record} -> Map.take(record, [:status, :error])
       :error -> nil
     end

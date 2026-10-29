@@ -96,17 +96,30 @@ defmodule Flezha.State.Supervisor do
       :error -> :ok
     end
 
+    forget_cell(cell_id)
+    Paths.delete_durable({:cell, cell_id})
+    {:ok, %{cell_id: cell_id, status: :ok}}
+  end
+
+  @doc """
+  Delete `relay_class`'s state directory (`Flezha.State.Paths.delete_class_dir/1`)
+  and forget every Cell of it this node holds in memory, its writers already
+  closed.
+  """
+  @spec delete_class(String.t()) :: :ok
+  def delete_class(relay_class) do
+    Enum.each(Metrics.cells_of(relay_class), &forget_cell/1)
+    Paths.delete_class_dir(relay_class)
+  end
+
+  # What a deleted Cell leaves in memory: its owed remote ships, its fsync
+  # mark, its counters (which list it as a Cell with persisted state) and its
+  # hold on the relay's input-log watermark.
+  defp forget_cell({relay_class, _, _} = cell_id) do
     RemoteGate.release_owed(cell_id)
     FsyncBatcher.forget(cell_id)
-    Paths.delete_durable({:cell, cell_id})
-    # Its counters are what lists it as a Cell with persisted state.
     Metrics.drop_cell(cell_id)
-
-    # A deleted Cell must stop holding the relay's input-log watermark.
-    {relay_class, _, _} = cell_id
     InputLog.forget_cell(relay_class, cell_id)
-
-    {:ok, %{cell_id: cell_id, status: :ok}}
   end
 
   @doc "Look up a running writer pid without starting one."

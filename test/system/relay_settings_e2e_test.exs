@@ -5,8 +5,9 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
   completes itself, a chained steps loop that ends itself, a steps loop that
   never ends until stopped, a `durable: remote` class refused on a controller
   with no durability backend, a two-second `sleep_after` on a flow
-  instance and on a steps instance, and a `max_duration_ms` window that a
-  runner restart or a live move does not restart.
+  instance and on a steps instance, a `max_duration_ms` window that a
+  runner restart or a live move does not restart, and a finished run that keeps
+  its state only when its class or the controller asks.
 
   Tagged `:system` (boots real subprocesses); run with:
 
@@ -21,7 +22,9 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
   alias Flezha.Relay.Builder
   alias Flezha.Service.RelayManager
   alias Flezha.Service.RelayManager.Init
+  alias Flezha.Service.Steps
   alias Flezha.State.Completion
+  alias Flezha.State.Paths
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag timeout: 180_000
@@ -32,27 +35,29 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
     @tag capability: :runner_lifecycle,
          skip: FlezhaTest.SystemCase.deferral(:runner_lifecycle)
     test "a flow instance ends itself with complete, after its Cells ran what they held", ctx do
-      collector = spawn_link(fn -> collect_loop([]) end)
-      namespace = unique("complete_flow")
-      id = unique("complete_flow")
-      id_path = unique_id_path()
-      on_exit(fn -> cleanup(namespace, id, id_path) end)
-      boot_runner(namespace, ctx, id_path, release?: false)
+      {namespace, id} = complete_flow(ctx)
 
-      start_stream(namespace, id, "complete_flow",
-        plugins: [forward_sink("complete_flow_out", collector)]
-      )
-
-      send_input(namespace, id, "a")
-      send_input(namespace, id, "bye")
-
-      assert NodeTestHelper.wait_until(fn -> collected(collector) == ["a", "bye"] end, 30_000),
-             "the flow did not echo both inputs: #{inspect(collected(collector))}"
-
-      await_status(id, "completed", 30_000)
+      # Its class declares no `keep_finished`: the relay history answers.
+      assert %{state_kept: false} = await_status(namespace, id, "ok", 30_000)
 
       assert NodeTestHelper.wait_until(fn -> not registered?(namespace, id) end, 15_000),
              "the completed flow instance was never deregistered"
+
+      assert NodeTestHelper.wait_until(fn -> not File.exists?(Paths.class_dir(id)) end, 15_000),
+             "the completed flow instance's state directory was kept"
+    end
+
+    @tag capability: :runner_lifecycle,
+         skip: FlezhaTest.SystemCase.deferral(:runner_lifecycle)
+    test "a flow instance that completes keeps its record when the controller keeps by default",
+         ctx do
+      keep_finished()
+      {namespace, id} = complete_flow(ctx)
+
+      assert %{status: "completed"} =
+               await_status(namespace, id, %{state_kept: true}, 30_000)
+
+      assert Completion.exists?(id)
     end
 
     test "a chained steps loop runs each pass on the last one's handoff and ends on an empty one",
@@ -64,7 +69,7 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
       {port, _runner} = boot_runner(namespace, ctx, id_path, release?: false)
 
       start_steps(namespace, id, "chained_steps", first_message: "3")
-      await_status(id, "ok", 60_000)
+      await_status(namespace, id, "ok", 60_000)
 
       seen = NodeTestHelper.read_port(port, &(passes(&1) == ~w(3 2 1 0)), 30_000)
       assert passes(seen) == ~w(3 2 1 0), "the passes were not 3, 2, 1, 0:\n#{seen}"
@@ -92,7 +97,7 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
       await_outputs(collector, 2, id)
 
       assert registered?(namespace, id)
-      assert Completion.read(id) == :error
+      assert Steps.outcome(namespace, id) == :error
 
       assert :ok = RelayManager.stop_relay(namespace, id)
       refute registered?(namespace, id)
@@ -173,7 +178,7 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
 
       spend_window(namespace, id)
       replace_runner(namespace, ctx, runner, id_path)
-      await_status(id, "cancelled", 60_000)
+      await_status(namespace, id, "cancelled", 60_000)
     end
 
     # Fails when: the bind a live move runs arms the class's whole window again.
@@ -190,8 +195,69 @@ defmodule FlezhaTest.System.RelaySettingsE2ETest do
       spend_window(namespace, id)
       {:ok, pid} = RelayManager.get_relay_pid(namespace, id)
       assert :ok = GenServer.call(pid, {:rebind, target}, 60_000)
-      await_status(id, "cancelled", 60_000)
+      await_status(namespace, id, "cancelled", 60_000)
     end
+  end
+
+  # `commit_block_steps` commits a Cell in its first stage; released, it ends
+  # `ok` at once.
+  describe "keep_finished (uds)" do
+    @describetag transport: :uds
+
+    test "a steps run whose class declares nothing keeps nothing once it ends", ctx do
+      {namespace, id} = commit_block_run(ctx, [])
+
+      assert %{state_kept: false, error: ""} = await_status(namespace, id, "ok", 60_000)
+
+      assert NodeTestHelper.wait_until(fn -> not File.exists?(Paths.class_dir(id)) end, 15_000),
+             "the finished run's state directory was kept"
+    end
+
+    # Only the reference runner declares `keep_finished` from the drill's env.
+    @tag reference_runtime: true
+    test "a steps run whose class declares keep_finished keeps its state and record", ctx do
+      {namespace, id} = commit_block_run(ctx, [{"FLEZHA_FIXTURE_KEEP_FINISHED_H", "24"}])
+
+      assert %{finished_at: finished_at, expires_at: expires_at} =
+               await_status(namespace, id, %{status: "ok", state_kept: true}, 60_000)
+
+      assert expires_at - finished_at == 24 * 3600, "the declared window was not the one kept"
+      assert Completion.exists?(id)
+
+      assert [_ | _] = Path.wildcard(Path.join([Paths.class_dir(id), "**", "*.wal"])),
+             "the kept run's Cell state is gone"
+    end
+  end
+
+  defp complete_flow(ctx) do
+    collector = spawn_link(fn -> collect_loop([]) end)
+    namespace = unique("complete_flow")
+    id = unique("complete_flow")
+    id_path = unique_id_path()
+    on_exit(fn -> cleanup(namespace, id, id_path) end)
+    boot_runner(namespace, ctx, id_path, release?: false)
+
+    start_stream(namespace, id, "complete_flow",
+      plugins: [forward_sink("complete_flow_out", collector)]
+    )
+
+    send_input(namespace, id, "a")
+    send_input(namespace, id, "bye")
+
+    assert NodeTestHelper.wait_until(fn -> collected(collector) == ["a", "bye"] end, 30_000),
+           "the flow did not echo both inputs: #{inspect(collected(collector))}"
+
+    {namespace, id}
+  end
+
+  defp commit_block_run(ctx, env) do
+    namespace = unique("keep_finished")
+    id = unique("commit_block_steps")
+    id_path = unique_id_path()
+    on_exit(fn -> cleanup(namespace, id, id_path) end)
+    boot_runner(namespace, ctx, id_path, release?: true, extra_env: env)
+    start_steps(namespace, id, "commit_block_steps", [])
+    {namespace, id}
   end
 
   defp window_run do

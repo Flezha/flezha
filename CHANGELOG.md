@@ -8,6 +8,17 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- A finished relay keeps nothing by default: its state directory is deleted
+  when it ends, flow and steps alike, and `flz relay info` answers its status
+  and error from the relay history. A class that needs its Cells, journal or
+  result after the end declares `keep_finished` under `durable` (hours, or
+  `true` for `FLEZHA_STEPS_RETENTION_HOURS`); `FLEZHA_KEEP_FINISHED_BY_DEFAULT=true`
+  keeps every class as before. A tasklet's spawn repeated by a crash re-run
+  after its instance ended is found in the relay history and starts nothing;
+  a controller that cannot answer that lookup refuses the spawn as retryable
+  (`relay.history_unreachable`). Breaking for a direct service caller:
+  `Flezha.Service.Steps.completed_retention_hours` drops its metadata argument
+  ([relay settings](docs/public/configuration/relay_settings.md)).
 - A factory can be read in full with no instance running:
   `flz relay factory <factory_id>` and `Flezha.Service.Fleet.factory/3` answer
   how it runs, what its class declares (where it keeps its work, how long an
@@ -135,6 +146,8 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A run that completed while its relay was being bound to a runner again no
+  longer ends as `stopped`: the rebind keeps the stop's cause and outcome.
 - Stopping a halted steps relay removes it at once, instead of waiting for an
   answer its runner never sends.
 - The convergence loop's start of a relay that ran nowhere no longer announces

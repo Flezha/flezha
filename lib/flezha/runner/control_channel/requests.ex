@@ -33,7 +33,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
   alias Flezha.State.Wire
   alias Flezha.Service.Admin
   alias Flezha.Service.RelayManager
-  alias Flezha.State.{Completion, TaskJournal}
+  alias Flezha.State.TaskJournal
 
   require Logger
 
@@ -110,24 +110,15 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
     if status == "error", do: report_steps_failure(state, relay_id, error)
 
-    # Finished-job retention: record the terminal outcome (durably, before the
-    # teardown) so `flz relay info` can surface it and `stop_relay`
-    # retains the state instead of deleting it. `finished_at` is stamped
-    # controller-side (the wire carries no timestamp).
-    _ =
-      Completion.write(relay_id, %{
-        namespace: state.namespace,
-        run: Atom.to_string(Records.run_of(relay_id)),
-        status: status,
-        error: error,
-        result: result,
-        finished_at: System.system_time(:second)
-      })
-
+    # The outcome rides the stop into the Overwatch; the teardown writes the
+    # completion record beside the state only when its class keeps it.
+    # `finished_at` is stamped here: the wire carries no timestamp.
     deregister_on_completion(state, relay_id, overwatch, %{
       status: status,
       error: error,
-      undo: undo
+      result: result,
+      undo: undo,
+      finished_at: System.system_time(:second)
     })
   end
 

@@ -21,7 +21,7 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
 
   alias Flezha.Dlq.Store, as: DlqStore
   alias Flezha.Service.Cli
-  alias Flezha.State.Completion
+  alias Flezha.Service.Steps
   alias Flezha.State.TaskJournal
   alias FlezhaTest.Helper.DlqFixtures
   alias FlezhaTest.Helper.NodeTestHelper
@@ -126,7 +126,7 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
 
     for turn <- ~w(hello boom), do: send_turn(namespace, relay_id, turn)
 
-    await_status(relay_id, "error", 60_000)
+    await_status(namespace, relay_id, "error", 60_000)
     assert DlqStore.list(relay_id) == []
   end
 
@@ -248,12 +248,12 @@ defmodule FlezhaTest.System.StepsFailedTurnE2ETest do
     }
   end
 
-  defp answered!(%{collector: collector, relay_id: relay_id}, answer) do
+  defp answered!(%{namespace: namespace, collector: collector, relay_id: relay_id}, answer) do
     assert NodeTestHelper.wait_until(fn -> answer in collected(collector) end, 60_000),
            "the session never answered #{answer}: " <>
              inspect(collected(collector)) <>
-             ", completion " <>
-             inspect(Completion.read(relay_id))
+             ", outcome " <>
+             inspect(Steps.outcome(namespace, relay_id))
   end
 
   defp iteration_records(relay_id) do

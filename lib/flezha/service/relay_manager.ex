@@ -26,7 +26,6 @@ defmodule Flezha.Service.RelayManager do
   alias Flezha.Shutdown
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
-  alias Flezha.State.Completion
   alias Flezha.State.Paths
 
   defdelegate assign_runner(arg1, arg2, arg3), to: Placement
@@ -356,7 +355,9 @@ defmodule Flezha.Service.RelayManager do
   move and `:sealed` also seals a steps relay's journal at its latest committed
   iteration; either closes the writers on the node the relay ran on.
   `cause:` (`:stop`, `:complete`, `:rescale`, `:rescale_leave` or `:failed_start`)
-  decides which steps act, and `terminal:` is how a completed run said it ended. `overwatch:` is the Overwatch a completion was admitted against: a
+  decides which steps act, and `terminal:` is how a completed run said it ended
+  (`status`, `error`, `result`, `undo`, `finished_at`): its state is kept, with a
+  completion record, only when its class keeps finished state. `overwatch:` is the Overwatch a completion was admitted against: a
   task can complete before the hub writes the row of the start that ran it, and
   the hub queues a stop behind a start it sent and has not yet registered. The
   fallback covers a completion handled on the node that started the relay.
@@ -373,23 +374,13 @@ defmodule Flezha.Service.RelayManager do
   """
   def stop_all_relays(namespace), do: Teardown.stop_all(namespace, Shutdown.stop_timeout_ms())
 
-  @doc """
-  Reclaim a stopped relay's state directory on this node: its writers
-  closed, its tree removed unless a completion record keeps it for the
-  retention window.
-  """
+  @doc "Delete a stopped relay's state directory on this node, its writers closed first."
   @spec delete_state_dir(String.t()) :: :ok
-  defdelegate delete_state_dir(relay_id), to: Teardown, as: :delete_relay_state_dir
+  def delete_state_dir(relay_id), do: Teardown.finish_state_dir(relay_id, nil)
 
   @doc "Close every writer of `relay_class` on this node, flushed; its files stay."
   @spec close_writers(String.t()) :: :ok
   defdelegate close_writers(relay_class), to: Flezha.State.Supervisor
-
-  @doc "The completion record a finished steps instance of `relay_class` left."
-  defdelegate completion(relay_class), to: Completion, as: :read
-
-  @doc "Whether a finished steps instance of `relay_class` left a completion record."
-  defdelegate completed?(relay_class), to: Completion, as: :exists?
 
   @doc """
   Keep a `ctx.effect` result of `relay_id` in its instance's effect log,

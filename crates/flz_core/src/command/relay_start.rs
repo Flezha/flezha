@@ -177,6 +177,9 @@ pub(crate) fn class_metadata(topology: &RelayTopology) -> HashMap<String, String
     if let Some(after) = topology.sleep_after() {
         put("sleep_after_ms", after.as_millis().to_string());
     }
+    if let Some(hours) = topology.durable.keep_finished().metadata() {
+        put("keep_finished_h", hours);
+    }
     if let Some(limit) = topology.max_duration {
         put("max_duration_ms", limit.as_millis().to_string());
     }
@@ -309,6 +312,34 @@ mod metadata_tests {
                 .map(String::as_str),
             Some("2000")
         );
+    }
+
+    // Retention rides both the `AddRelay` answer and the announcement, and is
+    // absent when nothing is kept.
+    #[test]
+    fn keep_finished_rides_the_metadata_and_the_announcement() {
+        for (suffix, durable, expected) in [
+            ("hours", r#"{"remote":{"keep_finished":6}}"#, Some("6")),
+            (
+                "window",
+                r#"{"local":{"keep_finished":true}}"#,
+                Some("default"),
+            ),
+            ("off", r#"{"local":{"keep_finished":false}}"#, None),
+            ("none", r#""local""#, None),
+        ] {
+            let id = format!("meta_keep_{suffix}_{}", std::process::id());
+            register_steps(&id, durable);
+            let announced = crate::relay::registry::advertised_for_factory(&id).declarations;
+            assert_eq!(
+                announced.get("keep_finished_h").map(String::as_str),
+                expected
+            );
+            assert_eq!(
+                metadata_of(&id).get("keep_finished_h").map(String::as_str),
+                expected
+            );
+        }
     }
 
     #[test]

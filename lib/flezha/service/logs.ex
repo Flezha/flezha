@@ -191,10 +191,7 @@ defmodule Flezha.Service.Logs do
              cursor: :before,
              limit: {100, 1_000}
            ) do
-      %{rows: rows, next: next, unreachable: unreachable} =
-        Reads.controllers()
-        |> Reads.rows(Local, :read, [kind.id, query, page])
-        |> Page.merge(page, &Local.key/1)
+      %{rows: rows, next: next, unreachable: unreachable} = Local.everywhere(kind.id, query, page)
 
       {:ok, %{records: Enum.map(rows, &elem(&1, 1)), next: next, unreachable: unreachable}}
     end

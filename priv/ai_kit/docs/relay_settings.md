@@ -57,6 +57,7 @@ run                        flow (default) | steps
 durable                    false | local (default) | remote
   local, remote
     sleep_after            a duration | false
+    keep_finished          hours | true | false (default)
 ```
 
 A class that declares only its factory id and its graph runs in flow, with
@@ -78,6 +79,7 @@ and nothing else is kept locally too, and sleeps after six idle hours.
 | `run.steps.on_failure` | `undo_all` | What a step that fails for good does. `undo_all` undoes every finished step, last one first. `keep_progress` keeps every committed pass and undoes only the one in flight; in a `per_input` loop the failed turn is set aside and the loop goes on. |
 | `durable` | `local` | Where an instance keeps its work. `false`: in memory only, and a crash starts over. `local`: on the controller's disk. `remote`: each commit point (a step, a flow input, a flow checkpoint) is acknowledged only once the remote durability backend holds it. |
 | `durable.<local\|remote>.sleep_after` | `false` for a flow class, six hours for a steps class | An instance idle this long is written out, leaves its runner, and wakes on its next message with its cells restored. `false` never sleeps. A sleeping flow instance has its input written to disk before it is forwarded, so a flow class pays for that only when it sets an interval. |
+| `durable.<local\|remote>.keep_finished` | `false` | What a finished instance keeps. By default nothing: its state is deleted when it ends, and `flz relay info` reads its status and error from the relay history. A number of hours, or `true` for the controller's window (`FLEZHA_STEPS_RETENTION_HOURS`, 72 by default), keeps its Cells and completion record (with its result) for that long. `FLEZHA_KEEP_FINISHED_BY_DEFAULT=true` keeps every class that does not declare it. |
 
 `ack.checkpoint` with `outputs: at_checkpoint` trades latency for throughput:
 the interval closes on whichever comes first of `every` inputs or
@@ -195,7 +197,10 @@ impl Relay for OrdersRelay {
     fn settings() -> RelaySettings {
         RelaySettings {
             run: Run::Steps { each: Each::PerInput, on_failure: OnFailure::KeepProgress },
-            durable: Durable::Local { sleep_after: SleepAfter::After(Duration::from_secs(10)) },
+            durable: Durable::Local {
+                sleep_after: SleepAfter::After(Duration::from_secs(10)),
+                keep_finished: KeepFinished::Nothing,
+            },
             max_duration: Some(Duration::from_secs(600)),
             description: "one order per message",
         }
@@ -306,13 +311,15 @@ func (OrdersRelay) Spec() flezha.RelaySpec {
 A few spellings differ from the tree's names:
 
 - **Java**: `durable()` takes `Durable.Memory()` for `false`. `sleepAfter` is an
-  `Optional<Duration>`, and empty never sleeps. `EffectivelyOnce` and
+  `Optional<Duration>`, and empty never sleeps. `keepFinished` is
+  `KeepFinished.Nothing()`, `KeepFinished.Hours(n)` or
+  `KeepFinished.ControllerWindow()`. `EffectivelyOnce` and
   `Ack.Checkpoint` take `withAck`, `withCorrectionMs`, `withBeyondWindow`,
   `withEvery`, `withMaxDelayMs` and `withOutputs`.
 - **Node**: the run is written as its branch, `flow: {...}` or `steps: {...}`,
   never both, because a short form's `run` is its tasklet body. The tree
   reaches the core as JSON, members spelled as the core reads them
-  (`sleepAfter` is `sleep_after`).
+  (`sleepAfter` is `sleep_after`, `keepFinished` is `keep_finished`).
 - **Python**, **Ruby**, **PHP**: `run` and `durable` are written bare
   (`"steps"`, `:local`) or as a one-key map holding the branch's members.
   Python's `Run` and `Durable` type aliases spell the tree with `Literal`
@@ -587,6 +594,7 @@ impl Relay for AgentRelay {
             },
             durable: Durable::Local {
                 sleep_after: SleepAfter::After(Duration::from_secs(10)), // an idle session sleeps after 10 s
+                keep_finished: KeepFinished::Nothing,
             },
             ..RelaySettings::default()
         }
