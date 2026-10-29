@@ -1,8 +1,8 @@
-//! The monotonic anchor, env parsing, lock poison recovery, big-endian reads
+//! The monotonic anchor, the polling loop, env parsing, lock poison recovery, big-endian reads
 //! and nonces; not a stable surface.
 
 use std::sync::{LazyLock, Mutex, MutexGuard};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// One origin for every monotonic stamp in the process.
 static MONOTONIC_ANCHOR: LazyLock<Instant> = LazyLock::new(Instant::now);
@@ -15,6 +15,23 @@ pub fn monotonic_nanos() -> u64 {
 /// Milliseconds since the monotonic anchor; signed as the atomic it feeds.
 pub fn monotonic_ms() -> i64 {
     MONOTONIC_ANCHOR.elapsed().as_millis() as i64
+}
+
+/// Poll `done` every `interval` (a yield when zero) until it holds, or `false`
+/// once `timeout` has passed. The one polling loop of the core and its tests.
+pub fn wait_until(timeout: Duration, interval: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let started = Instant::now();
+    while !done() {
+        if started.elapsed() >= timeout {
+            return false;
+        }
+        if interval.is_zero() {
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(interval);
+        }
+    }
+    true
 }
 
 /// The environment readers, re-exported so a crate above this one reaches one

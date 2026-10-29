@@ -13,7 +13,7 @@ use std::sync::Arc;
 use prost::Message;
 
 use super::cell_state::relay_not_found;
-use super::{OffReaderAction, OffReaderBuild};
+use super::{OffReaderAction, OffReaderAnswer, OffReaderBuild};
 use crate::cell::{CellCounters, CellSlot};
 use crate::channel::TaskletId;
 use crate::dynamic::DynamicCellCounters;
@@ -40,7 +40,7 @@ impl OffReaderAction for TaskletActivity {
             None => None,
         };
         Ok(Box::new(move || {
-            activity(&instance, cells_of).encode_to_vec()
+            OffReaderAnswer::Reply(activity(&instance, cells_of).encode_to_vec())
         }))
     }
 }

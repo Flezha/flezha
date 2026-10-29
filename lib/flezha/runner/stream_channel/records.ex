@@ -362,15 +362,16 @@ defmodule Flezha.Runner.StreamChannel.Records do
   marker is a Cell frame whose identity names the instance and whose seq
   carries the offset; a runner that spreads an instance's records over several
   streams sends it on each and names their count in the body, an empty body
-  meaning one.
+  meaning one. A one-byte body `1` is the final marker of a stop that drained
+  the instance: it names no offset (`:final`) and confirms no prefix.
   """
   @spec processed_prefix(map(), binary()) ::
-          {:ok, binary(), non_neg_integer(), pos_integer()} | :refused
+          {:ok, binary(), non_neg_integer() | :final, pos_integer()} | :refused
   def processed_prefix(state, frame) do
     with {:ok, %{cell_id: {rc, _, _}, seq: offset, body: body}} <- Wire.decode_frame(frame),
-         {:ok, streams} <- marker_streams(body),
+         {:ok, at, streams} <- marker_body(offset, body),
          true <- admit(state, rc, :processed_prefix) do
-      {:ok, rc, offset, streams}
+      {:ok, rc, at, streams}
     else
       false ->
         :refused
@@ -381,9 +382,10 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
-  defp marker_streams(<<>>), do: {:ok, 1}
-  defp marker_streams(<<streams::16-big>>) when streams > 0, do: {:ok, streams}
-  defp marker_streams(body), do: {:error, {:bad_marker_body, body}}
+  defp marker_body(offset, <<>>), do: {:ok, offset, 1}
+  defp marker_body(offset, <<streams::16-big>>) when streams > 0, do: {:ok, offset, streams}
+  defp marker_body(_offset, <<1>>), do: {:ok, :final, 1}
+  defp marker_body(_offset, body), do: {:error, {:bad_marker_body, body}}
 
   @doc """
   Records an earlier stream handed to the writers are not counted by this
@@ -412,13 +414,23 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
-  @doc "Step the stream's markers and confirm, in each instance's input log, what they release."
+  @doc """
+  Step the stream's markers and confirm, in each instance's input log, what
+  they release. A final marker released tells the relay's routed Overwatch
+  `{:relay_drained, relay_id}`: its writers hold every record the runner sent
+  ahead of it. With no route, it is dropped.
+  """
   @spec confirm_prefix(map(), (Prefix.t() -> {[tuple()], Prefix.t()})) :: map()
   def confirm_prefix(state, step) do
     {confirmed, prefix} = step.(state.prefix)
 
-    Enum.each(confirmed, fn {rc, offset, streams} ->
-      Flezha.State.Supervisor.confirm_prefix(rc, offset, streams: streams, stream: self())
+    Enum.each(confirmed, fn
+      {rc, :final, _streams} ->
+        with [pid | _] <- Map.get(state.relay_mapping, rc, []),
+             do: send(pid, {:relay_drained, rc})
+
+      {rc, offset, streams} ->
+        Flezha.State.Supervisor.confirm_prefix(rc, offset, streams: streams, stream: self())
     end)
 
     %{state | prefix: prefix}

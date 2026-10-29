@@ -535,7 +535,7 @@ The controller ties an input to the outputs it causes with a token in the input'
 `flz.reply_to`. It creates one for every outside call, after removing any `flz.reply_to` the
 caller's metadata carried. Every other way into a relay drops that key, so no hook, plugin or
 sender can add, drop or change one. Every way in also drops the keys only the controller sets,
-`flz.replay`, `flz.replay_end`, `flz.edge` and `flz.offset`; `flz.msg_id` passes. The token is
+`flz.replay`, `flz.control`, `flz.edge` and `flz.offset`; `flz.msg_id` passes. The token is
 journaled with the input wherever the relay journals input, so a sleep, a move to another
 runner or a crash re-run deliver it again. The runner carries it from the input to every value
 derived from it and stamps it on each output the input causes; a tasklet never sees it, and a

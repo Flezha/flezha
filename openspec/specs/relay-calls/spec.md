@@ -16,10 +16,11 @@ point, whichever caller sent it (the CLI's `flz relay call`, the published
 For an outside call the controller SHALL mint the token: that entry point SHALL remove any
 `flz.reply_to` the caller's metadata carries, mint an opaque, unguessable token of at most 255
 bytes and put it on the input's metadata as `flz.reply_to`. Every other entry point SHALL remove
-`flz.reply_to`, and with it the routing keys `flz.replay`, `flz.replay_end`, `flz.edge` and
+`flz.reply_to`, and with it the routing keys `flz.replay`, `flz.control`, `flz.edge` and
 `flz.offset`, from the metadata it is given, in one step (`Calls.Token.strip/1`); the call entry point
 SHALL remove the same four routing keys before it puts its token, so no caller and no feeding
-plugin can mark an input a replay, a replay's end, an edge re-forward or a journal offset. Only
+plugin can mark an input a replay, a replay's end or a relay's stop, an edge re-forward or a
+journal offset. Only
 the controller's own re-forward and journal paths SHALL write those keys. `flz.msg_id` SHALL pass
 every entry point unchanged. The relay form of a token (`o:` followed by the caller and the call id) SHALL
 be accepted only from the controller's own call-delivery path (the delivery worker's message to
@@ -52,7 +53,7 @@ This SHALL hold for an unbounded and a steps relay alike.
 
 #### Scenario: A plugin cannot mark an input a replay
 
-- **WHEN** a feeding plugin injects a payload in `:confirming` mode whose metadata carries `flz.replay`, `flz.replay_end`, `flz.edge` and `flz.offset`
+- **WHEN** a feeding plugin injects a payload in `:confirming` mode whose metadata carries `flz.replay`, `flz.control`, `flz.edge` and `flz.offset`
 - **THEN** the input SHALL reach the relay without any of the four, its journal offset SHALL be the one the relay's input log assigned, and the relay SHALL treat it as a fresh input
 
 #### Scenario: A source's message id still absorbs a duplicate

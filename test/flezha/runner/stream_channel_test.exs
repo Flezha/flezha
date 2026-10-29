@@ -3,6 +3,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
+  alias Flezha.Runner.StreamChannel.Prefix
   alias Flezha.State.Paths
   alias Flezha.State.Wire
   alias Flezha.Transport.LivenessCounters
@@ -681,6 +682,33 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     assert_receive {:"$gen_cast",
                     {:dead_lettered, %{token: nil, offset: 4, tasklet: "task", attempts: 3}}},
                    2_000
+  end
+
+  # fails when: a draining stop's final marker is read as an offset, or the
+  # relay's Overwatch hears it drained before its writers hold the records the
+  # runner sent ahead of the marker.
+  test "a final marker tells the relay's Overwatch it drained once its records are written" do
+    rc = "drained_#{System.unique_integer([:positive])}"
+    :ok = ClassRegistry.put_overwatch(rc, self(), "runner-a")
+    on_exit(fn -> ClassRegistry.delete(rc) end)
+    {[], fenced} = Prefix.fenced(Prefix.new())
+    cell = {rc, "task", ""}
+
+    state = %{
+      runner_id: "r1",
+      identity: "runner-a",
+      relay_mapping: %{rc => [self()]},
+      prefix: Prefix.received(fenced, cell, 10)
+    }
+
+    header = WireEncoders.encode_header(1, 1, 1, 0, <<>>)
+    frame = WireEncoders.encode_frame(Wire.encode_cell_id(rc, "", ""), 0, header, <<1>>)
+    assert {:ok, ^rc, :final, 1} = StreamChannel.Records.processed_prefix(state, frame)
+
+    state = StreamChannel.Records.confirm_prefix(state, &Prefix.marker(&1, rc, :final, 1))
+    refute_received {:relay_drained, _}
+    _ = StreamChannel.Records.confirm_prefix(state, &Prefix.drained(&1, cell, 10))
+    assert_received {:relay_drained, ^rc}
   end
 
   test "a frame that does not decode is reported once per session and kind" do

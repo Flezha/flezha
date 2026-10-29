@@ -12,6 +12,8 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   are fsynced by one batcher flush, which the stream's first marker asks for,
   and shipped by the runner's `durable: remote` writers, before any marker
   of the stream is confirmed. A stream that carries no marker asks for none.
+  The final marker of a stop that drained the instance waits the same way and
+  confirms no offset: it is answered as `:final`.
 
   Pure over its own struct; `Flezha.Runner.StreamChannel` performs the effects.
   """
@@ -19,9 +21,12 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   defstruct outstanding: %{}, markers: %{}, fence: :none
 
   @type cell_id :: {binary(), binary(), binary()}
+  @typedoc "A marker's offset, or `:final` for the marker that ends a draining stop."
+  @type at :: non_neg_integer() | :final
+  @type confirmed :: [{binary(), at(), pos_integer()}]
   @type t :: %__MODULE__{
           outstanding: %{binary() => %{cell_id() => {non_neg_integer(), non_neg_integer()}}},
-          markers: %{binary() => [{non_neg_integer(), %{cell_id() => non_neg_integer()}}]},
+          markers: %{binary() => [{at(), pos_integer(), %{cell_id() => non_neg_integer()}}]},
           fence: :none | :asked | :done
         }
 
@@ -45,7 +50,7 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   Answers the offsets now confirmed, per instance.
   """
   @spec drained(t(), cell_id(), non_neg_integer()) ::
-          {[{binary(), non_neg_integer(), pos_integer()}], t()}
+          {confirmed(), t()}
   def drained(%__MODULE__{} = prefix, {rc, _, _} = cell_id, bytes) do
     writers = Map.get(prefix.outstanding, rc, %{})
 
@@ -75,7 +80,7 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   count, so a later marker waits only on what the writer still owes.
   """
   @spec released(t(), cell_id(), non_neg_integer()) ::
-          {[{binary(), non_neg_integer(), pos_integer()}], t()}
+          {confirmed(), t()}
   def released(%__MODULE__{} = prefix, {rc, _, _} = cell_id, bytes) do
     writers = Map.get(prefix.outstanding, rc, %{})
 
@@ -124,8 +129,8 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   stream, sent on `streams` streams in all. Answers the offsets this stream
   now confirms, per instance, with that count.
   """
-  @spec marker(t(), binary(), non_neg_integer(), pos_integer()) ::
-          {[{binary(), non_neg_integer(), pos_integer()}], t()}
+  @spec marker(t(), binary(), at(), pos_integer()) ::
+          {confirmed(), t()}
   def marker(%__MODULE__{} = prefix, rc, offset, streams \\ 1) do
     positions =
       for {cell_id, {received, drained}} <- Map.get(prefix.outstanding, rc, %{}),
@@ -146,7 +151,7 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
   def ask_fence(%__MODULE__{} = prefix), do: {false, prefix}
 
   @doc "The fence landed: every record an earlier stream handed over is acknowledged."
-  @spec fenced(t()) :: {[{binary(), non_neg_integer(), pos_integer()}], t()}
+  @spec fenced(t()) :: {confirmed(), t()}
   def fenced(%__MODULE__{} = prefix) do
     prefix = %{prefix | fence: :done}
 
@@ -175,11 +180,11 @@ defmodule Flezha.Runner.StreamChannel.Prefix do
         do: Map.delete(prefix.markers, rc),
         else: Map.put(prefix.markers, rc, waiting)
 
+    {finals, prefixes} = Enum.split_with(done, &match?({:final, _, _}, &1))
+
     confirmed =
-      case List.last(done) do
-        nil -> []
-        {offset, streams, _positions} -> [{rc, offset, streams}]
-      end
+      Enum.take(for({offset, streams, _} <- prefixes, do: {rc, offset, streams}), -1) ++
+        for({:final, streams, _} <- finals, do: {rc, :final, streams})
 
     {confirmed, %{prefix | markers: markers}}
   end

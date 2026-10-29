@@ -34,7 +34,7 @@ mod prepare_tests;
 #[cfg(test)]
 mod timer_settle_tests;
 
-#[cfg(feature = "bench-internals")]
+#[cfg(any(test, feature = "bench-internals"))]
 pub(crate) use activation::empty_effect;
 pub(crate) use activation::settle_steps_undo;
 pub use activation::{
@@ -50,6 +50,7 @@ pub use decl::{
 };
 pub use handout::to_schema;
 pub use issue::{render_issues, TopologyIssue};
+pub(crate) use leave::{begin_leave, end_leave};
 pub use leave::{cell_left_locked, pending_leave, relay_left, PendingLeave};
 pub(crate) use prepare::Crossed;
 pub use prepare::{

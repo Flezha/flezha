@@ -261,7 +261,7 @@ sequenceDiagram
     CTRL->>CTRL: 2. rewind the log to it under epoch + 1
     CTRL->>EX: 3. RestoreInitState, and wait for it
     CTRL->>EX: 4. re-send the slice after the baseline, each input marked flz.replay
-    CTRL->>EX: 5. flz.replay_end, to every cell
+    CTRL->>EX: 5. flz.control = replay_end, to every cell
     EX->>EX: hold the slice, sort by event time then offset, run it
     EX->>CTRL: corrected records under epoch + 1
     CTRL->>SINK: corrected outputs: the higher epoch overwrites the stale rows by key
@@ -281,7 +281,7 @@ the design:
 - **The rewind comes before the restore.** The other way round, the runner
   would write corrected records onto sequence numbers the stale records still
   hold, and send outputs under the old epoch before the new one was on disk.
-- **`flz.replay_end` goes to every cell.** An input reaches exactly one cell,
+- **The end of the slice goes to every cell.** An input reaches exactly one cell,
   by its key, so an end marker riding the last input would leave every other
   cell holding its share of the slice forever.
 - **The new epoch is passed in, not computed by the writer.** A correction

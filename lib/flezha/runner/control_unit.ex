@@ -213,12 +213,29 @@ defmodule Flezha.Runner.ControlUnit do
   `RemRelay`, awaiting the runner's answer for up to `timeout_ms`. The runner
   ships its Cells' last buffered changes as it removes the relay, so they are
   on their way once it answers. The Overwatch's own teardown uses it.
+
+  With `drain: true` the caller has sent the relay's stop marker behind its
+  last input: the runner gets half the wait to apply everything ahead of the
+  marker before it removes the relay, and the answer waits, within
+  `timeout_ms`, for `{:relay_drained, relay_id}`, which the stream channel
+  sends once the writers hold every record the runner sent before its final
+  marker.
   """
-  @spec stop_relay(binary(), binary(), non_neg_integer()) ::
+  @spec stop_relay(binary(), binary(), non_neg_integer(), keyword()) ::
           {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
-  def stop_relay(runner_id, relay_id, timeout_ms) do
-    command = {:rem_relay, %RunnerCommands.RemRelay{relay_id: relay_id}}
-    send_control_await(runner_id, command, timeout: timeout_ms)
+  def stop_relay(runner_id, relay_id, timeout_ms, opts \\ []) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    drain_ms = if Keyword.get(opts, :drain, false), do: div(timeout_ms, 2), else: 0
+    stop = %RunnerCommands.RemRelay{relay_id: relay_id, drain_within_ms: drain_ms}
+
+    with {:ok, _} = answer when drain_ms > 0 <-
+           send_control_await(runner_id, {:rem_relay, stop}, timeout: timeout_ms) do
+      receive do
+        {:relay_drained, ^relay_id} -> answer
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) -> answer
+      end
+    end
   end
 
   @doc """

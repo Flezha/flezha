@@ -163,3 +163,63 @@ subscribers left SHALL stop at once.
 - **WHEN** the home moves to controller C
 - **THEN** C's copy opens its connection before A's copy closes its own
 
+### Requirement: A relay without an input log stops behind every input it confirmed
+
+A relay whose input is not journaled SHALL stop behind every input its Overwatch confirmed.
+When that Overwatch stops while bound to a runner, every input it delivered to the runner before
+the stop SHALL be applied by the runner, and every record those inputs produced SHALL be handed
+to the relay's Cell writers before they close. The Overwatch SHALL send a stop marker on the relay's data stream behind its last
+delivery, then tell the runner to drop the relay with a time limit. The runner SHALL drop it only
+after it has read the marker and the instance is quiet: no Cell holds an input queued, in a
+batch at a host, held for a retry or owed to another Cell, no input is crossing to the host or
+on a retry ladder, and every Cell's records are flushed. The runner SHALL then answer with a
+final processed-prefix marker on the state sink, behind those records, and the controller SHALL
+close the writers only after it has that answer. The runner SHALL wait for this off its command
+thread, so no other relay's command waits behind it. When the time limit passes first, the stop
+SHALL finish as it does without the answer. Nothing SHALL be added to an input's own path. A
+relay whose input is journaled SHALL stop as before.
+
+#### Scenario: An input on the wire as the stop begins is applied and moved
+
+- **GIVEN** a persistent relay without an input log in a cold namespace, fed by a confirming source
+- **WHEN** the source controller confirms an input and the relay's cold move begins before the runner has read that input from its data stream
+- **THEN** the runner applies the input before it drops the relay
+- **AND** the destination's state includes that input's change
+
+#### Scenario: Inputs queued in a busy Cell are applied before the last flush
+
+- **GIVEN** a relay whose Cell is still applying an earlier input while confirmed inputs wait in its mailbox
+- **WHEN** the relay is stopped for a cold move
+- **THEN** every waiting input is applied and its record flushed before the relay is dropped
+- **AND** those records are in the copy the destination pulls
+
+#### Scenario: An input on a retry is applied before the relay is dropped
+
+- **GIVEN** a relay whose Cell failed an input with a retryable error and holds it for its backoff
+- **WHEN** the relay is stopped within the time limit
+- **THEN** the retry runs before the relay is dropped, and its record is flushed
+
+#### Scenario: Work passed between a relay's tasklets is finished too
+
+- **GIVEN** a relay whose entry tasklet's output feeds a second tasklet of the same relay
+- **WHEN** it is stopped right after an input was confirmed
+- **THEN** both tasklets' changes from that input are in the copy the destination pulls
+
+#### Scenario: The last records reach the writers before they close
+
+- **GIVEN** a relay whose runner flushes its Cells' last records as it stops
+- **WHEN** the source closes the relay's writers
+- **THEN** every one of those records has been handed to the writers first
+
+#### Scenario: A busy relay does not hold up the runner's other relays
+
+- **GIVEN** two relays on one runner, the first with a Cell busy in author code
+- **WHEN** the first is stopped and the second is sent a command
+- **THEN** the second's command is answered while the first still waits
+
+#### Scenario: A runner that does not answer does not hold the move
+
+- **GIVEN** a relay whose Cell never finishes, or whose runner is wedged or gone
+- **WHEN** the relay is stopped
+- **THEN** the stop finishes within its existing budget, as it does today
+

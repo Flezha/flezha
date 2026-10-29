@@ -16,6 +16,11 @@ use crate::util::LockRecover;
 /// names the instance and whose seq carries `P`.
 pub const PROCESSED_PREFIX_PAYLOAD_ID: &str = "processed_prefix";
 
+/// The body of the final marker, which ends a stop that drained the instance:
+/// every record it produced is ahead of it. The controller reads a one-byte
+/// body as flags and confirms no prefix from it.
+const FINAL_BODY: [u8; 1] = [1];
+
 pub struct PrefixLedger {
     instance_id: Arc<str>,
     state: Mutex<Ledger>,
@@ -121,15 +126,28 @@ impl PrefixLedger {
         let Some(prefix) = self.candidate() else {
             return;
         };
-        let identity = crate::flusher::encode_cell_identity(&self.instance_id, "", "");
-        let frame = crate::flusher::build_cell_frame(&identity, prefix, &[0u8; 16], &[]);
-        if crate::state_sink::send_unheld(PROCESSED_PREFIX_PAYLOAD_ID, frame) {
+        if send_marker(&self.instance_id, prefix, &[]) {
             let mut ledger = self.state.lock_recover();
             ledger.reported = ledger.reported.max(Some(prefix));
         } else {
             self.moved.store(true, Ordering::Release);
         }
     }
+}
+
+/// The final marker of `instance_id`'s stop, sent only behind every record
+/// already written: `false`, and nothing sent, while the reconnect ring still
+/// holds one or the wire refuses it.
+pub(crate) fn send_final(instance_id: &str) -> bool {
+    send_marker(instance_id, 0, &FINAL_BODY)
+}
+
+/// A marker never overtakes a record it covers, nor waits in the ring beside
+/// one that may be evicted.
+fn send_marker(instance_id: &str, prefix: u64, body: &[u8]) -> bool {
+    let identity = crate::flusher::encode_cell_identity(instance_id, "", "");
+    let frame = crate::flusher::build_cell_frame(&identity, prefix, &[0u8; 16], body);
+    crate::state_sink::send_unheld(PROCESSED_PREFIX_PAYLOAD_ID, frame)
 }
 
 /// Instances a record of which the reconnect ring evicted: that input's

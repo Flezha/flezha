@@ -63,6 +63,26 @@ pub fn pending_leave(relay: &str) -> Option<Arc<PendingLeave>> {
     PENDING.lock_recover().get(relay).cloned()
 }
 
+/// The leave pending under `relay`, begun now when none is: a stop that waits
+/// for the relay to drain and the host's leave after it share one, so a start
+/// of the same id is held from the first until the last is done.
+pub(crate) fn begin_leave(relay: &str) -> Arc<PendingLeave> {
+    let mut pending = PENDING.lock_recover();
+    Arc::clone(
+        pending
+            .entry(relay.to_string())
+            .or_insert_with(|| Arc::new(PendingLeave::new())),
+    )
+}
+
+/// End the leave pending under `relay`, if any, running the starts it held.
+pub(crate) fn end_leave(relay: &str) {
+    let ended = PENDING.lock_recover().remove(relay);
+    if let Some(pending) = ended {
+        pending.answer();
+    }
+}
+
 /// Tell the host an evicted Cell left, and wait for its answer: the caller
 /// holds the Cell's gates and removes its key only after, so a Cell minted
 /// again under the key is never handed work before the host dropped the old
@@ -91,17 +111,14 @@ pub fn cell_left_locked(slot: &Arc<CellSlot>) {
 /// away), once no activation handed out for it is still running: a host write
 /// landing after the leave would stay for good. Until the host answers, the
 /// leave is pending under the relay's id. A typed relay's state went with its
-/// slots.
+/// slots, so the leave its stop began ends here.
 pub fn relay_left(instance: &RelayInstance) {
     let topology = &instance.topology;
-    if !topology.tasklets.iter().any(|t| t.host_facts.is_some()) {
-        return;
-    }
     let relay = instance.instance_id.to_string();
-    let pending = Arc::new(PendingLeave::new());
-    PENDING
-        .lock_recover()
-        .insert(relay.clone(), Arc::clone(&pending));
+    if !topology.tasklets.iter().any(|t| t.host_facts.is_some()) {
+        return end_leave(&relay);
+    }
+    let pending = begin_leave(&relay);
     let target = schema::CellRef {
         relay: relay.clone(),
         tasklet: 0,

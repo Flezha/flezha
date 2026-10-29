@@ -663,7 +663,7 @@ defmodule Flezha.Relay.Replay do
         # an input reaches exactly one Cell (routed by key), so a marker
         # riding one would strand the slice every *other* Cell buffered.
         if state.correction_window_ms do
-          reforward(state, [{"", %{"flz.replay_end" => "1"}}])
+          reforward(state, [{"", %{"flz.control" => "replay_end"}}])
         end
 
         :ok

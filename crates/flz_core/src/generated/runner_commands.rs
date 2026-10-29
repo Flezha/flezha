@@ -235,10 +235,16 @@ pub struct AddRelayResponse {
         ::prost::alloc::string::String,
     >,
 }
+/// A non-zero drain_within_ms is the stop of a relay whose input is not
+/// journaled: the runner answers once it has read the relay's stop marker, the
+/// instance is quiet and the final processed-prefix marker is sent behind its
+/// records, or once that time has passed. 0 stops it at once.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct RemRelay {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub drain_within_ms: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MigrationSerialization {

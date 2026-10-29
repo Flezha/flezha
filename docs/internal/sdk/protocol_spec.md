@@ -227,7 +227,8 @@ than at emit.
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the output confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a flow relay on the effectively-once tier or a durable steps relay (§11). A flow relay's invocation carries it back as its effect record's `consumed_offset`, a steps relay's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
-| `flz.replay`, `flz.replay_end` | controller → runner | Replayed-slice markers for late-input correction (§11). |
+| `flz.replay` | controller → runner | Marks an input of a replayed slice for late-input correction (§11). |
+| `flz.control` | controller → runner | An in-band marker on a payload-less frame: `replay_end` closes a replayed slice (§11); `stop` is the stop of a relay without an input log, behind its last input (RemRelay). |
 | `flz.change_seq` | runner → controller | On the `CellState` reply frame: the seq a single selected Cell was serialized at (§6). |
 | `flz.part`, `flz.part_attempt`, `flz.relay` | runner → controller | On an `output_part` frame: the part's number within its attempt, from `0`; the attempt, from `1`; and the instance it belongs to (§11). |
 
@@ -701,8 +702,19 @@ under its entry channel and opens no pass.
 
 ### RemRelay
 
-`RemRelay { relay_id: string }` removes the instance from the registry
-(hard teardown). Error: `runtime.relay_not_found`.
+`RemRelay { relay_id: string, drain_within_ms: uint64 }` removes the instance
+from the registry (hard teardown). Error: `runtime.relay_not_found`.
+
+A non-zero `drain_within_ms` is the stop of a relay whose input is not
+journaled. The controller first sends a payload-less frame carrying
+`flz.control = "stop"` on the relay's data stream, behind its last input. The
+runner answers off its control reader, so other relays' commands are not held:
+once it has read that marker and the instance is quiet (no Cell holds an input
+queued, at the host, on a retry or owed to another Cell, nothing is crossing to
+the host and every record is flushed), it sends the final processed-prefix
+marker behind those records and then removes the relay and answers. A start of
+the same id waits for the removal. When `drain_within_ms` passes first, it
+removes the relay without the final marker. `0` removes it at once.
 
 ### StepsStop
 
@@ -1027,7 +1039,7 @@ parks to the dead-letter queue under that name, with one attempt), wraps the pay
 bytes through that
 channel's declared type, and pushes the item onto every consumer Tasklet's
 Cell mailbox under the mailbox policy of §3; `flz.offset`, `flz.replay` and
-`flz.replay_end` ride along as described in §11. A **steps relay** instance takes
+`flz.control` ride along as described in §11. A **steps relay** instance takes
 the same entrance: the channel is resolved the same way (an undeclared name
 parks under that name), the payload is wrapped through the channel's declared
 type or parser, a parse failure rides the entry channel's retry ladder to the
@@ -1367,7 +1379,7 @@ re-delivered. A transport-less run processes the input as an arrival.
 
 The controller marks every input of the re-forwarded slice with
 `flz.replay = "1"` and closes the slice with a **payload-less broadcast
-frame** carrying `flz.replay_end = "1"`. The Cell holds the slice, orders it
+frame** carrying `flz.control = "replay_end"`. The Cell holds the slice, orders it
 by event time and only then dispatches — an arrival-ordered replay would
 recompute the same wrong answer. The end marker is a broadcast because an
 input routes to exactly one Cell by key; a flag on the last input would
@@ -1819,14 +1831,18 @@ every input at or below `P` has been processed by every Cell it reached and
 every record it produced is on this stream ahead of the marker. The body is
 empty, or two bytes big-endian naming how many streams the runner sent the
 same marker on when it spreads the instance's records over several; the
-controller then counts `P` once each of them has. The runner never holds a
+controller then counts `P` once each of them has. A one-byte body `1` is the
+final marker of a stop that drained the instance (`RemRelay.drain_within_ms`):
+its seq is `0` and it confirms no offset. The runner never holds a
 marker for a reconnect, and sends none covering a record it lost.
 
 The controller confirms `P` once every Cell writer of the instance has fsynced
 past the bytes this stream had handed it when the marker arrived; records an
 earlier stream handed over are made durable by one flush the stream's first
 marker asks for, and under `durable: remote` shipped, before any of its markers
-counts. A confirmed `P` is the instance's floor.
+counts. A confirmed `P` is the instance's floor. A final marker waits the same
+way, and then tells the relay's Overwatch the relay drained, so its stop closes
+the writers on every record the runner sent before it.
 Before one is confirmed, and after a controller restart, the floor is the
 minimum durable consumed offset over the instance's reporters.
 

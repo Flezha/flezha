@@ -443,13 +443,13 @@ The per-Cell flush buffer SHALL carry a third `staged` list holding the open int
 
 The Java SDK SHALL implement the `effectively-once-correction` capability. `Exactly.EffectivelyOnce` SHALL carry `correctionMs` and `beyondWindow`, where the policy is `PROCESS_AS_ARRIVAL` (the default, today's behaviour) or `DROP`, so a correction window cannot be written without the tier. Declaring a correction window SHALL require an `EventTimeFrom` clock and all channels keyed; violating either SHALL fail registration.
 
-Every effect record SHALL carry the invocation's `event_time`. The runtime SHALL maintain a per-Cell event-time high-water mark, and SHALL classify an input whose event time is below the high-water by more than the declared window as beyond-window. A replay slice SHALL be recognised via the `flz.replay` metadata key and terminated by a payload-less `flz.replay_end` **broadcast** frame (intercepted before channel lookup, since an input routes to only one cell by key); the buffered slice SHALL be dispatched in **event-time order**, and a closed slice SHALL flush before any live input popped behind it.
+Every effect record SHALL carry the invocation's `event_time`. The runtime SHALL maintain a per-Cell event-time high-water mark, and SHALL classify an input whose event time is below the high-water by more than the declared window as beyond-window. A replay slice SHALL be recognised via the `flz.replay` metadata key and terminated by a payload-less **broadcast** frame whose `flz.control` key is `replay_end` (intercepted before channel lookup, since an input routes to only one cell by key); the buffered slice SHALL be dispatched in **event-time order**, and a closed slice SHALL flush before any live input popped behind it.
 
 A replay SHALL NOT lower the event-time high-water mark.
 
 #### Scenario: A replayed slice dispatches in event-time order
 
-- **WHEN** a replay slice delivers inputs with event times `[30, 10, 20]` followed by an `flz.replay_end` broadcast
+- **WHEN** a replay slice delivers inputs with event times `[30, 10, 20]` followed by a broadcast whose `flz.control` key is `replay_end`
 - **THEN** the Tasklet's `run` SHALL be invoked for them in event-time order `10, 20, 30`
 
 #### Scenario: A closed slice flushes before a live input behind it

@@ -119,7 +119,7 @@ After the walk, `Admission.settle_start/2` keeps the quota take when the start a
 | 5 | `:calls` | answers every caller still waiting (`Flezha.Relay.Calls.Inbound.end_all/4`) |
 | 10 | `:bind_task` | kills an in-flight bind task (`Rebind.terminate_bind_task/1`) |
 | 20 | `:class_registry` | drops the in-memory class entry |
-| 30 | `:control_unit` | tells the runner to drop the relay and waits up to half the budget for its answer, which comes after the Cells' last changes shipped; a gone or silent runner is not an error |
+| 30 | `:control_unit` | tells the runner to drop the relay and waits up to half the budget for its answer, which comes after the Cells' last changes shipped; a gone or silent runner is not an error. A relay without an input log sends its stop behind its last input (`flz.control` = `stop` on its data stream) and gives the runner half that wait to apply everything ahead of it; the answer then also waits for `{:relay_drained, id}`, which the stream channel sends once the writers have fsynced every record the runner sent before its final marker |
 | 33 | `:journal` | answers each sender whose input the log is still journaling (`Ingest.settle_journaling/2`): taken when the log took it, since the next bind re-forwards it, so a confirming sender never sends it twice |
 | 35 | `:writers` | closes the class's Cell writers, flushed |
 | 37 | `:lineage` | `release_lineage/1`, after the final flush |

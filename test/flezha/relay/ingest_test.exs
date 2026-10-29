@@ -139,7 +139,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   describe "the keys only the controller sets" do
     setup :set_mimic_global_until_exit
 
-    @controller_keys ["flz.reply_to", "flz.replay", "flz.replay_end", "flz.edge", "flz.offset"]
+    @controller_keys ["flz.reply_to", "flz.replay", "flz.control", "flz.edge", "flz.offset"]
 
     test "no inject sets them, a call's included, which rides only the token its entry minted" do
       inst = instance_id()

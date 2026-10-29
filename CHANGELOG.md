@@ -48,6 +48,10 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A cold move no longer loses input the old copy had already taken. A relay
+  without an input log now stops behind the last input it was sent: its runner
+  applies everything ahead of the stop and the records reach disk before the
+  relay's files are handed over, within the stop's usual time limit.
 - A relay that answers a move's readiness check after the check gave up no
   longer leaves an error line in the controller's log, and its late "ready"
   can no longer be taken as its answer to a later check.

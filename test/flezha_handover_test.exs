@@ -7,6 +7,7 @@ defmodule FlezhaTest.Handover do
   """
   alias Flezha.Identificator
   alias Flezha.Payloader
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.RelayManager
   alias Flezha.State.Commands
   alias Flezha.State.TestHelpers
@@ -228,6 +229,34 @@ defmodule FlezhaTest.Handover do
     assert {:ok, %{arrived_via_hotswap?: false}} =
              RelayManager.get_overwatch_state(@default_namespace, relay_id)
 
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: a cold drain drops a relay without an input log while its Cell
+  # is busy, so the confirmed inputs queued behind the running one are lost.
+  @tag :multi_node
+  @tag :cold_drain_busy
+  test "a cold drain applies the confirmed inputs a busy Cell held queued" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cold_busy_node)
+    relay_id = start_relay_on_peer(peer_node, "cold_busy")
+    release = Path.join(System.tmp_dir!(), "#{relay_id}.release")
+    on_exit(fn -> File.rm(release) end)
+    sent = ["hold:#{release}" | for(n <- 1..5, do: "queued_#{n}")]
+    Enum.each(sent, &confirm(relay_id, &1))
+
+    drain = Task.async(fn -> shutdown_peer(peer_node, 30_000) end)
+    # The class entry goes in the step before the runner is told to stop.
+    assert NodeTestHelper.wait_until(
+             fn -> :erpc.call(peer_node, ClassRegistry, :owner, [relay_id]) == :error end,
+             15_000
+           )
+
+    File.write!(release, "")
+    assert :ok = Task.await(drain, 45_000)
+    assert landed_here?(relay_id)
+    NodeTestHelper.wait_until(fn -> sent -- text_inputs(relay_id) == [] end, 10_000)
+    inputs = text_inputs(relay_id)
+    assert sent -- inputs == [], "confirmed inputs lost in the move: #{inspect(sent -- inputs)}"
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 

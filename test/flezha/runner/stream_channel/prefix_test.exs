@@ -1,8 +1,9 @@
 defmodule Flezha.Runner.StreamChannel.PrefixTest do
   @moduledoc """
-  A processed-prefix marker is confirmed only once every writer of its
-  instance fsynced past the bytes it had been handed when the marker arrived,
-  and only once the stream's bind flush landed.
+  A processed-prefix marker, and the final marker of a draining stop, is
+  confirmed only once every writer of its instance fsynced past the bytes it
+  had been handed when the marker arrived, and only once the stream's bind
+  flush landed.
   """
   use ExUnit.Case, async: true
 
@@ -65,6 +66,19 @@ defmodule Flezha.Runner.StreamChannel.PrefixTest do
 
     assert {[], prefix} = Prefix.drained(prefix, @sol, 0)
     assert {[{"op", 3, 1}], _prefix} = Prefix.drained(prefix, @btc, 6)
+  end
+
+  # fails when: a draining stop's final marker is answered before the writers
+  # fsynced the records ahead of it, or it hides the prefix drained beside it.
+  test "a final marker waits for the records ahead of it and answers beside the prefix" do
+    prefix = fenced() |> Prefix.received(@btc, 10)
+    {[], prefix} = Prefix.marker(prefix, "op", 1)
+    prefix = Prefix.received(prefix, @sol, 10)
+    {[], prefix} = Prefix.marker(prefix, "op", :final)
+
+    {[], prefix} = Prefix.drained(prefix, @sol, 10)
+    assert {[{"op", 1, 1}, {"op", :final, 1}], prefix} = Prefix.drained(prefix, @btc, 10)
+    assert prefix.markers == %{}
   end
 
   test "an unfenced stream confirms nothing until its fence flush lands" do

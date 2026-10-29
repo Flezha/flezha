@@ -60,14 +60,22 @@ pub trait CommandAction {
     }
 }
 
-/// A read too slow for the control reader: what it needs is taken from the
-/// runner there, and the answer is built and written on a worker thread, so
-/// the commands queued behind it are not held up.
+/// A command too slow for the control reader: what it needs is taken from the
+/// runner there, and the rest runs on a worker thread, so the commands queued
+/// behind it are not held up.
 pub trait OffReaderAction {
     fn prepare(&self, runner: &mut RunnerNode) -> Result<OffReaderBuild, crate::Error>;
 }
 
-pub type OffReaderBuild = Box<dyn FnOnce() -> Vec<u8> + Send>;
+pub type OffReaderBuild = Box<dyn FnOnce() -> OffReaderAnswer + Send>;
+
+/// How an off-reader command ends: its answer, written by the worker, or a
+/// command handed back to the coordinator, which runs it and answers under the
+/// same reference id.
+pub enum OffReaderAnswer {
+    Reply(Vec<u8>),
+    Coordinator(Box<Command>),
+}
 
 pub enum CommandActionType {
     Regular(Box<dyn CommandAction>),
@@ -177,7 +185,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
             Some(pending) => CommandActionType::AfterLeave(pending),
             None => regular(c),
         },
-        Some(Command::RemRelay(c)) => regular(c),
+        Some(Command::RemRelay(c)) => relay_stop::classify(c),
         Some(Command::MigrationSerialization(c)) => regular(c),
         Some(Command::MigrationDeserialization(c)) => regular(c),
         Some(Command::CellState(c)) => regular(c),
@@ -259,36 +267,9 @@ pub fn handle_command(
             command::exec_control(runner, handler, payload_id, message, reference_id),
         ),
 
-        CommandActionType::OffReader(action) => match action.prepare(runner) {
-            Ok(build) => {
-                let (stream, payload_id) = (Arc::clone(stream), payload_id.to_string());
-                let spawned = std::thread::Builder::new()
-                    .name("flezha-off-reader".into())
-                    .spawn(move || {
-                        let frame = encode_response(
-                            &payload_id,
-                            reference_id,
-                            build(),
-                            &[],
-                            HashMap::new(),
-                        );
-                        respond_with(&stream, frame);
-                    });
-                if let Err(e) = spawned {
-                    flz_transport::notice!(Error, "Failed to start an off-reader answer: {e}");
-                }
-            }
-            Err(refusal) => respond_with(
-                stream,
-                encode_response(
-                    payload_id,
-                    reference_id,
-                    Vec::new(),
-                    &[refusal],
-                    HashMap::new(),
-                ),
-            ),
-        },
+        CommandActionType::OffReader(action) => {
+            off_reader(runner, action, stream, payload_id, reference_id)
+        }
 
         CommandActionType::AfterLeave(pending) => {
             if pending
@@ -321,6 +302,50 @@ pub fn handle_command(
                 "Received an unexpected controller->SDK command (ref={reference_id}); ignoring."
             );
         }
+    }
+}
+
+/// Prepare an off-reader command here and run the rest on a worker thread,
+/// which writes its answer or hands a command back to the coordinator.
+fn off_reader(
+    runner: &mut RunnerNode,
+    action: Box<dyn OffReaderAction>,
+    stream: &Arc<FlezhaStream>,
+    payload_id: &str,
+    reference_id: String,
+) {
+    match action.prepare(runner) {
+        Ok(build) => {
+            let (stream, payload_id) = (Arc::clone(stream), payload_id.to_string());
+            let spawned = std::thread::Builder::new()
+                .name("flezha-off-reader".into())
+                .spawn(move || match build() {
+                    OffReaderAnswer::Reply(bytes) => respond_with(
+                        &stream,
+                        encode_response(&payload_id, reference_id, bytes, &[], HashMap::new()),
+                    ),
+                    OffReaderAnswer::Coordinator(command) => crate::runner::coordinator_send(
+                        crate::runner::RunnerMessage::HandleCommandAction(
+                            payload_id,
+                            request_bytes(reference_id, *command),
+                            HashMap::new(),
+                        ),
+                    ),
+                });
+            if let Err(e) = spawned {
+                flz_transport::notice!(Error, "Failed to start an off-reader answer: {e}");
+            }
+        }
+        Err(refusal) => respond_with(
+            stream,
+            encode_response(
+                payload_id,
+                reference_id,
+                Vec::new(),
+                &[refusal],
+                HashMap::new(),
+            ),
+        ),
     }
 }
 

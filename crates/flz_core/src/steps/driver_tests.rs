@@ -16,78 +16,26 @@ use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
 
 use crate::cell::{CellItem, CellSlot};
-use crate::host::{apply_result, HostPayload};
+use crate::host::HostPayload;
 use crate::poll_core::{EnginePayload, Polled};
 use crate::runner::{RunnerMessage, RunnerNode};
 use crate::steps::instance::{PassOrigin, Phase};
 use crate::test_support::steps::{
     ack_control_request, assert_no_completion, await_completion, await_park, feed_at, feed_with,
 };
-use crate::test_support::{capture_parks, host_class, spin_until, stream_pair};
+use crate::test_support::{capture_parks, host_class, reply, spin_until, stream_pair, FakeHost};
 use crate::timer::{TimerKind, TimerOp};
 use crate::{schema, state_sink, ErrorModel};
 
 mod call;
 mod undo;
 
-/// Answers every activation the poll core hands out while it lives: an
-/// apply-state command is recorded and answered applied; each work item is
-/// answered with `verdict` over the host payload's bytes, an `Ok` item
-/// echoing its bytes to the plugin channel `out`.
-struct FakeHost {
-    stop: Arc<AtomicBool>,
-    applied: Arc<Mutex<Vec<String>>>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
 impl FakeHost {
+    /// Answers each work item with `verdict` over the host payload's bytes,
+    /// an `Ok` item echoing its bytes to the plugin channel `out`, and records
+    /// every apply-state command, answered applied.
     fn serve(verdict: impl Fn(&[u8]) -> schema::Verdict + Send + 'static) -> Self {
         Self::answering(move |payload, applied| answer(payload, applied, &verdict))
-    }
-
-    /// Answers every activation with `respond`.
-    fn answering(
-        respond: impl Fn(&EnginePayload, &Mutex<Vec<String>>) -> schema::ActivationOutcome
-            + Send
-            + 'static,
-    ) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let applied = Arc::new(Mutex::new(Vec::new()));
-        let thread = {
-            let stop = Arc::clone(&stop);
-            let applied = Arc::clone(&applied);
-            thread::spawn(move || {
-                let core = crate::poll_core::global();
-                while !stop.load(Ordering::Acquire) {
-                    match core.poll(Duration::from_millis(20)) {
-                        Polled::Activation(act) => {
-                            let outcome = respond(&act.payload, &applied);
-                            reply(act, outcome);
-                        }
-                        Polled::Timeout => {}
-                        Polled::ShuttingDown => return,
-                    }
-                }
-            })
-        };
-        Self {
-            stop,
-            applied,
-            thread: Some(thread),
-        }
-    }
-
-    fn applied(&self) -> Vec<String> {
-        self.applied.lock().expect("applied poisoned").clone()
-    }
-}
-
-impl Drop for FakeHost {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
     }
 }
 
@@ -948,16 +896,6 @@ fn own_timer_class(name: &str) -> (String, OwnTimerHost) {
         ..Default::default()
     };
     (id, host)
-}
-
-fn reply(act: crate::poll_core::EngineActivation, outcome: schema::ActivationOutcome) {
-    let token = act.token;
-    apply_result(
-        crate::poll_core::global(),
-        act,
-        schema::ActivationResult { token, outcome },
-    )
-    .expect("the poll core takes the answer");
 }
 
 #[test]

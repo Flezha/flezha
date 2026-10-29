@@ -438,9 +438,8 @@ fn route_stream_frame(
     metadata: &HashMap<String, String>,
     stream: Arc<FlezhaStream>,
 ) {
-    if metadata.contains_key("flz.replay_end") {
-        crate::host::deferred_end_replay_slice(instance);
-        return;
+    if let Some(marker) = metadata.get("flz.control") {
+        return control_marker(instance, marker);
     }
 
     let (consumed_offset, call, replay) = frame_facts(metadata);
@@ -469,6 +468,21 @@ fn route_stream_frame(
     // `DropNothing` push here parks this reader — the one park the core
     // keeps, and what carries ingress backpressure to the controller.
     route_to_consumers(instance, channel, &typed_payload, &d, None);
+}
+
+/// An in-band marker the controller sends behind the frames it covers: the
+/// end of a replayed slice, or the stop of the relay, which a draining stop
+/// waits to have read.
+fn control_marker(instance: &Arc<RelayInstance>, marker: &str) {
+    match marker {
+        "replay_end" => crate::host::deferred_end_replay_slice(instance),
+        "stop" => instance.stop_marker.store(true, Ordering::Release),
+        other => flz_transport::notice!(
+            Warn,
+            "relay {}: unknown control marker {other:?} dropped",
+            instance.instance_id
+        ),
+    }
 }
 
 /// The records of `value`, emitted on `channel_id` for the input at `origin`,

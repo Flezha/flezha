@@ -89,7 +89,8 @@ on the effectively-once tier writes.
 controller whose disk holds it. A move's handover carries state in-band only where the disk
 cannot: `Flezha.Relay.Handover.prepare/1` (via `Overwatch.prepare_handover_state/1`) ships
 none in a cold move of a class that keeps state on disk, whose source stops and flushes before
-the destination starts, and it sources the state from the runner otherwise, so a migration
+the destination starts (a relay without an input log stops behind its last input, so its writers
+close only once the runner has applied and shipped every input it was sent), and it sources the state from the runner otherwise, so a migration
 triggered by that runner's death (the hub's own redistribution, after a controller loses its
 last runner for a factory and withdraws it) ships an empty payload. The hub names the node a
 moved child left (`migrated_from`), which `HubManager.Placement.alter_child_data/2` writes into

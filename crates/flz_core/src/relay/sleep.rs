@@ -60,15 +60,32 @@ impl RelayInstance {
     }
 
     /// Whether every Cell holds nothing queued, in flight, held back,
-    /// retrying, staged or unflushed. A pending timer keeps a flow relay awake;
-    /// a steps relay sleeps with it, its park naming the earliest.
-    pub(crate) fn cells_idle(&self) -> bool {
-        let timers_hold = self.steps.is_none();
+    /// retrying, staged or unflushed and, where `timers_hold`, no timer
+    /// pending. A pending timer keeps a flow relay awake; a steps relay sleeps
+    /// with it, its park naming the earliest.
+    pub(crate) fn cells_idle(&self, timers_hold: bool) -> bool {
         !self.ladders_running()
             && self
                 .all_slots()
                 .iter()
                 .all(|slot| slot.quiescent(timers_hold))
+    }
+
+    /// Whether a stop may drop this instance without losing an input it was
+    /// sent: [`Self::cells_idle`], no input crossing to the host, and nothing
+    /// admitted to any Cell while the Cells were asked. A pending timer is
+    /// saved state, not owed work.
+    pub(crate) fn quiet_for_stop(&self) -> bool {
+        let admitted = || -> u64 {
+            self.all_slots()
+                .iter()
+                .map(|slot| slot.counters().pushes_total.load(Ordering::Acquire))
+                .sum()
+        };
+        let before = admitted();
+        self.cells_idle(false)
+            && !self.host_prepare.lock_recover().in_flight()
+            && admitted() == before
     }
 
     /// The earliest processing-time timer pending on any Cell: what a
@@ -149,7 +166,7 @@ fn flow_idle_due(inst: &Arc<RelayInstance>) {
     if quiet < window {
         return arm(inst, window - quiet);
     }
-    if !inst.cells_idle() {
+    if !inst.cells_idle(true) {
         return arm(inst, window);
     }
     inst.idle.asleep.store(true, Ordering::Release);

@@ -538,7 +538,7 @@ impl Decide<'_, '_, '_> {
                 if self.s.parks_in_flight > 0 {
                     return self.arm(Deadline::ParkIdle, ADMIT_RETRY);
                 }
-                if !self.r.inst.cells_idle() {
+                if !self.r.inst.cells_idle(false) {
                     return self.arm(Deadline::ParkIdle, self.r.inst.sleep_after());
                 }
                 self.park();

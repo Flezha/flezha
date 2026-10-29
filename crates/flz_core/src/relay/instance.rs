@@ -123,6 +123,9 @@ pub struct RelayInstance {
     pub prefix: Option<Arc<crate::prefix::PrefixLedger>>,
     /// The end a flow relay asked for from inside, until it is reported.
     pub(crate) end: crate::relay::completion::FlowEnd,
+    /// Set once the stop marker the controller sends behind its last input
+    /// is read: nothing it delivered is still on the wire.
+    pub(crate) stop_marker: AtomicBool,
 }
 
 impl RelayInstance {
@@ -144,7 +147,6 @@ impl RelayInstance {
         config_override: Option<bool>,
         partition: KeyGroupRange,
     ) -> Arc<Self> {
-        // The runner override wins over the class const when present.
         let keeps_state = config_override.unwrap_or(topology.durable.keeps());
         let prefix = (topology.steps.is_none() && keeps_state)
             .then(|| crate::prefix::PrefixLedger::new(Arc::clone(&instance_id)));
@@ -205,6 +207,7 @@ impl RelayInstance {
                 steps: topology_is_steps.then(|| crate::steps::StepsRun::new(Weak::clone(weak))),
                 prefix,
                 end: Default::default(),
+                stop_marker: AtomicBool::new(false),
             }
         })
     }

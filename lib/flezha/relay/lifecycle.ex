@@ -737,10 +737,8 @@ defmodule Flezha.Relay.Lifecycle do
     :ok
   end
 
-  defp class_registry_step({state, _reason}, _budget) do
-    _ = ClassRegistry.delete(Overwatch.relay_class(state))
-    :ok
-  end
+  defp class_registry_step({state, _reason}, _budget),
+    do: ClassRegistry.delete(Overwatch.relay_class(state))
 
   # The runner has been told to drop the relay, so it is no longer bound
   # here: its writers close, flushed, and its files stay. A relay that
@@ -753,12 +751,14 @@ defmodule Flezha.Relay.Lifecycle do
 
   defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
 
-  # Awaited for half the budget: the runner ships its Cells' last changes as
-  # it removes the relay, and the relay's stop flushes them in before its files
-  # go. A runner that is gone or does not answer has nothing left to wait for,
-  # and the walk goes on to the writers and the plugin table either way.
+  # Awaited for half the budget: the runner ships its Cells' last changes as it
+  # removes the relay, and the stop flushes them in before its files go; with no
+  # input log to re-forward what it has not applied, the stop rides behind the
+  # last input. A runner that is gone or does not answer has nothing to wait for.
   defp control_unit_step({state, _reason}, budget) do
-    _answer = ControlUnit.stop_relay(state.runner_id, state.id, div(budget, 2))
+    stop = {"", %{"flz.control" => "stop"}}
+    behind? = Replay.floor_reporter(state) == nil and Overwatch.deliver(state, stop) == :ok
+    _answer = ControlUnit.stop_relay(state.runner_id, state.id, div(budget, 2), drain: behind?)
     :ok
   end
 

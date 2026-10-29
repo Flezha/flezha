@@ -372,6 +372,48 @@ defmodule FlezhaTest.Runner.ControlUnitStepsStopTest do
     refute_received {:sent, {:rem_relay, _}}
   end
 
+  # fails when: a draining stop gives the runner no share of its wait, answers
+  # before the relay drained, or waits past its own limit for a drain that
+  # never comes.
+  test "a draining stop gives the runner half its wait and answers once the relay drained" do
+    test_pid = self()
+    runner_id = "exec-drain-#{System.unique_integer([:positive])}"
+
+    ControlChannel
+    |> stub(:send_control, fn ^runner_id, command ->
+      ref = "ref-#{System.unique_integer([:positive])}"
+      send(test_pid, {:sent, command, ref})
+      {:ok, ref}
+    end)
+
+    {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
+    on_exit(fn -> NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
+    answer = fn ref -> GenServer.cast(pid, {:handle_payload, success(ref), %{}}) end
+
+    drained = Task.async(fn -> ControlUnit.stop_relay(runner_id, "op-1", 10_000, drain: true) end)
+    assert_receive {:sent, {:rem_relay, %{relay_id: "op-1", drain_within_ms: 5_000}}, ref}, 500
+    answer.(ref)
+    send(drained.pid, {:relay_drained, "op-1"})
+    assert {:ok, ""} = Task.await(drained, 5_000)
+
+    started = System.monotonic_time(:millisecond)
+    never = Task.async(fn -> ControlUnit.stop_relay(runner_id, "op-2", 300, drain: true) end)
+    assert_receive {:sent, {:rem_relay, %{drain_within_ms: 150}}, ref}, 500
+    answer.(ref)
+    assert {:ok, ""} = Task.await(never, 5_000)
+    assert System.monotonic_time(:millisecond) - started >= 300
+  end
+
+  test "a stop of a relay whose runner is gone answers at once, draining or not" do
+    missing = "exec-missing-#{System.unique_integer([:positive])}"
+
+    assert {:error, :no_control_unit} =
+             ControlUnit.stop_relay(missing, "op-1", 60_000, drain: true)
+  end
+
+  defp success(ref),
+    do: %RunnerCommands.CommandResponse{reference_id: ref, status: "success", raw_data: ""}
+
   test "steps_stop/2 returns {:error, :no_control_unit} when the runner is gone" do
     missing = "exec-missing-#{System.unique_integer([:positive])}"
     assert GenServer.whereis(Identificator.control_unit(missing)) == nil

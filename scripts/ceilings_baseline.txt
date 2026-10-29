@@ -9,7 +9,7 @@
 crates/cli/src/args.rs::scan 62
 crates/flz_core/src/admission.rs::admit_from_cell 53
 crates/flz_core/src/command/mod.rs::classify 59
-crates/flz_core/src/command/mod.rs::handle_command 86
+crates/flz_core/src/command/mod.rs::handle_command 59
 crates/flz_core/src/control_unit.rs::read_loop 68
 crates/flz_core/src/coordinator.rs::heartbeat_metadata 59
 crates/flz_core/src/effect.rs::fold 76
@@ -18,7 +18,7 @@ crates/flz_core/src/host/activation.rs::settle_item 67
 crates/flz_core/src/host/activation.rs::settle_items 60
 crates/flz_core/src/host/issue.rs::details 166
 crates/flz_core/src/host/issue.rs::kind 66
-crates/flz_core/src/host/leave.rs::relay_left 58
+crates/flz_core/src/host/leave.rs::relay_left 55
 crates/flz_core/src/poll_core/assembly.rs::assemble_batch 64
 crates/flz_core/src/poll_core/mod.rs::host_command_within 53
 crates/flz_core/src/relay/instance.rs::with_options 70

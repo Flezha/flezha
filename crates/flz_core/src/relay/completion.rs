@@ -99,7 +99,9 @@ fn arm(inst: &Arc<RelayInstance>, deadline: Deadline, after: Duration) {
 pub(crate) fn deadline_due(inst: &Arc<RelayInstance>, deadline: Deadline) {
     match deadline {
         Deadline::MaxDuration => end(inst, "cancelled", Vec::new()),
-        Deadline::Complete if !inst.cells_idle() => arm(inst, Deadline::Complete, DRAIN_RECHECK),
+        Deadline::Complete if !inst.cells_idle(true) => {
+            arm(inst, Deadline::Complete, DRAIN_RECHECK)
+        }
         Deadline::Complete => report(inst),
         _ => {}
     }

@@ -164,8 +164,13 @@ message AddRelayResponse {
     map<string, string> metadata = 1;
 }
 
+// A non-zero drain_within_ms is the stop of a relay whose input is not
+// journaled: the runner answers once it has read the relay's stop marker, the
+// instance is quiet and the final processed-prefix marker is sent behind its
+// records, or once that time has passed. 0 stops it at once.
 message RemRelay {
     string relay_id = 1;
+    uint64 drain_within_ms = 2;
 }
 
 message MigrationSerialization {

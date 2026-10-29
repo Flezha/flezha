@@ -16,7 +16,7 @@ defmodule Flezha.Relay.Calls.Token do
   @source "flz.call_source"
   # The controller stamps these on its own re-forwards and journal answers;
   # no sender may set them.
-  @routing [@reply_to, "flz.replay", "flz.replay_end", "flz.edge", "flz.offset"]
+  @routing [@reply_to, "flz.replay", "flz.control", "flz.edge", "flz.offset"]
 
   @type t :: binary()
 
@@ -51,7 +51,7 @@ defmodule Flezha.Relay.Calls.Token do
 
   @doc """
   `metadata` without the keys only the controller sets (`flz.reply_to`,
-  `flz.replay`, `flz.replay_end`, `flz.edge`, `flz.offset`): what every other
+  `flz.replay`, `flz.control`, `flz.edge`, `flz.offset`): what every other
   entry point admits. `flz.msg_id` passes, so a sender's id still absorbs a
   duplicate.
   """

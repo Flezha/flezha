@@ -178,12 +178,10 @@ fn a_stopped_stream_reports_no_prefix_a_late_release_moves() {
         crate::flusher::encode_cell_identity(&id, "", ""),
     );
     crate::state_sink::install_global_sink(Arc::new(move |payload_id: &str, frame: &[u8]| {
-        let seq_at = 2 + identity.len();
-        if payload_id == crate::prefix::PROCESSED_PREFIX_PAYLOAD_ID
-            && frame[2..seq_at] == identity[..]
-        {
-            let seq = frame[seq_at..seq_at + 8].try_into().unwrap();
-            seen.lock().unwrap().push(u64::from_be_bytes(seq));
+        let marker = crate::test_support::split_cell_frame(frame)
+            .filter(|_| payload_id == crate::prefix::PROCESSED_PREFIX_PAYLOAD_ID);
+        if let Some(marker) = marker.filter(|marker| marker.identity == identity) {
+            seen.lock().unwrap().push(marker.seq);
         }
         Ok(())
     }));
@@ -253,11 +251,20 @@ impl ControllerEnd {
     /// The answer to `reference_id`, skipping every other frame.
     fn answer(&mut self, reference_id: &str) -> crate::pb::CommandResponse {
         loop {
-            let (_, frame, _) = payloader::extract_payload(&self.0)
-                .unwrap_or_else(|e| panic!("no answer to {reference_id}: {e}"));
-            match crate::test_support::response_in(&frame) {
-                Some(response) if response.reference_id == reference_id => return response,
-                _ => continue,
+            let response = self.next_answer();
+            if response.reference_id == reference_id {
+                return response;
+            }
+        }
+    }
+
+    /// The next answer to any request, skipping every other frame.
+    fn next_answer(&mut self) -> crate::pb::CommandResponse {
+        loop {
+            let (_, frame, _) =
+                payloader::extract_payload(&self.0).unwrap_or_else(|e| panic!("no answer: {e}"));
+            if let Some(response) = crate::test_support::response_in(&frame) {
+                return response;
             }
         }
     }
@@ -533,5 +540,198 @@ fn a_move_hands_over_a_seq_above_what_the_source_drains_as_it_stops() {
         next_seq >= drained,
         "the move hands over seq {next_seq}, but the source's last record took {}",
         drained - 1
+    );
+}
+
+/// A host that holds its first batch until `release` sends or is dropped
+/// (`held` signals it holds it) and answers every batch with one change per
+/// input.
+struct BusyHost {
+    held: std::sync::mpsc::Receiver<()>,
+    release: std::sync::mpsc::Sender<()>,
+    _host: crate::test_support::FakeHost,
+}
+
+impl BusyHost {
+    fn serve() -> Self {
+        let (held_tx, held) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let first = Mutex::new(Some((held_tx, release_rx)));
+        let host = crate::test_support::FakeHost::answering(move |payload, _| {
+            let crate::poll_core::EnginePayload::Work { items, .. } = payload else {
+                return crate::schema::ActivationOutcome::StateApplied;
+            };
+            if let Some((held, release)) = first.lock().unwrap().take() {
+                held.send(()).expect("the test waits");
+                let _ = release.recv_timeout(DEADLINE);
+            }
+            let changed = |_: &crate::poll_core::ItemAttempt| crate::schema::ItemEffect {
+                changes: vec![b"change".to_vec()],
+                ..crate::host::empty_effect()
+            };
+            crate::schema::ActivationOutcome::Work(items.iter().map(changed).collect())
+        });
+        Self {
+            held,
+            release,
+            _host: host,
+        }
+    }
+}
+
+/// Every relay in `ids` bound on `node` as one class of a flow tasklet that
+/// keeps its state, the stop under test's coordinator behind `node`, and a
+/// dispatch handle onto them.
+fn draining_runner(ids: &[&str]) -> (ControllerEnd, RelayDispatchHandle) {
+    let factory = format!("drain_stop_{}", std::process::id());
+    let class = format!(
+        r#"{{"factory_id":"{factory}","sdk_lang":1,"sdk_version":"0.1.0","run":"flow",
+             "durable":{{"local":{{"sleep_after":false}}}},
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+             "tasklets":[{{"name":"p0"}}]}}"#
+    );
+    crate::host::register_host_class_json(class.as_bytes()).expect("class registers");
+    let mut node = RunnerNode::new("test-ns".to_string());
+    for id in ids {
+        let errors = crate::test_support::host_class::bind(&mut node, &factory, id, "", 0);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+    let handle = node.relay_dispatch_handle();
+    let (controller, coordinator, _bridge) = coordinated_with(node);
+    crate::runner::install_reconnect_trigger(coordinator.lock().unwrap().clone());
+    (controller, handle)
+}
+
+/// What reaches the state sink for relay `id`, in order: `record` for each
+/// Cell record, `final` for the final marker of its stop.
+fn shipped_by(id: &str) -> Arc<Mutex<Vec<&'static str>>> {
+    let shipped = Arc::new(Mutex::new(Vec::new()));
+    let (seen, cell, instance) = (
+        Arc::clone(&shipped),
+        crate::flusher::encode_cell_identity(id, "p0", ""),
+        crate::flusher::encode_cell_identity(id, "", ""),
+    );
+    crate::state_sink::install_global_sink(Arc::new(move |payload_id: &str, frame: &[u8]| {
+        let Some(split) = crate::test_support::split_cell_frame(frame) else {
+            return Ok(());
+        };
+        match payload_id {
+            crate::state_sink::CELL_STATE_CHANGE_PAYLOAD_ID
+            | crate::state_sink::CELL_EFFECT_RECORD_PAYLOAD_ID
+                if split.identity == cell =>
+            {
+                seen.lock().unwrap().push("record")
+            }
+            crate::prefix::PROCESSED_PREFIX_PAYLOAD_ID
+                if split.identity == instance && split.body == [1] =>
+            {
+                seen.lock().unwrap().push("final")
+            }
+            _ => {}
+        }
+        Ok(())
+    }));
+    shipped
+}
+
+/// One frame into `id` as its stream reader hands it over.
+fn deliver(handle: &RelayDispatchHandle, id: &str, payload: Vec<u8>, key: &str, value: &str) {
+    let metadata = HashMap::from([(key.to_string(), value.to_string())]);
+    handle.dispatch(id, payload, &metadata, crate::test_support::stream_pair().0);
+}
+
+/// `RemRelay` of `id`, given `drain_ms` to drain.
+fn stop(id: &str, drain_ms: u64) -> Command {
+    Command::RemRelay(crate::pb::RemRelay {
+        relay_id: id.to_string(),
+        drain_within_ms: drain_ms,
+    })
+}
+
+/// fails when: a stop drops the relay while its Cell is busy, so the inputs
+/// queued behind the running one, sent before the stop, are never applied
+/// and no record of them reaches the state sink ahead of the final marker.
+#[test]
+fn a_stop_ships_the_records_of_every_input_sent_before_it() {
+    const INPUTS: usize = 4;
+    let _env = crate::runner::env_test_guard();
+    let _sink = crate::state_sink::test_guard();
+    let id = format!("drain_stop_{}_shipped", std::process::id());
+    let shipped = shipped_by(&id);
+    let host = BusyHost::serve();
+    let (mut controller, handle) = draining_runner(&[&id]);
+    for n in 0..INPUTS {
+        deliver(&handle, &id, vec![n as u8], "channel", "in");
+    }
+    host.held.recv_timeout(DEADLINE).expect("the Cell is busy");
+
+    deliver(&handle, &id, Vec::new(), "flz.control", "stop");
+    controller.request("ref-stop", stop(&id, DEADLINE.as_millis() as u64));
+    crate::test_support::spin_until("the stop begins", || {
+        crate::host::pending_leave(&id).is_some()
+    });
+    host.release.send(()).expect("the host waits");
+    let answer = controller.answer("ref-stop");
+    drop(host);
+
+    crate::state_sink::reset_for_test();
+    assert_eq!(answer.status, "success", "{:?}", answer.errors);
+    assert_eq!(
+        *shipped.lock().unwrap(),
+        [vec!["record"; INPUTS], vec!["final"]].concat(),
+        "every input's record ships ahead of the final marker"
+    );
+    assert!(handle.registry.get(&id).is_none(), "the relay was dropped");
+}
+
+/// fails when: a draining stop waits on the coordinator, so another relay's
+/// command queues behind a Cell busy in author code, or a Cell that never
+/// finishes holds the stop past its limit.
+#[test]
+fn a_stop_whose_cell_never_finishes_ends_at_its_limit_and_holds_no_other_relay() {
+    const LIMIT_MS: u64 = 200;
+    let _env = crate::runner::env_test_guard();
+    let _sink = crate::state_sink::test_guard();
+    let (busy, other) = (
+        format!("drain_stop_{}_busy", std::process::id()),
+        format!("drain_stop_{}_other", std::process::id()),
+    );
+    let shipped = shipped_by(&busy);
+    let host = BusyHost::serve();
+    let (mut controller, handle) = draining_runner(&[&busy, &other]);
+    deliver(&handle, &busy, vec![0], "channel", "in");
+    host.held.recv_timeout(DEADLINE).expect("the Cell is busy");
+    deliver(&handle, &busy, Vec::new(), "flz.control", "stop");
+
+    let started = std::time::Instant::now();
+    controller.request("ref-busy", stop(&busy, LIMIT_MS));
+    crate::test_support::spin_until("the stop begins", || {
+        crate::host::pending_leave(&busy).is_some()
+    });
+    controller.request("ref-other", stop(&other, 0));
+
+    let first = controller.next_answer();
+    let (late, waited) = (controller.next_answer(), started.elapsed());
+    drop(host);
+    crate::state_sink::reset_for_test();
+    assert_eq!(
+        first.reference_id, "ref-other",
+        "answered behind the busy stop"
+    );
+    assert_eq!(
+        (late.reference_id.as_str(), late.status.as_str()),
+        ("ref-busy", "success")
+    );
+    assert!(
+        waited >= std::time::Duration::from_millis(LIMIT_MS),
+        "stopped before its limit: {waited:?}"
+    );
+    assert!(
+        shipped.lock().unwrap().is_empty(),
+        "drained without its record"
+    );
+    assert!(
+        handle.registry.get(&busy).is_none(),
+        "the relay was dropped"
     );
 }

@@ -3,7 +3,8 @@
 
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
 
 use flz_transport::transport::FlezhaStream;
 use prost::Message;
@@ -15,22 +16,7 @@ use crate::pb::{CommandResponse, ControlFrame};
 
 pub mod steps;
 
-/// Poll `done` every `interval` (a yield when zero) until it holds, or `false`
-/// once `timeout` has passed. The one polling loop of the Rust tests.
-pub fn wait_until(timeout: Duration, interval: Duration, mut done: impl FnMut() -> bool) -> bool {
-    let started = Instant::now();
-    while !done() {
-        if started.elapsed() >= timeout {
-            return false;
-        }
-        if interval.is_zero() {
-            std::thread::yield_now();
-        } else {
-            std::thread::sleep(interval);
-        }
-    }
-    true
-}
+pub use crate::util::wait_until;
 
 /// Yield until `done` holds; a 5 s deadline names `what` on failure.
 #[cfg(test)]
@@ -81,6 +67,82 @@ pub fn response_in(message: &[u8]) -> Option<CommandResponse> {
 pub(crate) fn saturate<P: Send + 'static>(mailbox: &Mailbox<P>, item: P) {
     assert!(mailbox.try_push(item).is_ok());
     assert!(mailbox.is_full());
+}
+
+/// Answers every activation the poll core hands out while it lives with
+/// `respond`, which also sees the apply-state commands it recorded.
+#[cfg(test)]
+pub(crate) struct FakeHost {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    applied: Arc<std::sync::Mutex<Vec<String>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(test)]
+impl FakeHost {
+    pub(crate) fn answering(
+        respond: impl Fn(
+                &crate::poll_core::EnginePayload,
+                &std::sync::Mutex<Vec<String>>,
+            ) -> crate::schema::ActivationOutcome
+            + Send
+            + 'static,
+    ) -> Self {
+        use std::sync::atomic::Ordering;
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let applied = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let thread = {
+            let stop = Arc::clone(&stop);
+            let applied = Arc::clone(&applied);
+            std::thread::spawn(move || {
+                let core = crate::poll_core::global();
+                while !stop.load(Ordering::Acquire) {
+                    match core.poll(Duration::from_millis(20)) {
+                        crate::poll_core::Polled::Activation(act) => {
+                            let outcome = respond(&act.payload, &applied);
+                            reply(act, outcome);
+                        }
+                        crate::poll_core::Polled::Timeout => {}
+                        crate::poll_core::Polled::ShuttingDown => return,
+                    }
+                }
+            })
+        };
+        Self {
+            stop,
+            applied,
+            thread: Some(thread),
+        }
+    }
+
+    pub(crate) fn applied(&self) -> Vec<String> {
+        self.applied.lock().expect("applied poisoned").clone()
+    }
+}
+
+#[cfg(test)]
+impl Drop for FakeHost {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Answer a taken activation as a host does.
+#[cfg(test)]
+pub(crate) fn reply(
+    act: crate::poll_core::EngineActivation,
+    outcome: crate::schema::ActivationOutcome,
+) {
+    let token = act.token;
+    crate::host::apply_result(
+        crate::poll_core::global(),
+        act,
+        crate::schema::ActivationResult { token, outcome },
+    )
+    .expect("the poll core takes the answer");
 }
 
 /// One park as the controller receives it: the cell identity the frame was

@@ -60,7 +60,7 @@ flz_key|offset|flz.offset
 flz_key|edge|flz.edge
 flz_key|relay|flz.relay
 flz_key|replay|flz.replay
-flz_key|replay_end|flz.replay_end
+flz_key|control|flz.control
 flz_key|reply_to|flz.reply_to
 flz_key|change_seq|flz.change_seq
 flz_key|part|flz.part
