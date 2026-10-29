@@ -208,6 +208,8 @@ defmodule Flezha.Cluster.GroupedHashingTest do
       assert_receive :pre_redistribution, 1_000
       refute_recheck()
 
+      # This process stands in for the coordinator the leave is written by.
+      Process.register(self(), hub.hub_id)
       GroupedHashing.handle_node_leave(hub, %{node: @a})
 
       assert GroupedHashing.group_nodes(hub.hub_id, "report") == [@b]
@@ -250,6 +252,40 @@ defmodule Flezha.Cluster.GroupedHashingTest do
 
       assert :gh_join in handlers.(Hook.post_node_join())
       refute :gh_join in handlers.(Hook.pre_node_join())
+    end
+
+    # fails when: a leave, which ProcessHub runs on its worker queue, writes the
+    # table beside the coordinator, so an announcement the coordinator applies
+    # from a table read before the leave puts the departed node's row back.
+    test "a node's leave is written by the coordinator, after what it is applying" do
+      hub_id = live_hub(%GroupedHashing{})
+      hub = ProcessHub.Hub.get(hub_id)
+
+      GenServer.cast(
+        hub_id,
+        {:exec_cast, {GroupedHashing, :apply_announcement, [@a, ["report"]]}}
+      )
+
+      _ = :sys.get_state(hub_id)
+      assert GroupedHashing.group_nodes(hub_id, "report") == [@a]
+
+      coordinator = Process.whereis(hub_id)
+      :sys.suspend(coordinator)
+      leave = Task.async(fn -> GroupedHashing.handle_node_leave(hub, %{node: @a}) end)
+
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 {:messages, queued} = Process.info(coordinator, :messages)
+                 Enum.any?(queued, &match?({:"$gen_call", _, {:exec_call, _}}, &1))
+               end,
+               2_000
+             ),
+             "the leave did not go to the coordinator"
+
+      assert GroupedHashing.group_nodes(hub_id, "report") == [@a]
+      :sys.resume(coordinator)
+      Task.await(leave)
+      assert GroupedHashing.group_nodes(hub_id, "report") == []
     end
 
     test "a stopping hub leaves every group and forgets the hub", %{hub: hub} do

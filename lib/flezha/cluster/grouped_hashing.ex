@@ -234,6 +234,20 @@ defmodule Flezha.Cluster.GroupedHashing do
   """
   @spec handle_node_leave(ProcessHub.Hub.t(), %{node: node()}) :: :ok
   def handle_node_leave(hub, %{node: leaving}) do
+    # ProcessHub runs this hook on its worker queue. Written there, the row
+    # could be put back by an announcement the coordinator is applying from a
+    # table it read before, so the coordinator writes it, and this waits.
+    if GenServer.whereis(hub.hub_id) == self(),
+      do: drop_node(hub, leaving),
+      else:
+        GenServer.call(hub.hub_id, {:exec_call, {__MODULE__, :drop_node, [leaving]}}, :infinity)
+  catch
+    # The hub stopping under the leave: its table goes with it.
+    :exit, _hub_gone -> :ok
+  end
+
+  @doc false
+  def drop_node(hub, leaving) do
     put_node_groups(hub, leaving, [])
 
     :ok
