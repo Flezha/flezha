@@ -47,12 +47,14 @@ defmodule Flezha.Runner.FleetManager.Factories do
           establish(namespace, runner_id, factory_id, attribute, value)
         end)
 
-        # The API and the graph ride beside the placement attributes, never
-        # among them: they describe the factory and decide no placement.
+        # The API, the graph and the declarations ride beside the placement
+        # attributes, never among them: they describe the factory and decide
+        # no placement.
         advert =
           Map.merge(advert, %{
             api: api(factory["api"]),
             graph: graph(factory["graph"]),
+            declarations: declarations(factory["declarations"], advert),
             announced_at: System.os_time()
           })
 
@@ -116,20 +118,35 @@ defmodule Flezha.Runner.FleetManager.Factories do
   end
 
   @doc """
-  The API `runner`'s advertisement of a factory entry announced, the latest
-  advertisement's when `runner` has none here, and whether its advertising
-  runners announce different ones.
+  What a factory row reads from its announcement: the API and the
+  declarations `runner`'s advertisement of a factory entry announced, the
+  latest advertisement's when `runner` has none here, and whether its
+  advertising runners announce different ones. `declarations` is `nil` for a
+  runner that announced none.
   """
-  @spec announced_api(map(), String.t() | nil) ::
-          %{api: [map()], api_at: integer() | nil, api_disagree: boolean()}
-  def announced_api(info, runner) do
+  @spec announced_row(map(), String.t() | nil) :: %{
+          api: [map()],
+          api_at: integer() | nil,
+          api_disagree: boolean(),
+          declarations: map() | nil,
+          declarations_disagree: boolean()
+        }
+  def announced_row(info, runner) do
     {api, at, disagree} = announced(info, runner, :api, [])
-    %{api: api, api_at: at, api_disagree: disagree}
+    {declarations, _at, declarations_disagree} = announced(info, runner, :declarations, nil)
+
+    %{
+      api: api,
+      api_at: at,
+      api_disagree: disagree,
+      declarations: declarations,
+      declarations_disagree: declarations_disagree
+    }
   end
 
   @doc """
   The graph a factory entry's advertisement announced (`nil` when it announced
-  none), chosen as `announced_api/2` chooses it, and whether its advertising
+  none), chosen as `announced_row/2` chooses it, and whether its advertising
   runners announce different ones. Read on its own, so no factory row carries it.
   """
   @spec announced_graph(map(), String.t() | nil) :: %{
@@ -182,8 +199,9 @@ defmodule Flezha.Runner.FleetManager.Factories do
 
   defp graph(_absent), do: nil
 
-  # A runner's frame is read as text and lists of text, so a malformed one
-  # stores nothing a reader of the graph would trip over.
+  # A runner's frame is read as text, lists of text, integers and booleans,
+  # so a malformed one stores nothing a reader of the graph would trip over.
+  # A field a runner did not announce is `nil`.
   defp graph_channel(channel) do
     %{
       name: channel["name"],
@@ -192,23 +210,59 @@ defmodule Flezha.Runner.FleetManager.Factories do
       consumers: texts(channel["consumers"]),
       plugin_end: text(channel["plugin_end"]),
       call_target: blank_nil(text(channel["call_target"])),
-      overflow: text(channel["overflow"])
+      overflow: text(channel["overflow"]),
+      retry_max: integer(channel["retry_max"]),
+      retry_backoff_ms: integer(channel["retry_backoff_ms"]),
+      call_deadline_ms: integer(channel["call_deadline_ms"]),
+      call_create: boolean(channel["call_create"])
     }
   end
 
   defp graph_tasklet(tasklet) do
-    capacity = tasklet["mailbox_capacity"]
-
     %{
       name: tasklet["name"],
       mode: text(tasklet["mode"]),
       cell_keys: texts(tasklet["cell_keys"]),
-      mailbox_capacity: if(is_integer(capacity), do: capacity)
+      mailbox_capacity: integer(tasklet["mailbox_capacity"]),
+      compensates: boolean(tasklet["compensates"]),
+      idle_ttl_ms: integer(tasklet["idle_ttl_ms"]),
+      max_cells: integer(tasklet["max_cells"])
     }
   end
 
+  # The declarations a factory's announcement carries, decoded as an
+  # `AddRelay` answer's metadata is, in the names an operator reads. Empty or
+  # absent is `nil`: a current runner always declares its durability. A flow's
+  # duplicate rule, acknowledgement, correction window and keying are `nil` for
+  # a steps run, which declares none of them.
+  defp declarations(metadata, advert) when is_map(metadata) and map_size(metadata) > 0 do
+    decoded = ClassRegistry.declarations_of(metadata, advert)
+    flow? = decoded.run == :flow
+
+    %{
+      durable: decoded.durable,
+      sleep_after_ms: decoded.sleep_after_ms,
+      max_duration_ms: decoded.max_duration_ms,
+      effectively_once: if(flow?, do: decoded.effectively_once),
+      ack: if(flow?, do: ack(decoded.ack_checkpoint)),
+      correction_ms: decoded.correction_window_ms,
+      keyed: if(flow?, do: not decoded.keyless)
+    }
+  end
+
+  defp declarations(_absent, _advert), do: nil
+
+  defp ack(true = _checkpoint), do: :checkpoint
+  defp ack(false), do: :per_input
+
   defp text(value) when is_binary(value), do: value
   defp text(_other), do: nil
+
+  defp integer(value) when is_integer(value), do: value
+  defp integer(_other), do: nil
+
+  defp boolean(value) when is_boolean(value), do: value
+  defp boolean(_other), do: nil
 
   defp texts(values) when is_list(values), do: Enum.filter(values, &is_binary/1)
   defp texts(_other), do: []

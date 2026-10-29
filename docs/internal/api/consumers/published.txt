@@ -46,6 +46,7 @@ Flezha.Service.Dlq.tasklets/2
 Flezha.Service.Fleet.drop_runner/3
 Flezha.Service.Fleet.dropped_runners/2
 Flezha.Service.Fleet.factories/2
+Flezha.Service.Fleet.factory/3
 Flezha.Service.Fleet.installed_plugins/1
 Flezha.Service.Fleet.provider/2
 Flezha.Service.Fleet.providers/1

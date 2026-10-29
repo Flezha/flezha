@@ -248,6 +248,7 @@ pub(crate) const RELAY: Help = r#"EXAMPLES:
     flz relay send orders --text x --msg-id orders/0/41
     flz relay diagnose orders-eu
     flz relay graph orders-eu
+    flz relay factory orders
     flz relay activity orders-eu
     flz relay activity orders-eu --cells book --limit 10
     flz relay rewind chat-1 --to-iteration 3

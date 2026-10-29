@@ -81,6 +81,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz relay info [<relay_id>] [--namespace \| -n <namespace>]` | Every relay in a namespace as its Overwatch reports it. |
 | `flz relay diagnose <relay_id> [--namespace \| -n <namespace>]` | What is wrong with a relay and what to do about it. |
 | `flz relay graph <relay_id> [--namespace \| -n <namespace>]` | The graph of a relay's factory, as its runner announces it. |
+| `flz relay factory <factory_id> [--namespace \| -n <namespace>]` | One factory of a namespace, described whether or not an instance of it runs. |
 | `flz relay activity <relay_id> [--cells <tasklet>] [--limit <count>] [--namespace \| -n <namespace>]` | What each tasklet of a relay is doing, as its runner counts it. |
 | `flz relay listen <relay_id> [--input] [--calls] [--tally] [--duration-ms <milliseconds>] [--namespace \| -n <namespace>]` | Stream every frame a relay emits, or those of one direction. |
 | `flz relay send <relay_id> --text \| -t <payload> [--channel \| -c <ch>] [--key <key>] [--msg-id <id>] [--await <ms>] [--namespace \| -n <namespace>]` | Inject a message into a relay's input stream. |

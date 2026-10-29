@@ -154,30 +154,37 @@ fn partition_refusal(
     }
 }
 
-/// The class's settings and declarations as `AddRelayResponse` metadata;
-/// empty bytes for a class that never registered. The durability always
-/// rides; a member rides only when its parent is chosen. The run and a steps
-/// run's shape ride the factory's announcement instead.
+/// The class's metadata as `AddRelayResponse` bytes; empty bytes for a class
+/// that never registered.
 fn metadata_response(class: Option<&RelayTopology>) -> Vec<u8> {
-    let mut metadata = std::collections::HashMap::new();
-    if let Some(topology) = class {
-        let mut put = |key: &str, value: String| metadata.insert(key.to_string(), value);
-        put("durable", topology.durable.as_str().to_string());
-        if let Some(after) = topology.sleep_after() {
-            put("sleep_after_ms", after.as_millis().to_string());
+    match class {
+        Some(topology) => AddRelayResponse {
+            metadata: class_metadata(topology),
         }
-        if let Some(limit) = topology.max_duration {
-            put("max_duration_ms", limit.as_millis().to_string());
-        }
-        match &topology.steps {
-            Some(spec) => steps_metadata(topology, spec, &mut metadata),
-            None => flow_metadata(topology, &mut metadata),
-        }
+        .encode_to_vec(),
+        None => Vec::new(),
     }
-    if metadata.is_empty() {
-        return Vec::new();
+}
+
+/// The class's settings and declarations, which the `AddRelay` answer and the
+/// factory's announcement both carry, so the two cannot differ. The
+/// durability always rides; a member rides only when its parent is chosen.
+/// The run and a steps run's shape ride the announcement's own fields.
+pub(crate) fn class_metadata(topology: &RelayTopology) -> HashMap<String, String> {
+    let mut metadata = HashMap::new();
+    let mut put = |key: &str, value: String| metadata.insert(key.to_string(), value);
+    put("durable", topology.durable.as_str().to_string());
+    if let Some(after) = topology.sleep_after() {
+        put("sleep_after_ms", after.as_millis().to_string());
     }
-    AddRelayResponse { metadata }.encode_to_vec()
+    if let Some(limit) = topology.max_duration {
+        put("max_duration_ms", limit.as_millis().to_string());
+    }
+    match &topology.steps {
+        Some(spec) => steps_metadata(topology, spec, &mut metadata),
+        None => flow_metadata(topology, &mut metadata),
+    }
+    metadata
 }
 
 /// What a steps class declares: the compensable positions, comma-separated (a
@@ -264,6 +271,44 @@ mod metadata_tests {
             .metadata
             .into_iter()
             .collect()
+    }
+
+    // The announcement and the `AddRelay` answer read one function, so a
+    // class's declarations are the same in both, for either run.
+    #[test]
+    fn the_announced_declarations_are_the_add_relay_metadata() {
+        let steps = format!("meta_announced_steps_{}", std::process::id());
+        register_steps(&steps, r#"{"local":{"sleep_after":2000}}"#);
+        let flow = format!("meta_announced_flow_{}", std::process::id());
+        let json = format!(
+            r#"{{"factory_id":"{flow}","sdk_lang":1,"sdk_version":"0.1.0","durable":"remote",
+                 "max_duration_ms":120000,"compact_after_bytes":4096,"run":"flow",
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0"}}]}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+
+        for id in [&steps, &flow] {
+            let announced = crate::relay::registry::advertised_for_factory(id).declarations;
+            assert_eq!(
+                announced
+                    .into_iter()
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+                metadata_of(id)
+            );
+        }
+        assert_eq!(
+            metadata_of(&flow)
+                .get("max_duration_ms")
+                .map(String::as_str),
+            Some("120000")
+        );
+        assert_eq!(
+            metadata_of(&steps)
+                .get("sleep_after_ms")
+                .map(String::as_str),
+            Some("2000")
+        );
     }
 
     #[test]

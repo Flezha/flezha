@@ -177,7 +177,7 @@ fn a_host_class_announces_every_channel_with_its_ends() {
             "chains":[[{"link":"call","factory":"pricing","deadline_ms":500,"response":"ask.response"}]]},
            {"name":"ask.response","kind":"entry","chains":[[{"link":"into","tasklet":3}]]}"#,
         r#"{"name":"ohlc","cell_keys":["a","b"],"cells_for_overridden":true},
-           {"name":"trades"},
+           {"name":"trades","idle_ttl_ms":30000,"max_cells":200},
            {"name":"atr","mailbox_capacity":64},
            {"name":"read"}"#,
     );
@@ -250,5 +250,97 @@ fn a_host_class_announces_every_channel_with_its_ends() {
             ("atr".into(), "single".into(), "".into(), 64),
             ("read".into(), "single".into(), "".into(), capacity),
         ]
+    );
+}
+
+#[test]
+fn a_graph_carries_each_tasklets_bounds_and_each_channels_retry_and_call() {
+    let id = factory("graph_bounds");
+    register(
+        &id,
+        r#"{"name":"in","kind":"entry",
+            "chains":[[{"link":"key"},{"link":"into","tasklet":0}],[{"link":"key"},{"link":"into","tasklet":1}]]},
+           {"name":"mid","kind":"inter_task","producer":0,"retry_max":5,"retry_backoff_ms":20,
+            "chains":[[{"link":"into","tasklet":2}]]},
+           {"name":"ask","kind":"plugin","producer":2,
+            "chains":[[{"link":"call","factory":"pricing","deadline_ms":2000,"create":true,
+                        "response":"ask.response"}]]},
+           {"name":"ask.response","kind":"entry","chains":[[{"link":"into","tasklet":2}]]}"#,
+        r#"{"name":"evicts","idle_ttl_ms":30000,"max_cells":200},
+           {"name":"unbounded"},
+           {"name":"single"}"#,
+    );
+    let graph = advertised_for_factory(&id).graph.expect("graph");
+
+    let tasklets: Vec<_> = graph
+        .tasklets
+        .iter()
+        .map(|t| (t.name.as_str(), t.compensates, t.idle_ttl_ms, t.max_cells))
+        .collect();
+    assert_eq!(
+        tasklets,
+        [
+            ("evicts", Some(false), Some(30_000), Some(200)),
+            ("unbounded", Some(false), None, None),
+            ("single", Some(false), None, None),
+        ],
+        "a flow class compensates nothing; only a dynamic tasklet has bounds"
+    );
+
+    let channel = |name: &str| {
+        graph
+            .channels
+            .iter()
+            .find(|c| c.name == name)
+            .cloned()
+            .expect("channel")
+    };
+    let mid = channel("mid");
+    assert_eq!((mid.retry_max, mid.retry_backoff_ms), (Some(5), Some(20)));
+    assert_eq!((mid.call_deadline_ms, mid.call_create), (None, None));
+    let ask = channel("ask");
+    assert_eq!(
+        (ask.call_deadline_ms, ask.call_create),
+        (Some(2000), Some(true))
+    );
+}
+
+#[test]
+fn a_steps_class_marks_exactly_its_compensating_tasklets() {
+    let id = factory("graph_saga");
+    let json = format!(
+        r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,"run":"steps",
+             "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"into","tasklet":0}}]]}},
+                         {{"name":"s1","kind":"inter_task","producer":0,"chains":[[{{"link":"into","tasklet":1}}]]}},
+                         {{"name":"s2","kind":"inter_task","producer":1,"chains":[[{{"link":"into","tasklet":2}}]]}}],
+             "tasklets":[{{"name":"reserve","compensate_overridden":true}},
+                         {{"name":"place","compensate_overridden":true}},
+                         {{"name":"notify"}}]}}"#
+    );
+    crate::host::register_host_class_json(json.as_bytes()).expect("the class registers");
+
+    let marks: Vec<_> = advertised_for_factory(&id)
+        .graph
+        .expect("graph")
+        .tasklets
+        .into_iter()
+        .map(|t| (t.name, t.compensates))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            ("reserve".to_string(), Some(true)),
+            ("place".to_string(), Some(true)),
+            ("notify".to_string(), Some(false)),
+        ]
+    );
+
+    // The connect frame writes the announcement as this JSON.
+    let frame = serde_json::to_value(advertised_for_factory(&id)).expect("serialises");
+    assert_eq!(frame["declarations"]["durable"], "memory");
+    assert_eq!(frame["graph"]["tasklets"][0]["compensates"], true);
+    assert_eq!(
+        frame["graph"]["tasklets"][0]["max_cells"],
+        serde_json::Value::Null
     );
 }

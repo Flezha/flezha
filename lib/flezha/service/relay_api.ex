@@ -15,7 +15,6 @@ defmodule Flezha.Service.RelayApi do
   alias Flezha.Service.RelayManager
 
   @binary ["bytes", "msgpack", "custom"]
-  @no_graph %{graph: nil, disagree: false}
 
   @typedoc "One entry channel of a factory's API, as `Relay.api` answers it."
   @type entry :: %{
@@ -82,7 +81,7 @@ defmodule Flezha.Service.RelayApi do
   @doc false
   def graph_here(namespace, relay_id) do
     with {:ok, %{factory_id: factory}, host} <- declared(namespace, relay_id),
-         %{graph: _} = read <- RelayManager.factory_graph(namespace, factory, host) || @no_graph,
+         %{graph: _} = read <- RelayManager.factory_graph(namespace, factory, host),
          do: {:ok, Map.put(read, :factory, factory)}
   end
 

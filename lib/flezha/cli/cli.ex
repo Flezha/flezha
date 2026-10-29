@@ -73,6 +73,7 @@ defmodule Flezha.Service.Cli do
     "Dlq.list" => &Dlq.list/3,
     "Dlq.replay" => &Dlq.replay/3,
     "Fleet.dropped_runners" => &Listing.dropped_runners/3,
+    "Fleet.factory" => &Info.factory/3,
     "Fleet.installed_plugins" => &Plugin.installed/3,
     "Fleet.provider" => &Plugin.provider/3,
     "Fleet.providers" => &Plugin.providers/3,

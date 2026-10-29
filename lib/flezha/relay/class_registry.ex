@@ -95,9 +95,9 @@ defmodule Flezha.Relay.ClassRegistry do
   `AddRelay` response and its factory's announcement.
 
   `compensable_tasks` is the chain positions whose tasklet declares a `compensate`
-  hook, or `nil` when the class declares nothing (a flow relay, or a Java runner) —
-  which a rewind reads as "no coverage information", not as "nothing is
-  compensable".
+  hook, or `nil` when the class declares nothing (a flow relay, or a runner
+  older than the declaration), which a rewind reads as "no coverage
+  information", not as "nothing is compensable".
   """
   @type declarations :: %{
           run: run(),
@@ -129,8 +129,17 @@ defmodule Flezha.Relay.ClassRegistry do
   announces none never sleeps.
   """
   @spec decode_declarations(binary() | nil, map()) :: declarations()
-  def decode_declarations(raw_data, established) do
-    metadata = decode_metadata(raw_data)
+  def decode_declarations(raw_data, established),
+    do: raw_data |> decode_metadata() |> declarations_of(established)
+
+  @doc """
+  `decode_declarations/2` of a metadata map already decoded: an
+  `AddRelayResponse`'s, or the `declarations` a factory's announcement
+  carries. Total on any map, so a malformed announcement decodes to what it
+  can read.
+  """
+  @spec declarations_of(map(), map()) :: declarations()
+  def declarations_of(metadata, established) do
     durable = parse_durable(Map.get(metadata, "durable"))
 
     %{
@@ -167,9 +176,15 @@ defmodule Flezha.Relay.ClassRegistry do
   defp parse_durable("remote"), do: :remote
   defp parse_durable(_raw), do: :local
 
-  defp parse_ops(nil), do: nil
+  # Positions that do not all read as integers are no coverage information.
   defp parse_ops(""), do: []
-  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
+
+  defp parse_ops(csv) when is_binary(csv) do
+    positions = csv |> String.split(",") |> Enum.map(&Integer.parse/1)
+    if Enum.all?(positions, &match?({_n, ""}, &1)), do: Enum.map(positions, &elem(&1, 0))
+  end
+
+  defp parse_ops(_absent), do: nil
 
   # A positive decimal declaration string as an integer, or nil when
   # absent/malformed/non-positive.

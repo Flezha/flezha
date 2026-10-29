@@ -15,6 +15,7 @@ defmodule Flezha.Service.Fleet do
 
   @namespace [type: :string, doc: "The namespace."]
   @runner_id [type: :string, doc: "The runner's id, as `runners/2` lists it."]
+  @factory_id [type: :string, doc: "The factory."]
 
   alias Flezha.Cluster.Reads
   alias Flezha.Plugin.Installer
@@ -22,6 +23,7 @@ defmodule Flezha.Service.Fleet do
   alias Flezha.Runner.DropMarks
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.CallerContext
+  alias Flezha.Service.RelayManager
 
   @type caller_context :: CallerContext.t()
 
@@ -109,7 +111,7 @@ defmodule Flezha.Service.Fleet do
           {:ok, map()} | {:error, term()}
   verb runners_for_factory(namespace, factory_id, caller_context),
     verb: :list_runners,
-    args: [namespace: @namespace, factory_id: [type: :string, doc: "The factory."]] do
+    args: [namespace: @namespace, factory_id: @factory_id] do
     {:ok, FleetManager.Cluster.factory_runners(namespace, factory_id)}
   end
 
@@ -118,10 +120,48 @@ defmodule Flezha.Service.Fleet do
   each, carrying the `nodes` advertising it and the `runners` that can place
   it, so a listing needs no `runners_for_factory/3` call per factory;
   `unreachable` names the controllers that did not answer.
+
+  A row also carries how the factory runs (`run`, and a steps run's `each` and
+  `on_failure`), its API and its `declarations`: `durable`, `sleep_after_ms`,
+  `max_duration_ms`, `effectively_once`, `ack`,
+  `correction_ms` and `keyed`, a value the class did not declare being `nil`,
+  and `declarations: nil` when its runner announced none. `api_disagree` and
+  `declarations_disagree` say its runners, on any controller, announce
+  different ones.
   """
   @spec factories(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb factories(namespace, caller_context), verb: :list_runners, args: [namespace: @namespace] do
     {:ok, FleetManager.Cluster.global_factories(namespace)}
+  end
+
+  @doc """
+  One factory of a namespace, described whether or not an instance of it runs.
+
+  It answers its row as `factories/2` answers it, its announced `graph` (`nil`
+  when its runners announced none, each tasklet saying whether it
+  `compensates`), and
+  `disagree`, true when its runners do not all announce one class: different
+  graphs on the controller that read it, or different APIs or declarations on
+  any controller. The graph is read on a controller whose runner announces the
+  factory. A factory no connected runner announces is `relay.factory_unknown`.
+  """
+  @spec factory(String.t(), String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb factory(namespace, factory_id, caller_context),
+    verb: :list_runners,
+    args: [namespace: @namespace, factory_id: @factory_id] do
+    %{rows: rows, unreachable: unreachable} = FleetManager.Cluster.global_factories(namespace)
+
+    with %{} = row <-
+           Enum.find(rows, &(&1.id == factory_id)) ||
+             {:error, {:factory_unknown, namespace, factory_id}},
+         %{graph: graph, disagree: disagree} <- RelayManager.factory_graph(namespace, factory_id) do
+      {:ok,
+       Map.merge(row, %{
+         graph: graph,
+         disagree: disagree or row.api_disagree or row.declarations_disagree,
+         unreachable: unreachable
+       })}
+    end
   end
 
   @doc "The caller context a runner in `namespace` connects with."

@@ -61,6 +61,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:runners, ["default"]},
       {:runners_for_factory, ["default", "factory"]},
       {:factories, ["default"]},
+      {:factory, ["default", "factory"]},
       {:runner_caller_context, ["default"]},
       {:drop_runner, ["default", "runner"]},
       {:readmit_runner, ["default", "stable"]},

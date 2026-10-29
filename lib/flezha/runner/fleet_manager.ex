@@ -43,8 +43,9 @@ defmodule Flezha.Runner.FleetManager do
 
   @doc """
   This node's factories in `namespace`, one row each: `id`, `description`,
-  `run`, `runners` (the active runners that can place it, as
-  `runners_for_factory/3` answers) and the API `runner` announced for it.
+  `run`, `each`, `on_failure`, `runners` (the active runners that can place
+  it, as `runners_for_factory/3` answers), and the API and the declarations
+  `runner` announced for it (`Factories.announced_row/2`).
   """
   def list_factories(namespace, runner \\ nil) do
     GenServer.call(__MODULE__, {:list_factories, namespace, runner}, manager_call_timeout())
@@ -571,9 +572,11 @@ defmodule Flezha.Runner.FleetManager do
           id: factory_id,
           description: info.description,
           run: established_value(state, namespace, factory_id, :run),
+          each: established_value(state, namespace, factory_id, :each),
+          on_failure: established_value(state, namespace, factory_id, :on_failure),
           runners: candidates(state, namespace, factory_id)
         }
-        |> Map.merge(Factories.announced_api(info, runner))
+        |> Map.merge(Factories.announced_row(info, runner))
       end)
       |> Enum.sort_by(& &1.id)
 

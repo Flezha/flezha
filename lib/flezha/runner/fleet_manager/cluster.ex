@@ -15,8 +15,9 @@ defmodule Flezha.Runner.FleetManager.Cluster do
   Every factory any node's runners advertise in `namespace`, one row each, and
   the nodes that did not answer. A row lists the `nodes` advertising it and the
   union of their `runners`; its other fields are the most recently announced
-  advertisement's (`api_at`), and `api_disagree` is true when any node's
-  runners disagree or two nodes announce different APIs.
+  advertisement's (`api_at`). `api_disagree` is true when any node's runners
+  disagree or two nodes announce different APIs, and `declarations_disagree`
+  likewise for the declarations.
   """
   @spec global_factories(String.t()) :: Reads.rows()
   def global_factories(namespace) do
@@ -33,9 +34,13 @@ defmodule Flezha.Runner.FleetManager.Cluster do
     |> Map.merge(%{
       nodes: rows |> Enum.map(& &1.node) |> Enum.uniq() |> Enum.sort(),
       runners: rows |> Enum.flat_map(& &1.runners) |> Enum.uniq() |> Enum.sort(),
-      api_disagree: Enum.any?(rows, & &1.api_disagree) or length(Enum.uniq_by(rows, & &1.api)) > 1
+      api_disagree: disagree?(rows, :api, :api_disagree),
+      declarations_disagree: disagree?(rows, :declarations, :declarations_disagree)
     })
   end
+
+  defp disagree?(rows, key, flag),
+    do: Enum.any?(rows, & &1[flag]) or length(Enum.uniq_by(rows, & &1[key])) > 1
 
   @doc """
   The runners of `factory_id` in `namespace` on every node advertising it,

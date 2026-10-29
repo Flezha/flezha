@@ -895,7 +895,7 @@ the runner can exit.
 ### UpdateFactories
 
 `UpdateFactories { repeated FactoryDecl factories }` (`FactoryDecl { id,
-description, sdk_lang, run, each, on_failure, api, graph }`, the struct whose serde form is each init frame entry)
+description, sdk_lang, run, each, on_failure, api, graph, declarations }`, the struct whose serde form is each init frame entry)
 travels runner → controller, fire-and-forget, after a
 post-start define/remove in any SDK (the core's session sends it), carrying the runner's **full**
 current factory set. Full-set semantics make it idempotent: `FleetManager`
@@ -929,13 +929,34 @@ class: `kind` is `entry`, `inter_tasklet` or `plugin_bound`; `producer` is the p
 tasklet's name, empty for an entry; `consumers` are the consuming tasklets' names; `plugin_end`
 is `call` for a `call(...)` end, `output` for a plugin output, otherwise `none`; `call_target`
 is a call end's `id:<relay>` or `factory:<id>`, empty otherwise; `overflow` is `drop_nothing`,
-`drop_newest` or `drop_oldest`. Each `GraphTasklet { name, mode, cell_keys, mailbox_capacity }`
-names a tasklet in declaration order, with `mode` `single`, `static` or `dynamic`. The init
-frame's factory entries carry the same structure as a `"graph"` object with these keys, omitted
-when there is none. `flz_core` builds it from the class's topology (`advertised_for_factory`).
+`drop_newest` or `drop_oldest`; `retry_max` and `retry_backoff_ms` are the channel's retry
+policy (total attempts, first run included, and the base backoff); `call_deadline_ms` and
+`call_create` are a call end's deadline and whether it creates the callee, absent for any other
+end. Each `GraphTasklet { name, mode, cell_keys, mailbox_capacity, compensates, idle_ttl_ms,
+max_cells }` names a tasklet in declaration order, with `mode` `single`, `static` or `dynamic`.
+`compensates` is true exactly for a tasklet of a steps class that declares a `compensate` hook.
+`idle_ttl_ms` and `max_cells` are set only for a `dynamic` tasklet: its idle eviction window,
+absent when it never evicts, and its cap on live Cells, absent when it has none. Every field
+after `overflow` and after `mailbox_capacity` is `optional` on the wire: a runner built before
+them sends none, and the controller reads each as not announced (`nil`), never as zero or
+false. The init frame's factory entries carry the same structure as a `"graph"` object with
+these keys (`null` for an absent optional field), omitted when there is none. `flz_core` builds it from the class's topology (`advertised_for_factory`).
 A runner that sends none leaves its factory with no graph, and
 it is still placed. The controller keeps each runner's latest announcement beside its API, out
-of the factory rows a call reads, and `Relay.graph` reads it.
+of the factory rows a call reads, and `Relay.graph` and `Fleet.factory` read it.
+
+### Declarations
+
+`FactoryDecl.declarations` (field 9) is a `map<string, string>` holding exactly the entries the
+`AddRelayResponse` metadata holds for an instance of the class (`durable`, `sleep_after_ms`,
+`max_duration_ms`, a steps class's `compensable_tasks`, a flow class's `exactly`, `keyed`,
+`correction_ms`, `beyond_window`, `ack` and `compact_after_bytes`). `flz_core` builds both from
+one function (`class_metadata`), so they cannot differ. The init frame's factory entries carry
+it as a `"declarations"` object. An empty map is "not announced": a current runner always
+declares `durable`, so only a runner built before the field sends none. The controller decodes
+it with the decoder it applies to the `AddRelay` metadata, keeps it per runner announcement
+beside the API and the graph, and answers it in the rows of `Fleet.factories`. It decides no
+placement.
 
 ### SpawnStepsRequest
 

@@ -32,6 +32,7 @@ mod streams_connect;
 mod tasklet_activity;
 
 pub(crate) use credit::answer_credit;
+pub(crate) use relay_start::class_metadata;
 
 /// One command's answer: the `CommandResponse` bytes under the handler's own
 /// payload id (the frame is stamped with the REQUEST's).

@@ -630,6 +630,11 @@ message FactoryDecl {
     // The class's static data flow, built when the factory is announced.
     // Absent from a runner that announces none.
     RelayGraph graph = 8;
+    // The class's declarations, the same entries the AddRelayResponse
+    // metadata carries for an instance of it (durable, sleep_after_ms,
+    // max_duration_ms, ...). Empty from a runner that announces none, which
+    // the Controller reads as "not announced".
+    map<string, string> declarations = 9;
 }
 
 // A class's tasklets and the channels between them, referenced by name.
@@ -651,6 +656,14 @@ message GraphChannel {
     string call_target = 6;
     // "drop_nothing", "drop_newest" or "drop_oldest".
     string overflow = 7;
+    // The channel's retry policy: total attempts, first run included, and
+    // the base backoff. Absent from a runner that announces none.
+    optional uint32 retry_max = 8;
+    optional uint64 retry_backoff_ms = 9;
+    // For a "call" end: its deadline and whether it creates the callee.
+    // Absent otherwise, and from a runner that announces none.
+    optional uint64 call_deadline_ms = 10;
+    optional bool call_create = 11;
 }
 
 message GraphTasklet {
@@ -659,6 +672,14 @@ message GraphTasklet {
     string mode = 2;
     repeated string cell_keys = 3;
     uint32 mailbox_capacity = 4;
+    // True exactly for a tasklet of a steps class that declares a compensate
+    // hook. Absent from a runner that announces none.
+    optional bool compensates = 5;
+    // For a "dynamic" tasklet: its idle eviction window (absent when it never
+    // evicts) and its cap on live Cells (absent when it has none, or one past
+    // the field's range). Absent for any other mode.
+    optional uint64 idle_ttl_ms = 6;
+    optional uint32 max_cells = 7;
 }
 
 // One entry channel of a factory's API, as its class declares it.

@@ -160,6 +160,11 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[NAMESPACE])
             .sending(SCOPED)
             .calls(&["Relay.graph"]),
+        Verb::door("factory")
+            .taking(&[Positional::required("<factory_id>")])
+            .reading(&[NAMESPACE])
+            .sending(SCOPED)
+            .calls(&["Fleet.factory"]),
         Verb::door("activity")
             .taking(RELAY_ID)
             .reading(&[CELLS, LIMIT, NAMESPACE])

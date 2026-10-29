@@ -3,6 +3,7 @@ defmodule Flezha.Service.Cli.Info do
   `flz relay info` — the text form of the relay report: the partition
   groups and their coverage, then every live and finished relay, or with a
   relay id its API; `flz relay graph`, one relay's tasklets and channels;
+  `flz relay factory`, one factory's run, declarations and graph;
   `flz relay activity`, what each of its tasklets is doing; and
   `flz relay diagnose`, one relay's findings.
   """
@@ -111,32 +112,71 @@ defmodule Flezha.Service.Cli.Info do
   @doc """
   `flz relay graph <relay_id>`: the relay's entry channels, then each tasklet
   with its cell mode and the channels it consumes and produces, a channel that
-  ends at a plugin output or a call marked so.
+  ends at a plugin output or a call marked so, and a tasklet that compensates.
   """
-  def graph(%{graph: nil} = read, _args, _opts) do
-    IO.puts(graph_heading(read))
+  def graph(read, _args, _opts) do
+    IO.puts("Graph of relay '#{read.relay}' (factory '#{read.factory}'):")
 
-    IO.puts(
-      "  No graph announced: connect a runner of factory '#{read.factory}' that announces one."
-    )
-  end
-
-  def graph(%{graph: graph} = read, _args, _opts) do
-    IO.puts(graph_heading(read))
-
-    if read.disagree,
+    if read.graph && read.disagree,
       do: IO.puts("  Connected runners announce different graphs; this is the latest.")
 
+    print_graph(read.graph, read.factory)
+  end
+
+  @doc """
+  `flz relay factory <factory_id>`: how the factory runs, what its class
+  declares and its runners, then its graph as `graph/3` prints it.
+  """
+  def factory(read, _args, _opts) do
+    IO.puts("Factory '#{read.id}':")
+
+    if read.disagree,
+      do: IO.puts("  Connected runners announce this factory differently; this is the latest.")
+
+    IO.puts("  Run: #{run_line(Map.merge(read.declarations || %{}, read))}")
+    print_declarations(read.declarations)
+    runners = if read.runners == [], do: "(none)", else: Enum.join(read.runners, ", ")
+    IO.puts("  Runners: #{runners}")
+    print_graph(read.graph, read.id)
+    Context.unreachable(read.unreachable)
+  end
+
+  defp print_declarations(nil), do: IO.puts("  Declarations: not announced by its runner")
+
+  defp print_declarations(declared) do
+    IO.puts("  Durable: #{durable_line(declared)}")
+
+    if declared.max_duration_ms,
+      do: IO.puts("  Time limit: #{interval(declared.max_duration_ms)}")
+
+    if declared.ack == :checkpoint, do: IO.puts("  Ack: checkpoint")
+
+    if declared.correction_ms,
+      do: IO.puts("  Correction window: #{interval(declared.correction_ms)}")
+
+    if declared.keyed == false, do: IO.puts("  Keyed: false")
+  end
+
+  defp print_graph(nil, factory),
+    do:
+      IO.puts(
+        "  No graph announced: connect a runner of factory '#{factory}' that announces one."
+      )
+
+  defp print_graph(graph, _factory) do
     entries = for %{kind: "entry"} = channel <- graph.channels, do: channel_label(channel)
     IO.puts("  entry: #{Enum.join(entries, ", ")}")
     Enum.each(graph.tasklets, &print_tasklet(&1, graph.channels))
   end
 
-  defp graph_heading(read), do: "Graph of relay '#{read.relay}' (factory '#{read.factory}'):"
-
   defp print_tasklet(tasklet, channels) do
     keys = if tasklet.cell_keys == [], do: "", else: " #{Enum.join(tasklet.cell_keys, ", ")}"
-    IO.puts("  #{tasklet.name}  #{tasklet.mode}#{keys}, mailbox #{tasklet.mailbox_capacity}")
+    compensates = if tasklet[:compensates], do: ", compensates", else: ""
+
+    IO.puts(
+      "  #{tasklet.name}  #{tasklet.mode}#{keys}, mailbox #{tasklet.mailbox_capacity}#{compensates}"
+    )
+
     inputs = for channel <- channels, tasklet.name in channel.consumers, do: channel.name
     outputs = for %{producer: producer} = c <- channels, producer == tasklet.name, do: c
     IO.puts("    in:  #{Enum.join(inputs, ", ")}")
@@ -309,14 +349,16 @@ defmodule Flezha.Service.Cli.Info do
 
   # `steps (each: per_input, on_failure: keep_progress)`, or `flow` with its
   # duplicate rule when it is not the default.
-  defp run_line(%{run: "steps", each: each, on_failure: on_failure}) when not is_nil(each),
-    do: "steps (each: #{each}, on_failure: #{on_failure || :undo_all})"
+  # A relay row carries its run as text, a factory row as an atom.
+  defp run_line(%{run: run, each: each, on_failure: on_failure})
+       when run in ["steps", :steps] and not is_nil(each),
+       do: "steps (each: #{each}, on_failure: #{on_failure || :undo_all})"
 
   defp run_line(%{effectively_once: true}), do: "flow (exactly: effectively_once)"
   defp run_line(relay), do: relay.run
 
   # `local (sleep_after: 6h)`; a class kept in memory has nothing to sleep on.
-  defp durable_line(%{durable: "memory"}), do: "false"
+  defp durable_line(%{durable: memory}) when memory in ["memory", :memory], do: "false"
 
   defp durable_line(relay),
     do: "#{relay.durable} (sleep_after: #{interval(relay.sleep_after_ms)})"

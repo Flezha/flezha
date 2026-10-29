@@ -13,6 +13,8 @@ COMMANDS:
     info      Every relay in a namespace as its Overwatch reports it.
     diagnose  What is wrong with a relay and what to do about it.
     graph     The graph of a relay's factory, as its runner announces it.
+    factory   One factory of a namespace, described whether or not an instance
+              of it runs.
     activity  What each tasklet of a relay is doing, as its runner counts it.
     listen    Stream every frame a relay emits, or those of one direction.
     send      Inject a message into a relay's input stream.
@@ -29,6 +31,7 @@ EXAMPLES:
     flz relay send orders --text x --msg-id orders/0/41
     flz relay diagnose orders-eu
     flz relay graph orders-eu
+    flz relay factory orders
     flz relay activity orders-eu
     flz relay activity orders-eu --cells book --limit 10
     flz relay rewind chat-1 --to-iteration 3

@@ -63,6 +63,49 @@ defmodule FlezhaTest.Helper.FleetStateHelper do
   end
 
   @doc """
+  One graph channel as the connect frame carries it, `fields` (string keys)
+  over a channel with no call target that drops nothing.
+  """
+  def graph_channel(name, kind, producer, consumers, plugin_end, fields \\ %{}) do
+    Map.merge(
+      %{
+        "name" => name,
+        "kind" => kind,
+        "producer" => producer,
+        "consumers" => consumers,
+        "plugin_end" => plugin_end,
+        "call_target" => "",
+        "overflow" => "drop_nothing"
+      },
+      fields
+    )
+  end
+
+  @doc """
+  The `UpdateFactories` form of a factory entry given in the connect frame's
+  form, so a test announces one factory both ways.
+  """
+  def factory_decl(factory) do
+    decl = factory |> Map.delete("graph") |> struct_of(RunnerCommands.FactoryDecl)
+    %{decl | graph: relay_graph(factory["graph"])}
+  end
+
+  defp relay_graph(nil), do: nil
+
+  defp relay_graph(graph),
+    do: %RunnerCommands.RelayGraph{
+      channels: Enum.map(graph["channels"], &struct_of(&1, RunnerCommands.GraphChannel)),
+      tasklets: Enum.map(graph["tasklets"], &struct_of(&1, RunnerCommands.GraphTasklet))
+    }
+
+  defp struct_of(fields, module),
+    do:
+      struct(
+        module,
+        Map.new(fields, fn {key, value} -> {String.to_existing_atom(key), value} end)
+      )
+
+  @doc """
   `announce/3` of bare factory ids, which take the same shapes `seed/2` accepts.
   """
   def sync(namespace, runner, factory_ids) do

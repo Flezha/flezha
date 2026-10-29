@@ -673,13 +673,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
       "graph" => nil
     }
 
-    decl = %RunnerCommands.FactoryDecl{
-      id: "told",
-      sdk_lang: 1,
-      run: "steps",
-      each: "once",
-      on_failure: "undo_all"
-    }
+    decl = FleetStateHelper.factory_decl(json)
 
     :ok = FleetStateHelper.announce(@namespace, "r1", [%{json | "description" => "the first"}])
     :ok = FleetStateHelper.announce(@namespace, "r2", [json, %{json | "id" => "untold"}])

@@ -627,9 +627,16 @@ defmodule Flezha.Service.RelayManager do
   def factory_row(namespace, factory_id, host),
     do: on_factory_node(namespace, factory_id, :factory_row, nil, host)
 
-  @doc "`factory_id`'s announced graph or `nil`, asked as `factory_row/3` is."
-  def factory_graph(namespace, factory_id, host),
-    do: on_factory_node(namespace, factory_id, :factory_graph, nil, host)
+  @doc """
+  `factory_id`'s announced graph and whether its runners disagree, asked as
+  `factory_row/3` is: `host`'s (a relay's) runner first when it has one.
+  `graph: nil` when none was announced; a peer that could not be asked is an
+  error.
+  """
+  def factory_graph(namespace, factory_id, host \\ %{runner: nil}),
+    do:
+      on_factory_node(namespace, factory_id, :factory_graph, nil, host) ||
+        %{graph: nil, disagree: false}
 
   # A relay runs on its runner's node, which holds that runner's advertisement.
   defp on_factory_node(namespace, factory_id, fun, none, host \\ %{runner: nil}) do

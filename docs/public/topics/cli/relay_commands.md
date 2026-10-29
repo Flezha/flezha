@@ -192,7 +192,8 @@ API of relay 'orders-eu' (factory 'orders'):
 hosting it announces it: the entry channels, then each tasklet with its cell mode, its
 mailbox and the channels it reads (`in`) and writes (`out`). A channel that ends
 at a plugin output is marked `→ output`, one that ends in a call `→ call` with
-its target, and one that sheds when full names its policy. With `--json` it is
+its target, and one that sheds when full names its policy. A tasklet of a
+workflow that declares a `compensate` hook is marked `compensates`. With `--json` it is
 the channels and tasklets as data. The trade watcher of the
 [tradedesk](tutorials/tradedesk.html):
 
@@ -213,6 +214,44 @@ Graph of relay 'trade_watcher' (factory 'trade_watcher'):
 
 A relay whose runner announces no graph, because it runs an older SDK, says so
 instead.
+
+`flz relay factory <factory_id>` describes a factory whether or not an instance
+of it runs, which is the only way to see a short-lived workflow that a parent
+starts and that finishes in seconds. It prints how the factory runs, what its
+class declares (where it keeps its work and how long an idle instance waits
+before it sleeps, its time limit, and for a flow its acknowledgement,
+correction window and keying when they are not the default), the runners that
+can place it, and its graph as `flz relay graph` prints it. A factory whose
+runners on any controller announce it differently says so. The order executor
+of the [tradedesk](tutorials/tradedesk.html), with no order in flight:
+
+```sh
+$ flz relay factory order_executor --namespace trading
+```
+
+```output
+Factory 'order_executor':
+  Run: steps (each: once, on_failure: undo_all)
+  Durable: local (sleep_after: 6h)
+  Runners: trading_b763e7baa892
+  entry: order
+  reserve_funds  single, mailbox 1024, compensates
+    in:  order
+    out: reserve_funds
+  place_order  single, mailbox 1024, compensates
+    in:  reserve_funds
+    out: place_order
+  confirm_fill  single, mailbox 1024
+    in:  place_order
+    out: -
+  record_order  single, mailbox 1024
+    in:  place_order
+    out: -
+```
+
+A factory no connected runner announces is refused as `relay.factory_unknown`.
+A runner too old to announce its declarations prints `Declarations: not
+announced by its runner`.
 
 `flz relay activity <relay_id>` asks the runner hosting a relay what each of its
 tasklets is doing: its live Cells, the items queued in all of them and in the

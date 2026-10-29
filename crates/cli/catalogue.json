@@ -256,6 +256,27 @@
       ]
     },
     {
+      "name": "Fleet.factory",
+      "doc": "One factory of a namespace, described whether or not an instance of it runs.",
+      "action": "relay.list",
+      "remote": true,
+      "stream": false,
+      "args": [
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": true,
+          "doc": "The namespace."
+        },
+        {
+          "name": "factory_id",
+          "type": "string",
+          "required": true,
+          "doc": "The factory."
+        }
+      ]
+    },
+    {
       "name": "Fleet.installed_plugins",
       "doc": "Every plugin package each controller loaded or refused at boot, each row with its `node`.",
       "action": "plugin.list",

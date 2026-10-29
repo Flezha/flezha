@@ -361,7 +361,9 @@ strings, read in one place, `Flezha.Relay.ClassRegistry.decode_declarations/2`:
 from the factory's announcement instead, which the controller established
 when the runner connected. A missing key takes its default. `keyed` is sent
 only when it is false: such a class cannot be partitioned, and the controller
-uses that to refuse a partitioned start. Every SDK builds this
+uses that to refuse a partitioned start. The factory's announcement carries the
+same map, decoded the same way, so a factory can be described before any
+instance of it runs (`flz relay factory`). Every SDK builds this
 map in the core, so a Java class and a Rust class with the same settings send
 the same map. Wire detail:
 [the SDK protocol specification](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/protocol_spec.md).

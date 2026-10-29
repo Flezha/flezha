@@ -24,6 +24,7 @@ defmodule Flezha.Cluster.ReadsMultiNodeTest do
   alias Flezha.Service.Steps
   alias Flezha.State.Completion
   alias Flezha.State.TestHelpers
+  alias FlezhaTest.Helper.FleetStateHelper
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.StepsResumeHarness
 
@@ -63,6 +64,18 @@ defmodule Flezha.Cluster.ReadsMultiNodeTest do
 
     assert {:ok, %{rows: [_runner], unreachable: []}} =
              Fleet.runners_for_factory(ns, @factory, @context)
+
+    # A saga no instance of has run, described from the peer's announcement.
+    assert {:ok, saga} = Fleet.factory(ns, "saga_block_steps", @context)
+
+    assert %{nodes: [^peer], run: :steps, each: :once, on_failure: :undo_all, disagree: false} =
+             saga
+
+    assert %{durable: durable, sleep_after_ms: _, keyed: nil} = saga.declarations
+    assert durable in [:local, :remote]
+
+    assert Enum.map(saga.graph.tasklets, &{&1.name, &1.compensates}) ==
+             [{"saga_a", true}, {"saga_b", true}, {"saga_c", false}]
 
     {:ok, _} = NamespaceStore.create(ns)
     assert {:ok, %{rows: namespaces}} = Relay.list_namespaces(@context)
@@ -126,6 +139,29 @@ defmodule Flezha.Cluster.ReadsMultiNodeTest do
     assert [%{nodes: nodes, runners: runners}] = Enum.filter(factories, &(&1.id == @factory))
     assert Enum.sort(nodes) == Enum.sort([node(), peer])
     assert Enum.sort(runners) == Enum.sort([local_runner, peer_runner])
+
+    # The two controllers announce one factory with different settings.
+    probe = fn durable ->
+      [
+        %{
+          "id" => "probe",
+          "sdk_lang" => 1,
+          "run" => "flow",
+          "declarations" => %{"durable" => durable}
+        }
+      ]
+    end
+
+    on_exit(fn -> FleetStateHelper.forget_established(ns, ["probe"]) end)
+    FleetStateHelper.announce(ns, "probe_here", probe.("memory"))
+    :erpc.call(peer, FleetStateHelper, :announce, [ns, "probe_there", probe.("remote")])
+
+    assert {:ok, %{rows: factories}} = Fleet.factories(ns, @context)
+
+    assert [%{declarations_disagree: true, api_disagree: false}] =
+             Enum.filter(factories, &(&1.id == "probe"))
+
+    assert {:ok, %{disagree: true}} = Fleet.factory(ns, "probe", @context)
 
     NodeTestHelper.stop_namespace(ns)
   end

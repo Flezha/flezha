@@ -806,6 +806,15 @@ pub struct FactoryDecl {
     /// Absent from a runner that announces none.
     #[prost(message, optional, tag = "8")]
     pub graph: ::core::option::Option<RelayGraph>,
+    /// The class's declarations, the same entries the AddRelayResponse
+    /// metadata carries for an instance of it (durable, sleep_after_ms,
+    /// max_duration_ms, ...). Empty from a runner that announces none, which
+    /// the Controller reads as "not announced".
+    #[prost(map = "string, string", tag = "9")]
+    pub declarations: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 /// A class's tasklets and the channels between them, referenced by name.
 #[derive(serde::Serialize)]
@@ -838,6 +847,18 @@ pub struct GraphChannel {
     /// "drop_nothing", "drop_newest" or "drop_oldest".
     #[prost(string, tag = "7")]
     pub overflow: ::prost::alloc::string::String,
+    /// The channel's retry policy: total attempts, first run included, and
+    /// the base backoff. Absent from a runner that announces none.
+    #[prost(uint32, optional, tag = "8")]
+    pub retry_max: ::core::option::Option<u32>,
+    #[prost(uint64, optional, tag = "9")]
+    pub retry_backoff_ms: ::core::option::Option<u64>,
+    /// For a "call" end: its deadline and whether it creates the callee.
+    /// Absent otherwise, and from a runner that announces none.
+    #[prost(uint64, optional, tag = "10")]
+    pub call_deadline_ms: ::core::option::Option<u64>,
+    #[prost(bool, optional, tag = "11")]
+    pub call_create: ::core::option::Option<bool>,
 }
 #[derive(serde::Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -851,6 +872,17 @@ pub struct GraphTasklet {
     pub cell_keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(uint32, tag = "4")]
     pub mailbox_capacity: u32,
+    /// True exactly for a tasklet of a steps class that declares a compensate
+    /// hook. Absent from a runner that announces none.
+    #[prost(bool, optional, tag = "5")]
+    pub compensates: ::core::option::Option<bool>,
+    /// For a "dynamic" tasklet: its idle eviction window (absent when it never
+    /// evicts) and its cap on live Cells (absent when it has none, or one past
+    /// the field's range). Absent for any other mode.
+    #[prost(uint64, optional, tag = "6")]
+    pub idle_ttl_ms: ::core::option::Option<u64>,
+    #[prost(uint32, optional, tag = "7")]
+    pub max_cells: ::core::option::Option<u32>,
 }
 /// One entry channel of a factory's API, as its class declares it.
 #[derive(serde::Serialize)]

@@ -21,6 +21,8 @@ defmodule Flezha.Service.RelayGraphTest do
   alias Flezha.Service.{Cli, HubManager, Relay}
   alias FlezhaTest.Helper.{CliCapture, FleetStateHelper}
 
+  import FleetStateHelper, only: [graph_channel: 5, graph_channel: 6]
+
   setup :set_mimic_global_until_exit
 
   @context %{source: :ui, principal: "console@_system"}
@@ -71,26 +73,18 @@ defmodule Flezha.Service.RelayGraphTest do
   defp graph(tasklets) do
     %{
       "channels" => [
-        channel("trades_in", "entry", "", ["ohlc"], "none"),
-        channel("ohlc_out", "inter_tasklet", "ohlc", ["atr"], "output", overflow: "drop_newest"),
-        channel("ask", "plugin_bound", "atr", [], "call", call_target: "factory:pricing")
+        graph_channel("trades_in", "entry", "", ["ohlc"], "none"),
+        graph_channel("ohlc_out", "inter_tasklet", "ohlc", ["atr"], "output", %{
+          "overflow" => "drop_newest"
+        }),
+        graph_channel("ask", "plugin_bound", "atr", [], "call", %{
+          "call_target" => "factory:pricing"
+        })
       ],
       "tasklets" =>
         for name <- tasklets do
           %{"name" => name, "mode" => "single", "cell_keys" => [], "mailbox_capacity" => 1024}
         end
-    }
-  end
-
-  defp channel(name, kind, producer, consumers, plugin_end, opts \\ []) do
-    %{
-      "name" => name,
-      "kind" => kind,
-      "producer" => producer,
-      "consumers" => consumers,
-      "plugin_end" => plugin_end,
-      "call_target" => opts[:call_target] || "",
-      "overflow" => opts[:overflow] || "drop_nothing"
     }
   end
 
@@ -133,17 +127,7 @@ defmodule Flezha.Service.RelayGraphTest do
       FleetStateHelper.announce(ns, "r1", [factory("market", graph(["ohlc", "atr"]))])
       from_json = FleetManager.factory_graph(ns, "market")
 
-      g = graph(["ohlc", "atr"])
-
-      decl = %RunnerCommands.FactoryDecl{
-        id: "market",
-        sdk_lang: 1,
-        run: "flow",
-        graph: %RunnerCommands.RelayGraph{
-          channels: for(c <- g["channels"], do: struct(RunnerCommands.GraphChannel, atomize(c))),
-          tasklets: for(t <- g["tasklets"], do: struct(RunnerCommands.GraphTasklet, atomize(t)))
-        }
-      }
+      decl = FleetStateHelper.factory_decl(factory("market", graph(["ohlc", "atr"])))
 
       Requests.update_factories(
         %{namespace: ns, runner_id: "r1"},
@@ -225,7 +209,7 @@ defmodule Flezha.Service.RelayGraphTest do
       bad = %{
         "channels" => [
           %{"name" => 7},
-          channel("in", "entry", "", "x", "none") |> Map.put("overflow", 3)
+          graph_channel("in", "entry", "", "x", "none") |> Map.put("overflow", 3)
         ],
         "tasklets" => [%{"name" => "t", "cell_keys" => [1, "k"], "mailbox_capacity" => "big"}]
       }
@@ -294,7 +278,4 @@ defmodule Flezha.Service.RelayGraphTest do
                Relay.graph(ns, "market-eu", %{source: :cli, principal: "vic"})
     end
   end
-
-  defp atomize(map),
-    do: Map.new(map, fn {key, value} -> {String.to_existing_atom(key), value} end)
 end

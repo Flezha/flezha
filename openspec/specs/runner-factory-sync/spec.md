@@ -208,15 +208,22 @@ change SHALL be accepted, and its factories SHALL have no API.
 ### Requirement: The factory announcement SHALL carry the class's graph
 
 Every factory a runner announces SHALL carry a `graph`, in the connect init frame's `factories`
-list and in each `FactoryDecl` of `UpdateFactories`, built from the registered class's topology: by
-`flz_core` for a class registered on it, and by the Elixir SDK from its own topology.
+list and in each `FactoryDecl` of `UpdateFactories`, built by `flz_core` from the registered
+class's topology for every SDK.
 The graph SHALL list every channel of the class with its kind (`entry`, `inter_tasklet` or
 `plugin_bound`), the tasklet that produces it (none for an entry), the tasklets that consume it, its
-plugin end (`none`, `output` or `call`), the target of a `call` end, and its overflow policy. It SHALL
+plugin end (`none`, `output` or `call`), the target of a `call` end, its overflow policy, its retry
+policy (`retry_max`, the total attempts, and `retry_backoff_ms`, the base backoff) and, for a `call`
+end, its deadline (`call_deadline_ms`) and whether it creates the callee (`call_create`). It SHALL
 list every tasklet with its name, its cell mode (`single`, `static` or `dynamic`), its declared cell
-keys and its mailbox capacity. Tasklets and channels SHALL be named as the class names them. The
-graph SHALL be built only when the factory is announced. A runner without this change SHALL be
-accepted, and its factories SHALL have no graph.
+keys, its mailbox capacity, whether it compensates (`compensates`: true exactly when the class runs
+in steps and the tasklet declares a `compensate` hook) and, for a `dynamic` tasklet, its idle
+eviction window (`idle_ttl_ms`, absent when it never evicts) and its cap on live Cells
+(`max_cells`, absent when it has no cap). Tasklets and channels SHALL be named as the class
+names them. Every scalar field
+this requirement adds SHALL be `optional` on the wire, so a runner that does not send it is read as
+having announced nothing, never as zero or false. The graph SHALL be built only when the factory is
+announced. A runner without the graph SHALL be accepted, and its factories SHALL have no graph.
 
 #### Scenario: The announcement lists tasklets and channels
 
@@ -225,8 +232,13 @@ accepted, and its factories SHALL have no graph.
 
 #### Scenario: A call end names its target
 
-- **WHEN** a class has a channel whose end is a `call(...)` to factory `pricing`
-- **THEN** that channel's plugin end is `call` and its call target is `factory:pricing`
+- **WHEN** a class has a channel whose end is a `call(...)` to factory `pricing` with a 2000 ms deadline
+- **THEN** that channel's plugin end is `call`, its call target is `factory:pricing` and its `call_deadline_ms` is 2000
+
+#### Scenario: A compensating tasklet is marked
+
+- **WHEN** a steps class's tasklet `reserve` declares `compensate` and its tasklet `notify` does not
+- **THEN** the announced graph marks `reserve` with `compensates: true` and `notify` with `compensates: false`
 
 #### Scenario: Every runtime announces the fixture's graph
 
@@ -237,6 +249,11 @@ accepted, and its factories SHALL have no graph.
 
 - **WHEN** a runner announces a factory with no `graph`
 - **THEN** its factory is placed as before and reads as having no announced graph
+
+#### Scenario: A runner that omits the new fields
+
+- **WHEN** a runner announces a graph without `compensates`, `idle_ttl_ms`, `max_cells`, `retry_max`, `retry_backoff_ms`, `call_deadline_ms` or `call_create`
+- **THEN** the controller keeps each of them as not announced (nil), not as zero or false
 
 ### Requirement: A factory change after start SHALL reach the controller from every SDK
 
@@ -305,4 +322,31 @@ or `chained` loop shapes.
 
 - **WHEN** the controller's one predicate answers that a class reads one input
 - **THEN** a partitioned start of that class SHALL be refused with `topology.partitions_without_per_input_loop`, and the one-input rule SHALL hold for its instances, both from that one answer
+
+### Requirement: The factory announcement SHALL carry the class's declarations
+
+Every factory a runner announces SHALL carry `declarations`, a map from name to text, in the
+connect init frame's `factories` list and in each `FactoryDecl` of `UpdateFactories`. It SHALL
+hold exactly the entries the `AddRelay` answer's metadata holds for that class, produced by one
+`flz_core` function that both the announcement and the `AddRelay` answer call, so the two can
+never differ. The controller SHALL decode it with the decoder it applies to `AddRelay` metadata
+and SHALL keep the decoded map per runner announcement beside the API and the graph, replaced by
+every full-set announcement. Declarations decide no placement. An empty map SHALL be read as "not
+announced": a class from a current runner always declares its durability, so a current runner
+never sends an empty map.
+
+#### Scenario: The announcement and the answer agree
+
+- **WHEN** a runner registers a class declaring `durable: {local: {sleep_after: 2000}}` and `max_duration_ms: 120000`
+- **THEN** its announcement's declarations and the `AddRelay` answer's metadata for an instance of it both carry `durable: local`, `sleep_after_ms: 2000` and `max_duration_ms: 120000`
+
+#### Scenario: A class changes after start
+
+- **WHEN** a started runner re-registers factory `ma_fan` with `durable: remote` and ships `UpdateFactories`
+- **THEN** the controller's kept declarations for that runner's `ma_fan` carry `durable: remote`
+
+#### Scenario: An old runner announces none
+
+- **WHEN** a runner announces factory `legacy` with no declarations
+- **THEN** the controller keeps no declarations for it and places it as before
 

@@ -8,6 +8,17 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- A factory can be read in full with no instance running:
+  `flz relay factory <factory_id>` and `Flezha.Service.Fleet.factory/3` answer
+  how it runs, what its class declares (where it keeps its work, how long an
+  idle instance waits before it sleeps, its time limit, and a flow's duplicate
+  rule, acknowledgement, correction window and keying), its runners and
+  controllers, and its graph, which now marks the tasklets that compensate,
+  each dynamic tasklet's Cell bounds, and each channel's retries and call
+  deadline. The rows of `Fleet.factories` carry `each`, `on_failure`,
+  `declarations` and `declarations_disagree`. Runners announce these with
+  their factories; a runner built before this reads as "not announced"
+  ([Relay commands](docs/public/topics/cli/relay_commands.md#flz-relay)).
 - The controller keeps a relay history: one `started` record when a relay run
   is started on purpose (by an operator, a partition group start, a schedule, a
   tasklet's spawn, a relay's call or a rescale) and one `ended` record when it
