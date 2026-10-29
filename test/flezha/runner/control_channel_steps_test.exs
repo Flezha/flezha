@@ -64,7 +64,7 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
     send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
 
     assert_receive {:stop_relay_called, "task-1"}, @torn_down_within
-    assert_received {:terminal, "task-1", %{status: "ok", error: "", undo: ""}}
+    assert_receive {:terminal, "task-1", %{status: "ok", error: "", undo: ""}}, @torn_down_within
 
     # The terminal outcome + result payload is surfaced on `:completed`.
     assert_receive {:telemetry, [:flezha, :steps, :completed], %{count: 1}, meta}, 500
@@ -95,7 +95,9 @@ defmodule FlezhaTest.Runner.ControlChannelRelayCompletedTest do
 
     # Terminal failure deregisters exactly as success — no retry.
     assert_receive {:stop_relay_called, "task-2"}, @torn_down_within
-    assert_received {:terminal, "task-2", %{status: "error", error: "boom", undo: "partial"}}
+
+    assert_receive {:terminal, "task-2", %{status: "error", error: "boom", undo: "partial"}},
+                   @torn_down_within
   end
 
   test "RelayCompleted cancelled (cooperative stop) → same converged teardown + result" do

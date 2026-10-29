@@ -418,11 +418,16 @@ pub fn drain(rx: &Receiver<RunnerMessage>, id: &str) -> (Vec<Vec<u8>>, (String, 
     (take_delivered(id), done)
 }
 
+/// How long a scenario waits for a run to progress before failing. Only a
+/// bound on a lost run: a machine running several suites at once makes a
+/// healthy run several times slower than alone.
+const SCENARIO_WAIT: Duration = Duration::from_secs(30);
+
 /// Answer control requests until steps relay `id` completes; its
 /// `(status, error, result)`. A park tears the run down without a
 /// completion, so it is reported as the run's `parked` outcome.
 pub fn await_completion(rx: &Receiver<RunnerMessage>, id: &str) -> (String, String, Vec<u8>) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + SCENARIO_WAIT;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let msg = rx
@@ -468,7 +473,7 @@ pub fn pump(
     id: &str,
     done: impl Fn(&[Vec<u8>]) -> bool,
 ) -> Vec<Vec<u8>> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + SCENARIO_WAIT;
     let mut outs = Vec::new();
     loop {
         outs.extend(take_delivered(id));

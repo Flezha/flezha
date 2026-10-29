@@ -25,6 +25,7 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
   """
 
   alias Flezha.Runner.StreamChannel
+  alias Flezha.State.TestHelpers
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Native
   alias FlezhaTest.Helper.NodeTestHelper
@@ -76,6 +77,9 @@ defmodule FlezhaTest.Runner.StreamChannelGateTest do
 
   describe "a peer that stops reading" do
     test "holds the sender, then delivers its frames when the peer drains", ctx do
+      # The hold must outlast the checks below, which a loaded machine can
+      # stretch past the 5 s default; a lost wake still fails the 10 s wait.
+      on_exit(TestHelpers.override_env(:send_gate_hold_ms, 60_000))
       spawn_sender(ctx.name)
 
       # The hold is the point: with the frames merely refused the task would

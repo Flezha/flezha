@@ -7,6 +7,10 @@ defmodule Flezha.Process.BacklogAdmissionTest do
   """
   use ExUnit.Case, async: true
 
+  # A 10 ms block timer or a fresh task's first message; a loaded machine can
+  # deliver either past the 100 ms default.
+  @arrives_within 5_000
+
   alias Flezha.Config.Durations
   alias Flezha.Process.Backlog
 
@@ -44,7 +48,7 @@ defmodule Flezha.Process.BacklogAdmissionTest do
 
     :atomics.add(flag, 1, 1)
     task = Task.async(fn -> Backlog.dispatch(via, :second) end)
-    assert_receive {:"$gen_call", from, :second}
+    assert_receive {:"$gen_call", from, :second}, @arrives_within
     GenServer.reply(from, :ok)
     assert :ok = Task.await(task)
 
@@ -61,7 +65,7 @@ defmodule Flezha.Process.BacklogAdmissionTest do
     :atomics.add(flag, 1, 1)
 
     task = Task.async(fn -> Backlog.dispatch({:via, Registry, {registry, :sink}}, :stuck) end)
-    assert_receive {:"$gen_call", _from, :stuck}
+    assert_receive {:"$gen_call", _from, :stuck}, @arrives_within
     bound = 10 + Durations.get(:backlog_wait_headroom_ms)
     assert {:ok, :ok} = Task.yield(task, bound * 5)
   end
@@ -103,7 +107,7 @@ defmodule Flezha.Process.BacklogAdmissionTest do
     assert up?(b) and Backlog.waiting(b) == 1
     refute_received {^ref, _}
 
-    assert_receive {:block_timeout, :sink, ^wait}
+    assert_receive {:block_timeout, :sink, ^wait}, @arrives_within
     assert {b, [:late]} = Backlog.block_timeout(b, wait)
     assert_received {^ref, :ok}
     assert Backlog.to_list(b) == [:a, :b] and Backlog.waiting(b) == 0
@@ -170,11 +174,11 @@ defmodule Flezha.Process.BacklogAdmissionTest do
     {:waiting, b, []} = Backlog.offer(b, :called, 1, call)
     {:waiting, b, []} = Backlog.offer(b, :waited, 1, wait)
 
-    assert_receive {:block_timeout, :sink, ^call}
+    assert_receive {:block_timeout, :sink, ^call}, @arrives_within
     assert {b, []} = Backlog.block_timeout(b, call)
     assert_received {^call_ref, {:error, {:queue_full, :timeout}}}
 
-    assert_receive {:block_timeout, :sink, ^wait}
+    assert_receive {:block_timeout, :sink, ^wait}, @arrives_within
     assert {_b, [:waited]} = Backlog.block_timeout(b, wait)
     assert_received {^wait_ref, :ok}
   end
