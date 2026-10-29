@@ -28,6 +28,7 @@ defmodule Flezha.Service.Controller do
   alias Flezha.AuthZ.Namespace
   alias Flezha.Boot.Readiness
   alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Page
   alias Flezha.Cluster.Reads
   alias Flezha.Config
   alias Flezha.Config.Durations
@@ -202,11 +203,56 @@ defmodule Flezha.Service.Controller do
   Every data-plane liveness counter the cluster's controllers hold. Each row
   carries the `node` that holds it; `unreachable` names the controllers that
   did not answer.
+
+  `opts` takes only `filter: [relays: [{namespace, relay_id}]]`, at most 500:
+  the counters of those relays and of the channels of the runners they are
+  bound to, each controller reading only those keys.
   """
-  @spec liveness_counters(caller_context()) :: {:ok, term()} | {:error, term()}
-  verb liveness_counters(caller_context), verb: :controller_status do
-    {:ok, LivenessCounters.snapshot_cluster()}
+  @spec liveness_counters(keyword(), caller_context()) :: {:ok, term()} | {:error, term()}
+  verb liveness_counters(opts \\ [], caller_context),
+    verb: :controller_status,
+    args: [opts: Page.arg()] do
+    with {:ok, only} <- liveness_keys(opts), do: {:ok, LivenessCounters.snapshot_cluster(only)}
   end
+
+  defp liveness_keys(opts) do
+    declared = [sorts: [relay: :asc], filters: [:relays], keys: [:filter]]
+
+    case Page.parse(opts, :liveness_counters, declared) do
+      {:ok, %Page{filter: filter}} -> relay_keys(Map.get(filter, :relays, []))
+      other -> other
+    end
+  end
+
+  defp relay_keys(written) do
+    with {:ok, relays} <- named_relays(written) do
+      runners =
+        for {namespace, ids} <- Enum.group_by(relays, &elem(&1, 0), &elem(&1, 1)),
+            row <-
+              elem(Info.hub_read(namespace, {HubManager, :relay_rows_of, [namespace, ids]}), 0),
+            row.runner != nil,
+            uniq: true,
+            do: row.runner
+
+      {:ok, {relays |> Enum.map(&elem(&1, 1)) |> Enum.uniq(), runners}}
+    end
+  end
+
+  defp named_relays(written) do
+    with {:ok, written} <- Page.bounded(written, "filter.relays") do
+      pairs = Enum.map(written, &pair/1)
+
+      if Enum.all?(pairs, &is_tuple/1),
+        do: {:ok, pairs},
+        else: Page.invalid("filter.relays", written)
+    end
+  end
+
+  defp pair({namespace, relay_id}) when is_binary(namespace) and is_binary(relay_id),
+    do: {namespace, relay_id}
+
+  defp pair([namespace, relay_id]), do: pair({namespace, relay_id})
+  defp pair(_other), do: nil
 
   # ---------- Mutations ----------
 

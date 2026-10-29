@@ -282,6 +282,13 @@ pub(crate) const UNIVERSAL: &[OptSpec] = &[TOKEN, HELP, OUTPUT, JSON_SWITCH];
 /// The options more than one verb shares, spelled once each.
 pub(crate) const NAMESPACE: OptSpec =
     OptSpec::text("--namespace", "-n", "<namespace>").doc("The namespace (default: default).");
+/// The paging flags every paged listing reads (`rpc::page`).
+pub(crate) const LIMIT: OptSpec = OptSpec::number("--limit", "--limit", "<n>")
+    .doc("Show one page of at most n rows (at most 500), with the total and the next cursor.");
+pub(crate) const AFTER: OptSpec = OptSpec::text("--after", "--after", "<cursor>")
+    .doc("Show the page after the one that printed this cursor.");
+pub(crate) const SEARCH: OptSpec = OptSpec::text("--search", "--search", "<text>")
+    .doc("Show only rows whose name contains this text, in any case.");
 /// The document a relay starts from, on a start and on every firing of a
 /// schedule.
 pub(crate) const INIT_VALUES: OptSpec = OptSpec::text("--init-values", "--init-values", "<json>")

@@ -150,30 +150,79 @@ defmodule Flezha.Service.HubManager.Rows do
   a dead node, which `get_all_relays/1` filters out), carrying the assigned
   runner, the declared factory (from the durable cspec start-args) and live node
   from the registry dump. Health is the hosting controller's verdict, which
-  `Flezha.Service.Relay.Info.rows/1` adds.
+  `Flezha.Service.Relay.Info.rows/2` adds.
+
+  With `detailed?`, each row also carries its run kind (`run`) and how many
+  plugins it is bound to (`plugins`), read from the same entry.
   """
-  @spec relay_rows(String.t()) :: [
+  @spec relay_rows(String.t(), boolean()) :: [
           %{id: term(), runner: term(), factory: term(), node: term()}
         ]
-  def relay_rows(namespace) do
+  def relay_rows(namespace, detailed? \\ false) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
       |> relay_dump()
       |> Enum.map(fn {relay_id, entry} ->
-        {cspec, node_pids, metadata} = normalize_registry_entry(entry)
-
-        builder = cspec_relay(cspec)
-
-        %{
-          id: relay_id,
-          factory: builder && Map.get(builder, :factory_id),
-          partition: cspec_partition(cspec)
-        }
-        |> Map.merge(host(node_pids, metadata))
+        relay_row(relay_id, normalize_registry_entry(entry), detailed?)
       end)
       |> Enum.sort_by(&inspect(&1.id))
     end)
   end
+
+  @doc """
+  The detailed rows `relay_rows/2` answers for `relay_ids` alone, each read
+  from its own registry entry, so the read does not grow with the namespace.
+  An id that names no relay but the first member of a partition group stands
+  for the group, and answers every member; an id that names neither is left
+  out.
+  """
+  @spec relay_rows_of(String.t(), [String.t()]) :: [map()]
+  def relay_rows_of(namespace, relay_ids) do
+    with_live_hub(namespace, [], fn hub_id ->
+      relay_ids
+      |> Enum.flat_map(&(lookup_row(hub_id, &1) || group_rows(hub_id, &1)))
+      |> Enum.uniq_by(& &1.id)
+    end)
+  end
+
+  defp group_rows(hub_id, group) do
+    case lookup_row(hub_id, Flezha.Partition.member_id(group, 0)) do
+      [%{partition: %{group: ^group, count: count}}] ->
+        Enum.flat_map(
+          0..(count - 1),
+          &(lookup_row(hub_id, Flezha.Partition.member_id(group, &1)) || [])
+        )
+
+      _none ->
+        []
+    end
+  end
+
+  defp lookup_row(hub_id, relay_id) do
+    with {cspec, _node_pids, _metadata} = entry <-
+           ProcessRegistry.lookup(hub_id, relay_id, with_metadata: true),
+         %{} <- cspec_relay(cspec),
+         do: [relay_row(relay_id, entry, true)],
+         else: (_none -> nil)
+  end
+
+  defp relay_row(relay_id, {cspec, node_pids, metadata}, detailed?) do
+    builder = cspec_relay(cspec)
+
+    %{
+      id: relay_id,
+      factory: builder && Map.get(builder, :factory_id),
+      partition: cspec_partition(cspec)
+    }
+    |> Map.merge(host(node_pids, metadata))
+    |> Map.merge(if detailed?, do: details(builder, cspec), else: %{})
+  end
+
+  defp details(builder, cspec),
+    do: %{
+      run: builder && Map.get(builder, :run),
+      plugins: length(Keyword.get(cspec_opts(cspec), :bindings, []))
+    }
 
   @doc """
   Every relay's bindings, as `{relay_id, [{plugin_id, %Flezha.Plugin{}}]}`.

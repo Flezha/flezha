@@ -6,6 +6,7 @@ defmodule Flezha.Service.PluginRecords do
   the namespace's hub (`Flezha.Service.HubManager.on_hub_node/4`).
   """
 
+  alias Flezha.Cluster.Page
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Probe
   alias Flezha.Plugin
@@ -13,6 +14,9 @@ defmodule Flezha.Service.PluginRecords do
   alias Flezha.Plugin.Shared
   alias Flezha.Process.Poll
   alias Flezha.Service.HubManager
+
+  @filters [:provider, :relay, :text]
+  @sample 10
 
   @doc """
   Every plugin enabled in `namespace`: its name, its provider, whether it is
@@ -26,11 +30,62 @@ defmodule Flezha.Service.PluginRecords do
          do: []
   end
 
+  @doc """
+  What `Flezha.Service.PluginManager.enabled/3` answers: `{:ok, plugins(namespace)}`
+  without `opts`, else one page of them (`Flezha.Cluster.Page`) by name, built
+  on the hub node. The page filters by `provider` (its name or id), `relay` (a
+  relay bound to it) and `text` (a case-insensitive substring of its name), and
+  each of its rows carries at most #{@sample} of its relays, sorted, beside
+  `relay_count`.
+  """
+  @spec page(binary(), keyword() | map()) :: {:ok, [map()] | map()} | {:error, Flezha.Error.t()}
+  def page(namespace, opts) do
+    with {:ok, page} <- Page.parse(opts, :plugin_list, sorts: [name: :asc], filters: @filters) do
+      {:ok, if(page, do: paged(namespace, page), else: plugins(namespace))}
+    end
+  end
+
+  defp paged(namespace, page) do
+    case HubManager.on_hub_node(namespace, {__MODULE__, :plugins_here}, [namespace, page], :none) do
+      {:error, _} -> page_of(page, [])
+      answer -> answer
+    end
+  end
+
   @doc false
-  def plugins_here(namespace) do
+  def plugins_here(namespace, page \\ nil) do
     bound = all_bindings(namespace)
     running = Probe.plugins_running(namespace, relays_of(bound))
-    rows(namespace, HubManager.plugin_entries(namespace), bound, running)
+    rows = rows(namespace, HubManager.plugin_entries(namespace), bound, running)
+    if page, do: page_of(page, rows), else: rows
+  end
+
+  defp page_of(page, rows) do
+    %{rows: kept} =
+      answer = rows |> Enum.filter(&kept?(&1, page.filter)) |> Page.slice(page, & &1.name)
+
+    %{
+      answer
+      | rows:
+          Enum.map(
+            kept,
+            &(%{&1 | relays: Enum.take(&1.relays, @sample)}
+              |> Map.put(:relay_count, length(&1.relays)))
+          )
+    }
+  end
+
+  defp kept?(row, filter) do
+    Enum.all?(filter, fn
+      {:provider, provider} ->
+        provider in [row.provider, row.provider_id]
+
+      {:relay, relay_id} ->
+        relay_id in row.relays
+
+      {:text, text} ->
+        String.contains?(String.downcase(row.name), String.downcase(to_string(text)))
+    end)
   end
 
   @doc """

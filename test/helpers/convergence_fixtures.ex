@@ -45,7 +45,13 @@ defmodule FlezhaTest.Helper.ConvergenceFixtures do
     })
 
     # The registry rows carry no health: a read adds the hosting controller's.
-    Mimic.stub(HubManager, :relay_rows, fn _ns -> Enum.map(rows, &Map.delete(&1, :health)) end)
+    registry = Enum.map(rows, &Map.delete(&1, :health))
+    Mimic.stub(HubManager, :relay_rows, fn _ns -> registry end)
+    Mimic.stub(HubManager, :relay_rows, fn _ns, _detailed? -> registry end)
+
+    Mimic.stub(HubManager, :relay_rows_of, fn _ns, ids ->
+      Enum.filter(registry, &(&1.id in ids or (&1.partition && &1.partition.group in ids)))
+    end)
 
     :ok
   end

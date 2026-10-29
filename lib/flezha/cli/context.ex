@@ -24,12 +24,26 @@ defmodule Flezha.Service.Cli.Context do
     IO.puts("  Did not answer: #{Enum.join(nodes, ", ")}")
   end
 
-  @doc "A cluster read's rows printed by `render`, then the closing unreachable line."
+  @doc """
+  A cluster read's rows printed by `render`, then, for one page of them
+  (`Flezha.Cluster.Page`), how many it showed of the total and the cursor of
+  the next page, then the closing unreachable line.
+  """
   @spec rows(%{rows: [term()], unreachable: [node()]}, ([term()] -> term())) :: :ok
-  def rows(%{rows: rows, unreachable: unreachable}, render) do
+  def rows(%{rows: rows, unreachable: unreachable} = answer, render) do
     render.(rows)
+    page(answer)
     unreachable(unreachable)
   end
+
+  defp page(%{total: total, next: next, rows: rows}) do
+    IO.puts("")
+    IO.puts("  Showing #{length(rows)} of #{total}.")
+    if next, do: IO.puts("  Next page: --after #{next}")
+    :ok
+  end
+
+  defp page(_whole), do: :ok
 
   @doc """
   A read of each controller's own facts: one block per controller, each under

@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::args::{OptSpec, Positional, Reading, NAMESPACE};
+use crate::args::{OptSpec, Positional, Reading, AFTER, LIMIT, NAMESPACE, SEARCH};
 use crate::dispatch::{Arg, Command, Missing, Verb};
 use crate::help;
 use crate::rpc::{self, text};
@@ -15,6 +15,16 @@ const INSTALLED: OptSpec =
     OptSpec::switch("--installed", "--installed").doc("List the installed packages instead.");
 const PROVIDERS: OptSpec =
     OptSpec::switch("--providers", "--providers").doc("List the providers instead.");
+const PROVIDER: OptSpec = OptSpec::text("--provider", "--provider", "<provider>")
+    .doc("Show only plugins of this provider.");
+const RELAY: OptSpec =
+    OptSpec::text("--relay", "--relay", "<relay_id>").doc("Show only plugins bound to this relay.");
+/// `flz plugin list`'s filter flags, by the filter key each sends.
+const LIST_FILTERS: &[(&str, &OptSpec)] = &[
+    ("provider", &PROVIDER),
+    ("relay", &RELAY),
+    ("text", &SEARCH),
+];
 const SINGLE: OptSpec =
     OptSpec::switch("--single", "--single").doc("Run one copy in the whole cluster.");
 
@@ -64,7 +74,9 @@ pub(crate) const TABLE: Command = Command {
             .taking(&[Positional::optional("<provider_id>")])
             .calls(&["Fleet.provider"]),
         Verb::new("list", handle_list)
-            .reading(&[INSTALLED, PROVIDERS, NAMESPACE])
+            .reading(&[
+                INSTALLED, PROVIDERS, NAMESPACE, LIMIT, AFTER, PROVIDER, RELAY, SEARCH,
+            ])
             .refusing(&[("--installed", "--providers")])
             .calls(&[
                 "PluginManager.enabled",
@@ -169,7 +181,11 @@ fn handle_list(read: &Reading) {
     } else if read.switch(PROVIDERS.long) {
         rpc::door("Fleet.providers", &[], &[], read);
     } else {
-        rpc::door("PluginManager.enabled", &[rpc::namespace(read)], &[], read);
+        let args: Vec<Value> = [Some(rpc::namespace(read)), rpc::page(read, LIST_FILTERS)]
+            .into_iter()
+            .flatten()
+            .collect();
+        rpc::door("PluginManager.enabled", &args, &[], read);
     }
 }
 

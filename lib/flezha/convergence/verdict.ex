@@ -119,6 +119,17 @@ defmodule Flezha.Convergence.Verdict do
   @spec rank(state() | :recovering) :: non_neg_integer()
   def rank(state), do: Map.fetch!(@rank, state)
 
+  @doc "Whether a listed relay word is a fault: ranked `degraded` or worse."
+  @spec fault?(state() | :recovering) :: boolean()
+  def fault?(word), do: rank(word) >= @rank.degraded
+
+  @doc """
+  Whether a listed relay word says the relay waits to be bound to a runner:
+  `unbound`, or `recovering` inside its unmet-intent grace.
+  """
+  @spec waiting?(state() | :recovering) :: boolean()
+  def waiting?(word), do: word in [:unbound, :recovering]
+
   @doc "The transition event every state change executes."
   @spec event() :: [atom()]
   def event(), do: @event

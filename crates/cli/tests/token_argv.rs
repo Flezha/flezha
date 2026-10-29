@@ -62,7 +62,7 @@ fn a_verb_sends_the_token_in_its_request_alone() {
 
     let request = the_request(&shim);
     assert_eq!(request["name"], "Dlq.list");
-    assert_eq!(request["args"], json!([null]));
+    assert_eq!(request["args"], json!([null, null]));
     assert_eq!(request["opts"], json!({ "token": TOKEN }));
 }
 

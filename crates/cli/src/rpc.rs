@@ -26,7 +26,7 @@ use flz_transport::service::payloader;
 use flz_transport::utility::socket_dir;
 use serde_json::{json, Map, Value};
 
-use crate::args::{Reading, DEFAULT_WINDOW_MS, DURATION_MS};
+use crate::args::{OptSpec, Reading, AFTER, DEFAULT_WINDOW_MS, DURATION_MS, LIMIT};
 
 /// One option a request carries: its key and its value.
 pub(crate) type Opt<'a> = (&'a str, Value);
@@ -449,10 +449,30 @@ pub(crate) fn namespace(read: &Reading) -> Value {
     }
 }
 
+/// The `opts` a paged listing sends: `limit`, `after`, and a `filter` of the
+/// filter flags it declares, each under its filter key. `None` when none was
+/// written, so the listing answers exactly what it answers without them.
+pub(crate) fn page(read: &Reading, filters: &[(&str, &OptSpec)]) -> Option<Value> {
+    let filter: Map<String, Value> = (filters.iter())
+        .filter_map(|(key, spec)| Some((key.to_string(), Value::from(read.opt(spec.long)?))))
+        .collect();
+    let mut opts = Map::new();
+    if let Some(limit) = read.num::<u64>(LIMIT.long) {
+        opts.insert("limit".into(), Value::from(limit));
+    }
+    if let Some(cursor) = read.opt(AFTER.long) {
+        opts.insert("after".into(), Value::from(cursor));
+    }
+    if !filter.is_empty() {
+        opts.insert("filter".into(), Value::Object(filter));
+    }
+    (!opts.is_empty()).then_some(Value::Object(opts))
+}
+
 /// The read verbs — a namespace, an output format, a progress line only text
 /// mode prints naming what is being fetched, and the row's operation taking the
-/// namespace.
-pub(crate) fn scoped_read(read: &Reading, noun: &str) {
+/// namespace, and the page asked for when one was.
+pub(crate) fn scoped_read(read: &Reading, noun: &str, page: Option<Value>) {
     let namespace = namespace(read);
     let shown = namespace.as_str().unwrap_or_default();
     progress_line(
@@ -460,7 +480,8 @@ pub(crate) fn scoped_read(read: &Reading, noun: &str) {
         &format!("Fetching {} for namespace '{}'...", noun, shown),
     );
 
-    door(read.operation(), &[namespace], &[], read);
+    let args: Vec<Value> = [Some(namespace), page].into_iter().flatten().collect();
+    door(read.operation(), &args, &[], read);
 }
 
 /// A line that says what `flz` is about to do, printed in text mode only: under

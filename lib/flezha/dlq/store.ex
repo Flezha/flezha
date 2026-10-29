@@ -31,6 +31,7 @@ defmodule Flezha.Dlq.Store do
 
   require Logger
 
+  alias Flezha.Cluster.Page
   alias Flezha.Config
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Entry
@@ -145,9 +146,42 @@ defmodule Flezha.Dlq.Store do
   @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def resolve(server \\ __MODULE__, entry_ref), do: drop(server, entry_ref)
 
-  @doc "Per-tasklet usage: `[%{relay_class, tasklet_id, entries, bytes}]`."
+  @doc """
+  One page (`Flezha.Cluster.Page`) of the parked entries, newest first by
+  `ts_ms`, then relay class, tasklet and id (`page_key/1`), each with its
+  `node`. Only the index lines of the page are decoded: the others are read for
+  their key alone.
+  """
+  @spec list_page(pid() | atom(), String.t() | nil, Page.t()) :: Page.answer()
+  def list_page(server \\ __MODULE__, relay_class, page),
+    do: call(server, {:list, relay_class, page})
+
+  @doc """
+  The key a page of entries is sorted by, from an entry and the `node` holding
+  it: newest first across controllers, two copies of one entry on two
+  controllers told apart.
+  """
+  @spec page_key(map()) :: tuple()
+  def page_key(entry),
+    do:
+      {entry["ts_ms"], safe(entry["relay_class"]), safe(entry["tasklet_id"]), entry["id"],
+       entry.node}
+
+  @doc """
+  Per-tasklet usage: `[%{relay_class, tasklet_id, entries, bytes}]`, `bytes`
+  the size of the tasklet's directory on disk. Answered from counts the Store
+  keeps in memory, so it opens no file.
+  """
   @spec stats(pid() | atom()) :: [map()]
   def stats(server \\ __MODULE__), do: call(server, :stats)
+
+  @doc """
+  Count `relay_class`'s parked sets again from disk, after something other
+  than the Store wrote them (the durability tier's hydration).
+  """
+  @spec recount(pid() | atom(), String.t()) :: :ok
+  def recount(server \\ __MODULE__, relay_class),
+    do: GenServer.cast(server, {:recount, relay_class})
 
   @doc """
   The relay class, tasklet and id an entry reference names, or
@@ -206,10 +240,16 @@ defmodule Flezha.Dlq.Store do
 
   # ---------- GenServer ----------
 
+  # `counts` is `%{{relay_class, tasklet} => %{entries:, bytes:}}` by directory
+  # name: built from disk before the first call, then updated from every
+  # change `dir_changed/2` publishes.
   @impl true
   def init(_opts) do
-    {:ok, arm_sweep(%{})}
+    {:ok, arm_sweep(%{counts: %{}}), {:continue, :count}}
   end
+
+  @impl true
+  def handle_continue(:count, state), do: {:noreply, count(state, tasklets())}
 
   @impl true
   def handle_call({:append, entry}, _from, state) do
@@ -223,6 +263,19 @@ defmodule Flezha.Dlq.Store do
       |> Enum.sort_by(& &1["ts_ms"])
 
     {:reply, entries, state}
+  end
+
+  def handle_call({:list, relay_class, page}, _from, state) do
+    keyed =
+      for {rc, sh} <- tasklets(relay_class),
+          line <- lines(rc, sh),
+          key = line_key(line, rc, sh),
+          key != nil,
+          do: {key, line}
+
+    %{rows: kept} = answer = Page.slice(keyed, page, &elem(&1, 0))
+    rows = for {_key, line} <- kept, do: line |> Jason.decode!() |> Map.put(:node, node())
+    {:reply, %{answer | rows: rows}, state}
   end
 
   def handle_call({:get, entry_ref}, _from, state) do
@@ -266,17 +319,8 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call(:stats, _from, state) do
     stats =
-      tasklets()
-      |> Enum.map(fn {rc, sh} ->
-        entries = load_entries(rc, sh)
-
-        %{
-          relay_class: rc,
-          tasklet_id: sh,
-          entries: length(entries),
-          bytes: dir_bytes(rc, sh)
-        }
-      end)
+      for {{rc, sh}, usage} <- Enum.sort(state.counts),
+          do: Map.merge(%{relay_class: rc, tasklet_id: sh}, usage)
 
     {:reply, stats, state}
   end
@@ -287,6 +331,9 @@ defmodule Flezha.Dlq.Store do
   end
 
   @impl true
+  def handle_cast({:recount, relay_class}, state),
+    do: {:noreply, count(state, tasklets(relay_class))}
+
   def handle_cast({:append, entry, on_durable}, state) do
     case do_append(entry) do
       {parked, _ref} = durable when parked in [:ok, :existing] ->
@@ -304,6 +351,12 @@ defmodule Flezha.Dlq.Store do
     do_sweep()
     {:noreply, arm_sweep(state)}
   end
+
+  def handle_info({:counted, set, nil}, state),
+    do: {:noreply, %{state | counts: Map.delete(state.counts, set)}}
+
+  def handle_info({:counted, set, usage}, state),
+    do: {:noreply, %{state | counts: Map.put(state.counts, set, usage)}}
 
   # ---------- append ----------
 
@@ -513,20 +566,41 @@ defmodule Flezha.Dlq.Store do
   defp ok_or({:error, _}, default), do: default
 
   defp load_entries(rc, sh) do
-    case File.read(entries_path(rc, sh)) do
-      {:ok, content} ->
-        content
-        |> String.split("\n", trim: true)
-        |> Enum.flat_map(fn line ->
-          # A torn trailing line (crash mid-append) is skipped, not fatal.
-          case Jason.decode(line) do
-            {:ok, %{"id" => _} = entry} -> [entry]
-            _ -> []
-          end
-        end)
+    Enum.flat_map(lines(rc, sh), fn line ->
+      # A torn trailing line (crash mid-append) is skipped, not fatal.
+      case Jason.decode(line) do
+        {:ok, %{"id" => _} = entry} -> [entry]
+        _ -> []
+      end
+    end)
+  end
 
-      {:error, _} ->
-        []
+  defp lines(rc, sh) do
+    case File.read(entries_path(rc, sh)) do
+      {:ok, content} -> String.split(content, "\n", trim: true)
+      {:error, _} -> []
+    end
+  end
+
+  # An index line's `page_key/1` without decoding it. `Jason.encode!/1` writes
+  # `ts_ms` as a bare number and `id` as hex, and escapes every quote inside a
+  # string value, so `"ts_ms":` and `"id":"` occur once each, as the keys. A
+  # torn line has no key and is skipped, as `load_entries/2` skips it.
+  defp line_key(line, rc, sh) do
+    with [_, ts] <- :binary.split(line, ~s("ts_ms":)),
+         {ts, _rest} <- Integer.parse(ts),
+         [_, id] <- :binary.split(line, ~s("id":")),
+         [id, _rest] <- :binary.split(id, ~s(")),
+         true <- String.ends_with?(line, "}") do
+      page_key(%{
+        "ts_ms" => ts,
+        "relay_class" => rc,
+        "tasklet_id" => sh,
+        "id" => id,
+        node: node()
+      })
+    else
+      _torn -> nil
     end
   end
 
@@ -584,6 +658,7 @@ defmodule Flezha.Dlq.Store do
     |> Enum.map(fn {rc, sh} -> {:dlq, {safe(rc), safe(sh)}} end)
     |> DurabilityTier.caught_up()
     |> Enum.each(fn {:dlq, {rc, sh}} ->
+      send(self(), {:counted, {rc, sh}, nil})
       # Only the empty index is removed: `rmdir` keeps a directory that still
       # holds anything else, and a class directory that still holds a tasklet.
       _ = File.rm(entries_path(rc, sh))
@@ -610,15 +685,25 @@ defmodule Flezha.Dlq.Store do
   # directory to the durability tier, which ships it whole. A drop has to reach
   # the backend as surely as a park — a stale remote copy would resurrect an
   # entry the user already resolved. Inert while no backend is configured.
+  #
+  # Every caller runs in the Store, so the new count reaches its state as a
+  # message to itself, queued before the reply to the call that changed it.
   defp dir_changed(rc, sh) do
-    :telemetry.execute(
-      [:flezha, :dlq, :usage],
-      %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
-      %{relay_class: rc, tasklet_id: sh}
-    )
+    %{entries: entries, bytes: bytes} = usage = usage({rc, sh})
 
+    :telemetry.execute([:flezha, :dlq, :usage], %{entries: entries, bytes: bytes}, %{
+      relay_class: rc,
+      tasklet_id: sh
+    })
+
+    send(self(), {:counted, {safe(rc), safe(sh)}, usage})
     DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})
   end
+
+  defp count(state, sets),
+    do: %{state | counts: for(set <- sets, into: state.counts, do: {set, usage(set)})}
+
+  defp usage({rc, sh}), do: %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)}
 
   defp fsync_file(path) do
     {:ok, io} = :file.open(path, [:read, :write, :raw, :binary])

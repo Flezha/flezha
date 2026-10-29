@@ -64,15 +64,24 @@ defmodule Flezha.Service.Cli.Plugin do
   def disable(_disabled, [name | _], _opts), do: IO.puts("Plugin #{name} disabled.")
 
   @doc "`flz plugin list`: each enabled plugin, where it runs and what it is bound to."
+  def enabled(%{rows: _} = page, args, opts),
+    do: Context.rows(page, &enabled(&1, args, opts))
+
   def enabled([], _args, _opts), do: IO.puts("No plugins enabled.")
   def enabled(rows, _args, _opts), do: Enum.each(rows, &IO.puts(enabled_line(&1)))
 
   defp enabled_line(row) do
     single = if row.single, do: " single", else: ""
     where = if row.controllers == [], do: "idle", else: Enum.join(row.controllers, ", ")
-    bound = if row.relays == [], do: "none", else: Enum.join(row.relays, ", ")
+    bound = if row.relays == [], do: "none", else: Enum.join(row.relays, ", ") <> more(row)
     "#{row.name}  #{row.provider}#{single}  bound: #{bound}  runs on: #{where}" <> hooks(row)
   end
+
+  # A paged row names a sample of its relays.
+  defp more(%{relay_count: count, relays: relays}) when count > length(relays),
+    do: " (#{count} in all)"
+
+  defp more(_row), do: ""
 
   # A controller plugin's own hooks, and where its copy falls behind.
   defp hooks(%{hooks: []}), do: ""

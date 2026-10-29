@@ -59,7 +59,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
       select
     )
 
-    :ok
+    # Written around the Store, which keeps its counts in memory.
+    Dlq.Store.recount(relay_class)
   end
 
   defp scope(:all), do: & &1

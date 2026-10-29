@@ -112,6 +112,19 @@ defmodule Flezha.Service.DlqTest do
       assert {:ok, %{rows: tasklets}} = DlqSvc.tasklets(relay_class, context())
       assert %{relay_class: relay_class, tasklet_id: "task", node: node()} in tasklets
     end
+
+    test "list pages newest first across the cluster", %{entry: entry, relay_class: relay_class} do
+      for n <- 1..3, do: {:ok, _} = Store.append(%{entry | payload: "p#{n}"})
+
+      assert {:ok, %{rows: first, total: 3, next: next, unreachable: []}} =
+               DlqSvc.list(relay_class, [limit: 2], context())
+
+      assert {:ok, %{rows: [last], next: nil}} =
+               DlqSvc.list(relay_class, %{"limit" => 2, "after" => next}, context())
+
+      keys = Enum.map(first ++ [last], &Store.page_key/1)
+      assert keys == Enum.sort(keys, :desc) and length(Enum.uniq(keys)) == 3
+    end
   end
 
   describe "replay/2" do

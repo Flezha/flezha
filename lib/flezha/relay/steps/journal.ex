@@ -7,22 +7,29 @@ defmodule Flezha.Service.Steps.Journal do
   engine completed it with (`Flezha.State.Completion`), or `nil` while it runs.
   """
 
+  alias Flezha.Cluster.Page
   alias Flezha.State.Completion
   alias Flezha.State.Wire
   alias Flezha.State.Outbox
   alias Flezha.State.TaskJournal
 
-  @doc "The journal report for `instance_id`."
-  @spec report(String.t()) :: {:ok, map()} | {:error, term()}
-  def report(instance_id) do
+  @doc """
+  The journal report for `instance_id`; with a `Flezha.Cluster.Page`, its
+  entries paged by seq under `rows`, only the page's rows built.
+  """
+  @spec report(String.t(), Page.t() | nil) :: {:ok, map()} | {:error, term()}
+  def report(instance_id, page \\ nil) do
     with {:ok, entries} <- TaskJournal.read(instance_id) do
       {:ok,
-       %{
-         instance: instance_id,
-         entries: Enum.map(entries, &journal_row/1),
-         outcome: outcome(instance_id)
-       }}
+       Map.merge(%{instance: instance_id, outcome: outcome(instance_id)}, rows(entries, page))}
     end
+  end
+
+  defp rows(entries, nil), do: %{entries: Enum.map(entries, &journal_row/1)}
+
+  defp rows(entries, page) do
+    %{rows: kept} = answer = Page.slice(entries, page, & &1.seq)
+    %{answer | rows: Enum.map(kept, &journal_row/1)}
   end
 
   defp outcome(instance_id) do

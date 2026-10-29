@@ -3,13 +3,29 @@ use std::num::NonZeroU64;
 use flz_transport::errors::FlezhaError;
 use serde_json::{Map, Value};
 
-use crate::args::{self, OptSpec, Positional, Reading, DURATION_MS, INIT_VALUES, NAMESPACE};
+use crate::args::{
+    self, OptSpec, Positional, Reading, AFTER, DURATION_MS, INIT_VALUES, NAMESPACE, SEARCH,
+};
 use crate::dispatch::{self, Arg, Command, Missing, Verb};
 use crate::{help, rpc};
 
 const RELAY_ID: &[Positional] = &[Positional::required("<relay_id>")];
 /// The verbs that name one relay, or one of its Cells, within the namespace.
 const SCOPED: &[Arg] = &[Arg::Namespace, Arg::Positionals];
+
+const HEALTH: OptSpec = OptSpec::text("--health", "--health", "<words>")
+    .doc("Show only relays of these health words, comma-separated; unhealthy names every fault.");
+const FACTORY: OptSpec =
+    OptSpec::text("--factory", "--factory", "<factory>").doc("Show only this factory's relays.");
+const RUNNER: OptSpec =
+    OptSpec::text("--runner", "--runner", "<runner>").doc("Show only relays bound to this runner.");
+/// `flz relay list`'s filter flags, by the filter key each sends.
+pub(crate) const LIST_FILTERS: &[(&str, &OptSpec)] = &[
+    ("health", &HEALTH),
+    ("factory", &FACTORY),
+    ("runner", &RUNNER),
+    ("text", &SEARCH),
+];
 
 const ID: OptSpec =
     OptSpec::text("--id", "-i", "<id>").doc("Id to start under (default: generated).");
@@ -117,9 +133,19 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[NAMESPACE])
             .sending(SCOPED)
             .calls(&["Relay.cell_state"]),
-        Verb::new("list", |read| rpc::scoped_read(read, "relays"))
-            .reading(&[NAMESPACE])
-            .calls(&["Relay.list"]),
+        Verb::new("list", |read| {
+            rpc::scoped_read(read, "relays", rpc::page(read, LIST_FILTERS))
+        })
+        .reading(&[
+            NAMESPACE,
+            args::LIMIT,
+            AFTER,
+            HEALTH,
+            FACTORY,
+            RUNNER,
+            SEARCH,
+        ])
+        .calls(&["Relay.list"]),
         Verb::new("info", handle_info)
             .taking(&[Positional::optional("<relay_id>")])
             .reading(&[NAMESPACE])
@@ -258,7 +284,7 @@ fn handle_info(read: &Reading) {
             &[],
             read,
         ),
-        None => rpc::scoped_read(read, "relay information"),
+        None => rpc::scoped_read(read, "relay information", None),
     }
 }
 

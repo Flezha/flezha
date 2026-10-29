@@ -37,6 +37,7 @@ defmodule Flezha.Service.Dlq do
   ]
 
   alias Flezha.AuthZ.Namespace
+  alias Flezha.Cluster.Page
   alias Flezha.Cluster.Reads
   alias Flezha.Config.Durations
   alias Flezha.Dlq.Store
@@ -60,13 +61,27 @@ defmodule Flezha.Service.Dlq do
   @doc """
   Every controller's parked entries, nearest-to-expiry first, each with the
   `node` holding it. A `relay_class` of `nil` reads every class.
+
+  With `opts` (`limit`, `after`) it answers one page of them across the
+  cluster, newest first (`Flezha.Cluster.Page`, `Flezha.Dlq.Store.page_key/1`):
+  each controller decodes only the entries it could put on the page.
   """
-  @spec list(String.t() | nil, caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
-  verb list(relay_class, caller_context),
+  @spec list(String.t() | nil, keyword(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb list(relay_class, opts \\ [], caller_context),
     verb: :dlq_list,
     row: &class_scope/1,
-    args: [relay_class: @relay_class] do
-    {:ok, Reads.controllers() |> Reads.rows(Store, :list, [relay_class]) |> by_expiry()}
+    args: [relay_class: @relay_class, opts: Page.arg()] do
+    case Page.parse(opts, :dlq_list, sorts: [newest: :desc]) do
+      {:ok, nil} ->
+        {:ok, Reads.controllers() |> Reads.rows(Store, :list, [relay_class]) |> by_expiry()}
+
+      {:ok, page} ->
+        answer = Reads.rows(Reads.controllers(), Store, :list_page, [relay_class, page])
+        {:ok, Page.merge(answer, page, &Store.page_key/1)}
+
+      refused ->
+        refused
+    end
   end
 
   @doc "One parked entry, with the `node` holding it and its payload bytes if it carries any."
@@ -178,7 +193,7 @@ defmodule Flezha.Service.Dlq do
     end
   end
 
-  defp class_scope([relay_class]), do: {:ok, %{namespace: class_namespace(relay_class)}}
+  defp class_scope([relay_class | _opts]), do: {:ok, %{namespace: class_namespace(relay_class)}}
 
   defp by_expiry(rows), do: Reads.newest(rows, & &1["ts_ms"], nil)
 

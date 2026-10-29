@@ -11,7 +11,7 @@ defmodule Flezha.Transport.LivenessCounters do
 
   Cardinality is bounded: one entry per channel (runner + stream name) and
   one per relay instance — never per frame. Entries whose owner process has
-  died are pruned on the next `snapshot_all/0`.
+  died are pruned on the next `snapshot_all/1`.
 
   The counters add **zero** data-plane behaviour — they are pure
   instrumentation.
@@ -21,7 +21,7 @@ defmodule Flezha.Transport.LivenessCounters do
   `@channel_rows` and `@relay_rows` are the single declaration this
   subsystem derives from. A row says everything about its slot:
 
-    * `name:` — the slot, and its key in `snapshot_all/0`.
+    * `name:` — the slot, and its key in `snapshot_all/1`.
     * `kind:` — `:count` (monotonic), `:set` (a gauge written whole) or
       `:instant` (a monotonic-ms stamp).
     * `scope:` — whose fact it is. `:channel` is about this stream;
@@ -325,7 +325,7 @@ defmodule Flezha.Transport.LivenessCounters do
       [name: :bytes_in, surface: [{:metric, :relay_bytes_in}]],
       [name: :bytes_filtered, surface: [{:metric, :relay_bytes_filtered}]],
       # Every message received is either filtered or forwarded, so these two
-      # are never written: `snapshot_all/0` fills them in from the four above,
+      # are never written: `snapshot_all/1` fills them in from the four above,
       # which keeps a forwarded message at two writes on the hot path.
       [name: :forwarded, surface: [{:metric, :relay_forwarded}]],
       [name: :bytes_forwarded, surface: [{:metric, :relay_bytes_forwarded}]],
@@ -631,16 +631,17 @@ defmodule Flezha.Transport.LivenessCounters do
 
   @doc """
   Snapshot every live channel and relay counter array, pruning entries whose
-  owner has died. Returns `%{channels: [...], relays: [...]}`.
+  owner has died. Returns `%{channels: [...], relays: [...]}`. `only`,
+  `{relay_ids, runner_ids}`, reads those relays and those runners' channels.
   """
-  @spec snapshot_all() :: %{channels: [map()], relays: [map()]}
-  def snapshot_all() do
+  @spec snapshot_all({[term()], [term()]} | nil) :: %{channels: [map()], relays: [map()]}
+  def snapshot_all(only \\ nil) do
     case :ets.whereis(@table) do
       :undefined ->
         %{channels: [], relays: []}
 
       _ ->
-        entries = :ets.tab2list(@table)
+        entries = if only, do: entries_of(only), else: :ets.tab2list(@table)
 
         {channels, relays} =
           Enum.reduce(entries, {[], []}, fn {key, ref, owner}, {chans, rels} ->
@@ -666,16 +667,25 @@ defmodule Flezha.Transport.LivenessCounters do
     end
   end
 
+  defp entries_of({relay_ids, runner_ids}),
+    do:
+      Enum.flat_map(relay_ids, &:ets.lookup(@table, {:relay, &1})) ++
+        Enum.flat_map(runner_ids, &:ets.match_object(@table, {{:channel, &1, :_}, :_, :_}))
+
   @doc """
-  `snapshot_all/0` on every controller of the cluster, rows joined, each with
+  `snapshot_all/1` on every controller of the cluster, rows joined, each with
   the `node` that holds it. A relay's counters live on the controller running
   it, so a reader pinned to one controller needs this to see a relay placed on
   another. A controller that does not answer in time is named in `unreachable`.
   """
-  @spec snapshot_cluster() :: %{channels: [map()], relays: [map()], unreachable: [node()]}
-  def snapshot_cluster() do
+  @spec snapshot_cluster({[term()], [term()]} | nil) :: %{
+          channels: [map()],
+          relays: [map()],
+          unreachable: [node()]
+        }
+  def snapshot_cluster(only \\ nil) do
     %{answers: answers, unreachable: unreachable} =
-      Reads.ask(Reads.controllers(), __MODULE__, :snapshot_all, [],
+      Reads.ask(Reads.controllers(), __MODULE__, :snapshot_all, [only],
         timeout: Durations.get(:transport_stats_call_ms)
       )
 

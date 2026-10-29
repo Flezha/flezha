@@ -8,11 +8,13 @@ defmodule Flezha.Service.Relay.Info do
   `node` holding it; and every partition group with its read-time key-group
   coverage.
 
-  `rows/1` is the namespace's relay rows as every surface reads them: the
+  `rows/2` is the namespace's relay rows as every surface reads them: the
   registry's, read on a hub member, each with the health the controller
-  hosting it judges.
+  hosting it judges. `list/2` is the relay list made of them, whole or one
+  page with the namespace's summary.
   """
 
+  alias Flezha.Cluster.Page
   alias Flezha.Cluster.Reads
   alias Flezha.Convergence.Snapshot
   alias Flezha.Convergence.Verdict
@@ -28,6 +30,162 @@ defmodule Flezha.Service.Relay.Info do
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.TaskJournal
+
+  @sorts [id: :asc, severity: :asc]
+  @filters [:health, :factory, :runner, :node, :group, :ids, :text]
+
+  @doc """
+  What `Flezha.Service.Relay.list/3` answers: every relay row of `namespace`,
+  a partition group as one row exactly as healthy as its sickest member,
+  sorted by id; or with `opts` one page of them (`Flezha.Cluster.Page`) with
+  the namespace's `summary`.
+
+  The page filters by `health` (health words, and `unhealthy` for any word
+  ranked `degraded` or worse by `Flezha.Convergence.Verdict.rank/1`),
+  `factory`, `runner`, `node`, `group` (a partition group's id), `ids` (at most
+  500 relay or group ids) and `text` (a case-insensitive substring of the id or
+  the factory), and sorts by `id` or by `severity` (worst first, then id). Its
+  rows also carry their run kind (`run`) and bound-plugin count (`plugins`).
+
+  The summary is computed over every row whatever the filter, in the pass that
+  builds the page: the rows by health; `faulted_groups`, each partition group
+  whose sickest member is `unhealthy` or whose key-group coverage is not
+  complete; and `waiting`, each factory with relays waiting to be bound to a
+  runner (`unbound` or `recovering`), with how many. A filter of `ids` alone
+  reads those relays' registry entries directly instead of walking the
+  namespace, and answers `summary: nil`.
+  """
+  @spec list(String.t(), keyword() | map()) :: {:ok, map()} | {:error, Flezha.Error.t()}
+  def list(namespace, opts) do
+    with {:ok, page} <- Page.parse(opts, :relay_list, sorts: @sorts, filters: @filters),
+         {:ok, filter} <- filter(page && page.filter) do
+      {:ok, if(page, do: page(namespace, page, filter), else: listed(namespace))}
+    end
+  end
+
+  defp listed(namespace) do
+    %{rows: rows} = answer = rows(namespace)
+    %{answer | rows: rows |> collapse() |> Enum.sort_by(&id_key/1)}
+  end
+
+  defp page(namespace, page, filter) do
+    {call, summarise?} =
+      case Map.keys(filter) do
+        [:ids] -> {{HubManager, :relay_rows_of, [namespace, filter.ids]}, false}
+        _walk -> {{HubManager, :relay_rows, [namespace, true]}, true}
+      end
+
+    %{rows: rows, unreachable: unreachable} = rows(namespace, call)
+    listed = collapse(rows)
+
+    listed
+    |> Enum.filter(&kept?(&1, filter))
+    |> Page.slice(page, sort_key(page.sort))
+    |> Map.merge(%{unreachable: unreachable, summary: if(summarise?, do: summary(rows, listed))})
+  end
+
+  defp collapse(rows) do
+    plain = Enum.reject(rows, &(&1[:partition] != nil))
+    plain ++ Enum.map(Partition.groups(rows), &group_row/1)
+  end
+
+  defp group_row(report) do
+    members = report.members
+
+    %{
+      id: report.group,
+      health: worst(members),
+      runner: Enum.map_join(members, ", ", &"p#{&1.partition.index}→#{&1.runner || "-"}"),
+      factory: members |> hd() |> Map.get(:factory),
+      partitions: "#{length(members)}/#{report.declared}",
+      node: members |> hd() |> Map.get(:node),
+      members: members
+    }
+    |> Map.merge(Map.take(hd(members), [:run, :plugins]))
+  end
+
+  defp worst(members), do: members |> Enum.map(& &1.health) |> Enum.max_by(&Verdict.rank/1)
+
+  defp summary(rows, listed) do
+    relays = Enum.flat_map(listed, &(&1[:members] || [&1]))
+
+    %{
+      health: Enum.frequencies_by(listed, & &1.health),
+      faulted_groups: rows |> Partition.groups() |> Enum.flat_map(&faulted/1),
+      waiting:
+        relays
+        |> Enum.filter(&Verdict.waiting?(&1.health))
+        |> Enum.frequencies_by(& &1.factory)
+        |> Enum.map(fn {factory, count} -> %{factory: factory, relays: count} end)
+        |> Enum.sort_by(&{-&1.relays, &1.factory})
+    }
+  end
+
+  defp faulted(report) do
+    health = worst(report.members)
+
+    if Verdict.fault?(health) or report.coverage != :ok,
+      do: [%{group: report.group, health: health, complete: report.coverage == :ok}],
+      else: []
+  end
+
+  defp id_key(row), do: inspect(row.id)
+
+  defp sort_key(:id), do: &id_key/1
+  defp sort_key(:severity), do: &{-Verdict.rank(&1.health), id_key(&1)}
+
+  # ---------- filters ----------
+
+  defp filter(nil), do: {:ok, nil}
+
+  defp filter(written) do
+    Enum.reduce_while(written, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      case filter_value(key, value) do
+        {:ok, value} -> {:cont, {:ok, Map.put(acc, key, value)}}
+        refused -> {:halt, refused}
+      end
+    end)
+  end
+
+  defp filter_value(key, value) when key in [:health, :ids] do
+    case words(value) do
+      nil -> Page.invalid("filter.#{key}", value)
+      words -> Page.bounded(words, "filter.#{key}")
+    end
+  end
+
+  defp filter_value(:text, value) when is_binary(value), do: {:ok, String.downcase(value)}
+  defp filter_value(key, value) when is_binary(value) and key != :text, do: {:ok, value}
+  defp filter_value(key, value), do: Page.invalid("filter.#{key}", value)
+
+  defp words(value) when is_binary(value), do: String.split(value, ",", trim: true)
+
+  defp words(value) when is_list(value) do
+    if Enum.all?(value, &(is_binary(&1) or is_atom(&1))), do: Enum.map(value, &to_string/1)
+  end
+
+  defp words(_value), do: nil
+
+  defp kept?(row, filter), do: Enum.all?(filter, &matches?(row, &1))
+
+  defp matches?(row, {:health, words}) do
+    to_string(row.health) in words or ("unhealthy" in words and Verdict.fault?(row.health))
+  end
+
+  defp matches?(row, {:ids, ids}), do: to_string(row.id) in ids
+  defp matches?(row, {:factory, factory}), do: row.factory == factory
+  defp matches?(row, {:group, group}), do: row[:members] != nil and row.id == group
+  defp matches?(row, {:runner, runner}), do: any_member?(row, &(&1.runner == runner))
+  defp matches?(row, {:node, node}), do: any_member?(row, &(to_string(&1.node) == node))
+
+  defp matches?(row, {:text, text}) do
+    Enum.any?(
+      [row.id, row.factory],
+      &(is_binary(&1) and String.contains?(String.downcase(&1), text))
+    )
+  end
+
+  defp any_member?(row, fun), do: Enum.any?(row[:members] || [row], fun)
 
   @doc "The report for `namespace`, with the controllers that did not answer."
   @spec report(String.t()) :: map()
@@ -54,14 +212,15 @@ defmodule Flezha.Service.Relay.Info do
   end
 
   @doc """
-  The relay rows of `namespace` (`HubManager.relay_rows/1`), read on a member
-  of its hub, each with `health` as the controller hosting it judges it. A
-  row no controller hosts reads this controller's verdict; a row whose host
-  does not answer reads `:unknown`, and that host is named in `unreachable`.
+  The relay rows of `namespace` (`HubManager.relay_rows/1`, or the registry
+  read `call` names), read on a member of its hub, each with `health` as the
+  controller hosting it judges it. A row no controller hosts reads this
+  controller's verdict; a row whose host does not answer reads `:unknown`, and
+  that host is named in `unreachable`.
   """
-  @spec rows(String.t()) :: Reads.rows()
-  def rows(namespace) do
-    {rows, unreachable} = hub_read(namespace, {HubManager, :relay_rows, [namespace]})
+  @spec rows(String.t(), {module(), atom(), list()} | nil) :: Reads.rows()
+  def rows(namespace, call \\ nil) do
+    {rows, unreachable} = hub_read(namespace, call || {HubManager, :relay_rows, [namespace]})
     {placed, unplaced} = Enum.split_with(rows, & &1.node)
     ids = Enum.map(placed, & &1.id)
 

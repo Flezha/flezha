@@ -17,7 +17,8 @@ defmodule Flezha.Service.Cli.Dlq do
 
   @doc """
   `flz dlq list`: every controller's parked entries, nearest-to-expiry first,
-  each with its controller.
+  each with its controller; with `--limit` or `--after`, one page of them,
+  newest first.
   """
   def list(answer, _args, _opts), do: Context.rows(answer, &entries/1)
 

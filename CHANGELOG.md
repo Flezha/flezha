@@ -8,6 +8,16 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- Large listings can be read one page at a time. `Relay.list`,
+  `PluginManager.enabled`, `Dlq.list` and the steps reads `journal`,
+  `committed_iterations`, `cells` and `undelivered` take an optional `opts` of
+  `limit`, `after`, `sort` and `filter` and then answer `rows`, `total`, a
+  `next` cursor and `unreachable`; a paged `Relay.list` adds the namespace's
+  `summary`. `Controller.liveness_counters` takes a filter of named relays.
+  `flz relay list`, `flz plugin list` and `flz dlq list` gain `--limit`,
+  `--after` and filter flags ([CLI](docs/public/topics/cli/cli.md#listing-by-the-page)).
+  Dead-letter stats are kept in memory and read no entry file. Every answer
+  read without `opts` is unchanged.
 - Reads answer for the whole cluster, whichever controller the caller is
   connected to: a relay's health is its hosting controller's verdict, a
   controller outside a namespace's hub lists its relays, the factory list holds

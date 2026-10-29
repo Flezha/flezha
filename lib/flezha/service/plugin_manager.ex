@@ -19,6 +19,7 @@ defmodule Flezha.Service.PluginManager do
   use Flezha.AuthZ.Verb
 
   alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Page
   alias Flezha.Config.Backoff
   alias Flezha.Config.Durations
   alias Flezha.Relay.Overwatch
@@ -702,12 +703,12 @@ defmodule Flezha.Service.PluginManager do
   @plugin_name [type: :string, doc: "The plugin's name."]
   @fields [type: :keyword, default: [], doc: "The plugin's fields."]
 
-  @doc "Every plugin enabled in a namespace."
-  @spec enabled(String.t(), CallerContext.t()) :: {:ok, [map()]} | {:error, term()}
-  verb enabled(namespace, caller_context),
+  @doc "Every plugin enabled in a namespace. With `opts`, one page (`PluginRecords.page/2`)."
+  @spec enabled(String.t(), keyword(), CallerContext.t()) :: {:ok, term()} | {:error, term()}
+  verb enabled(namespace, opts \\ [], caller_context),
     verb: :plugin_enabled,
-    args: [namespace: [type: :string, doc: "The namespace."]] do
-    {:ok, PluginRecords.plugins(Flezha.AuthZ.Namespace.or_default(namespace))}
+    args: [namespace: [type: :string, doc: "The namespace."], opts: Page.arg()] do
+    PluginRecords.page(Flezha.AuthZ.Namespace.or_default(namespace), opts)
   end
 
   @doc """

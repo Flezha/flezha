@@ -62,6 +62,8 @@ defmodule Flezha.Service.HubManager do
   defdelegate plugin_entry(arg1, arg2), to: Rows
   defdelegate placed_relay_ids(arg1, arg2), to: Rows
   defdelegate relay_rows(arg1), to: Rows
+  defdelegate relay_rows(arg1, arg2), to: Rows
+  defdelegate relay_rows_of(arg1, arg2), to: Rows
   defdelegate relay_spec(arg1, arg2), to: Rows
   defdelegate relay_runner_tag(arg1, arg2), to: Placement
   defdelegate relay_set_runner(arg1, arg2, arg3), to: Placement

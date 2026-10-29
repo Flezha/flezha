@@ -77,7 +77,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz relay scale <group> <partitions> [--namespace \| -n <namespace>] [--timeout \| -t <ms>]` | Rescale a partition group in a namespace to a new size. |
 | `flz relay stop <relay_id> [--namespace \| -n <namespace>]` | Stop a relay in a namespace, or a whole partition group. |
 | `flz relay state <relay_id> [--namespace \| -n <namespace>]` | A relay's live state, as JSON, and the change sequence it was read at. |
-| `flz relay list [--namespace \| -n <namespace>]` | The relays in a namespace, one row each. |
+| `flz relay list [--namespace \| -n <namespace>] [--limit <n>] [--after <cursor>] [--health <words>] [--factory <factory>] [--runner <runner>] [--search <text>]` | The relays in a namespace, one row each. |
 | `flz relay info [<relay_id>] [--namespace \| -n <namespace>]` | Every relay in a namespace as its Overwatch reports it. |
 | `flz relay diagnose <relay_id> [--namespace \| -n <namespace>]` | What is wrong with a relay and what to do about it. |
 | `flz relay graph <relay_id> [--namespace \| -n <namespace>]` | The graph of a relay's factory, as its runner announces it. |
@@ -110,7 +110,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 <!-- flz-reference:begin flz dlq -->
 | Command | What it does |
 | --- | --- |
-| `flz dlq list [<relay_class>]` | Every controller's parked entries, nearest-to-expiry first, each with the `node` holding it. |
+| `flz dlq list [<relay_class>] [--limit <n>] [--after <cursor>]` | Every controller's parked entries, nearest-to-expiry first, each with the `node` holding it. |
 | `flz dlq show <relay/tasklet/entry-id>` | One parked entry, with the `node` holding it and its payload bytes if it carries any. |
 | `flz dlq replay <relay/tasklet/entry-id>` | Re-dispatch a parked payload to its relay. |
 | `flz dlq drop <relay/tasklet/entry-id>` | Discard a parked entry and its payload. |
@@ -138,7 +138,7 @@ rows as `flz <group> help`, which prints them on the command line, and
 | `flz plugin update <name> [X<key>=<value> ...] [--<key> <value> ...]` | Change the options and hooks of a plugin. |
 | `flz plugin disable <name> [X<key>=<value> ...] [--<key> <value> ...]` | Disable a plugin: every running copy stops. |
 | `flz plugin help [<provider_id>]` | One plugin provider's help text, type, hooks and options. |
-| `flz plugin list [--installed] [--providers] [--namespace \| -n <namespace>]` | Every plugin enabled in a namespace. |
+| `flz plugin list [--installed] [--providers] [--namespace \| -n <namespace>] [--limit <n>] [--after <cursor>] [--provider <provider>] [--relay <relay_id>] [--search <text>]` | Every plugin enabled in a namespace. |
 | `flz plugin install <path-or-https-url>` | Place a plugin package (.fpz) from a path or an https:// URL. |
 | `flz plugin uninstall <plugin_id>` | Remove an installed plugin package. |
 | `flz plugin sync` | Make the plugin root hold exactly the packages FLEZHA_PLUGINS declares. |

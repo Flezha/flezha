@@ -17,7 +17,7 @@ pub(crate) const TABLE: Command = Command {
     title: "Runner management commands.",
     notes: None,
     verbs: &[
-        Verb::new("list", |read| rpc::scoped_read(read, "runners"))
+        Verb::new("list", |read| rpc::scoped_read(read, "runners", None))
             .reading(&[NAMESPACE])
             .calls(&["Fleet.runners"]),
         Verb::new("check", handle_check)
@@ -27,9 +27,11 @@ pub(crate) const TABLE: Command = Command {
             .reading(&[NAMESPACE])
             .sending(SCOPED)
             .calls(&["Fleet.drop_runner"]),
-        Verb::new("dropped", |read| rpc::scoped_read(read, "dropped runners"))
-            .reading(&[NAMESPACE])
-            .calls(&["Fleet.dropped_runners"]),
+        Verb::new("dropped", |read| {
+            rpc::scoped_read(read, "dropped runners", None)
+        })
+        .reading(&[NAMESPACE])
+        .calls(&["Fleet.dropped_runners"]),
         Verb::door("readmit")
             .taking(STABLE_ID)
             .reading(&[NAMESPACE])

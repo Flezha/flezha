@@ -191,12 +191,16 @@ defmodule Flezha.Service.AdminTest do
     end
 
     test "the proven namespace is inserted where the row declares it, so there is no slot" do
-      # `list` takes (namespace, context). The wire array holds the
-      # arguments after the namespace, so naming one is an argument too many.
+      # `list` takes (namespace, opts, context). The wire array holds the
+      # arguments after the namespace, so a namespace written there lands in
+      # `opts` and is refused, and one more is an argument too many.
       assert {:ok, _json} = door("Relay.list", "[]")
 
-      assert {:error, %Flezha.Error{code: "control.wrong_arity"}} =
+      assert {:error, %Flezha.Error{code: "control.unknown_parameter"}} =
                door("Relay.list", ~s(["#{@other}"]))
+
+      assert {:error, %Flezha.Error{code: "control.wrong_arity"}} =
+               door("Relay.list", ~s(["#{@other}", {}]))
     end
 
     test "a row-scoped verb's namespace field is stamped, not read from the caller" do

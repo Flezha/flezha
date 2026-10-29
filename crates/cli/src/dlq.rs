@@ -1,5 +1,8 @@
-use crate::args::Positional;
-use crate::dispatch::{Command, Missing, Verb};
+use serde_json::Value;
+
+use crate::args::{Positional, Reading, AFTER, LIMIT};
+use crate::dispatch::{Arg, Command, Missing, Verb};
+use crate::rpc;
 
 const ENTRY_REF: &[Positional] = &[Positional::required("<relay/tasklet/entry-id>")];
 
@@ -10,6 +13,8 @@ pub(crate) const TABLE: Command = Command {
     verbs: &[
         Verb::door("list")
             .taking(&[Positional::optional("<relay_class>")])
+            .reading(&[LIMIT, AFTER])
+            .sending(&[Arg::Positionals, Arg::Built(page)])
             .strict()
             .calls(&["Dlq.list"]),
         Verb::door("show")
@@ -29,6 +34,11 @@ pub(crate) const TABLE: Command = Command {
     unknown_prints_help: false,
 };
 
+/// `flz dlq list`'s page, when `--limit` or `--after` asks for one.
+fn page(read: &Reading) -> Option<Value> {
+    rpc::page(read, &[])
+}
+
 #[cfg(test)]
 mod tests {
     use flz_transport::errors::FlezhaError;
@@ -43,6 +53,34 @@ mod tests {
             list.expect("flz dlq declares list"),
             &owned(argv),
         )
+    }
+
+    /// fails when: a paging flag is not sent as the listing's `opts`, or a
+    /// listing without one sends any, which would page the unpaged answer.
+    #[test]
+    fn the_paging_flags_are_sent_as_opts_and_only_when_written() {
+        let paged = read_list(&["--limit", "5", "--after", "abc"]).expect("reads");
+        assert_eq!(
+            super::page(&paged),
+            Some(serde_json::json!({ "limit": 5, "after": "abc" }))
+        );
+        let whole = read_list(&["prices#p0"]).expect("reads");
+        assert_eq!(super::page(&whole), None);
+
+        let relay = crate::relay::TABLE
+            .verbs
+            .iter()
+            .find(|verb| verb.name == "list");
+        let argv = owned(&["--limit", "2", "--health", "unhealthy", "--search", "ord"]);
+        let read =
+            crate::args::read("flz relay", relay.expect("relay list"), &argv).expect("reads");
+        assert_eq!(
+            crate::rpc::page(&read, crate::relay::LIST_FILTERS),
+            Some(serde_json::json!({
+                "limit": 2,
+                "filter": { "health": "unhealthy", "text": "ord" }
+            }))
+        );
     }
 
     /// fails when: `flz dlq list -n trading` reads `trading` as the relay whose

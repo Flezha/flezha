@@ -21,6 +21,7 @@ defmodule Flezha.Service.Steps do
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.Cluster.Page
   alias Flezha.Config
   alias Flezha.Relay.PartitionGroup
   alias Flezha.Relay.Suspend
@@ -79,23 +80,27 @@ defmodule Flezha.Service.Steps do
   @doc """
   One instance's task journal, in append order, and the run's outcome. The
   outcome is the status and error the engine completed the run with, or `nil`
-  while it runs.
+  while it runs. With `opts` the entries are paged newest first by seq
+  (`Flezha.Cluster.Page`), under `rows`.
   """
-  @spec journal(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
-  verb journal(instance_id, caller_context),
+  @spec journal(String.t(), keyword(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb journal(instance_id, opts \\ [], caller_context),
     verb: :state_journal,
     row: &instance_row/1,
-    args: [instance_id: @instance_id] do
-    RelayManager.on_state_node(instance_id, Journal, :report, [instance_id])
+    args: [instance_id: @instance_id, opts: Page.arg()] do
+    with {:ok, page} <- Page.parse(opts, :journal, sorts: [seq: :desc]),
+         do: RelayManager.on_state_node(instance_id, Journal, :report, [instance_id, page])
   end
 
-  @doc "The iterations the instance's journal has committed."
-  @spec committed_iterations(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
-  verb committed_iterations(instance_id, caller_context),
+  @doc "The iterations the instance's journal has committed; with `opts`, paged newest first."
+  @spec committed_iterations(String.t(), keyword(), caller_context()) ::
+          {:ok, [term()] | map()} | {:error, term()}
+  verb committed_iterations(instance_id, opts \\ [], caller_context),
     verb: :state_journal,
     row: &instance_row/1,
-    args: [instance_id: @instance_id] do
-    on_state(instance_id, :local_committed_iterations, [instance_id])
+    args: [instance_id: @instance_id, opts: Page.arg()] do
+    with {:ok, page} <- Page.parse(opts, :committed_iterations, sorts: [iteration: :desc]),
+         do: on_state(instance_id, :local_committed_iterations, [instance_id, page])
   end
 
   @doc "The input-log offset the instance's last iteration consumed. It is `nil` for none."
@@ -107,13 +112,19 @@ defmodule Flezha.Service.Steps do
     on_state(instance_id, :local_consumed_offset, [instance_id])
   end
 
-  @doc "The input-log records above the instance's floor. They are what it has not consumed yet."
-  @spec undelivered(String.t(), caller_context()) :: {:ok, [term()]} | {:error, term()}
-  verb undelivered(instance_id, caller_context),
+  @doc """
+  The input-log records above the instance's floor. They are what it has not
+  consumed yet. With `opts` they are paged by offset, `total` counted from the
+  log's offsets and only the page's records read; `limit: 0` reads none.
+  """
+  @spec undelivered(String.t(), keyword(), caller_context()) ::
+          {:ok, [term()] | map()} | {:error, term()}
+  verb undelivered(instance_id, opts \\ [], caller_context),
     verb: :state_inbox,
     row: &instance_row/1,
-    args: [instance_id: @instance_id] do
-    on_state(instance_id, :local_undelivered, [instance_id])
+    args: [instance_id: @instance_id, opts: Page.arg()] do
+    with {:ok, page} <- Page.parse(opts, :undelivered, sorts: [offset: :asc]),
+         do: on_state(instance_id, :local_undelivered, [instance_id, page])
   end
 
   @doc "The last offset written to the instance's input log. It is `-1` when it has none."
@@ -166,14 +177,16 @@ defmodule Flezha.Service.Steps do
   and snapshot sequences, WAL size and the writer's counters.
 
   `history_retention_hours` is how long the class's write-ahead history is
-  kept, the value `set_retention/3` changes.
+  kept, the value `set_retention/3` changes. With `opts` the Cells are paged by
+  tasklet and key under `rows`, `filter: [text: ...]` a substring of the key.
   """
-  @spec cells(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
-  verb cells(relay_class, caller_context),
+  @spec cells(String.t(), keyword(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb cells(relay_class, opts \\ [], caller_context),
     verb: :state_list,
     row: &class_row/1,
-    args: [relay_class: @relay_class] do
-    on_state(relay_class, :local_cells, [relay_class])
+    args: [relay_class: @relay_class, opts: Page.arg()] do
+    with {:ok, page} <- Page.parse(opts, :cells, sorts: [key: :asc], filters: [:text]),
+         do: on_state(relay_class, :local_cells, [relay_class, page])
   end
 
   @doc """
@@ -318,21 +331,37 @@ defmodule Flezha.Service.Steps do
     do: RelayManager.on_state_node(instance_id, __MODULE__, function, args)
 
   @doc false
-  def local_committed_iterations(instance_id),
-    do: {:ok, TaskJournal.committed_iterations(instance_id)}
+  def local_committed_iterations(instance_id, page \\ nil),
+    do: {:ok, paged(TaskJournal.committed_iterations(instance_id), page, & &1)}
 
   @doc false
   def local_consumed_offset(instance_id), do: {:ok, TaskJournal.consumed_offset(instance_id)}
 
   @doc false
-  def local_undelivered(instance_id) do
-    with records when is_list(records) <- InputLog.undelivered(instance_id) do
-      {:ok,
-       Enum.map(records, fn {offset, message, metadata} ->
-         %{offset: offset, message: message, metadata: metadata}
-       end)}
+  def local_undelivered(instance_id, page \\ nil)
+
+  def local_undelivered(instance_id, nil) do
+    with records when is_list(records) <- InputLog.undelivered(instance_id),
+         do: {:ok, Enum.map(records, &undelivered_row/1)}
+  end
+
+  # The records above the floor are the contiguous offsets `floor + 1..last`,
+  # so the total needs no record and the page reads only its own.
+  def local_undelivered(instance_id, %Page{} = page) do
+    with {:ok, floor, last} <- InputLog.tail(instance_id) do
+      from = max(floor, page.after || -1) + 1
+      to = min(from + page.limit - 1, last)
+      records = if to >= from, do: InputLog.read_range(instance_id, from, to), else: []
+
+      with records when is_list(records) <- records do
+        rows = Enum.map(records, &undelivered_row/1)
+        {:ok, Page.answer(rows, max(last - floor, 0), to < last, page, & &1.offset)}
+      end
     end
   end
+
+  defp undelivered_row({offset, message, metadata}),
+    do: %{offset: offset, message: message, metadata: metadata}
 
   @doc false
   def local_last_offset(instance_id) do
@@ -356,7 +385,7 @@ defmodule Flezha.Service.Steps do
   end
 
   @doc false
-  def local_cells(relay_class) do
+  def local_cells(relay_class, page \\ nil) do
     rows =
       for {{class, tasklet, key} = cell_id, counters} <- Metrics.snapshot_all(),
           class == relay_class do
@@ -376,10 +405,24 @@ defmodule Flezha.Service.Steps do
     {:ok,
      %{
        relay_class: relay_class,
-       history_retention_hours: PersistenceResolver.retention_hours(relay_class),
-       cells: rows
-     }}
+       history_retention_hours: PersistenceResolver.retention_hours(relay_class)
+     }
+     |> Map.merge(paged_cells(rows, page))}
   end
+
+  defp paged_cells(rows, nil), do: %{cells: rows}
+
+  defp paged_cells(rows, page) do
+    text = page.filter |> Map.get(:text, "") |> to_string()
+
+    rows
+    |> Enum.filter(&String.contains?(&1.cell_key, text))
+    |> paged(page, &{&1.tasklet_id, &1.cell_key})
+  end
+
+  # The answer as a page when one is asked for, else as it was.
+  defp paged(rows, nil, _key), do: rows
+  defp paged(rows, page, key), do: Page.slice(rows, page, key)
 
   @doc false
   def local_outbox(cell) do

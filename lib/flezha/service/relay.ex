@@ -23,8 +23,8 @@ defmodule Flezha.Service.Relay do
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.Scope
   alias Flezha.Cluster.Directory
+  alias Flezha.Cluster.Page
   alias Flezha.Config.Durations
-  alias Flezha.Convergence.Verdict
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
@@ -96,13 +96,19 @@ defmodule Flezha.Service.Relay do
   not answer. A
   group is one row, exactly as healthy as its sickest member: an aggregate
   that rounded up would hide the one partition that stopped serving its keys.
+
+  With `opts` (`limit`, `after`, `sort`, `filter`) it answers one page, as
+  `Flezha.Cluster.Page` describes, with `total`, `next` and the namespace's
+  `summary`; `Flezha.Service.Relay.Info.list/2` names the filters and sorts.
   """
-  @spec list(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
-  verb list(namespace, caller_context), verb: :list_relays, args: [namespace: @namespace] do
-    %{rows: rows} = answer = namespace |> Namespace.or_default() |> Info.rows()
-    plain = Enum.reject(rows, &(&1[:partition] != nil))
-    groups = Enum.map(Partition.groups(rows), &group_row/1)
-    {:ok, %{answer | rows: Enum.sort_by(plain ++ groups, &inspect(&1.id))}}
+  @spec list(String.t(), keyword(), caller_context()) :: {:ok, map()} | {:error, term()}
+  verb list(namespace, opts \\ [], caller_context),
+    verb: :list_relays,
+    args: [
+      namespace: @namespace,
+      opts: Page.arg()
+    ] do
+    Info.list(Namespace.or_default(namespace), opts)
   end
 
   @doc """
@@ -775,18 +781,4 @@ defmodule Flezha.Service.Relay do
   defp delivered(:ok, member), do: {:ok, %{to: member, verdict: :delivered}}
   defp delivered({:ok, verdict}, member), do: {:ok, %{to: member, verdict: verdict}}
   defp delivered({:error, _reason} = refused, _member), do: refused
-
-  defp group_row(report) do
-    members = report.members
-
-    %{
-      id: report.group,
-      health: members |> Enum.map(& &1.health) |> Enum.max_by(&Verdict.rank/1),
-      runner: Enum.map_join(members, ", ", &"p#{&1.partition.index}→#{&1.runner || "-"}"),
-      factory: members |> hd() |> Map.get(:factory),
-      partitions: "#{length(members)}/#{report.declared}",
-      node: members |> hd() |> Map.get(:node),
-      members: members
-    }
-  end
 end

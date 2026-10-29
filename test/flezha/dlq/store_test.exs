@@ -165,6 +165,7 @@ defmodule Flezha.Dlq.StoreTest do
     task_dir = Path.join([dir, "MarketRelay", "ohlc"])
     File.mkdir_p!(task_dir)
     File.write!(Path.join(task_dir, "entries.jsonl"), "")
+    :ok = Store.recount(store, "MarketRelay")
     assert [%{entries: 0}] = Store.stats(store)
 
     assert :ok = Store.sweep(store)
