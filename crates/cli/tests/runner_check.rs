@@ -1,5 +1,7 @@
 //! `flz runner check` — the runner's own probe, from a shell.
 
+mod common;
+
 use std::os::unix::net::UnixListener;
 use std::process::{Command, Output};
 
@@ -59,16 +61,17 @@ fn an_unreachable_controller_exits_non_zero_with_the_runners_own_diagnosis() {
 
 #[test]
 fn the_access_denied_output_is_the_diagnosis_a_runner_would_print() {
-    // A directory this process cannot traverse can only be another user's;
-    // `/proc/1/fd` is one on every Linux box the tests do not run as root on.
-    let denied = std::path::Path::new("/proc/1/fd");
-    let verdict = probe(denied);
-    if !matches!(verdict, Reach::AccessDenied { .. }) {
-        // Running as root, or not on Linux: there is no boundary to observe.
+    let Some(denied) = common::DeniedDir::new() else {
         return;
-    }
+    };
+    let verdict = probe(denied.path());
+    assert!(
+        matches!(verdict, Reach::AccessDenied { .. }),
+        "{:?}",
+        verdict
+    );
 
-    let output = check_in(denied);
+    let output = check_in(denied.path());
     let text = String::from_utf8_lossy(&output.stdout).to_string();
 
     assert!(!output.status.success(), "{}", text);

@@ -5,16 +5,6 @@
 use super::*;
 use crate::test_support::{capture_unacked_parks, passes_alone, CapturedPark};
 
-/// Live threads of this process whose kernel name starts with `prefix`
-/// (the kernel keeps 15 bytes: `flezha-unresolv`).
-fn live_threads_named(prefix: &str) -> usize {
-    std::fs::read_dir("/proc/self/task")
-        .expect("/proc/self/task")
-        .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
-        .filter(|comm| comm.trim_end().starts_with(prefix))
-        .count()
-}
-
 type Parks = std::sync::Mutex<Vec<CapturedPark>>;
 
 /// The distinct parks shipped so far; a re-send repeats one.
@@ -42,6 +32,7 @@ fn in_own_process(name: &str) -> Option<String> {
 
 /// Fails when: a source with one misspelled channel name, at rate, holds one
 /// blocking OS thread per frame while the controller has not acked.
+#[cfg(target_os = "linux")]
 #[test]
 fn unacked_parks_of_a_misspelled_channel_hold_a_bounded_number_of_threads() {
     const FRAMES: usize = 2_000;
@@ -57,7 +48,8 @@ fn unacked_parks_of_a_misspelled_channel_hold_a_bounded_number_of_threads() {
     crate::test_support::spin_until("every park to ship once", || {
         shipped_ids(&parks).len() == FRAMES
     });
-    let live = live_threads_named("flezha-unresolv");
+    // The kernel keeps 15 bytes of the thread's name.
+    let live = crate::test_support::live_threads_named("flezha-unresolv");
     ack_all(&parks, &instance);
     state_sink::reset_for_test();
 
@@ -69,6 +61,7 @@ fn unacked_parks_of_a_misspelled_channel_hold_a_bounded_number_of_threads() {
 
 /// Lower this process's thread limit to none: clone(2) fails with EAGAIN.
 /// The limit in force before comes back.
+#[cfg(target_os = "linux")]
 fn no_more_threads() -> libc::rlimit {
     let mut saved = libc::rlimit {
         rlim_cur: 0,
@@ -85,6 +78,7 @@ fn no_more_threads() -> libc::rlimit {
 
 /// Fails when: a park handed off while the process cannot start threads is
 /// printed and lost, or passes without waiting for the owner to start.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_park_whose_thread_cannot_spawn_is_not_lost() {
     if unsafe { libc::geteuid() } == 0 {

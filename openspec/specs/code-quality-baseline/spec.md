@@ -1662,3 +1662,46 @@ name read with no row and a row no runtime reads, for every runtime a row names.
 - **WHEN** a Rust crate reads <!-- docs-citation-record:begin -->`FLEZHA_X_MS` through `const ENV_X: &str = "FLEZHA_X_MS"`<!-- docs-citation-record:end --> and no row names it
 - **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
 
+### Requirement: The workspace SHALL compile for macOS without a Mac
+
+`python3 scripts/run_gates.py --run @macos` SHALL cross-compile every crate of the Rust
+workspace, with all its targets, for `aarch64-apple-darwin` and `x86_64-apple-darwin` through
+`cargo zigbuild`, with rustc warnings denied, and SHALL exit 0 on a clean tree. A code warning
+or a compile error in any project crate on either Apple triple SHALL fail the row. The linker's
+note that it found no macOS SDK concerns the host, not the code, and SHALL NOT fail it.
+
+The row SHALL run only when asked for. It SHALL NOT be part of the full run or of any CI
+workflow, and on a host without `cargo-zigbuild` the runner SHALL report the row as not run,
+naming the install command, rather than as a finding.
+
+#### Scenario: A clean tree compiles for both Apple triples
+- **WHEN** a developer runs `python3 scripts/run_gates.py --run @macos` on a Linux host with `cargo-zigbuild`, zig and both Apple rustup targets
+- **THEN** the row exits 0, having compiled every workspace crate and target for both triples
+
+#### Scenario: Code that compiles on Linux but not on macOS fails the row
+- **WHEN** a test passes `std::ptr::null()` where macOS's `libc` signature takes a mutable pointer
+- **THEN** `cargo build` on Linux succeeds and the `@macos` row fails, naming the file and line
+
+#### Scenario: A macOS-only dead-code warning fails the row
+- **WHEN** a helper is used only by tests compiled for Linux alone, and the helper itself is not
+- **THEN** the `@macos` row fails on the unused helper
+
+### Requirement: A test SHALL depend on a Linux-only interface only when it is compiled for Linux alone
+
+A Rust test SHALL be compiled only for `target_os = "linux"`, together with any helper only such
+tests use, when it reads `/proc` or relies on behaviour only Linux has (`RLIMIT_NPROC` limiting
+threads, CPU affinity). A test that only needs a fixture with a property SHALL build
+that fixture portably instead of borrowing a Linux path for it:
+- a directory this process cannot enter: a temporary directory with no permissions, restored
+  before it is removed
+- a directory candidate that cannot be created: a path under a regular file
+- a process that is alive: `kill -0`
+
+#### Scenario: A denied socket directory needs no /proc
+- **WHEN** the socket probe, `flz runner check` or `flz reset --include-sockets` is tested against a directory this process cannot enter, run as a non-root user
+- **THEN** the fixture is a temporary directory with mode `000` created by the test, the probe reports access denied with the `FLEZHA_SOCKET_DIR_GROUP` fix, and the directory is removed after the test
+
+#### Scenario: A Linux mechanism stays tested on Linux
+- **WHEN** the workspace's tests are compiled for macOS
+- **THEN** the tests that count threads through `/proc/self/task` or stop thread creation through `RLIMIT_NPROC` are not compiled, and on Linux they run as before
+

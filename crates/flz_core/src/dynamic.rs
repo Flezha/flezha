@@ -577,13 +577,10 @@ pub(crate) mod tests {
     #[test]
     fn a_relay_with_an_idle_ttl_runs_no_reaper_thread() {
         let (_instance, _registry) = registry_of("sweep_no_reaper", r#","idle_ttl_ms":60000"#);
-        let reaper = std::fs::read_dir("/proc/self/task")
-            .expect("the process's threads")
-            .filter_map(Result::ok)
-            .any(|task| {
-                std::fs::read_to_string(task.path().join("comm"))
-                    .is_ok_and(|name| name.trim() == "flezha-reaper")
-            });
-        assert!(!reaper, "a relay with an idle TTL spawned a reaper thread");
+        assert_eq!(
+            crate::test_support::live_threads_named("flezha-reaper"),
+            0,
+            "a relay with an idle TTL spawned a reaper thread"
+        );
     }
 }

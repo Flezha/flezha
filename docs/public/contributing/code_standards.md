@@ -161,8 +161,15 @@ $ python3 scripts/run_gates.py --list            # every gate and its command
 $ python3 scripts/run_gates.py --list @core      # the rows one group selects
 $ python3 scripts/run_gates.py --run @naming     # the naming and structure gates
 $ python3 scripts/run_gates.py --run @format     # formatters, license headers, notices
+$ python3 scripts/run_gates.py --run @macos      # the Rust workspace, cross-compiled for macOS
 $ python3 scripts/run_gates.py --run <id>        # one gate
 ```
+
+`@macos` compiles every Rust crate and target for `aarch64-apple-darwin` and
+`x86_64-apple-darwin` with warnings denied, so code that builds on Linux but
+not on a Mac fails here first. It needs `cargo-zigbuild`, zig (the venv
+`scripts/build-dist.sh` installs) and both Apple rustup targets, and runs only
+when asked for: no workflow selects it.
 
 A row may run in a directory of its own, under extra environment and a time
 limit, and may be declared quiet: a quiet row that passes but prints a warning,

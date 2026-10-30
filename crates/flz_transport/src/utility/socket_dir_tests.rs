@@ -201,7 +201,10 @@ fn nothing_live_reports_the_candidate_with_the_most_to_say() {
 #[test]
 fn the_controller_takes_the_first_candidate_it_can_create() {
     let root = TempDir::new().unwrap();
-    let unwritable = PathBuf::from("/proc/flezha-cannot-create-this");
+    // A directory under a regular file cannot be created on any Unix, as root too.
+    let file = root.path().join("a-file");
+    fs::write(&file, b"").unwrap();
+    let unwritable = file.join("sockets");
     let wanted = root.path().join("sockets");
 
     let resolved = resolve_from(
@@ -271,10 +274,11 @@ fn a_long_runner_id_composes_a_data_socket_a_peer_directory_can_bind() {
     let path = stream_socket_path_in(&dir, LONG_ID, "secondary").expect("the name fits the wall");
 
     assert!(
-        path.len() <= 107,
-        "{} is {} bytes; sun_path holds 107 and a NUL",
+        path.len() <= SOCKET_PATH_MAX_BYTES,
+        "{} is {} bytes; sun_path holds {} and a NUL",
         path,
-        path.len()
+        path.len(),
+        SOCKET_PATH_MAX_BYTES
     );
 
     let _ = fs::remove_file(&path);
@@ -345,8 +349,22 @@ fn a_directory_that_cannot_hold_a_data_socket_is_refused_by_name_and_length() {
         text
     );
     assert!(text.contains("123 bytes"), "{}", text);
-    assert!(text.contains("107"), "{}", text);
+    assert!(
+        text.contains(&format!("holds {}", SOCKET_PATH_MAX_BYTES)),
+        "{}",
+        text
+    );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_address_limit_is_linuxs_sun_path_less_its_nul() {
+    assert_eq!(SOCKET_PATH_MAX_BYTES, 107);
+}
+
+// Checked by the compiler on every macOS build, the `@macos` cross-build included.
+#[cfg(target_os = "macos")]
+const _: () = assert!(SOCKET_PATH_MAX_BYTES == 103);
 
 #[test]
 fn the_socket_predicate_recognises_the_names_this_module_creates() {

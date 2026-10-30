@@ -27,6 +27,17 @@ pub(crate) fn spin_until(what: &str, done: impl Fn() -> bool) {
     );
 }
 
+/// Live threads of this process whose kernel name starts with `prefix`; the
+/// kernel keeps the first 15 bytes of a name.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn live_threads_named(prefix: &str) -> usize {
+    std::fs::read_dir("/proc/self/task")
+        .expect("/proc/self/task")
+        .filter_map(|task| std::fs::read_to_string(task.ok()?.path().join("comm")).ok())
+        .filter(|comm| comm.trim_end().starts_with(prefix))
+        .count()
+}
+
 /// A connected pair: the SDK's end as a `FlezhaStream`, the controller's raw.
 pub fn stream_pair() -> (Arc<FlezhaStream>, UnixStream) {
     let (sdk_end, ctrl_end) = UnixStream::pair().expect("UnixStream::pair");

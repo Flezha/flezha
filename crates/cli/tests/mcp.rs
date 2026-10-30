@@ -6,7 +6,6 @@
 mod common;
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -246,14 +245,16 @@ fn hung_pid(shim: &Shim) -> String {
 }
 
 fn alive(pid: &str) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+    kill("-0", pid)
 }
 
-fn kill(signal: &str, pid: &str) {
-    let _ = Command::new("kill")
+/// Whether `signal` reached `pid`.
+fn kill(signal: &str, pid: &str) -> bool {
+    Command::new("kill")
         .args([signal, pid])
         .stderr(Stdio::null())
-        .status();
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 #[test]

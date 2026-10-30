@@ -30,13 +30,21 @@ const STREAM_SOCKET_INFIX: &str = "_stream_";
 const SOCKET_SUFFIX: &str = ".sock";
 
 /// A Unix domain socket address holds `sun_path` less the NUL the kernel
-/// appends, and the kernel refuses anything longer before a socket exists.
+/// appends, and the kernel refuses anything longer before a socket exists:
+/// 107 bytes on Linux, 103 on macOS, read from the platform's own definition.
+#[cfg(unix)]
+const SOCKET_PATH_MAX_BYTES: usize = std::mem::size_of::<libc::sockaddr_un>()
+    - std::mem::offset_of!(libc::sockaddr_un, sun_path)
+    - 1;
+/// Windows' AF_UNIX address has a 108-byte `sun_path`, as Linux's does.
+#[cfg(not(unix))]
 const SOCKET_PATH_MAX_BYTES: usize = 107;
 /// The id field's ceiling. The longest name around it is 22 bytes
 /// (`secondary_stream_` + `.sock`), so 24 here leaves 60 bytes for the socket
-/// directory — more than any candidate the ladder produces on a normal host,
-/// and more than the longest id `Identificator.unique_id/1` mints in the
-/// default namespace, which is 24 and is therefore never shortened.
+/// directory on Linux and 56 on macOS — more than any candidate the ladder
+/// produces on a normal host, and more than the longest id
+/// `Identificator.unique_id/1` mints in the default namespace, which is 24
+/// and is therefore never shortened.
 const STREAM_SOCKET_ID_MAX: usize = 24;
 /// How much of a shortened id is the id's own leading bytes; the rest is `~`
 /// and 12 hex characters of its digest, so a shortened field is exactly

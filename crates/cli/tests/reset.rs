@@ -740,17 +740,14 @@ fn a_stale_socket_is_cleared_not_kept() {
 
 #[test]
 fn a_directory_this_user_cannot_enter_is_reported_not_forced() {
-    // Another user's directory, on every Linux box these tests do not run as
-    // root on.
-    let denied = Path::new("/proc/1/fd");
-    if fs::read_dir(denied).is_ok() {
-        return; // running as root: there is no boundary to observe
-    }
+    let Some(denied) = common::DeniedDir::new() else {
+        return;
+    };
 
     let f = Fixture::populated();
     let out = f
         .cmd()
-        .env("FLEZHA_SOCKET_FILES_PATH", denied)
+        .env("FLEZHA_SOCKET_FILES_PATH", denied.path())
         .arg("--yes")
         .arg("--include-sockets")
         .output()

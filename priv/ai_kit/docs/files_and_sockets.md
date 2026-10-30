@@ -91,6 +91,9 @@ repository fallback fits while the controller's working directory is at most
 43 bytes, which is another reason to prefer a short runtime directory over a
 deep checkout.
 
+These figures are Linux's. On macOS a socket address holds 103 bytes, so the
+socket directory is at most 56 bytes.
+
 `flz runner check` runs this resolution and its probe from a shell, with no
 runner code and no running controller; see
 [`../topics/deploying/deploying_a_controller.md`](../topics/deploying/deploying_a_controller.md).

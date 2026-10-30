@@ -704,15 +704,17 @@ directory. The controller and the runner compose this name independently, from d
 resolved separately, so a rule that consulted either side's directory could produce two names
 for one runner.
 
-Composing a socket path that would exceed the platform limit for a Unix domain socket path — 107
-bytes, `sun_path` less its NUL — SHALL be refused where the path is composed, naming the path and
-its byte length, rather than surfacing as a listener that failed to start.
+Composing a socket path that would exceed the platform's limit for a Unix domain socket path
+SHALL be refused where the path is composed, naming the path and its byte length, rather than
+surfacing as a listener that failed to start. The limit SHALL be the size of the platform's
+`sun_path` less its NUL, read from the platform's own socket address definition rather than
+spelled as a number: 107 bytes on Linux and 103 bytes on macOS.
 
 The controller SHALL NOT mint a runner id longer than the bound this name applies. The bound
 SHALL be declared once and read by both the minting side and the composing side, so a minted id
 reaches its socket unshortened and a user diagnosing a socket sees the id the controller
-reports. Shortening remains the rule for an id the controller did not mint — an SDK's own stable
-identity — and is not removed by the mint's bound.
+reports. Shortening remains the rule for an id the controller did not mint (an SDK's own stable
+identity) and is not removed by the mint's bound.
 
 The control socket SHALL be named by the same implementation that names a data socket. No
 component SHALL spell the control socket's filename itself.
@@ -730,8 +732,12 @@ component SHALL spell the control socket's filename itself.
 - **THEN** both compose the same absolute path
 
 #### Scenario: A path that cannot fit is refused where it is built
-- **WHEN** a socket directory is long enough that the composed data socket path would exceed 107 bytes
-- **THEN** composition refuses, naming the path and its byte length, and no listener is started
+- **WHEN** a socket directory is long enough that the composed data socket path would exceed the platform's limit
+- **THEN** composition refuses, naming the path, its byte length and the limit, and no listener is started
+
+#### Scenario: The limit is the platform's own
+- **WHEN** the composing implementation is built for Linux, or for macOS
+- **THEN** its limit is 107 bytes on Linux and 103 bytes on macOS, with no per-platform number spelled in Flezha's code
 
 #### Scenario: A shortened name is still recognised as Flezha's own
 - **WHEN** a directory holds a data socket whose id field was shortened
@@ -984,20 +990,21 @@ no-op rather than an error.
 A controller with UDS enabled SHALL refuse to boot when its socket directory leaves no room for
 the longest data socket a runner can be given: a `secondary` data socket whose id field is at
 the bound the data socket name applies. It SHALL compose that path through the implementation
-that composes every data socket, so the boot and a runner's connect apply one arithmetic. The
-refusal SHALL name the directory, its byte length, the address limit and
+that composes every data socket, so the boot and a runner's connect apply one arithmetic and
+one address limit. The refusal SHALL name the directory, its byte length, the address limit and
 `FLEZHA_SOCKET_FILES_PATH`, and SHALL come before anything in the directory is removed.
 
-With a 24-byte id field under the 107-byte address limit, the directory is at most 60 bytes. A
-directory of 61 to 79 bytes still holds the control socket, so without this refusal a
-controller boots and then refuses at connect every runner whose id is long.
+With a 24-byte id field, the directory is at most 60 bytes under Linux's 107-byte address limit
+and at most 56 bytes under macOS's 103-byte limit. A directory longer than that but short
+enough to hold the control socket would otherwise let a controller boot and then refuse at
+connect every runner whose id is long.
 
 #### Scenario: A directory with no room for a data socket refuses the boot
-- **WHEN** a controller prepares a socket directory of 61 bytes that already holds a file
+- **WHEN** a controller on Linux prepares a socket directory of 61 bytes that already holds a file
 - **THEN** it refuses to boot, naming the directory, its length of 61 bytes, the 107-byte address limit and `FLEZHA_SOCKET_FILES_PATH`, and the file is still there
 
 #### Scenario: A directory at the limit is prepared
-- **WHEN** a controller prepares a socket directory of 60 bytes
+- **WHEN** a controller on Linux prepares a socket directory of 60 bytes
 - **THEN** the directory is prepared
 
 ### Requirement: `FLEZHA_RUNNER_REMOVAL_GRACE_MS` controls inactive-Runner retention

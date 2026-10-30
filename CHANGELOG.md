@@ -8,6 +8,13 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- The longest socket path is the platform's own: 107 bytes on Linux as
+  before, 103 on macOS, where a socket directory may therefore be at most 56
+  bytes ([files and sockets](docs/public/configuration/files_and_sockets.md)).
+  The Rust code compiles for both Apple chips; a build on a Mac is not yet
+  tested. Building from source lists the C compiler, cmake and protoc it
+  needs, and how to get them on macOS
+  ([building from source](docs/public/topics/deploying/building_from_source.md)).
 - Relay liveness counters are kept per namespace, so two relays with the same
   id in different namespaces no longer share one row. Each relay row of
   `Controller.liveness_counters` carries its `namespace`, and the read takes

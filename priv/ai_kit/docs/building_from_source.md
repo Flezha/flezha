@@ -8,6 +8,9 @@ with changes of your own.
 
 - Elixir 1.17 or later, with its Erlang/OTP.
 - A stable Rust toolchain.
+- A C compiler, cmake (the Kafka plugin's checksum library builds with it) and
+  protoc (the controller's protobuf modules are generated with it at compile
+  time).
 - A checkout of the repository with the Elixir and Rust SDK submodules, which
   the build compiles:
 
@@ -45,6 +48,20 @@ $ tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/storage' -C _b
 
 A plain `tar` of the directory carries the logs and the node cookie of every
 local run.
+
+## On macOS
+
+Flezha's Rust code is checked to compile for macOS, on Apple Silicon and
+Intel, but a build on a Mac and a controller running there are not tested yet.
+Install the C compiler with
+`xcode-select --install`, the other tools with Homebrew, and Rust with
+[rustup](https://rustup.rs):
+
+```sh
+$ brew install elixir cmake protobuf
+```
+
+Then build as above.
 
 ## Make targets
 

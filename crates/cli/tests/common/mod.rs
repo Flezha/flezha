@@ -13,7 +13,7 @@
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::{fs, thread};
@@ -21,6 +21,30 @@ use std::{fs, thread};
 use flz_transport::service::payloader;
 use serde_json::{json, Value};
 use tempfile::TempDir;
+
+/// A directory this process cannot enter: a temporary one with no
+/// permissions, given them back before it is removed. `None` when it can
+/// still be read, as it can by root, which leaves no boundary to observe.
+pub struct DeniedDir(TempDir);
+
+impl DeniedDir {
+    pub fn new() -> Option<Self> {
+        let denied = DeniedDir(TempDir::new().expect("a temporary directory"));
+        fs::set_permissions(denied.path(), fs::Permissions::from_mode(0o000))
+            .expect("the directory's permissions");
+        fs::read_dir(denied.path()).is_err().then_some(denied)
+    }
+
+    pub fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+impl Drop for DeniedDir {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(self.0.path(), fs::Permissions::from_mode(0o700));
+    }
+}
 
 /// A `flzvm` that records each start beside itself, prints each argument on
 /// its own line, then its whole stdin, and succeeds, so what `flz` handed it is

@@ -273,6 +273,8 @@ fn connect_probe(_socket: &Path, _dir_meta: Option<&fs::Metadata>) -> Reach {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -294,11 +296,14 @@ mod tests {
         let _listener = listen(live.path());
         assert_eq!(probe(live.path()), Reach::Reachable);
 
-        // Access denied needs a directory this process cannot traverse, which
-        // only another user's directory can be; `/proc/1/fd` is one on every
-        // Linux box where the tests do not run as root.
-        let denied = probe(Path::new("/proc/1/fd"));
-        if caller_uid() != 0 {
+        // Access denied needs a directory this process cannot traverse. Root
+        // still can, so as root there is no boundary to observe.
+        let locked = TempDir::new().unwrap();
+        fs::set_permissions(locked.path(), fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = probe(locked.path());
+        let enterable = fs::read_dir(locked.path()).is_ok();
+        fs::set_permissions(locked.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        if !enterable {
             match denied {
                 Reach::AccessDenied { caller_uid, .. } => {
                     assert_eq!(caller_uid, super::caller_uid());

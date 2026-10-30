@@ -560,6 +560,16 @@ GATES += (
               env={"FLEZHA_E2E_RUNTIME": "rust"}, timeout=1800),
     *_plugins(), *_rust(), *_sdk_java(), *_sdk_node(), *_sdk_python(), *_sdk_ruby(),
     *_sdk_php(), *_sdk_elixir(), *_sdk_go(),
+    # Every crate and target for both Apple triples, from this host. Not quiet:
+    # rustc notes on every Apple link that it found no macOS SDK, which says
+    # nothing about the code; `-D warnings` is what holds the code to no warnings.
+    # Its own target directory keeps the host build's cache. Zig comes from the
+    # venv scripts/build-dist.sh installs, the Apple rustup targets with it.
+    _bar("macos", "macos", "cargo", "zigbuild", "--workspace", "--all-targets",
+         "--target", "aarch64-apple-darwin", "--target", "x86_64-apple-darwin", quiet=False,
+         env={"RUSTFLAGS": "-D warnings", "CARGO_TARGET_DIR": f"{ROOT}/_build/.target-macos",
+              "PATH": "$HOME/.local/share/flezha-zig-venv/bin:$PATH"},
+         tools=["cargo-zigbuild:cargo install cargo-zigbuild --locked"]),
     # The committed prost output is what crates/protobufs/regen.sh writes. A
     # generator that cannot run is not a stale file: only diff's 1 is a finding.
     _bar("proto-fresh", "contract", "bash", "-c",
