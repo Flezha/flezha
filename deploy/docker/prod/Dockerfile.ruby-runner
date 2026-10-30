@@ -26,7 +26,7 @@
 # platform gem needs none — the native library is IN it, which is the whole
 # point — but `msgpack` publishes a source gem for this platform and builds its
 # own C extension at install time.
-FROM ruby:3.4-slim AS gems
+FROM ruby:3.4.12-slim-trixie AS gems
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
@@ -37,7 +37,7 @@ RUN gem install --no-document /tmp/gems/*.gem && rm -rf /tmp/gems
 
 # --- runtime ---------------------------------------------------------------
 
-FROM ruby:3.4-slim
+FROM ruby:3.4.12-slim-trixie
 
 # `libjemalloc2` is the library. No build toolchain and, deliberately, no
 # cargo: if this image ever needs one, the platform gem for its architecture is

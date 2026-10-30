@@ -37,23 +37,21 @@ repository = "https://github.com/flezha/flezha"
 [workspace.dependencies]
 bytes = "1"
 crc32fast = "1.4"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 crossbeam = "0.8"
 crossbeam-deque = "0.8"
 dashmap = "6"
-erased-serde = "0.4.6"
 libc = "0.2"
-mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
-postcard = { version = "1.0", features = ["use-std"] }
-prost = "0.13.5"
+mio = { version = "1.2", features = ["os-poll", "os-ext", "net"] }
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+prost = "0.14.4"
 quinn-proto = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-signal-hook = "0.3"
+signal-hook = "0.4"
 tempfile = "3"
-thiserror = "1.0"
+thiserror = "2"
 tracing = "0.1"
 
 # Every crate opts in with `[lints] workspace = true`. The clippy ceiling is

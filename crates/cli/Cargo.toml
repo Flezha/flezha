@@ -14,7 +14,7 @@ flz_transport = { path = "../flz_transport" }
 # The OS entropy source, for the one value this crate mints: the break-glass
 # bootstrap token. `flz_transport::utility::noise` is deliberately not
 # cryptographic and must not be used for a credential.
-getrandom = "0.2"
+getrandom = "0.4"
 # Already in the graph via flz_transport; the direct dependency is the signal
 # handler `flz mcp` stops its children on, and the parent-death signal that
 # kills a `flzvm` child when `flz` itself is killed.

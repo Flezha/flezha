@@ -195,7 +195,7 @@ impl SendGate {
         }
         let _ = self
             .inflight
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
                 Some(held.saturating_sub(len))
             });
     }

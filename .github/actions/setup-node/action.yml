@@ -3,9 +3,9 @@ description: >
   Node at the version .github/toolchains.json names, plus an optional
   npm ci over one directory and the node_modules cache for it.
 
-# The manifest's single-version pin is 22. `sdk/node/package.json` declares the
+# The manifest's single-version pin is 26. `sdk/node/package.json` declares the
 # floor as `>=20.0.0`, and the Node SDK's own repository runs the package suite
-# on 20 and 24, so a job that needs one Node rather than a Node matrix sits
+# on 20 and 26, so a job that needs one Node rather than a Node matrix sits
 # inside a window that is proved at both ends.
 #
 # A matrix arm overrides the pin with `version:` and stays a fan-out: the

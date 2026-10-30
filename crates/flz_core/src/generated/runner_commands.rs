@@ -113,7 +113,7 @@ pub mod command_request {
 /// spelled family.snake, its `class`, a plain `message`, the `details` that
 /// message names as a JSON object (the encoding `AdminRequest.args` uses), and
 /// a `hint` naming the next command, empty when there is none.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Error {
     #[prost(string, tag = "1")]
     pub code: ::prost::alloc::string::String,
@@ -129,7 +129,7 @@ pub struct Error {
 /// Controller -> SDK, the one frame a refused runner connect is answered with,
 /// written before the controller closes the stream, so the runner can report
 /// why rather than retrying a connection that will never be admitted.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectRefused {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
@@ -145,12 +145,12 @@ pub struct CommandResponse {
     #[prost(bytes = "vec", tag = "4")]
     pub raw_data: ::prost::alloc::vec::Vec<u8>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AssignRunnerId {
     #[prost(string, tag = "1")]
     pub runner_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectSocket {
     #[prost(uint32, tag = "1")]
     pub sockets_count: u32,
@@ -239,19 +239,19 @@ pub struct AddRelayResponse {
 /// journaled: the runner answers once it has read the relay's stop marker, the
 /// instance is quiet and the final processed-prefix marker is sent behind its
 /// records, or once that time has passed. 0 stops it at once.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RemRelay {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
     #[prost(uint64, tag = "2")]
     pub drain_within_ms: u64,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MigrationSerialization {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MigrationDeserialization {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -266,7 +266,7 @@ pub struct MigrationDeserialization {
 /// Tasklet's Cells, `tasklet` + `cell_key` to one Cell. An
 /// `cell_key` without a `tasklet` is refused — a Cell key is unique
 /// only within its Tasklet.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CellState {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -275,7 +275,7 @@ pub struct CellState {
     #[prost(string, tag = "3")]
     pub cell_key: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RunnerDisconnect {
     /// Terminal disconnect: the runner runs its graceful shutdown and then
     /// exits NON-ZERO, so the orchestrator that owns process lifecycle
@@ -289,14 +289,14 @@ pub struct RunnerDisconnect {
     #[prost(string, tag = "2")]
     pub reason: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RelayMessage {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "2")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RelayMessageResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
@@ -313,7 +313,7 @@ pub struct RelayMessageResponse {
 /// Direction is reversed compared to most CommandRequest variants: SDK -> Controller.
 /// It travels as a `request` ControlFrame on the "control_command" payload_id,
 /// and the Controller's ControlChannel dispatches it by its oneof tag.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RunnerShutdownNotification {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -328,7 +328,7 @@ pub struct RunnerShutdownNotification {
 /// Controller -> SDK direction at the wire level — same envelope as the
 /// notification. The SDK awaits this with a per-Relay 2 s timeout
 /// (parallelised across Relays) and exits regardless after the timeout.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RunnerShutdownAck {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -336,7 +336,7 @@ pub struct RunnerShutdownAck {
 /// One serialized inter-tasklet handoff value: the payload bytes produced
 /// by the channel's byte codec, tagged with the producing channel id so a
 /// resume re-seeds through the same channel's decoder.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskHandoffItem {
     #[prost(uint32, tag = "1")]
     pub channel_id: u32,
@@ -348,7 +348,7 @@ pub struct TaskHandoffItem {
 /// on. Both seqs are absent when the Cell wrote no record. The Controller
 /// journals the stage only once every named record is durable, and releases
 /// exactly those records' outputs once the entry is.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CommittedCell {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
@@ -401,7 +401,7 @@ pub struct TaskCommit {
 }
 /// The firing that opened a timer-fed pass: the Cell of the stage's tasklet,
 /// the timer's kind (`true` for event time) and its scheduled timestamp.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimerTrigger {
     #[prost(string, tag = "1")]
     pub cell_key: ::prost::alloc::string::String,
@@ -415,7 +415,7 @@ pub struct TimerTrigger {
 /// reference_id so the SDK wakes the blocked driver. A present `error`
 /// (journal write/fsync failure, oversized handoff) terminates the run
 /// abnormally through the existing terminal-error path.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskCommitResponse {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -468,7 +468,7 @@ pub struct IterCommit {
 /// The failure a dead-lettered turn ends on: the tasklet whose Cell failed,
 /// its attempts, the author's error text, and the Cell's key (empty for a
 /// declared Cell).
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeadLetter {
     #[prost(string, tag = "1")]
     pub tasklet: ::prost::alloc::string::String,
@@ -482,7 +482,7 @@ pub struct DeadLetter {
 /// Controller -> SDK reply to IterCommit, emitted only AFTER the journal entry
 /// is durable (fsync). Same reference_id / terminal-error contract as
 /// TaskCommitResponse.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IterCommitResponse {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -501,7 +501,7 @@ pub struct IterCommitResponse {
 /// declared no durable timer. `consumed_offset` is the highest input-log offset
 /// the run parked to the dead-letter queue unread, absent when none: consumed
 /// without a pass, so the Controller releases it rather than re-delivering it.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IterPark {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -516,7 +516,7 @@ pub struct IterPark {
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
 /// durable state (steps-durable-loop): tasklet `task_idx` of iteration `iter`
 /// completed forward on `cells_ran`.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskCommittedTask {
     #[prost(uint32, tag = "1")]
     pub task_idx: u32,
@@ -602,7 +602,7 @@ pub struct TaskJournalState {
 ///   [cell_key_len: u16 BE][cell_key]`. `change_log_bytes` is
 /// the tail of the WAL framed `[seq: u64 BE][len: u32 BE]
 /// [header: 16B][change_bytes][crc32: u32 BE]` records back-to-back.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RestoreInitState {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
@@ -636,7 +636,7 @@ pub struct RestoreInitState {
 /// SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
 /// is the highest WAL seq folded into State; the Controller expects the next
 /// `cell_state_change` to carry `seq = terminal_seq + 1`.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RestoreInitStateResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
@@ -652,12 +652,12 @@ pub struct RestoreInitStateResponse {
 /// Controller-issued compaction request. The SDK clones the cell's
 /// `Self::State` under the sticky CAS, serializes it, and replies via
 /// `cell_state_snapshot` then `CompactCellResponse`.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompactCell {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompactCellResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
@@ -671,7 +671,7 @@ pub struct CompactCellResponse {
 /// watermark (`status = "open"`). The SDK's per-Cell mailbox
 /// observer translates the signal into the channel's declared
 /// `OverflowPolicy`.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CellMailboxStatus {
     #[prost(bytes = "vec", tag = "1")]
     pub cell_id: ::prost::alloc::vec::Vec<u8>,
@@ -684,12 +684,12 @@ pub struct CellMailboxStatus {
 /// control channel is bound, the SDK is listening, and the reply path is
 /// intact. SDKs without the handler MUST log and ignore the unknown variant
 /// (existing protobuf-decoder behaviour).
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Ping {
     #[prost(string, tag = "1")]
     pub nonce: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PingResponse {
     #[prost(string, tag = "1")]
     pub nonce: ::prost::alloc::string::String,
@@ -708,7 +708,7 @@ pub struct PingResponse {
 /// went: "complete" when every compensate hook it planned succeeded and was
 /// journaled, "partial" when one failed or its journal entry was refused, and
 /// empty when no pass ran (or the runtime predates the field).
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RelayCompleted {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -730,7 +730,7 @@ pub struct RelayCompleted {
 /// encoded CreditWindowAck as the CommandResponse raw_data; a pre-credit SDK
 /// that does not recognise the variant never acks and keeps the legacy
 /// CellMailboxStatus behaviour.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreditWindowInit {
     #[prost(string, tag = "1")]
     pub stream_id: ::prost::alloc::string::String,
@@ -740,7 +740,7 @@ pub struct CreditWindowInit {
 /// SDK -> Controller, as the CommandResponse raw_data of CreditWindowInit.
 /// Echoes the offered `stream_id`; on receipt the controller marks the
 /// session credit-speaking and starts enforcing the byte ledger.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreditWindowAck {
     #[prost(string, tag = "1")]
     pub stream_id: ::prost::alloc::string::String,
@@ -751,7 +751,7 @@ pub struct CreditWindowAck {
 /// The SDK discards a grant whose `stream_id` does not match its current
 /// credit session (stale grant from before a reconnect). One-way; the generic
 /// CommandResponse it solicits is ignored.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreditGrant {
     #[prost(string, tag = "1")]
     pub stream_id: ::prost::alloc::string::String,
@@ -762,7 +762,7 @@ pub struct CreditGrant {
 /// the dead-letter entry identified by `park_id` is fsynced in the DLQ
 /// store, so the parked cell may drop the poison payload and advance.
 /// One-way; the generic CommandResponse it solicits is ignored.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ParkPayloadAck {
     #[prost(string, tag = "1")]
     pub park_id: ::prost::alloc::string::String,
@@ -826,7 +826,7 @@ pub struct RelayGraph {
     pub tasklets: ::prost::alloc::vec::Vec<GraphTasklet>,
 }
 #[derive(serde::Serialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GraphChannel {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -861,7 +861,7 @@ pub struct GraphChannel {
     pub call_create: ::core::option::Option<bool>,
 }
 #[derive(serde::Serialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GraphTasklet {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -886,7 +886,7 @@ pub struct GraphTasklet {
 }
 /// One entry channel of a factory's API, as its class declares it.
 #[derive(serde::Serialize)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ApiEntry {
     #[prost(string, tag = "1")]
     pub channel: ::prost::alloc::string::String,
@@ -925,7 +925,7 @@ pub struct UpdateFactories {
 /// compensation, then emits the normal `RelayCompleted` (status "cancelled")
 /// that drives the single teardown path. Rides the "control_command" payload_id
 /// like other CommandRequest variants.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StepsStop {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -951,7 +951,7 @@ pub struct StepsStop {
 /// Controller records as the spawned instance's parent only when the
 /// requesting session hosts it; empty from outside an invocation or from an
 /// older runtime.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SpawnStepsRequest {
     #[prost(string, tag = "1")]
     pub instance_id: ::prost::alloc::string::String,
@@ -972,7 +972,7 @@ pub struct SpawnStepsRequest {
 /// across re-runs of the invocation; `offset` is the input-log offset the
 /// invocation was taking, and the result is kept exactly as long as that input;
 /// `cell_identity` is the Cell that made the call.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EffectResult {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -990,7 +990,7 @@ pub struct EffectResult {
 /// Controller -> SDK reply to EffectResult. `error` is the refusal, absent once
 /// the result is kept. `first` is set when the identity was already kept with
 /// another payload: `payload` is then that first result, which the call returns.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EffectResultAck {
     #[prost(message, optional, tag = "1")]
     pub error: ::core::option::Option<Error>,
@@ -1019,7 +1019,7 @@ pub struct EffectResults {
 /// resolved to: the requester's own, or the generated one for a request that
 /// carried none (empty when nothing was started). The reply never faults the
 /// requesting tasklet — it only resolves its handle.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SpawnStepsResponse {
     #[prost(string, tag = "1")]
     pub outcome: ::prost::alloc::string::String,
@@ -1044,7 +1044,7 @@ pub struct SpawnStepsResponse {
 ///
 /// Rides the "control_command" payload_id like the other SDK-initiated
 /// variants.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdminRequest {
     #[prost(string, tag = "1")]
     pub verb: ::prost::alloc::string::String,
@@ -1055,7 +1055,7 @@ pub struct AdminRequest {
 /// reference_id so the SDK wakes the blocked caller. `result` is the published
 /// function's own answer as JSON; `error` is a refusal (policy, quota, a name
 /// that resolves to nothing) and is absent otherwise.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AdminResponse {
     #[prost(string, tag = "1")]
     pub result: ::prost::alloc::string::String,
@@ -1069,7 +1069,7 @@ pub struct AdminResponse {
 /// also asks for that tasklet's Cells, at most `limit` of them (default 50,
 /// clamped to 500); a tasklet the class does not declare is refused as
 /// `state.tasklet_not_found`.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskletActivity {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
@@ -1106,7 +1106,7 @@ pub struct TaskletCells {
 /// One Cell's figures. `key` is absent for an unkeyed Cell; `last_admitted_ms`
 /// is on the clock of `read_at_ms`, and a Cell that has admitted nothing yet
 /// carries the time it was created.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CellActivityRow {
     #[prost(string, optional, tag = "1")]
     pub key: ::core::option::Option<::prost::alloc::string::String>,
@@ -1128,7 +1128,7 @@ pub struct CellActivityRow {
 /// `admitted_total` counts mailbox items, timer firings and interval closes
 /// included; `blocked_total` counts wait rounds, not blocked pushes. The
 /// capped, created and evicted totals are kept by dynamic tasklets only.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskletActivityRow {
     #[prost(string, tag = "1")]
     pub tasklet: ::prost::alloc::string::String,

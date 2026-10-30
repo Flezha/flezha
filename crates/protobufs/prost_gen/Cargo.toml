@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-prost-build = "=0.13.5"
+prost-build = "=0.14.4"
 
 # A tool, not part of the product: its own workspace and lock keep prost-build
 # out of the root workspace's dependency graph.

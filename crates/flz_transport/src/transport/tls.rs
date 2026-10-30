@@ -6,33 +6,35 @@
 use std::io;
 use std::sync::Arc;
 
+use rustls::pki_types::pem::{self, PemObject};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::RootCertStore;
 
 /// Read a PEM certificate chain. Errors on unreadable/undecodable input;
 /// an empty chain is the caller's policy question, not an IO error.
 pub fn load_certs(path: &str) -> io::Result<Vec<CertificateDer<'static>>> {
-    let pem = std::fs::read(path)?;
-    let mut reader = io::BufReader::new(&pem[..]);
-
-    rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    CertificateDer::pem_file_iter(path)
+        .and_then(Iterator::collect)
+        .map_err(pem_to_io)
 }
 
 /// Read the first PEM private key.
 pub fn load_private_key(path: &str) -> io::Result<PrivateKeyDer<'static>> {
-    let pem = std::fs::read(path)?;
-    let mut reader = io::BufReader::new(&pem[..]);
+    PrivateKeyDer::from_pem_file(path).map_err(|e| match e {
+        pem::Error::NoItemsFound => io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("no private key found in {}", path),
+        ),
+        e => pem_to_io(e),
+    })
+}
 
-    rustls_pemfile::private_key(&mut reader)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("no private key found in {}", path),
-            )
-        })
+/// A read failure keeps its own kind; anything else is undecodable input.
+fn pem_to_io(e: pem::Error) -> io::Error {
+    match e {
+        pem::Error::Io(e) => e,
+        e => io::Error::new(io::ErrorKind::InvalidData, e),
+    }
 }
 
 /// Read a PEM trust-anchor file into a `RootCertStore`. Errors when the file

@@ -33,6 +33,9 @@ impl TransportServer {
     }
 }
 
+#[rustler::resource_impl]
+impl rustler::Resource for TransportServer {}
+
 impl Drop for TransportServer {
     fn drop(&mut self) {
         self.stop();
@@ -58,6 +61,9 @@ pub struct StreamHandle {
     /// connected. Only a UDS peer has one, and only where the platform can say.
     pub peer_pid: Option<u32>,
 }
+
+#[rustler::resource_impl]
+impl rustler::Resource for StreamHandle {}
 
 impl Drop for StreamHandle {
     fn drop(&mut self) {

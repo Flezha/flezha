@@ -58,7 +58,7 @@ services:
       - flezha_network
 
   zookeeper:
-    image: zookeeper:3.9.3
+    image: zookeeper:3.9.6
     container_name: zookeeper_prod
     restart: unless-stopped
     environment:
@@ -68,7 +68,7 @@ services:
       - flezha_network
 
   kafka:
-    image: confluentinc/cp-kafka:7.8.6
+    image: confluentinc/cp-kafka:7.8.11
     container_name: kafka_prod
     restart: unless-stopped
     environment:

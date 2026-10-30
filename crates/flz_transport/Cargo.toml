@@ -16,7 +16,7 @@ crate-type = ["rlib"]
 test-support = []
 
 [dependencies]
-byteorder = "1.4"
+byteorder = "1.5"
 crossbeam.workspace = true
 mio.workspace = true
 quinn-proto.workspace = true
@@ -25,7 +25,6 @@ bytes.workspace = true
 # SHA-256 that bounds a data socket's runner-id field.
 ring = "0.17"
 rustls.workspace = true
-rustls-pemfile.workspace = true
 # The error catalogue, `errors.json`, and error documents, read typed.
 serde.workspace = true
 serde_json.workspace = true

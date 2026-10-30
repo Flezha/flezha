@@ -8,7 +8,7 @@
 # under /usr/local/ and /opt/ with world-rwx, the only writable state is on
 # the mounted /flezha repo and a /cache volume the caller passes in.
 
-FROM eclipse-temurin:21-jdk-jammy
+FROM eclipse-temurin:21.0.13_9-jdk-jammy
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -28,9 +28,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Maven ───────────────────────────────────────────────────────────────────
-ENV MAVEN_VERSION=3.9.9
-RUN curl -fsSL "https://downloads.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+# The archive keeps every release; downloads.apache.org drops superseded ones.
+ENV MAVEN_VERSION=3.10.0
+ARG MAVEN_SHA512=908b1501bfb420bf7c8affb855534a9c407fd6099367bfb9f2f2dcb8e9799102bffb84518cde74c679bd76870247c6528683abdd620581bffa90f95d92d175aa
+RUN curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
         -o /tmp/maven.tgz \
+    && echo "${MAVEN_SHA512}  /tmp/maven.tgz" | sha512sum -c - \
     && tar -xzf /tmp/maven.tgz -C /opt/ \
     && rm /tmp/maven.tgz \
     && ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn

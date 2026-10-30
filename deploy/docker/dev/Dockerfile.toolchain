@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.28.0
 
 # Dev image — bundles the full toolchain so `docker compose up` gives
 # a developer a ready-to-go shell with everything installed. The
@@ -22,11 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 22 + TypeScript for the testnet TS app and the websocket-plugin
+# Node.js 26 + TypeScript for the testnet TS app and the websocket-plugin
 # test cases that drive it.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_26.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g typescript \
+    && npm install -g typescript@7.0.2 \
     && rm -rf /var/lib/apt/lists/*
 
 # UID/GID 1000 matches the host convention so bind-mounted files stay

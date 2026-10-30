@@ -14,10 +14,10 @@
 # through `ext-ffi`, so the library is built once on the host (or by
 # `scripts/build-php-sdk.sh`) and mounted in.
 
-ARG PHP_VERSION=8.4
+ARG PHP_VERSION=8.4.27
 
 # --- non-thread-safe: the default posture ----------------------------------
-FROM php:${PHP_VERSION}-cli AS nts
+FROM php:${PHP_VERSION}-cli-trixie AS nts
 
 # `ext-ffi` is bundled with PHP's source but not built by the official images,
 # and it links against libffi. `ffi.enable` is left at its default
@@ -28,7 +28,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && docker-php-ext-install -j"$(nproc)" ffi pcntl
 
-COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+COPY --from=composer:2.11.0 /usr/bin/composer /usr/local/bin/composer
 
 # The coverage driver. `phpunit/php-code-coverage` 10 dropped phpdbg, so a
 # coverage run needs Xdebug or PCOV; PCOV is the coverage-only one and costs a
@@ -39,7 +39,7 @@ RUN pecl install pcov \
 WORKDIR /work
 
 # --- thread-safe plus Swoole: the threaded executor ------------------------
-FROM php:${PHP_VERSION}-zts AS zts
+FROM php:${PHP_VERSION}-zts-trixie AS zts
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libffi-dev git unzip \
@@ -67,7 +67,7 @@ RUN apt-get update \
 # it carries the setting that arm needs.
 RUN echo 'ffi.enable=1' > "$PHP_INI_DIR/conf.d/flezha-ffi.ini"
 
-COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+COPY --from=composer:2.11.0 /usr/bin/composer /usr/local/bin/composer
 
 # The coverage driver. `phpunit/php-code-coverage` 10 dropped phpdbg, so a
 # coverage run needs Xdebug or PCOV; PCOV is the coverage-only one and costs a

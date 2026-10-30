@@ -13,14 +13,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 flz_transport = { path = "../flz_transport" }
-rustler = "0.35"
+rustler = "0.38"
 crossbeam.workspace = true
 libc.workspace = true
 mio.workspace = true
 quinn-proto.workspace = true
 bytes.workspace = true
 rustls.workspace = true
-rustls-pemfile.workspace = true
 
 [dev-dependencies]
 flz_transport = { path = "../flz_transport", features = ["test-support"] }

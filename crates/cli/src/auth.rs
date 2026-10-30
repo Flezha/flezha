@@ -108,7 +108,7 @@ fn recover_offline(auth_dir: &Path) {
 /// does not come from the decorrelation noise `flz_transport` ships.
 fn mint_bootstrap_token() -> String {
     let mut raw = [0u8; 32];
-    if let Err(e) = getrandom::getrandom(&mut raw) {
+    if let Err(e) = getrandom::fill(&mut raw) {
         rpc::fail(FlezhaError::with(
             "cli.entropy_unavailable",
             [("reason", e.to_string().into())],

@@ -190,7 +190,7 @@ start_postgres() {
   docker rm -f "$PG" >/dev/null 2>&1
   docker run -d --name "$PG" --network "$NET" \
     -e POSTGRES_USER=flezha -e POSTGRES_PASSWORD=flezha_test -e POSTGRES_DB=flezha \
-    postgres:16-alpine >/dev/null 2>&1
+    postgres:16.15-alpine >/dev/null 2>&1
 
   local deadline=$(($(date +%s) + 60))
   while [ "$(date +%s)" -lt "$deadline" ]; do

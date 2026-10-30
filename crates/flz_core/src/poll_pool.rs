@@ -191,7 +191,7 @@ impl Governor {
     /// has to hold exactly.
     fn reserve(&self, limit: usize) -> bool {
         self.live
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |live| {
                 (live < limit).then_some(live + 1)
             })
             .is_ok()
@@ -224,7 +224,7 @@ impl Governor {
     pub fn left(&self) -> usize {
         let taken = self
             .live
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |live| {
                 live.checked_sub(1)
             });
         self.topping_up.store(false, Ordering::Release);

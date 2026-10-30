@@ -45,7 +45,7 @@ impl RelayInstance {
         let _ = self
             .idle
             .owed_inbox
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 
     /// Whether this instance may sleep: its class sets `sleep_after` and its

@@ -596,7 +596,7 @@ defmodule Flezha.MixProject do
       # plugin is configured.
       {:postgrex, "~> 0.22"},
       {:protox, "~> 2.0"},
-      {:mimic, "~> 1.11"},
+      {:mimic, "~> 2.4"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       # Syntax highlighting for the guides' code blocks. Makeup ships lexers
@@ -604,7 +604,7 @@ defmodule Flezha.MixProject do
       {:makeup_syntect, "~> 0.1", only: :dev, runtime: false},
       {:logger_file_backend, "~> 0.1.1"},
       {:logger_backends, "~> 1.0"},
-      {:rustler, "~> 0.35"},
+      {:rustler, "~> 0.38"},
       {:recon, "~> 2.5"},
       {:phoenix_pubsub, "~> 2.1"},
       # Hoisted to a top-level dep (already transitively present via

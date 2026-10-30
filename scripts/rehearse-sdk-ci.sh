@@ -94,7 +94,7 @@ RELEASE="$(cd "${RELEASE}" && pwd)"
 # act's runner image, plus what GitHub's ubuntu-24.04 image carries and act's
 # does not, and jobs lean on: Maven, and a stable Rust on PATH.
 docker build -q --pull -t "${IMAGE}" - > /dev/null <<'DOCKERFILE'
-FROM catthehacker/ubuntu:act-24.04
+FROM catthehacker/ubuntu:act-24.04-20260815
 RUN apt-get update && apt-get install -y --no-install-recommends maven && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 ENV PATH=/root/.cargo/bin:${PATH}

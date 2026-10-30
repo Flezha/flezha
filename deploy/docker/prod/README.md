@@ -26,7 +26,7 @@ running whatever they happened to cache.
 tag is written once, in the `ELIXIR_IMAGE` argument, and read by both the
 release stage and the builder:
 
-- **Stage 1** — `rust:1.87.0-slim-bookworm`: builds `flz_nif.so` and the
+- **Stage 1** — `rust:1.99.0-slim-bookworm`: builds `flz_nif.so` and the
   `flz` CLI binary with `--release`. It needs no `protoc`: the prost output
   is committed.
 - **Stage 2**, `${ELIXIR_IMAGE}`: assembles the Mix release with
@@ -36,7 +36,7 @@ release stage and the builder:
   compiling `flezha` as a dependency needs, `MIX_ENV=prod`, workdir `/src`.
   A package built here carries the image's OTP and Elixir versions, which is
   what the controller checks before loading it.
-- **Stage 3** — `debian:bookworm-slim`: runtime. Apt-installs `libssl3`,
+- **Stage 3** — `debian:bookworm-20261027-slim`: runtime. Apt-installs `libssl3`,
   `libstdc++6`, `libtinfo6`, `locales`, `ca-certificates`, `tini`. The
   release bundles its own ERTS — there is no system Elixir or Erlang in
   the runtime image, and `:wx` / `:observer` are not packaged.

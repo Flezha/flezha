@@ -59,7 +59,7 @@ serde_json.workspace = true
 postcard.workspace = true
 dashmap.workspace = true
 crossbeam.workspace = true
-jni = { version = "0.21", optional = true }
+jni = { version = "0.22", optional = true }
 # `napi9` is the N-API version floor: Node 20 is the oldest release in the
 # SDK's support window and every release in it speaks 9 or better.
 # `dyn-symbols` resolves the N-API symbols from the host at load time instead
@@ -74,13 +74,13 @@ napi-derive = { version = "3.6", default-features = false, optional = true }
 # `magnus` is the high-level CRuby binding; `rb-sys` is the raw one underneath
 # it, needed directly for `rb_thread_call_without_gvl` — magnus has no safe
 # wrapper for releasing the GVL, and every blocking core call must.
-magnus = { version = "0.8", default-features = false, optional = true }
+magnus = { version = "0.9", default-features = false, optional = true }
 rb-sys = { version = "0.9", optional = true }
 # `pyo3` is the CPython binding. `auto-initialize` is what lets an ordinary
 # Rust test binary start an interpreter, which is how the veneer's mapping is
 # proved with no Python process involved; it is inert in the wheel, where
 # CPython is already running.
-pyo3 = { version = "0.29", default-features = false, features = [
+pyo3 = { version = "0.30", default-features = false, features = [
     "macros",
     "auto-initialize",
 ], optional = true }
@@ -89,7 +89,7 @@ prost = { workspace = true, optional = true }
 [build-dependencies]
 napi-build = { version = "2.4", optional = true }
 rb-sys-env = { version = "0.2", optional = true }
-pyo3-build-config = { version = "0.29", optional = true }
+pyo3-build-config = { version = "0.30", optional = true }
 
 [dev-dependencies]
 flz_core = { path = "../flz_core", features = ["bench-internals", "test-support"] }
