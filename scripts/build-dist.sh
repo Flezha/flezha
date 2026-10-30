@@ -15,6 +15,9 @@
 #   1g. Each SDK language's starter project (priv/ai_kit/templates/) as
 #      flezha-<language>-starter.tar.gz, staged by --stage-release only, for
 #      the same reason.
+#   1h. The controller release archive of each platform, built and smoke-tested
+#      natively by CI's release workflow (scripts/release-archive.sh) and
+#      staged by --stage-release only -> _build/.dist/controller/
 #   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
 #      package's own table declares -> _build/.dist/node-addons/<suffix>/, packed into
 #      the per-platform packages at _build/.dist/node-packages/
@@ -172,6 +175,9 @@ wheel_tiers() {
 # carries beside them.
 ELIXIR_NIFS_OUT="${REPO_ROOT}/_build/.dist/elixir-nifs"
 ELIXIR_NIF_CHECKSUMS="checksum-Elixir.Flezha.SDK.Native.exs"
+# The controller archives: named, packed and checked by their own script, so
+# a macOS runner with only its stock bash can build one.
+CONTROLLER_OUT="${REPO_ROOT}/_build/.dist/controller"
 # The precompiled Ruby gems, and the Ruby minors each one carries a library for.
 RUBY_GEMS_OUT="${REPO_ROOT}/_build/.dist/ruby-gems"
 RUBY_GEM_MINORS="3.3,3.4"
@@ -184,8 +190,6 @@ TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${HOME}/.cache/flezha-cargo}"
 export CARGO_TARGET_DIR
 
-# Persistent zig venv (survives reboots, unlike /tmp).
-ZIG_VENV="${HOME}/.local/share/flezha-zig-venv"
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -391,6 +395,10 @@ PY
   if [[ -z "${TRIPLES}" ]]; then
     stage_asset "${SDK_DIST}/flezha-sdk.jar" "flezha-sdk.jar"
     stage_asset "${TEST_APP_DIST}/java_runner.jar" "java_runner.jar"
+    for platform in $("${SCRIPT_DIR}/release-archive.sh" platforms); do
+      archive="$("${SCRIPT_DIR}/release-archive.sh" name "${platform}")"
+      stage_asset "${CONTROLLER_OUT}/${archive}" "${archive}"
+    done
   fi
   stage_fixture_archive
   stage_starter_archives
@@ -423,40 +431,11 @@ require_cmd java   "install JDK 21"
 require_cmd python3 "install python3 + python3-venv"
 
 # ---------------------------------------------------------------------------
-# 1. Make sure cargo-zigbuild is installed.
+# 1-3. cargo-zigbuild, zig and the rustup target of every triple.
 # ---------------------------------------------------------------------------
-if ! command -v cargo-zigbuild >/dev/null 2>&1; then
-  step "installing cargo-zigbuild (one-time, ~30s)"
-  cargo install cargo-zigbuild --locked
-fi
-
-# ---------------------------------------------------------------------------
-# 2. Make sure zig is on PATH (via a self-contained venv we own).
-# ---------------------------------------------------------------------------
-if ! command -v zig >/dev/null 2>&1; then
-  if [[ ! -x "${ZIG_VENV}/bin/zig" ]]; then
-    step "creating persistent zig venv at ${ZIG_VENV}"
-    python3 -m venv "${ZIG_VENV}"
-    "${ZIG_VENV}/bin/pip" install --quiet ziglang
-    cat > "${ZIG_VENV}/bin/zig" <<EOF
-#!/bin/bash
-exec "${ZIG_VENV}/bin/python" -m ziglang "\$@"
-EOF
-    chmod +x "${ZIG_VENV}/bin/zig"
-  fi
-  export PATH="${ZIG_VENV}/bin:${PATH}"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Make sure all five rustup targets are installed.
-# ---------------------------------------------------------------------------
-step "ensuring rustup targets are installed"
-for t in "${ALL_TRIPLES[@]}"; do
-  if ! rustup target list --installed 2>/dev/null | grep -qx "${t}"; then
-    echo "  rustup target add ${t}"
-    rustup target add "${t}"
-  fi
-done
+step "ensuring cargo-zigbuild, zig and the rustup targets"
+PATH="$("${SCRIPT_DIR}/ensure-zig.sh" "${ALL_TRIPLES[@]}"):${PATH}"
+export PATH
 
 # ---------------------------------------------------------------------------
 # 4. Build the native crates for each target and stage into resources/.

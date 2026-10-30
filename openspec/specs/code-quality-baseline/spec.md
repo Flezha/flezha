@@ -1670,9 +1670,10 @@ workspace, with all its targets, for `aarch64-apple-darwin` and `x86_64-apple-da
 or a compile error in any project crate on either Apple triple SHALL fail the row. The linker's
 note that it found no macOS SDK concerns the host, not the code, and SHALL NOT fail it.
 
-The row SHALL run only when asked for. It SHALL NOT be part of the full run or of any CI
-workflow, and on a host without `cargo-zigbuild` the runner SHALL report the row as not run,
-naming the install command, rather than as a finding.
+The row SHALL run on a Linux runner for every push to `main` that the core workflow's path
+filter selects, and otherwise only when asked for. It SHALL NOT be part of the full run or of
+any pull-request job, and on a host without `cargo-zigbuild` the runner SHALL report the row as
+not run, naming the install command, rather than as a finding.
 
 #### Scenario: A clean tree compiles for both Apple triples
 - **WHEN** a developer runs `python3 scripts/run_gates.py --run @macos` on a Linux host with `cargo-zigbuild`, zig and both Apple rustup targets
@@ -1685,6 +1686,11 @@ naming the install command, rather than as a finding.
 #### Scenario: A macOS-only dead-code warning fails the row
 - **WHEN** a helper is used only by tests compiled for Linux alone, and the helper itself is not
 - **THEN** the `@macos` row fails on the unused helper
+
+#### Scenario: A push to main runs the row, a pull request does not
+- **GIVEN** the core workflow
+- **WHEN** a push to `main` touches a Rust crate, and when a pull request touches the same crate
+- **THEN** the push runs `@macos` on a Linux runner and the pull request runs no job that installs `cargo-zigbuild`
 
 ### Requirement: A test SHALL depend on a Linux-only interface only when it is compiled for Linux alone
 

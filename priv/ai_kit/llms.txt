@@ -89,7 +89,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 
 - [Deploying a controller](deploying_a_controller.md): The controller is the part of Flezha that decides and remembers.
 - [Docker](docker.md): The image `flezha/flezha` holds the same release as the binaries, on Debian, and runs it as the user `flezha` (uid 1000).
-- [Building from source](building_from_source.md): The [release archive](deploying_a_controller.md) is built for Linux x86_64.
+- [Building from source](building_from_source.md): The [release archives](deploying_a_controller.md) are built for Linux x86_64 and for macOS on Apple Silicon and Intel.
 - [Connecting a runner](connecting_a_runner.md): A runner is a program of your own that runs your relays.
 - [Clustering](clustering.md): One controller can carry a whole application, but it is then a single machine to lose.
 - [Kubernetes](kubernetes.md): A controller and its runners run on Kubernetes as they run in Docker or Docker Compose: the same images, the same settings as environment variables, and a shared folder for the Unix sockets the runner reaches the controller through.

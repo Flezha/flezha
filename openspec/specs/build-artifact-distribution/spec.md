@@ -67,17 +67,20 @@ against a host-triple-only tree, with no network access.
 
 ### Requirement: A release SHALL publish every supported triple
 
-A tag matching the release pattern SHALL trigger a CI job that cross-builds
+A tag matching the release pattern SHALL trigger a CI workflow that cross-builds
 `flz_core_ffi` for all five supported triples with the `jni` feature and again
 with the `napi` feature, builds the `abi3` wheels and the free-threaded wheels
 for the five triples, builds a precompiled Ruby gem for each of the five
 triples carrying one library per supported Ruby minor, builds the fake
 controller binary for the five triples, assembles the SDK and test-runner fat
-jars, stages the fixture archive, and attaches all of them and a SHA-256
-manifest covering all of them to the GitHub Release for that tag. The `napi`
-binaries SHALL be staged under the per-platform package layout the Node SDK's
-`package.json` declares. Staging SHALL refuse a set missing any of them, naming
-what is missing.
+jars, stages the fixture archive, stages the controller archives, and attaches
+all of them and a SHA-256 manifest covering all of them to the GitHub Release
+for that tag. The `napi` binaries SHALL be staged under the per-platform package
+layout the Node SDK's `package.json` declares. Staging SHALL refuse a set missing
+any of them, naming what is missing.
+
+The workflow SHALL attach nothing to the release until every build and check it
+runs has passed. A tag whose version carries a `-` SHALL make a pre-release.
 
 Pull-request CI SHALL NOT cross-compile any non-host triple. The five-triple
 matrix SHALL run on release tags only.
@@ -85,19 +88,24 @@ matrix SHALL run on release tags only.
 #### Scenario: A release tag publishes the full matrix
 
 - **WHEN** a release tag is pushed and its workflow completes
-- **THEN** the GitHub Release SHALL carry five `jni` `libflz_core_ffi.*` assets, five `napi` addons, five `abi3` wheels, five free-threaded wheels per supported free-threaded interpreter, five precompiled Ruby gems, five fake controller binaries, `flezha-sdk.jar`, `java_runner.jar`, the fixture archive, and a checksum manifest covering all of them
+- **THEN** the GitHub Release SHALL carry five `jni` `libflz_core_ffi.*` assets, five `napi` addons, five `abi3` wheels, five free-threaded wheels per supported free-threaded interpreter, five precompiled Ruby gems, five fake controller binaries, `flezha-sdk.jar`, `java_runner.jar`, the fixture archive, the three controller archives, and a checksum manifest covering all of them
+
+#### Scenario: A failing job attaches nothing
+
+- **WHEN** a release tag is pushed and any build, smoke test or load check of its workflow fails
+- **THEN** the GitHub Release SHALL carry no asset from that run
 
 #### Scenario: Pull-request CI does not cross-compile
 
-- **GIVEN** the merged `.github/workflows/java-sdk.yml`
-- **WHEN** the pull-request-triggered jobs are inspected
+- **GIVEN** the merged workflows under `.github/workflows/`
+- **WHEN** their pull-request-triggered jobs are inspected
 - **THEN** none SHALL install or invoke `zig`, `cargo-zigbuild`, or `ziglang`
 
 #### Scenario: An incomplete release refuses to stage
 
-- **GIVEN** a build output missing a free-threaded wheel or a Ruby platform gem
+- **GIVEN** a build output missing a free-threaded wheel, a Ruby platform gem or a controller archive
 - **WHEN** `scripts/build-dist.sh --stage-release <dir>` runs
-- **THEN** it SHALL fail naming the missing gem or the wheel count of that tier, and SHALL write no manifest
+- **THEN** it SHALL fail naming the missing gem, the wheel count of that tier or the missing archive, and SHALL write no manifest
 
 ### Requirement: Portable packaging SHALL fetch and verify published assets
 
@@ -215,4 +223,53 @@ refuses a manifest reached through the `test/apps/rust_runner` symlink.
 #### Scenario: The suite still boots the reference runner
 - **WHEN** plain `mix test` runs here
 - **THEN** it SHALL launch two reference runners from `test/apps/rust_runner` through the symlink and they SHALL connect within the boot window
+
+### Requirement: A release SHALL carry a controller archive per platform, run on that platform first
+
+A release SHALL build the controller release, with `bin/flz`, `bin/flzvm` and its own Erlang
+runtime, natively on Linux x86_64, macOS arm64 and macOS x86_64, and publish each as
+`flezha-<version>-<platform>.tar.gz`, where `<version>` is the Mix project version and
+`<platform>` is `linux-x86_64`, `macos-arm64` or `macos-x86_64`. Each archive SHALL leave out
+the release's `tmp` and `storage` directories.
+
+Before it is published, each archive SHALL be unpacked and smoke-tested on a runner of its own
+platform by `scripts/release-archive.sh smoke`: the controller starts as a daemon and becomes ready,
+`flz runner check` reaches its control socket, a runner connects and `flz runner list` shows
+it, and `flz controller stop` exits 0. The smoke test SHALL leave nothing behind outside its
+temporary directory.
+
+`make release-archive` SHALL build and pack the archive for the host by the same steps, so the
+archive and its smoke test can be produced and run locally.
+
+#### Scenario: Each platform's archive has run on that platform
+- **WHEN** a release tag is pushed and its workflow completes
+- **THEN** the release carries `flezha-<version>-linux-x86_64.tar.gz`, `flezha-<version>-macos-arm64.tar.gz` and `flezha-<version>-macos-x86_64.tar.gz`, and the run shows each one's smoke test passing on a runner of its platform
+
+#### Scenario: An archive that cannot serve a runner is not published
+- **WHEN** the unpacked controller of one platform does not become ready, does not answer `flz runner check`, or shows no connected runner
+- **THEN** that smoke test fails and the release carries no asset from the run
+
+#### Scenario: The archive is built and checked locally
+- **WHEN** a developer runs `make release-archive` and then `scripts/release-archive.sh smoke` on the archive it wrote
+- **THEN** the archive for the host's platform is in `_build/.dist/controller/` and the smoke test passes, as in CI
+
+### Requirement: The macOS SDK libraries SHALL be loaded on a Mac before a release
+
+The two cross-built macOS `libflz_core_ffi.dylib` assets SHALL each be loaded on a macOS
+runner of their own chip, with one exported symbol looked up, before the release is
+published.
+
+#### Scenario: A dylib that cannot load stops the release
+- **WHEN** the staged macOS arm64 or x86_64 `libflz_core_ffi.dylib` fails to load, or lacks the symbol, on a runner of its chip
+- **THEN** the load check fails and the release carries no asset from the run
+
+### Requirement: Only `main`, pull requests, schedules and release tags SHALL start CI
+
+No workflow SHALL start on a push to a branch other than `main`. Pushes to `main`, pull
+requests, schedules, manual dispatches and `v*` tags remain the only triggers.
+
+#### Scenario: A push to dev starts nothing
+- **GIVEN** the workflows under `.github/workflows/`
+- **WHEN** their `on:` blocks are inspected
+- **THEN** every `push` trigger names `branches: [main]`, `tags: ["v*"]` or both, and none names another branch
 

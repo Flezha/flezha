@@ -8,10 +8,27 @@ used here.
 >
 > - A controller release running on this machine
 >   ([Deploying a controller](../topics/deploying/deploying_a_controller.md)), version 0.1.2 or later.
-> - Elixir 1.14 or later with Erlang/OTP, and Node.js with npm, to build the release.
+> - To build the release from source instead of downloading it: Elixir 1.14 or later with
+>   Erlang/OTP, and Node.js with npm.
 > - A Postgres database and a role for the console.
 
-## Build the release
+## Get the release
+
+> Download the archive for this machine with its checksum file, check it, and unpack it.
+> {: .step}
+
+```sh
+$ curl -fLO https://github.com/flezha/flezha_console/releases/download/v0.1.0/flezha_console-0.1.0-linux-x86_64.tar.gz
+$ curl -fLO https://github.com/flezha/flezha_console/releases/download/v0.1.0/SHA256SUMS.txt
+$ sha256sum --check --ignore-missing SHA256SUMS.txt
+$ tar -xzf flezha_console-0.1.0-linux-x86_64.tar.gz
+```
+
+Each release has an archive for `linux-x86_64`, `macos-arm64` and `macos-x86_64`, and each
+one started on its own platform before it was published. The release is in `flezha_console/`
+and carries its own Erlang runtime and its compiled assets.
+
+### Or build it from source
 
 > Clone the console and the stylebook side by side, link the stylebook into the console's
 > assets, and build the release.
@@ -29,14 +46,16 @@ $ mix release
 ```
 
 `npm install` links the stylebook checkout into `assets/node_modules`; the release is in
-`_build/prod/rel/flezha_console`.
+`_build/prod/rel/flezha_console`. Use that directory in place of `flezha_console` below.
+
+## Install it
 
 > Install it under a user of its own.
 > {: .step}
 
 ```sh
 $ sudo useradd --system --home /opt/flezha_console --shell /usr/sbin/nologin flezha_console
-$ sudo cp -a _build/prod/rel/flezha_console /opt/flezha_console
+$ sudo cp -a flezha_console /opt/flezha_console
 $ sudo chown -R flezha_console: /opt/flezha_console
 ```
 
@@ -167,8 +186,8 @@ $ sudo sh -c 'set -a; . /etc/flezha_console/console.env; set +a; /opt/flezha_con
 
 ## Update it
 
-Build the new release as above, copy it over `/opt/flezha_console`, and restart the unit. The
-migrations run before it starts again.
+Get the new release as above, by download or build, copy it over `/opt/flezha_console`, and
+restart the unit. The migrations run before it starts again.
 
 ```sh
 $ sudo systemctl restart flezha-console

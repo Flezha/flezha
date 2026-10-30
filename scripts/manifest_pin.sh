@@ -5,6 +5,7 @@
 #   scripts/manifest_pin.sh sdk/python/pyproject.toml pytest   # "pytest==<v>"
 #   scripts/manifest_pin.sh sdk/ruby/flezha.gemspec rubocop    # "rubocop", "<v>"
 #   scripts/manifest_pin.sh .github/toolchains.json node       # "node": "<v>"
+#   scripts/manifest_pin.sh mix.exs version                    # version: "<v>"
 #
 # Every CI step that installs a tool at the version its manifest names calls
 # this, so the anchored pattern exists once and one pin cannot resolve to two
@@ -35,18 +36,21 @@ manifest=$1
 name=$2
 
 case "$manifest" in
-  *.toml) pattern="\"${name}==\\K[^\"]+" ;;
-  *.gemspec) pattern="\"${name}\", \"\\K[^\"]+" ;;
-  *.json) pattern="\"${name}\"\\s*:\\s*\"\\K[^\"]+" ;;
+  *.toml) pattern="\"${name}==([^\"]+)" ;;
+  *.gemspec) pattern="\"${name}\", \"([^\"]+)" ;;
+  *.json) pattern="\"${name}\"[[:space:]]*:[[:space:]]*\"([^\"]+)" ;;
+  *.exs) pattern="[[:space:]]${name}: \"([^\"]+)\"" ;;
   *)
-    echo "$0: $manifest: not a manifest this reader knows (pyproject.toml, a gemspec or a JSON manifest)" >&2
+    echo "$0: $manifest: not a manifest this reader knows (pyproject.toml, a gemspec, a JSON manifest or mix.exs)" >&2
     exit 2
     ;;
 esac
 
 # One version, nothing but version characters: a range, a second entry or no
 # entry at all fails the match.
-version=$(grep -oP -- "$pattern" "$manifest" || true)
+# sed, not `grep -P`: macOS's grep has no Perl patterns, and the macOS release
+# runners read their toolchain versions through here.
+version=$(sed -nE "s/.*${pattern}.*/\\1/p" "$manifest")
 if ! [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]; then
   echo "$0: $manifest pins no exact version for $name (found: ${version:-nothing})" >&2
   exit 1

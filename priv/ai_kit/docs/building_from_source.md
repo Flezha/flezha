@@ -1,8 +1,8 @@
 # Building from source
 
-The [release archive](deploying_a_controller.md) is built for Linux
-x86_64. Build a release yourself on any other platform, or to run a controller
-with changes of your own.
+The [release archives](deploying_a_controller.md) are built for Linux x86_64
+and for macOS on Apple Silicon and Intel. Build a release yourself on any other
+platform, or to run a controller with changes of your own.
 
 ## What you need
 
@@ -40,20 +40,23 @@ applies as it does to a downloaded release.
 > cookie. For anything you want to keep, point `FLEZHA_STATE_DIR` at an
 > absolute path outside the build.
 
-To pack a release of your own as an archive:
+To pack a release of your own as an archive, the way a GitHub release does:
 
 ```sh
-$ tar -czf <name>.tar.gz --exclude='flezha/tmp' --exclude='flezha/storage' -C _build/prod/rel flezha
+$ make release-archive
 ```
 
-A plain `tar` of the directory carries the logs and the node cookie of every
-local run.
+It writes `_build/.dist/controller/flezha-<version>-<platform>.tar.gz` and
+leaves out the release's `tmp/` and `storage/`, which hold the logs and the
+node cookie of every local run. `scripts/release-archive.sh smoke <archive>
+<runner>` runs the check a release runs on it: a controller starts from the
+unpacked archive, a runner connects, and the controller stops.
 
 ## On macOS
 
-Flezha's Rust code is checked to compile for macOS, on Apple Silicon and
-Intel, but a build on a Mac and a controller running there are not tested yet.
-Install the C compiler with
+The release archives for macOS are built and started on Macs before each
+release, so on a Mac they are the simpler route. A build from source on a Mac
+of your own has not been tested yet. Install the C compiler with
 `xcode-select --install`, the other tools with Homebrew, and Rust with
 [rustup](https://rustup.rs):
 
@@ -72,7 +75,8 @@ the first target in the Makefile, so a bare `make` does the same as
 | Target | Does |
 |---|---|
 | `build` | `cargo build --workspace`, `mix deps.get`, `mix compile` |
-| `build-release` | `cargo build --release -p flz_nif -p flz`, then `MIX_ENV=prod mix deps.get --only prod && mix release --overwrite` |
+| `build-release` | `cargo build --release -p flz_nif -p flz`, then `MIX_ENV=prod mix deps.get --only prod && mix release --overwrite`, into `$(REL_DIR)/flezha` (`REL_DIR` defaults to `_build/prod/rel`) |
+| `release-archive` | `build-release`, then the release packed as this platform's archive in `_build/.dist/controller/`, as a GitHub release publishes it |
 | `nif` / `nif-release` | Build only the `flz_nif` crate (debug / release) |
 | `test` | `mix test` |
 | `fmt` | `scripts/format-apply.sh`, the formatter for every language in the tree |

@@ -6,7 +6,7 @@ name: Ruby SDK
 # that repository as a submodule, pinned to a commit. What cannot move is on
 # this side of the pin: the veneer is a feature of this repository's own crate,
 # and end to end needs the controller. The platform gems a release publishes are
-# built by the release job in `java-sdk.yml`.
+# built by the release job in `release.yml`.
 #
 # A change to the gem reaches these jobs when the pin is bumped, which is the
 # change that brings it into end to end at all.

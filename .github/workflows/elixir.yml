@@ -87,3 +87,23 @@ jobs:
         # wraps it in ExUnit.CaptureLog and asserts the message. `@contract`
         # regenerates the committed prost output and fails on a diff.
         run: python3 scripts/run_gates.py --run @core,rust-test-core,rust-test-runner,@contract
+
+  # Every Rust crate and target compiled for both Apple chips with warnings
+  # denied, on a push to main: it cross-compiles, which no pull-request job does.
+  macos-compile:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache: "false"
+
+      - name: Install cargo-zigbuild, zig and the Apple targets
+        run: scripts/ensure-zig.sh aarch64-apple-darwin x86_64-apple-darwin
+
+      - run: python3 scripts/run_gates.py --run @macos

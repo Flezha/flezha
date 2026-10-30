@@ -167,9 +167,10 @@ $ python3 scripts/run_gates.py --run <id>        # one gate
 
 `@macos` compiles every Rust crate and target for `aarch64-apple-darwin` and
 `x86_64-apple-darwin` with warnings denied, so code that builds on Linux but
-not on a Mac fails here first. It needs `cargo-zigbuild`, zig (the venv
-`scripts/build-dist.sh` installs) and both Apple rustup targets, and runs only
-when asked for: no workflow selects it.
+not on a Mac fails here first. It needs `cargo-zigbuild`, zig and both Apple
+rustup targets, which `scripts/ensure-zig.sh aarch64-apple-darwin
+x86_64-apple-darwin` installs. CI runs it on every push to `main`, never on a
+pull request.
 
 A row may run in a directory of its own, under extra environment and a time
 limit, and may be declared quiet: a quiet row that passes but prints a warning,

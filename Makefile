@@ -1,4 +1,4 @@
-.PHONY: build build-release nif nif-release test fmt clean \
+.PHONY: build build-release release-archive nif nif-release test fmt clean \
         refresh-process-hub \
         docker-build docker-publish \
         docker-build-dev docker-build-toolchain \
@@ -12,11 +12,16 @@ build:
 	mix deps.get
 	mix compile
 
-# Rust + Elixir (prod release)
+# Rust + Elixir (prod release), into $(REL_DIR)/flezha
+REL_DIR ?= _build/prod/rel
 build-release:
 	cargo build --release -p flz_nif -p flz
 	MIX_ENV=prod mix deps.get --only prod
-	MIX_ENV=prod mix release --overwrite
+	MIX_ENV=prod mix release --overwrite --path $(REL_DIR)/flezha
+
+# The release packed as this host's archive, in _build/.dist/controller/
+release-archive: build-release
+	scripts/release-archive.sh pack $(REL_DIR)/flezha
 
 # Re-resolve process_hub within the version requirement mix.exs declares: drop
 # its lock entry so `mix deps.get` picks the newest matching release. Plain

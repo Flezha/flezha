@@ -8,6 +8,13 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- Each release carries the controller archive for Linux x86_64 and for macOS
+  on Apple Silicon and Intel, each built on its own platform and started there,
+  with a runner connected, before it is published. Check a download against the
+  release's `SHA256SUMS.txt`, and fetch it with `curl` on a Mac, which keeps
+  macOS from refusing the unsigned binaries
+  ([deploying a controller](docs/public/topics/deploying/deploying_a_controller.md)).
+  `make release-archive` packs the same archive from a checkout.
 - The longest socket path is the platform's own: 107 bytes on Linux as
   before, 103 on macOS, where a socket directory may therefore be at most 56
   bytes ([files and sockets](docs/public/configuration/files_and_sockets.md)).

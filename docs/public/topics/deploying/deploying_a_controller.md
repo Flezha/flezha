@@ -40,19 +40,34 @@ The four ways give you the same controller:
 
 ### Binaries
 
-**Get the release.** Download the archive for Linux x86_64 and unpack it:
+**Get the release.** Each release has an archive per platform:
+
+| Platform | Archive |
+|---|---|
+| Linux x86_64 | `flezha-<version>-linux-x86_64.tar.gz` |
+| macOS, Apple Silicon | `flezha-<version>-macos-arm64.tar.gz` |
+| macOS, Intel | `flezha-<version>-macos-x86_64.tar.gz` |
+
+Download yours with its checksum file, check it, and unpack it:
 
 ```sh
 $ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-0.1.0-linux-x86_64.tar.gz
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/SHA256SUMS.txt
+$ sha256sum --check --ignore-missing SHA256SUMS.txt
 $ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
 $ cd flezha
 ```
 
+On macOS, `shasum -a 256 --check --ignore-missing SHA256SUMS.txt` does the
+check. Download with `curl`, as above: a browser marks the file as downloaded
+from the internet, and macOS then refuses to run the unsigned binaries in it.
+
 The `flezha/` directory holds `bin/flz` (the CLI) and `bin/flzvm` (the release
 script the CLI calls). The release carries its own Erlang runtime, so the
-machine it runs on needs no Elixir and no Erlang. It is the same artifact the
-production image runs. The release page lists its checksum in
-`SHA256SUMS.txt`. On another platform, or with changes of your own,
+machine it runs on needs no Elixir and no Erlang. The Linux archive is the same
+artifact the production image runs. Each archive started a controller and
+served a runner on its own platform before it was published. On another
+platform, or with changes of your own,
 [build it from source](building_from_source.md).
 
 The commands below call it as `flz`; [CLI](../cli/cli.md) shows how

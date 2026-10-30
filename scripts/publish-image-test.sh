@@ -26,7 +26,7 @@ exit 0
 STUB
 chmod +x "$WORK/bin/docker"
 
-version="$(sed -n 's/^ *version: *"\([^"]*\)".*/\1/p' "$ROOT/mix.exs" | head -1)"
+version="$("$ROOT/scripts/manifest_pin.sh" "$ROOT/mix.exs" version)"
 case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
 tag="flezha/flezha:$version-$arch"
 

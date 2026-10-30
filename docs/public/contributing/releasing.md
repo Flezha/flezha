@@ -1,7 +1,6 @@
 # Releasing
 
-What a release publishes beyond the controller archive, and how each part is
-built. None of it is tracked in git. Working on Flezha needs none of this page:
+What a release publishes, and how each part is built. None of it is tracked in git. Working on Flezha needs none of this page:
 the tests read only the native library for your own platform, which
 [Setting up a checkout](setting_up.md#the-native-library-for-java) builds.
 
@@ -9,17 +8,28 @@ the tests read only the native library for your own platform, which
 
 | Artifact | Where it is built to |
 |---|---|
+| The controller archive for linux-x86_64, macos-arm64 and macos-x86_64 | `_build/.dist/controller/`, by `make release-archive` on each platform |
 | `libflz_core_ffi` for five platforms: linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64 | `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/` |
 | The Java SDK jar, with the five native libraries inside | `sdk/java/flezha-sdk/dist/flezha-sdk.jar` |
 | The Java test runner jar | `test/apps/java_runner/dist/java_runner.jar` |
 
 ## On a version tag
 
-Pushing a `v*` tag runs the release jobs in `.github/workflows/java-sdk.yml`.
-They run the publication readiness gate
-(`python3 scripts/run_gates.py --run @release`), build the five native
-libraries, assemble both jars, and publish them as GitHub Release assets with a
-SHA-256 manifest.
+Pushing a `v*` tag, or creating a GitHub release with a new one, runs
+`.github/workflows/release.yml`:
+
+1. The controller archive is built on a Linux, an Apple Silicon and an Intel
+   Mac runner, and each runs `scripts/release-archive.sh smoke` on its own
+   runner: a controller starts from the unpacked archive, a runner connects and
+   is given a relay, and the controller stops.
+2. On Linux, the publication readiness gate runs
+   (`python3 scripts/run_gates.py --run @release`), then the five native
+   libraries, the SDK packages and both jars are built, and everything is
+   staged with one `SHA256SUMS.txt`.
+3. The two macOS libraries are loaded once on a Mac of their own chip.
+4. Only then is everything attached to the release. A failure anywhere attaches
+   nothing, and a tag with a `-` in it, such as `v0.1.0-rc.1`, makes a
+   pre-release.
 
 [The publication readiness checklist](https://github.com/flezha/flezha/blob/main/docs/internal/publishing/readiness.md)
 lists what has to be settled before a release, and
