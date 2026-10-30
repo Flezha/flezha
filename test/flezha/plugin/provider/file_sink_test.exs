@@ -328,7 +328,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
     end
   end
 
-  # Against `FlezhaTest.Helper.FakeS3`, or MinIO under `S3_INTEGRATION=1`.
+  # Against `FlezhaTest.Helper.FakeS3`, or the dev S3 server under `S3_INTEGRATION=1`.
   describe "commit: rename under an S3 root" do
     if Minio.integration?(), do: @describetag(:s3_integration)
 

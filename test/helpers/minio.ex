@@ -1,18 +1,18 @@
 defmodule FlezhaTest.Helper.Minio do
   @moduledoc """
-  The MinIO in `deploy/docker/dev/docker-compose.yml`, for the tests tagged
+  The S3 server in `deploy/docker/dev/docker-compose.yml`, for the tests tagged
   `:s3_integration`. The default `mix test` skips them; run one with
 
-      docker compose -f deploy/docker/dev/docker-compose.yml up -d minio
+      docker compose -f deploy/docker/dev/docker-compose.yml up -d s3
       S3_INTEGRATION=1 mix test --include s3_integration <file>
 
-  MinIO listens on localhost:9100 with user and password
+  It listens on localhost:9100 with user and password
   `flezha`/`flezha_test_secret`; `MINIO_ENDPOINT`, `MINIO_USER`, `MINIO_SECRET`
   and `MINIO_BUCKET` point the tests elsewhere.
 
-  `file_plugin_root/1` needs no MinIO: it only sets the controller's settings,
+  `file_plugin_root/1` needs no server: it only sets the controller's settings,
   so a default-suite test of an `s3://` root reads the same ones, and
-  `plugin_bucket!/1` answers `FlezhaTest.Helper.FakeS3` in MinIO's place unless
+  `plugin_bucket!/1` answers `FlezhaTest.Helper.FakeS3` in the server's place unless
   `S3_INTEGRATION=1`.
   """
 
@@ -45,7 +45,7 @@ defmodule FlezhaTest.Helper.Minio do
   end
 
   @doc """
-  Point the file plugins at `root`, an `s3://` URL, with MinIO's connection
+  Point the file plugins at `root`, an `s3://` URL, with the server's connection
   settings. Reads and writes nothing; the caller declares the `:env` fixture.
   """
   @spec file_plugin_root(binary()) :: :ok
@@ -54,13 +54,13 @@ defmodule FlezhaTest.Helper.Minio do
     Application.put_env(:flezha, :file_plugin_s3, settings())
   end
 
-  @doc "Whether the tests reach MinIO: `S3_INTEGRATION=1`."
+  @doc "Whether the tests reach the server: `S3_INTEGRATION=1`."
   @spec integration?() :: boolean()
   def integration?(), do: System.get_env("S3_INTEGRATION") == "1"
 
   @doc """
   A file plugin root under a prefix of its own in `bucket`, with its settings
-  set, and client options for that prefix: MinIO's bucket under
+  set, and client options for that prefix: the server's bucket under
   `S3_INTEGRATION=1`, emptied when the test ends, else a `FakeS3` one. The
   caller declares the `:env` and `:system_env` fixtures.
   """

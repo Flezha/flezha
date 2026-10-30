@@ -229,7 +229,7 @@ this page that is not here.
 | `:multi_node` | `nightly-e2e.yml` | no | a peer BEAM this tier boots and stops mid-suite |
 | `:testnet` | a person | no | `mix test.setup`, then a free port `Flezha.Testnet.ws_port/0` derives |
 | `:postgres_integration` | a person | no | the `postgres` compose service |
-| `:s3_integration` | a person | no | the `minio` compose service and `S3_INTEGRATION=1` |
+| `:s3_integration` | a person | no | the `s3` compose service and `S3_INTEGRATION=1` |
 | `:memory_drift` | a person | no | `MIX_RUN_MEMORY_DRIFT=1` and the time the harness takes |
 | `:credit_soak` | a person | no | the time the soak takes |
 

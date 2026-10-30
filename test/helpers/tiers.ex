@@ -137,10 +137,10 @@ defmodule FlezhaTest.Tiers do
       tag: :s3_integration,
       runs_in: :manual,
       workflow: nil,
-      reason: "the minio compose service on localhost:9100, which no CI job stands up",
+      reason: "the s3 compose service on localhost:9100, which no CI job stands up",
       within: nil,
       excluded: true,
-      needs: "the `minio` compose service and S3_INTEGRATION=1",
+      needs: "the `s3` compose service and S3_INTEGRATION=1",
       transports: [:uds],
       doc: "The test tiers",
       self_skip: false

@@ -50,7 +50,7 @@ services:
       - flezha_network
 
   zookeeper:
-    image: zookeeper:3.9.3
+    image: zookeeper:3.9.6
     container_name: flezha_zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
@@ -64,7 +64,7 @@ services:
   # host (the Kafka plugin package's tests and end-to-end run) uses
   # `localhost:19092`, the listener the broker advertises under that name.
   kafka:
-    image: confluentinc/cp-kafka:7.8.6
+    image: confluentinc/cp-kafka:7.8.11
     container_name: flezha_kafka
     environment:
       KAFKA_BROKER_ID: 1
@@ -89,14 +89,13 @@ services:
       - flezha_network
 
   kafka_ui:
-    image: provectuslabs/kafka-ui:latest
+    image: kafbat/kafka-ui:v1.5.0
     container_name: flezha_kafka_ui
     ports:
       - "8081:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     depends_on:
       - kafka
       - zookeeper
@@ -109,7 +108,7 @@ services:
   # shares the default compose project name ("dev") and already owns a
   # `postgres` service on 5432 — colliding with it recreates that container.
   postgres-sink:
-    image: postgres:16
+    image: postgres:16.15
     container_name: flezha_postgres_sink
     environment:
       POSTGRES_USER: flezha
@@ -151,7 +150,7 @@ services:
   # end-to-end run: AMQP on 5672, the management API on 15672. Erlang
   # distribution (4369, 25672) stays unpublished: the host runs its own epmd.
   rabbitmq:
-    image: rabbitmq:4.3.6-management
+    image: rabbitmq:4.3.7-management
     container_name: flezha_rabbitmq
     ports:
       - "5672:5672"
@@ -168,17 +167,17 @@ services:
   # S3-compatible target for the remote durability tier's S3 backend
   # (S3_INTEGRATION=1 mix test --include s3_integration). The bucket is
   # created by the test, so nothing here needs an init container.
-  minio:
-    image: minio/minio:latest
-    container_name: flezha_minio
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: flezha
-      MINIO_ROOT_PASSWORD: flezha_test_secret
+  s3:
+    image: chrislusf/seaweedfs:4.51
+    container_name: flezha_s3
+    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
+    configs:
+      - source: s3_identities
+        target: /etc/seaweedfs/s3.json
     ports:
-      - "9100:9000"
+      - "127.0.0.1:9100:8333"
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -219,6 +218,14 @@ services:
       - flezha_cargo_target:/flezha/_build/.target
     networks:
       - flezha_network
+
+configs:
+  # The test credentials the s3 service accepts.
+  s3_identities:
+    content: |
+      {"identities": [{"name": "flezha",
+        "credentials": [{"accessKey": "flezha", "secretKey": "flezha_test_secret"}],
+        "actions": ["Admin", "Read", "Write", "List", "Tagging"]}]}
 
 volumes:
   socket_data:

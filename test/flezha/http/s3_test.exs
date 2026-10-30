@@ -1,6 +1,6 @@
 defmodule Flezha.Http.S3Test do
   @moduledoc """
-  The two reads a file source makes of an object, against MinIO: the HEAD it
+  The two reads a file source makes of an object, against a real S3 server: the HEAD it
   polls and the ranged GET it reads with. Tagged `:s3_integration`;
   `FlezhaTest.Helper.Minio` says how to run it.
   """

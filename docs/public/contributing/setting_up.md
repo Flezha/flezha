@@ -84,7 +84,7 @@ On its first run it creates `.env` from `.env.example` and the
 | `postgres-sink` | `localhost:5433` |
 | `postgres-cdc`, with `wal_level=logical` | `localhost:5434`, database `flezha_test`, user `flezha`, password `flezha_test` |
 | `rabbitmq` | AMQP on `localhost:5672`, management on `http://localhost:15672/` (`guest` / `guest`) |
-| `minio` | `localhost:9100` |
+| `s3`, an S3-compatible server | `localhost:9100` |
 
 To start one service alone:
 

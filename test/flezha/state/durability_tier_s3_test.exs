@@ -1,6 +1,6 @@
 defmodule Flezha.State.DurabilityTier.Backend.S3Test do
   @moduledoc """
-  The S3 durability backend against MinIO, tagged `:s3_integration`;
+  The S3 durability backend against a real S3 server, tagged `:s3_integration`;
   `FlezhaTest.Helper.Minio` says how to run it.
 
   The signature is the part worth exercising against a real server: a
