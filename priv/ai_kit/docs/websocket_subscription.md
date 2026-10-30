@@ -24,7 +24,7 @@ without tearing it down, and can send the relay's outputs back out on the same s
 | `post_connect` | json | `%{}` | no | Frame sent once the socket opens |
 | `ws_opts` | json | `[]` | no | Options passed to the socket library |
 | `payload_metadata` | json | `%{}` | no | Metadata merged into every injection |
-| `idle_timeout_ms` | int | `30000` | no | Silence on the connection before it is reopened; 0 disables |
+| `idle_timeout_ms` | int | `60000` | no | Silence on the connection before it is reopened; 0 disables |
 | `resubscribe_after_ms` | int | `0` | no | Silence of DATA frames before the subscription is reasserted; 0 disables |
 | `subscription_url` | string | none | no | Endpoint the desired item set is polled from |
 | `subscription_items` | list | none | no | Literal desired item set, instead of polling one; changed in place by flz plugin update |
@@ -182,7 +182,7 @@ The plugin runs a two-tier watchdog whether or not a source is configured:
 
 | Tier | Knob | Trigger | Action |
 |---|---|---|---|
-| connection liveness | `idle_timeout_ms` (default `30000`; `0` disables) | no frame of any kind (data, heartbeat, ping/pong) for the window | the connection process exits `{:shutdown, :idle_timeout}` and the host restarts the plugin through its retry path; emits `[:flezha, :plugin, :websocket, :idle_reconnect]` |
+| connection liveness | `idle_timeout_ms` (default `60000`; `0` disables) | no frame of any kind (data, heartbeat, ping/pong) for the window | the connection process exits `{:shutdown, :idle_timeout}` and the host restarts the plugin through its retry path; emits `[:flezha, :plugin, :websocket, :idle_reconnect]` |
 | data liveness | `resubscribe_after_ms` (default `0` = off) | socket alive but no non-`ignore_pattern` data frame for the window | re-sends the subscription on the existing connection, at most once per window; emits `[:flezha, :plugin, :websocket, :resubscribe]` |
 
 Connect and the data-liveness re-subscribe send the same thing: the rendered

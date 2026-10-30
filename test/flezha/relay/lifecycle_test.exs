@@ -567,7 +567,11 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
 
       for declared? <- [true, false] do
         rows = if declared?, do: [%{id: "departing", factory_id: @factory}], else: []
-        stub(HubManager, :declared_relays, fn "departure-ns" -> rows end)
+
+        stub(HubManager, :declared_relays, fn
+          "departure-ns" -> rows
+          namespace -> Mimic.call_original(HubManager, :declared_relays, [namespace])
+        end)
 
         scanned =
           for cause <- unnamed, do: {false, cause, if(declared?, do: :moved, else: :stopped)}
@@ -615,6 +619,82 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       # with no cause left, the departure is the declared entry's, not this stop's.
       stub(HubManager, :declared_relays, fn @namespace -> [%{id: id, factory_id: @factory}] end)
       assert Lifecycle.departure(state) == :moved
+    end
+  end
+
+  describe "a relay declared but running nowhere" do
+    setup %{test_pid: test_pid} do
+      id = "declared-only-#{System.unique_integer([:positive])}"
+      relay = %Builder{id: id, factory_id: @factory}
+
+      stub(HubManager, :declared_relay, fn
+        @namespace, ^id -> {:ok, relay}
+        namespace, other -> Mimic.call_original(HubManager, :declared_relay, [namespace, other])
+      end)
+
+      stub(ProcessHub, :stop_children, fn
+        _hub, [^id], _opts -> send(test_pid, {:hub_stop, id}) && :declared_only
+        hub, ids, opts -> Mimic.call_original(ProcessHub, :stop_children, [hub, ids, opts])
+      end)
+
+      stub(ProcessHub.Future, :await, fn
+        :declared_only -> %ProcessHub.StopResult{status: :ok, stopped: [], errors: []}
+        future -> Mimic.call_original(ProcessHub.Future, :await, [future])
+      end)
+
+      stub(Flezha.Logs.RelayHistory, :ended, fn run, _ends_at ->
+        send(test_pid, {:ended, run.builder.id})
+        :ok
+      end)
+
+      {:ok, id: id}
+    end
+
+    # fails when: the stop door answers relay.not_found for a declaration the
+    # convergence loop keeps trying to start, so no operator can remove it, or
+    # removes it without the record and the announcement any stop makes.
+    test "an operator's stop removes the declaration, recorded and announced", %{id: id} do
+      Telemetry.capture([:flezha, :relay, :stopped])
+
+      assert :ok = RelayManager.stop_relay(@namespace, id)
+      assert_received {:hub_stop, ^id}
+      assert_received {:ended, ^id}
+
+      assert_received {:telemetry, [:flezha, :relay, :stopped], _,
+                       %{relay: ^id, reason: :stopped}}
+    end
+
+    # fails when: a stop lands while the relay's start is on its way and kills
+    # the new child with no teardown walk behind it.
+    test "a relay whose start is on its way is left to it", %{id: id} do
+      misc = ProcessHub.Hub.get(Identificator.hub(@namespace)).storage.misc
+      key = {ProcessHub.Constant.StorageKey.sif(), id}
+      ProcessHub.Service.Storage.insert(misc, key, [node()])
+      on_exit(fn -> ProcessHub.Service.Storage.remove(misc, key) end)
+
+      assert {:error, {:relay_not_found, @namespace, ^id}} =
+               RelayManager.stop_relay(@namespace, id)
+
+      refute_received {:hub_stop, ^id}
+    end
+
+    # fails when: a rescale, which stops a member it moves, takes the
+    # declaration of a member that is not running.
+    test "a rescale leaves the declaration of a member that is not running", %{id: id} do
+      for cause <- [:rescale, :rescale_leave] do
+        assert {:error, {:relay_not_found, @namespace, ^id}} =
+                 RelayManager.stop_relay(@namespace, id, cause: cause, preserve_state: true)
+      end
+
+      refute_received {:hub_stop, ^id}
+      refute_received {:ended, ^id}
+    end
+
+    test "with no declaration either, the stop still answers relay_not_found" do
+      id = "nowhere-#{System.unique_integer([:positive])}"
+
+      assert {:error, {:relay_not_found, @namespace, ^id}} =
+               RelayManager.stop_relay(@namespace, id)
     end
   end
 

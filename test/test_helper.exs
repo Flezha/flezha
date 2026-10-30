@@ -110,6 +110,7 @@ Mimic.copy(ProcessHub.Hub)
 Mimic.copy(ProcessHub.Service.Cluster)
 Mimic.copy(ProcessHub.Service.ProcessRegistry)
 Mimic.copy(ProcessHub.Service.Migration)
+Mimic.copy(ProcessHub.Service.DeclaredChildren)
 Mimic.copy(Flezha.Cluster.Directory)
 Mimic.copy(Flezha.Cluster.GroupedHashing)
 Mimic.copy(Flezha.Cluster.Orchestrator)
@@ -146,6 +147,8 @@ Mimic.copy(Flezha.Convergence.Probe)
 Mimic.copy(Flezha.Convergence.RecoveryGate)
 Mimic.copy(Flezha.Shutdown.Coordinator)
 Mimic.copy(Flezha.Service.Cli)
+Mimic.copy(Flezha.Config.Backoff)
+Mimic.copy(Flezha.Service.PluginRecords)
 
 # Registered after every `Mimic.copy/1` above, so it runs before their own
 # after-suite resets: a reset purges a copied module's original code, which kills

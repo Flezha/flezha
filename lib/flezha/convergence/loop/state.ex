@@ -30,6 +30,9 @@ defmodule Flezha.Convergence.Loop.State do
             # precondition unmet: planned after every other op this tick, so
             # ops that keep waiting cannot hold the per-tick cap for ever.
             unmet: MapSet.new(),
+            # {namespace, relay_id} => the reason the safety-net start found
+            # no runner for it, kept only to log each reason's transitions.
+            unstartable: %{},
             # {kind, target} => %{at, args}: everything a site declared through
             # `Flezha.Convergence.Facts.declare/1` that is not yet repaired.
             facts: %{},

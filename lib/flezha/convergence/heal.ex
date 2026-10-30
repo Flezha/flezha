@@ -112,8 +112,10 @@ defmodule Flezha.Convergence.Heal do
   Apply one planned op. `:ok` and `:error` drive the ladder; `:unmet` is the
   third answer and drives nothing — the op's precondition did not hold, so
   nothing was attempted and the target's rung is neither advanced nor reset.
+  `{:unmet, reason}` is a `start_relay` no runner can serve yet, with the
+  reason the Loop reports for the relay's namespace.
   """
-  @spec execute(Flezha.Convergence.Planner.op()) :: :ok | :error | :unmet
+  @spec execute(Flezha.Convergence.Planner.op()) :: :ok | :error | :unmet | {:unmet, term()}
   def execute(%{primitive: primitive} = op) when primitive in @primitives do
     :telemetry.execute(
       [:flezha, :convergence, :heal],
@@ -370,19 +372,32 @@ defmodule Flezha.Convergence.Heal do
   end
 
   defp start_unplaced(namespace, relay_id, relay) do
-    Logger.warning(
-      "[convergence] starting declared relay #{relay_id} in #{namespace}: " <>
-        "it has run nowhere for longer than the unmet-intent grace"
-    )
-
     # The relay ran before; starting it again is neither announced nor recorded.
     case RelayManager.start_relay(namespace, relay, announce: false, record?: false) do
       {:error, reason} ->
-        Logger.warning("[convergence] start of #{relay_id} failed: #{inspect(reason)}")
-        :error
+        case unstartable(reason) do
+          nil ->
+            Logger.warning("[convergence] start of #{relay_id} failed: #{inspect(reason)}")
+            :error
+
+          why ->
+            {:unmet, why}
+        end
 
       _started_or_duplicate ->
+        Logger.warning(
+          "[convergence] started declared relay #{relay_id} in #{namespace}: " <>
+            "it had run nowhere for longer than the unmet-intent grace"
+        )
+
         :ok
     end
   end
+
+  # A start no runner can serve yet is an unmet precondition, named without
+  # the relay so the Loop can count a namespace's relays under one reason.
+  defp unstartable({:factory_unknown, _namespace, factory}), do: {:factory_unknown, factory}
+  defp unstartable({:no_group_members, _relay_id, factories}), do: {:no_group_members, factories}
+  defp unstartable(:no_quorum), do: :no_quorum
+  defp unstartable(_reason), do: nil
 end

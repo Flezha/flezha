@@ -56,7 +56,12 @@ defmodule Flezha.Plugin.Provider.PostgresPollIntegrationTest do
     # The suite's primary level drops a warning; open the reader so its lines
     # reach the capture.
     :ok = :logger.set_module_level(Reader, :all)
-    on_exit(fn -> :logger.unset_module_level(Reader) end)
+    :ok = :logger.set_module_level(Flezha.Plugin.Provider.Worker, :all)
+
+    on_exit(fn ->
+      :logger.unset_module_level(Reader)
+      :logger.unset_module_level(Flezha.Plugin.Provider.Worker)
+    end)
 
     db = PostgresSink.connect!()
     table = "poll_#{System.unique_integer([:positive])}"
@@ -197,8 +202,8 @@ defmodule Flezha.Plugin.Provider.PostgresPollIntegrationTest do
           poll_once_after_refusal(reader)
         end)
 
-      assert log =~ "read failed table=#{t}"
-      assert log =~ "ingest refused: :parked"
+      assert log =~ "read table=#{t}"
+      assert log =~ "failed consecutive=1 reason=ingest refused: :parked"
     end
 
     test "with durable input the cursor is committed after every confirmed batch",
@@ -279,7 +284,7 @@ defmodule Flezha.Plugin.Provider.PostgresPollIntegrationTest do
       create_view!(db, view, "SELECT id, pg_sleep(0.2)::text AS s FROM #{t}")
 
       log =
-        capture_log([level: :warning], fn ->
+        capture_log([level: :info], fn ->
           {opts, reader} = start(%{table: view, query_timeout_ms: 20, failure_threshold: 3})
           assert wait_until(fn -> :sys.get_state(reader).consecutive_failures == 1 end, 5_000)
           poll_once(reader)
@@ -296,7 +301,10 @@ defmodule Flezha.Plugin.Provider.PostgresPollIntegrationTest do
           assert health(opts, reader) == :healthy
         end)
 
-      assert log =~ "consecutive=3 reason=query_canceled"
+      # The run is logged when it starts and when it ends, not once a read.
+      assert log =~ "consecutive=1 reason=query_canceled"
+      refute log =~ "consecutive=2"
+      assert log =~ "recovered after 3 consecutive failures"
     end
   end
 

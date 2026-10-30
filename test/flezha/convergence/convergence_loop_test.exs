@@ -176,6 +176,82 @@ defmodule Flezha.Convergence.LoopTest do
       refute_received {:tick_state, :error}
     end
 
+    # fails when: every tick logs each declared relay no runner serves.
+    test "declared relays no runner serves are reported once per namespace and reason" do
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:info))
+
+      # Stubbed inside the capture: the Loop may tick on its own at any time.
+      blocked =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          unplaced(["op"])
+          starts(%{"op" => {:unmet, {:factory_unknown, "f"}}})
+          for _ <- 1..3, do: :ok = Loop.tick_now()
+        end)
+
+      assert [_once] = Regex.scan(~r/cannot be started/, blocked)
+
+      assert blocked =~
+               ~s|1 declared relays in ns run nowhere and cannot be started: | <>
+                 ~s|{:factory_unknown, "f"}|
+
+      unplaced([])
+
+      cleared = ExUnit.CaptureLog.capture_log([level: :info], fn -> :ok = Loop.tick_now() end)
+      assert cleared =~ ~s|declared relays in ns no longer blocked: {:factory_unknown, "f"}|
+    end
+
+    # fails when: a reason is tracked per namespace rather than per relay, so a
+    # change of reason, or one that clears and comes back while other relays
+    # stay unplaced, goes unreported, or the count is the namespace's.
+    test "a reason that changes, clears and returns is reported each time, counted per reason" do
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:info))
+      stub(Intent, :declared, fn -> declared(["op", "op2"]) end)
+      unknown = {:unmet, {:factory_unknown, "f"}}
+      no_members = {:unmet, {:no_group_members, ["f"]}}
+
+      both =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          unplaced(["op", "op2"])
+          starts(%{"op" => unknown, "op2" => unknown})
+          :ok = Loop.tick_now()
+        end)
+
+      assert both =~
+               ~s|2 declared relays in ns run nowhere and cannot be started: {:factory_unknown|
+
+      changed =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          starts(%{"op" => no_members, "op2" => :ok})
+          :ok = Loop.tick_now()
+        end)
+
+      assert changed =~ ~s|no longer blocked: {:factory_unknown, "f"}|
+      assert changed =~ ~s|1 declared relays in ns run nowhere and cannot be started: {:no_group|
+
+      back =
+        ExUnit.CaptureLog.capture_log([level: :info], fn ->
+          starts(%{"op" => unknown, "op2" => :ok})
+          :ok = Loop.tick_now()
+        end)
+
+      assert back =~ ~s|cannot be started: {:factory_unknown, "f"}|
+      assert back =~ ~s|no longer blocked: {:no_group_members, ["f"]}|
+    end
+
+    defp unplaced(ids) do
+      stub(Intent, :detect_unplaced, fn _intent, since, _now, _watched ->
+        {Enum.map(ids, &{:ns, &1}), since}
+      end)
+    end
+
+    # Each relay's start answers as `answers` says; every other heal is unmet.
+    defp starts(answers) do
+      stub(Heal, :execute, fn
+        %{primitive: :start_relay, target: id} -> Map.fetch!(answers, id)
+        _op -> :unmet
+      end)
+    end
+
     defp watch_ticks() do
       Telemetry.capture([:flezha, :convergence, :tick],
         as: fn _e, _m, meta -> {:tick_state, meta.state} end
@@ -602,7 +678,30 @@ defmodule Flezha.Convergence.LoopTest do
                  }) == :ok
         end)
 
-      assert log =~ "starting declared relay eth_feed in ns: it has run nowhere"
+      assert log =~ "started declared relay eth_feed in ns: it had run nowhere"
+    end
+
+    test "start_relay no runner can serve is unmet, named for the namespace, and not logged" do
+      relay = %{id: "eth_feed", factory_id: "gone"}
+      stub(HubManager, :declared_relay, fn "ns", "eth_feed" -> {:ok, relay} end)
+
+      stub(RelayManager, :start_relay, fn "ns", ^relay, _opts ->
+        {:error, {:factory_unknown, "ns", "gone"}}
+      end)
+
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+
+      log =
+        capture_log([level: :warning], fn ->
+          assert Heal.execute(%{
+                   primitive: :start_relay,
+                   namespace: :ns,
+                   target: "eth_feed",
+                   args: %{}
+                 }) == {:unmet, {:factory_unknown, "gone"}}
+        end)
+
+      refute log =~ "eth_feed"
     end
 
     test "start_relay never starts a relay a stop took out of the declared set" do

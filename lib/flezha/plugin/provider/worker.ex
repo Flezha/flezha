@@ -14,12 +14,14 @@ defmodule Flezha.Plugin.Provider.Worker do
 
   `fields/1` is the state the kit reads: the host watch, the failure run
   (`consecutive_failures`, `last_error`), the time of the last settled read
-  and the timers. `failed/2`, `recovered/1` and `settled/1` move them.
+  and the timers. `failed/3`, `recovered/2` and `settled/1` move them.
   A `{:DOWN, ...}` that is not the host's, and every other message, reach the
   worker's own `handle_info/2`.
   """
 
   alias Flezha.Process.Watch
+
+  require Logger
 
   defmacro __using__(opts) do
     facts = Keyword.get(opts, :facts)
@@ -120,14 +122,45 @@ defmodule Flezha.Plugin.Provider.Worker do
   @spec host(map()) :: Watch.t()
   def host(opts), do: Watch.watch(Watch.new(), Map.fetch!(opts, :overwatcher_pid), :host)
 
-  @doc "`state` after one more failure in a row, `error` the last."
-  @spec failed(map(), term()) :: map()
-  def failed(state, error),
-    do: %{state | consecutive_failures: state.consecutive_failures + 1, last_error: error}
+  @doc """
+  `state` after one more failure in a row, `error` the last.
 
-  @doc "`state` with its failure run cleared."
-  @spec recovered(map()) :: map()
-  def recovered(state), do: %{state | consecutive_failures: 0, last_error: nil}
+  The run is logged under `subject`, the read that failed, when it starts, when
+  its error changes and again at every tenfold count, so a source that stays
+  down the same way writes a line per order of magnitude, not one per attempt.
+  """
+  @spec failed(map(), term(), String.t()) :: map()
+  def failed(state, error, subject) do
+    changed? = state.consecutive_failures > 0 and error != state.last_error
+    state = %{state | consecutive_failures: state.consecutive_failures + 1, last_error: error}
+    failures = state.consecutive_failures
+
+    if changed? or power_of_ten?(failures) do
+      Logger.warning("#{subject} failed consecutive=#{failures} reason=#{reason_text(error)}")
+    end
+
+    state
+  end
+
+  @doc """
+  `state` with its failure run cleared. A run that was under way is logged as
+  ended under `subject`, with its length.
+  """
+  @spec recovered(map(), String.t()) :: map()
+  def recovered(state, subject) do
+    failures = state.consecutive_failures
+
+    if failures > 0 do
+      Logger.info("#{subject} recovered after #{failures} consecutive failures")
+    end
+
+    %{state | consecutive_failures: 0, last_error: nil}
+  end
+
+  defp power_of_ten?(n), do: n == Integer.pow(10, length(Integer.digits(n)) - 1)
+
+  defp reason_text(reason) when is_binary(reason), do: reason
+  defp reason_text(reason), do: inspect(reason)
 
   @doc "`state` settled now: the idle window counts from here."
   @spec settled(map()) :: map()

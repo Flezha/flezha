@@ -22,6 +22,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   # async: false: writes Application env, and owns a hub on a shared on-disk root.
 
   use FlezhaTest.Case, fixtures: [:tmp_dir, :env], async: false
+  use Mimic
 
   alias Flezha.Identificator
   alias Flezha.Plugin
@@ -34,6 +35,7 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   alias Flezha.Service.RelayManager.Teardown
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
+  alias Flezha.State.TestHelpers
   alias ProcessHub.Service.DeclaredChildren
 
   @namespace "declared_mutate_contract_ns"
@@ -57,6 +59,31 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
       )
 
     {:ok, hub_id: hub_id}
+  end
+
+  # fails when: an enable whose entry never becomes readable here goes on to
+  # its bind, which answers that the plugin it just enabled is not enabled.
+  # The relays bound to it are subscribed all the same: the home runs, and a
+  # retry answers already enabled, which subscribes nothing.
+  test "an enable whose entry never shows here is refused as an unanswered registry" do
+    test_pid = self()
+    stub(HubManager, :plugin_entry, fn _namespace, _name -> :error end)
+    stub(Flezha.Config.Backoff, :wait, fn _ladder, _attempt, _target -> :ok end)
+
+    stub(Flezha.Service.PluginRecords, :bindings, fn @namespace, "unreadable" ->
+      [{@relay_id, "unreadable", %Plugin{id: "unreadable", provider: nil, namespace: @namespace}}]
+    end)
+
+    stub(Flezha.Relay.Overwatch, :plugin_subscribe, fn _pid, id, _binding, _entry ->
+      send(test_pid, {:subscribed, id})
+      :ok
+    end)
+
+    plugin =
+      Plugin.new(id: "unreadable", provider: __MODULE__.NoopProvider, namespace: @namespace)
+
+    assert {:error, :registry_unavailable} = PluginManager.enable_plugin("unreadable", plugin)
+    assert_received {:subscribed, "unreadable"}
   end
 
   # fails when: an enable is kept anywhere but the declared set, so a cold
@@ -125,6 +152,31 @@ defmodule Flezha.Service.DeclaredMutateContractTest do
   test "a relay with no declared entry is refused rather than declared" do
     assert {:error, :relay_not_declared} =
              RelayManager.redeclare(@namespace, "never_declared_op")
+  end
+
+  # fails when: a leader whose hub is not running, a peer still starting or
+  # back inside the node-down grace, fails the write at once with noproc.
+  test "a leader whose hub is down is asked again, and refused as transient past the budget",
+       %{hub_id: hub_id} do
+    on_exit(TestHelpers.override_env(:hub_declared_mutate_ms, 300))
+    stub(DeclaredChildren, :leader, fn _hub -> :ghost@nowhere end)
+    ends_at = System.os_time(:millisecond) + 60_000
+
+    assert {:error, :hub_unavailable} =
+             Init.write_plugins(@namespace, @relay_id, RegistryUpdate.put_window_end(ends_at))
+
+    assert declared_opt(hub_id, :max_duration_ends_at) == nil
+
+    asks = :counters.new(1, [])
+
+    stub(DeclaredChildren, :leader, fn _hub ->
+      :counters.add(asks, 1, 1)
+      if :counters.get(asks, 1) == 1, do: :ghost@nowhere, else: node()
+    end)
+
+    assert :ok = RelayManager.redeclare(@namespace, @relay_id)
+    assert declared_opt(hub_id, :max_duration_ends_at) == ends_at
+    assert :counters.get(asks, 1) >= 2
   end
 
   # fails when: a controller running with auto-restore off is told its binding

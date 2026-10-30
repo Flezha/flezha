@@ -158,7 +158,8 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
 
   # ---------- delivery ----------
 
-  defp deliver(state, []), do: {:caught_up, state |> Worker.recovered() |> caught_up()}
+  defp deliver(state, []),
+    do: {:caught_up, state |> Worker.recovered(subject(state)) |> caught_up()}
 
   defp deliver(state, records) do
     verdicts =
@@ -188,7 +189,7 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
   defp advance(state, taken) do
     {{_payload, _metadata, at}, _taken} = List.last(taken)
     emit(:shipped, %{count: length(taken)}, labels(state))
-    Worker.recovered(%{state | cursor: %{state.cursor | at: at}})
+    Worker.recovered(%{state | cursor: %{state.cursor | at: at}}, subject(state))
   end
 
   defp caught_up(%{caught_up: true} = state), do: state
@@ -221,17 +222,14 @@ defmodule Flezha.Plugin.Provider.PostgresPoll.Reader do
 
   defp failed(state, reason) do
     error = error_text(reason)
-    state = Worker.failed(state, error)
+    state = Worker.failed(state, error, subject(state))
     failures = state.consecutive_failures
-
-    Logger.warning(
-      "[Plugin.Provider.PostgresPoll] read failed #{state.where} " <>
-        "consecutive=#{failures} reason=#{error}"
-    )
 
     emit(:failed, %{consecutive_failures: failures}, reason_labels(state, error))
     %{state | plan: replan(state.plan, reason)}
   end
+
+  defp subject(state), do: "[Plugin.Provider.PostgresPoll] read #{state.where}"
 
   defp replan(_plan, %Postgrex.Error{postgres: %{code: code}})
        when code in [:undefined_table, :undefined_column],

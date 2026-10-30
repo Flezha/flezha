@@ -69,6 +69,13 @@ defmodule Flezha.Service.RelayManager.Teardown do
     :ok
   end
 
+  # An operator's stop of a relay running nowhere: it has only its declaration
+  # to lose, no runner to flush and no quota held.
+  defp declared_only?(target), do: target.overwatch == nil and target.cause == :stop
+
+  defp walks?(target, step),
+    do: not declared_only?(target) or step not in [:stream_flush, :final_flush, :quota]
+
   # The steps a stop's cause runs: a rescale is no stop to announce, for the
   # members it keeps and those it takes away alike.
   defp acts?(:failed_start, step), do: step == :hub_stop
@@ -92,8 +99,14 @@ defmodule Flezha.Service.RelayManager.Teardown do
     _kind, _reason -> :ok
   end
 
+  # A declaration-only stop's precommit removes it whether or not a child answers.
   defp hub_stop_step(%{namespace: namespace, relay_id: relay_id} = target, budget) do
-    with {:error, failure} <- hub_stop_children(namespace, [relay_id], budget) do
+    stopped =
+      if declared_only?(target),
+        do: hub_stop_child(namespace, relay_id, budget),
+        else: hub_stop_children(namespace, [relay_id], budget)
+
+    with {:error, failure} <- stopped do
       # Still running, the relay must not end later as stopped by this stop.
       if target.overwatch,
         do: RelayManager.call_overwatch(target.overwatch, {:note, %{cause: nil}})
@@ -114,6 +127,9 @@ defmodule Flezha.Service.RelayManager.Teardown do
   defp state_dir_step(target, budget),
     do:
       on_state_node(target, :reclaim_state_dir, [target.relay_id, target.preserve_state?], budget)
+
+  defp on_state_node(%{overwatch: nil} = target, function, args, _budget),
+    do: RelayManager.on_state_node(target.relay_id, __MODULE__, function, args)
 
   defp on_state_node(target, function, args, budget),
     do: :erpc.call(node(target.overwatch), __MODULE__, function, args, budget)
@@ -187,15 +203,18 @@ defmodule Flezha.Service.RelayManager.Teardown do
   @doc """
   Stop every relay in `namespace` through the hub, in one call after each
   runner's stream channels are flushed, and reclaim each one's state directory.
+  A relay declared but running nowhere loses its declaration with the rest.
   Quotas are not released: the namespace is going away with its ledger.
   """
   @spec stop_all(binary(), non_neg_integer()) :: :ok
   def stop_all(namespace, budget) do
     deadline = System.monotonic_time(:millisecond) + budget
-    relay_ids = namespace |> HubManager.get_all_relays() |> Enum.map(&elem(&1, 0))
+    running = namespace |> HubManager.get_all_relays() |> Enum.map(&elem(&1, 0))
+    declared = namespace |> HubManager.declared_relays() |> Enum.map(& &1.id)
+    relay_ids = Enum.uniq(running ++ declared)
 
     if relay_ids != [] do
-      relay_ids
+      running
       |> Enum.map(&HubManager.relay_runner_tag(namespace, &1))
       |> Enum.uniq()
       |> Enum.each(&stream_flush_step(%{runner_id: &1}, remaining(deadline)))
@@ -325,37 +344,112 @@ defmodule Flezha.Service.RelayManager.Teardown do
 
   defp stop_hosted(namespace, relay_id, opts) do
     cause = Keyword.get(opts, :cause, :stop)
+    operator? = cause == :stop and not Keyword.get(opts, :preserve_state, false)
 
-    with {:ok, relay_pid} <- stop_pid(namespace, relay_id, cause, Keyword.get(opts, :overwatch)) do
-      # Told why it ends and read in one call: the flush needs its runner, the
-      # quota step the Cells its start allocated.
-      facts = opts |> Keyword.take([:terminal]) |> Map.new() |> Map.put(:cause, cause)
-      {runner_id, cell_count, run} = stop_facts(namespace, relay_id, relay_pid, facts)
+    case stop_pid(namespace, relay_id, cause, Keyword.get(opts, :overwatch)) do
+      {:ok, relay_pid} ->
+        # Told why it ends and read in one call: the flush needs its runner,
+        # the quota step the Cells its start allocated.
+        facts = opts |> Keyword.take([:terminal]) |> Map.new() |> Map.put(:cause, cause)
+        read = stop_facts(namespace, relay_id, relay_pid, facts)
+        stop_walk(namespace, relay_id, relay_pid, cause, opts, read)
 
-      target = %{
+      {:error, {:relay_not_found, _, _}} = missing when operator? ->
+        stop_declared(namespace, relay_id, missing, opts)
+
+      error ->
+        error
+    end
+  end
+
+  # Declared but running nowhere, such as a relay whose factory no runner
+  # serves: an operator's stop walks the same steps with no Overwatch, so the
+  # declaration leaves through the hub and the stop is recorded and announced.
+  # No quota is given back: a relay running nowhere is no active relay, which
+  # is what the relay count is rebuilt from. A start still in flight is no such
+  # relay, and is not touched.
+  defp stop_declared(namespace, relay_id, missing, opts) do
+    with {:ok, relay} <- HubManager.declared_relay(namespace, relay_id),
+         true <- running_nowhere?(namespace, relay_id),
+         :ok <- stop_walk(namespace, relay_id, nil, :stop, opts, {nil, 0, relay.run}) do
+      run = %{
         namespace: namespace,
-        relay_id: relay_id,
-        overwatch: relay_pid,
-        runner_id: runner_id,
-        preserve_state?: Keyword.get(opts, :preserve_state, false),
-        cause: cause,
-        terminal: facts[:terminal],
-        run: run,
-        cell_count: cell_count
+        builder: relay,
+        factory_id: relay.factory_id,
+        halt_reason: nil
       }
 
-      steps = Enum.filter(Shutdown.steps(:relay), &acts?(cause, &1.name))
+      _ = RelayHistory.ended(run, fn -> nil end)
+      :ok
+    else
+      false -> missing
+      :error -> missing
+      {:error, _reason} = failed -> failed
+    end
+  end
 
-      case Shutdown.run(:relay, target, Shutdown.stop_timeout_ms(), steps) do
-        {:ok, _report} ->
-          :ok
+  # No hub member runs it or has a start of it on its way; a hub with no
+  # members to ask holds it as far as this can tell.
+  defp running_nowhere?(namespace, relay_id) do
+    case HubManager.get_hub_nodes(namespace, true) do
+      [] ->
+        false
 
-        {:partial, %{errors: [{step, reason} | _]}} ->
-          {:error, {:stop_failed, relay_id, step, reason}}
+      members ->
+        members
+        |> :erpc.multicall(
+          __MODULE__,
+          :held_here?,
+          [namespace, relay_id],
+          Durations.get(:hub_peer_lookup_ms)
+        )
+        |> Enum.all?(&(&1 == {:ok, false}))
+    end
+  end
 
-        {:partial, %{skipped: skipped}} ->
-          {:error, {:stop_timeout, relay_id, skipped}}
-      end
+  @doc false
+  # Whether this node's hub has `relay_id` bound to a node, or sent a start of it
+  # that has not registered yet; a hub that cannot answer counts as holding it.
+  @spec held_here?(binary(), binary()) :: boolean()
+  def held_here?(namespace, relay_id) do
+    Hub.with_live(Identificator.hub(namespace), true, fn hub_id ->
+      match?({_spec, [_ | _]}, ProcessHub.child_lookup(hub_id, relay_id)) or
+        start_sent?(hub_id, relay_id)
+    end)
+  end
+
+  # The hub keeps where it sent a start for 30 s, or until a stop takes it
+  # (`ProcessHub.Service.Dispatcher.take_start_targets/2`).
+  defp start_sent?(hub_id, relay_id) do
+    misc = ProcessHub.Hub.get(hub_id).storage.misc
+    ProcessHub.Service.Storage.get(misc, {ProcessHub.Constant.StorageKey.sif(), relay_id}) != nil
+  end
+
+  defp stop_walk(namespace, relay_id, relay_pid, cause, opts, {runner_id, cell_count, run}) do
+    target = %{
+      namespace: namespace,
+      relay_id: relay_id,
+      overwatch: relay_pid,
+      runner_id: runner_id,
+      preserve_state?: Keyword.get(opts, :preserve_state, false),
+      cause: cause,
+      terminal: opts[:terminal],
+      run: run,
+      cell_count: cell_count
+    }
+
+    steps =
+      Enum.filter(Shutdown.steps(:relay), &(acts?(cause, &1.name) and walks?(target, &1.name)))
+
+    case Shutdown.run(:relay, target, Shutdown.stop_timeout_ms(), steps) do
+      {:ok, _report} ->
+        :ok
+
+      {:partial, %{errors: [{step, reason} | _]}} ->
+        {:error, {:stop_failed, relay_id, step, reason}}
+
+      {:partial, %{skipped: skipped}} ->
+        {:error, {:stop_timeout, relay_id, skipped}}
     end
   end
 

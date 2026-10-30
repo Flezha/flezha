@@ -335,8 +335,10 @@ defmodule Flezha.Convergence.Loop do
     {state, delta} = plan_delta(state, intent, reality)
 
     plan = Planner.plan(delta, state.backoff, unmet_last: state.unmet)
-    {backoff, issued, unmet} = execute_plan(plan, state.backoff)
-    state = %{state | backoff: backoff, unmet: unmet}
+    {backoff, issued, unmet, starts} = execute_plan(plan, state.backoff)
+    unstartable = still_unstartable(state.unstartable, delta.unplaced_relays, starts)
+    maybe_log_unstartable(unstartable, state.unstartable)
+    state = %{state | backoff: backoff, unmet: unmet, unstartable: unstartable}
 
     reclaim_vacant_hubs(reality)
 
@@ -506,18 +508,66 @@ defmodule Flezha.Convergence.Loop do
   # namespace with no capable runner and turn a cap into a spin.
   defp execute_plan(plan, backoff) do
     now = System.monotonic_time(:millisecond)
-
-    Enum.reduce(plan, {backoff, 0, MapSet.new()}, fn op, {acc_backoff, count, unmet} ->
-      case Heal.execute(op) do
-        :unmet ->
-          {acc_backoff, count, MapSet.put(unmet, Planner.key(op))}
-
-        result ->
-          {Backoff.update(acc_backoff, Planner.key(op), ladder_outcome(op, result), now),
-           count + 1, unmet}
-      end
-    end)
+    Enum.reduce(plan, {backoff, 0, MapSet.new(), %{}}, &execute_op(&1, &2, now))
   end
+
+  # `starts` holds every start_relay tried, with the reason no runner could
+  # take it, or nil.
+  defp execute_op(op, {backoff, count, unmet, starts}, now) do
+    case Heal.execute(op) do
+      :unmet ->
+        {backoff, count, MapSet.put(unmet, Planner.key(op)), tried(starts, op, nil)}
+
+      {:unmet, why} ->
+        {backoff, count, MapSet.put(unmet, Planner.key(op)), tried(starts, op, why)}
+
+      result ->
+        {Backoff.update(backoff, Planner.key(op), ladder_outcome(op, result), now), count + 1,
+         unmet, tried(starts, op, nil)}
+    end
+  end
+
+  defp tried(starts, %{primitive: :start_relay} = op, why),
+    do: Map.put(starts, {to_string(op.namespace), op.target}, why)
+
+  defp tried(starts, _op, _why), do: starts
+
+  # A relay stays blocked while it is still unplaced and no start this tick
+  # answered otherwise: the per-tick cap may leave its start untried.
+  defp still_unstartable(blocked, unplaced, starts) do
+    unplaced = MapSet.new(unplaced, fn {namespace, id} -> {to_string(namespace), id} end)
+
+    blocked
+    |> Map.filter(fn {relay, _why} -> MapSet.member?(unplaced, relay) end)
+    |> Map.merge(starts)
+    |> Map.reject(fn {_relay, why} -> is_nil(why) end)
+  end
+
+  # Logged when a namespace's reason appears or clears, never per relay or tick.
+  defp maybe_log_unstartable(same, same), do: :ok
+
+  defp maybe_log_unstartable(new, old) do
+    now = by_reason(new)
+    before = by_reason(old)
+
+    for {{namespace, why}, count} <- now, not Map.has_key?(before, {namespace, why}) do
+      Logger.warning(
+        "[convergence] #{count} declared relays in #{namespace} run nowhere and cannot be " <>
+          "started: #{inspect(why)}; retrying quietly"
+      )
+    end
+
+    for {{namespace, why}, _count} <- before, not Map.has_key?(now, {namespace, why}) do
+      Logger.info(
+        "[convergence] declared relays in #{namespace} no longer blocked: #{inspect(why)}"
+      )
+    end
+
+    :ok
+  end
+
+  defp by_reason(blocked),
+    do: Enum.frequencies_by(blocked, fn {{namespace, _id}, why} -> {namespace, why} end)
 
   # A ladder rung's `:ok` means the remedy was APPLIED, not that the fault
   # cleared — only the declared evidence proves that, and `settle_facts/3` is

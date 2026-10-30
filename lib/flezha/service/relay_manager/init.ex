@@ -255,7 +255,36 @@ defmodule Flezha.Service.RelayManager.Init do
   # not part of its public API; `declared_mutate_contract_test.exs` fails loudly
   # if a release moves it, and the tidy public wrapper replaces this the moment
   # one ships.
+  #
+  # A leader whose hub is not running yet, a peer still starting or one back
+  # inside the node-down grace, cannot take the write: it is asked again, the
+  # leader read afresh each time, until the write's budget is spent, and is
+  # then answered as the transient `:hub_unavailable`.
   defp declare(hub, hub_id, spec) do
+    deadline = System.monotonic_time(:millisecond) + Durations.get(:hub_declared_mutate_ms)
+    declare(hub, hub_id, spec, 0, deadline)
+  end
+
+  defp declare(hub, hub_id, spec, attempt, deadline) do
+    case declare_once(hub, hub_id, spec) do
+      {:error, {:declared_mutate_failed, reason}} = failed ->
+        cond do
+          not leader_down?(reason) ->
+            failed
+
+          Hub.alive?(hub_id) and Backoff.again?(:no_response, attempt, hub_id, deadline) ->
+            declare(hub, hub_id, spec, attempt + 1, deadline)
+
+          true ->
+            {:error, :hub_unavailable}
+        end
+
+      answer ->
+        answer
+    end
+  end
+
+  defp declare_once(hub, hub_id, spec) do
     case DeclaredChildren.leader(hub) do
       leader when leader == node() -> call_declared_mutate(hub_id, spec)
       leader -> remote_declared_mutate(leader, hub_id, spec)
@@ -263,6 +292,13 @@ defmodule Flezha.Service.RelayManager.Init do
   catch
     :exit, reason -> {:error, {:declared_mutate_failed, reason}}
   end
+
+  # The leader's hub is not registered there, or its node is gone; a remote
+  # exit arrives wrapped by `:erpc`.
+  defp leader_down?({:noproc, _call}), do: true
+  defp leader_down?({:exception, {:noproc, _call}}), do: true
+  defp leader_down?(%ErlangError{original: {:erpc, :noconnection}}), do: true
+  defp leader_down?(_reason), do: false
 
   @doc false
   def call_declared_mutate(hub_id, spec) do

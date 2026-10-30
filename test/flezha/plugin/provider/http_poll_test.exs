@@ -133,14 +133,23 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert {"cfg-v1", _} = take_ingest()
 
       set(origin, status: 503, body: "nope")
+      :ok = :logger.set_module_level(Flezha.Plugin.Provider.Worker, :all)
+      on_exit(fn -> :logger.unset_module_level(Flezha.Plugin.Provider.Worker) end)
 
-      for expected <- 1..3 do
-        send(poller, :poll)
+      failing =
+        ExUnit.CaptureLog.capture_log(fn ->
+          for expected <- 1..3 do
+            send(poller, :poll)
 
-        assert_receive {:poll_event, :failed, %{consecutive_failures: ^expected},
-                        %{reason: {:http_status, 503}}},
-                       2_000
-      end
+            assert_receive {:poll_event, :failed, %{consecutive_failures: ^expected},
+                            %{reason: {:http_status, 503}}},
+                           2_000
+          end
+        end)
+
+      # One line opens the run; the attempts after it are counted, not logged.
+      assert failing =~ "failed consecutive=1 reason={:http_status, 503}"
+      refute failing =~ "consecutive=2"
 
       assert {:unhealthy, {:poll_failing, {:http_status, 503}}} =
                HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
@@ -148,9 +157,16 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       refute_ingest()
 
       set(origin, status: 200, body: "cfg-v2")
-      send(poller, :poll)
 
-      assert {"cfg-v2", %{"channel" => @channel}} = take_ingest()
+      recovered =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(poller, :poll)
+          assert {"cfg-v2", %{"channel" => @channel}} = take_ingest()
+          # The run ends once the poll that delivered it is settled.
+          _ = :sys.get_state(poller)
+        end)
+
+      assert recovered =~ "recovered after 3 consecutive failures"
       assert :healthy = HttpPoll.health(health_opts(%{owned_pid: poller, failure_threshold: 3}))
       refute_ingest()
     end

@@ -32,7 +32,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   use Flezha.Process.Timer, keys: [:poll]
 
   require Verdict
-  require Logger
 
   # The prefix is derived from the provider's id; nothing here names a root.
   @provider "http_poll"
@@ -160,7 +159,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
           Map.put(labels(state), :seed, seed?)
         )
 
-        Worker.recovered(%{state | etag: etag})
+        Worker.recovered(%{state | etag: etag}, subject(state))
 
       # Neither the refusing relay's hash nor the validator is advanced: it
       # did not take this content, so the next poll must re-offer it rather
@@ -194,17 +193,12 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
 
   defp unchanged(state, latency_ms) do
     emit(:unchanged, %{latency_ms: latency_ms}, labels(state))
-    Worker.recovered(state)
+    Worker.recovered(state, subject(state))
   end
 
   defp failed(state, reason, latency_ms) do
-    state = Worker.failed(state, reason)
+    state = Worker.failed(state, reason, subject(state))
     failures = state.consecutive_failures
-
-    Logger.warning(
-      "[Plugin.Provider.HttpPoll] poll failed plugin_id=#{inspect(state.plugin_id)} " <>
-        "consecutive=#{failures} reason=#{inspect(reason)}"
-    )
 
     emit(
       :failed,
@@ -218,6 +212,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   defp labels(state), do: %{plugin_id: state.plugin_id, channel: state.entry_channel}
+
+  defp subject(state), do: "[Plugin.Provider.HttpPoll] poll plugin_id=#{inspect(state.plugin_id)}"
 
   defp elapsed(started), do: :erlang.monotonic_time(:millisecond) - started
 end

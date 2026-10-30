@@ -282,7 +282,7 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
     end
   end
 
-  # Against `FlezhaTest.Helper.FakeS3`, or MinIO under `S3_INTEGRATION=1`.
+  # Against `FlezhaTest.Helper.FakeS3`, or the dev S3 server under `S3_INTEGRATION=1`.
   describe "an object under an S3 root" do
     if Minio.integration?(), do: @describetag(:s3_integration)
 
@@ -358,16 +358,17 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
          %{s3: s3, root: root} do
       :ok = S3.put("events.ndjson", "a\n", [], s3)
       System.put_env("FLEZHA_TEST_S3_SECRET", "s3cr3t-value")
-      {opts, reader} = start_reader(%{offset: 0, failure_threshold: 1})
       forbidden = {:unhealthy, {:read_failed, {:stat, {:http, 403}}}}
-      assert wait_until(fn -> health(opts, reader) == forbidden end, 5_000)
-
       on_exit(override_log_level(:warning))
 
-      log =
-        capture_log([level: :warning], fn ->
+      # A failure run is logged at its first failure, not at every poll.
+      {{opts, reader}, log} =
+        with_log([level: :warning], fn ->
+          {opts, reader} = start_reader(%{offset: 0, failure_threshold: 1})
+          assert wait_until(fn -> health(opts, reader) == forbidden end, 5_000)
           send(reader, :poll)
           settle(reader)
+          {opts, reader}
         end)
 
       status = capture_io(fn -> Cli.call("Controller.status", "[]", []) end)

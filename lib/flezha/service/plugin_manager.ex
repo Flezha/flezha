@@ -160,11 +160,12 @@ defmodule Flezha.Service.PluginManager do
 
     case Init.start_declared(namespace, spec, %{}, {:plugin, name}) do
       %ProcessHub.StartResult{started: [{_, [_ | _]} | _]} ->
-        await_entry(namespace, name, 0)
+        # The home runs whether or not its row reached here: its relays subscribe.
+        readable = await_entry(namespace, name, 0)
         # A controller plugin's home answers once it has placed its copies.
         if Plugin.controller?(entry), do: Home.serialized(namespace, name, fn -> :ok end)
         _ = reconverge(namespace, name, &Overwatch.plugin_subscribe(&1, &2, &3, entry))
-        {:ok, :enabled}
+        with :ok <- readable, do: {:ok, :enabled}
 
       {:error, :no_quorum} = refused ->
         refused
@@ -178,17 +179,20 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  # The hub answers a start once its child runs where it was placed; this
-  # node's rows learn of it a moment later. An enable answers once the plugin
-  # is readable here, so a bind that follows it finds it.
+  # This node's rows learn of a started home a moment later; an enable waits
+  # for them so a bind after it finds the plugin. Rows that never come are a
+  # registry that did not answer, not a plugin left disabled.
   defp await_entry(namespace, name, attempt) do
-    if HubManager.plugin_entry(namespace, name) != :error or
-         Backoff.give_up?(:no_response, attempt) do
-      :ok
-    else
-      Backoff.wait(:no_response, attempt + 1, {:plugin, name})
-      await_entry(namespace, name, attempt + 1)
+    cond do
+      HubManager.plugin_entry(namespace, name) != :error -> :ok
+      Backoff.give_up?(:no_response, attempt) -> {:error, :registry_unavailable}
+      true -> rewait_entry(namespace, name, attempt + 1)
     end
+  end
+
+  defp rewait_entry(namespace, name, attempt) do
+    Backoff.wait(:no_response, attempt, {:plugin, name})
+    await_entry(namespace, name, attempt)
   end
 
   ## Bind

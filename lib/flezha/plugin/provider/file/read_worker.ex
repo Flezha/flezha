@@ -223,7 +223,9 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
     offset = state.offset + byte_size(line) + 1
     emit(:shipped, %{bytes: byte_size(line), offset: offset}, labels(state))
 
-    %{state | offset: offset, buffer: rest} |> Worker.recovered() |> Worker.settled()
+    %{state | offset: offset, buffer: rest}
+    |> Worker.recovered(subject(state))
+    |> Worker.settled()
   end
 
   # A fragment already past the cap is a line past the cap whatever follows it.
@@ -278,13 +280,8 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
   end
 
   defp failed(state, reason) do
-    state = Worker.failed(state, reason)
+    state = Worker.failed(state, reason, subject(state))
     failures = state.consecutive_failures
-
-    Logger.warning(
-      "[Plugin.Provider.File.Source] read failed path=#{state.path} offset=#{state.offset} " <>
-        "consecutive=#{failures} reason=#{inspect(reason)}"
-    )
 
     emit(
       :failed,
@@ -297,6 +294,8 @@ defmodule Flezha.Plugin.Provider.File.ReadWorker do
 
   defp labels(state),
     do: %{plugin_id: state.plugin_id, path: state.path, channel: state.entry_channel}
+
+  defp subject(state), do: "[Plugin.Provider.File.Source] read path=#{state.path}"
 
   defp now(), do: :erlang.monotonic_time(:millisecond)
 end

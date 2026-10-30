@@ -50,8 +50,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   end
 
   describe "build/1 — default and conversion" do
-    test "defaults idle_timeout_ms to 30_000 when no flag is passed" do
-      assert {:ok, %Websocket{idle_timeout_ms: 30_000}} =
+    test "defaults idle_timeout_ms to 60_000 when no flag is passed" do
+      assert {:ok, %Websocket{idle_timeout_ms: 60_000}} =
                Websocket.build(%{"uri" => "wss://example.com"})
     end
 
@@ -69,7 +69,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
       # An invalid value coerces to the safe default rather than crashing
       # the plugin manager mid-restart. A warning log is emitted; we don't
       # assert on it here because the value is what protects the user.
-      assert {:ok, %Websocket{idle_timeout_ms: 30_000}} =
+      assert {:ok, %Websocket{idle_timeout_ms: 60_000}} =
                Websocket.build(%{"uri" => "wss://example.com", "idle_timeout_ms" => "soon"})
     end
   end
@@ -274,16 +274,12 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
       assert log =~ "applying #{ping * 2} ms"
     end
 
-    test "the default idle window is exactly the default ping interval, so it is raised" do
-      # The finding this floor closes: the two defaults were equal, so the
-      # threshold was reached at the moment the next pong was due.
-      ping = Fresh.Option.ping_interval([])
-      assert Websocket.Client.default_idle_timeout_ms() == ping
+    test "the shipped default sits above the default ping interval, so it is left alone" do
+      default = Websocket.Client.default_idle_timeout_ms()
+      assert default > Fresh.Option.ping_interval([])
 
-      log =
-        capture_log(fn -> assert window(Websocket.Client.default_idle_timeout_ms()) > ping end)
-
-      assert log =~ "keepalive ping interval"
+      refute capture_log(fn -> assert window(default) == default end) =~
+               "keepalive ping interval"
     end
 
     test "the floor follows the interval a user actually configured" do

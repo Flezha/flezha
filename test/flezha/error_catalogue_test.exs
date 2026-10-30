@@ -71,6 +71,17 @@ defmodule Flezha.ErrorCatalogueTest do
            "sites that are neither a verb action nor a wire site:\n" <> Enum.join(unknown, "\n")
   end
 
+  # Fails when: a plugin write whose namespace hub is not up yet answers
+  # internal.uncatalogued at a verb that writes the declared set.
+  test "a declared-set write the hub cannot take yet is a retryable refusal at every plugin write" do
+    actions = Map.new(Verbs.all(), &{&1.verb, &1.action})
+
+    for verb <- [:plugin_enable, :plugin_bind, :plugin_unbind, :plugin_update, :plugin_disable] do
+      assert %Flezha.Error{code: "plugin.registry_unavailable"} =
+               Flezha.Error.from_reason(:hub_unavailable, Map.fetch!(actions, verb))
+    end
+  end
+
   test "no reason at one site maps to two codes" do
     claims =
       for {code, entry} <- @catalogue["codes"],

@@ -244,7 +244,9 @@ defmodule Flezha.Config.DurationRows do
     # restart brings the plugin's worker back well inside it.
     {:listener_release_check_ms, :ms, 5_000, key: true},
     {:provider_probe_timeout_ms, :ms, 500, []},
-    {:ws_idle_timeout_ms, :ms, 30_000, []},
+    # Two of the socket library's 30 s keepalive pings, so the default sits
+    # above the floor `Websocket.Client.idle_window/1` enforces.
+    {:ws_idle_timeout_ms, :ms, 60_000, []},
     {:ws_min_tick_interval_ms, :ms, 1_000, []},
     {:ws_resubscribe_after_ms, :ms, 0, []},
     {:ws_sink_handoff_timeout_ms, :ms, 5_000, []},
