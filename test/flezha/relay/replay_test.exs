@@ -457,6 +457,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Rebind
@@ -464,6 +465,7 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Gate
+  alias Flezha.Runner.StreamPool
   alias Flezha.State.InputLog
   alias Flezha.State.TaskJournal
   alias Flezha.State.TestHelpers
@@ -637,6 +639,59 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
     end
   end
 
+  # The session's streams are let go and fresh ones bound under running relays.
+  describe "a data-plane rebind" do
+    # fails when: an input a broken stream swallowed is never sent again, or goes
+    # after an input forwarded on the fresh stream, whose offset raised its
+    # Cell's consumed floor past it, so the runner drops it.
+    test "re-forwards a parked relay's tail ahead of input taken once the fresh stream bound",
+         ctx do
+      runner_id = "bindfwd_park_#{System.unique_integer([:positive])}"
+      channel = StreamPool.channel_for(runner_id, ctx.class)
+      {:ok, pid} = StreamChannel.start_link({"_system", runner_id, channel, :primary})
+      on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
+      ctx = %{ctx | channel: channel, channel_pid: pid}
+      bind_stream(ctx)
+
+      state = overwatch(ctx, effectively_once: true, runner_id: runner_id, phase: :running)
+      state = ingest_cast(state, "swallowed")
+      assert drain_frames(ctx) == ["swallowed"]
+      unbind_stream(ctx)
+
+      state = Rebind.park_stream(state, runner_id)
+      assert state.channel == nil
+
+      # The fresh stream is up, and its notice not yet handled when input comes.
+      bind_stream(ctx)
+      assert_received {:stream_bound, ^channel} = bound
+      state = ingest_cast(state, "fresh")
+      assert drain_frames(ctx) == []
+
+      assert {:noreply, %Overwatch{channel: ^channel}} = Overwatch.handle_info(bound, state)
+      assert drain_frames(ctx) == ["swallowed", "fresh"]
+    end
+
+    # fails when: the rebind leaves a relay of the session unparked, and it
+    # forwards fresh input ahead of the tail its lost stream dropped.
+    test "parks every relay the session's identity owns on this node, and only those" do
+      owner = "bindfwd_identity_#{System.unique_integer([:positive])}"
+      mine = answering_overwatch()
+      other = answering_overwatch()
+      ClassRegistry.put_overwatch("#{owner}_mine", mine, owner)
+      ClassRegistry.put_overwatch("#{owner}_other", other, "#{owner}_elsewhere")
+
+      on_exit(fn ->
+        ClassRegistry.delete("#{owner}_mine")
+        ClassRegistry.delete("#{owner}_other")
+      end)
+
+      :ok = Rebind.park_streams("bindfwd_runner", owner)
+
+      assert_received {:asked, ^mine, {:park_stream, "bindfwd_runner"}}
+      refute_received {:asked, ^other, _}
+    end
+  end
+
   # A rebind runs in a task while the Overwatch keeps serving on the channel
   # the relay is leaving, whose runner is gone. ctx.channel is the bind's target.
   describe "a bind in flight" do
@@ -796,10 +851,28 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
     end)
   end
 
+  # A stand-in Overwatch that answers every call `:ok` and tells the test what
+  # it was asked.
+  defp answering_overwatch do
+    test_pid = self()
+    pid = spawn(fn -> answer_calls(test_pid) end)
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    pid
+  end
+
+  defp answer_calls(test_pid) do
+    receive do
+      {:"$gen_call", from, request} ->
+        send(test_pid, {:asked, self(), request})
+        GenServer.reply(from, :ok)
+        answer_calls(test_pid)
+    end
+  end
+
   # Put the channel back in the unbound state the product reaches on a dropped
   # stream, so the next round starts from the same forced precondition.
-  defp unbind_stream(%{channel: channel, channel_pid: pid}) do
-    send(pid, {:flz_closed, 0, "test"})
+  defp unbind_stream(%{channel: channel}) do
+    NodeTestHelper.close_bound_stream(channel, "test")
     assert GenServer.call(channel, :stream_ref_status) == nil
     :ok
   end

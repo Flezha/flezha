@@ -2,18 +2,22 @@ defmodule Flezha.Relay.Rebind do
   @moduledoc """
   The bind task every move runs (a rebind, a wake, a restarted runner): it runs
   `Flezha.Relay.Lifecycle.complete_init/5` off the Overwatch and reports, and
-  the result is folded back here. And a reconnect's session swap.
+  the result is folded back here. And a reconnect's session swap, and the park
+  that carries a relay across its session's data-plane rebind.
   """
 
+  alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Relay.Builder
+  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.StreamPool
   alias ProcessHub.Service.Migration, as: HubMigration
 
   require Logger
@@ -69,6 +73,49 @@ defmodule Flezha.Relay.Rebind do
   end
 
   def session_replaced(%Overwatch{} = state, _old_session, _new_session, _continuity), do: state
+
+  @doc """
+  Park every relay `runner_id`'s session `identity` owns on this node, once its
+  data streams are let go and before fresh ones are asked for: a lost stream
+  dropped what its write buffer held, and the input log's tail above the
+  floor is owed again, ahead of any fresh input.
+  """
+  @spec park_streams(binary(), binary()) :: :ok
+  def park_streams(runner_id, identity) do
+    pids =
+      for class <- ClassRegistry.running(identity),
+          {:ok, pid} <- [ClassRegistry.overwatch_pid(class)],
+          do: pid
+
+    StreamPool.call_each(pids, {:park_stream, runner_id})
+  end
+
+  @doc """
+  Park a running relay with a durable input log bound to `runner_id`: it
+  forwards on no channel and is armed for its own to bind again, so every input
+  journaled meanwhile stays in the tail its re-forward sends first
+  (`unpark/1`), at once when that channel is bound already.
+  """
+  @spec park_stream(Overwatch.t(), binary()) :: Overwatch.t()
+  def park_stream(
+        %Overwatch{runner_id: runner_id, phase: :running, bind_task: nil} = state,
+        runner_id
+      ) do
+    own = %Overwatch{state | channel: StreamPool.channel_for(runner_id, state.id)}
+
+    if Replay.floor_reporter(state) && Replay.arm_bind_reforward(own) == :armed,
+      do: %Overwatch{state | channel: nil},
+      else: state
+  end
+
+  def park_stream(%Overwatch{} = state, _runner_id), do: state
+
+  @doc "A parked relay's channel back, on its bind (`park_stream/2`)."
+  @spec unpark(Overwatch.t()) :: Overwatch.t()
+  def unpark(%Overwatch{channel: nil, runner_id: runner_id} = state) when runner_id != nil,
+    do: %Overwatch{state | channel: StreamPool.channel_for(runner_id, state.id)}
+
+  def unpark(%Overwatch{} = state), do: state
 
   @doc """
   Tell a deferred migration it may retry now. It re-queries consent on its own
@@ -185,6 +232,7 @@ defmodule Flezha.Relay.Rebind do
     Logger.info("[Overwatch] relay #{state.id} bound onto runner #{recovered.runner_id}")
 
     Lifecycle.publish_binding(recovered, state.runner_id)
+    Facts.declare({:relay_bound, state.id, %{}})
 
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 

@@ -25,12 +25,13 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Process.Watch
+  alias Flezha.Relay.Rebind
   alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Gate
-  alias Flezha.Runner.StreamChannel.Records
+  alias Flezha.Runner.StreamPool
   alias Flezha.SDK.SafeCall
   alias Flezha.Transport.LivenessCounters
   alias Flezha.Transport.Stream, as: TStream
@@ -163,10 +164,11 @@ defmodule Flezha.Runner.ControlChannel do
        control_unit: Identificator.control_unit(runner_id),
        liveness_ref: LivenessCounters.register_channel(runner_id, :control),
        last_seen: System.monotonic_time(:millisecond),
-       rebinding?: false,
+       # `nil`, or the running rebind's step: `:releasing` the old streams,
+       # `:connecting` while the runner opens fresh ones, or `:owed` once a loss
+       # past the release owes another rebind after it answers.
+       rebinding: nil,
        rebinds: 0,
-       # A returned channel announced itself while a rebind ran.
-       rebind_owed?: false,
        # Every data channel that announced itself, tagged with its name.
        data_channels: Watch.new(),
        send_gate_raised?: false,
@@ -261,7 +263,14 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, state}
   end
 
-  def handle_cast(:rebind_data_streams, %{rebinding?: true} = state), do: {:noreply, state}
+  # A loss while the old streams are let go is the fault being repaired, which
+  # every channel of a severed data plane reports. After that, a closed stream
+  # is one this rebind bound, and a returned channel may have come up after the
+  # fresh streams were bound, so another rebind is owed.
+  def handle_cast(:rebind_data_streams, %{rebinding: :releasing} = state), do: {:noreply, state}
+
+  def handle_cast(:rebind_data_streams, %{rebinding: step} = state) when step != nil,
+    do: {:noreply, %{state | rebinding: :owed}}
 
   def handle_cast(:rebind_data_streams, %{rebinds: n} = state) when n >= @rebinds do
     Logger.warning("[control_channel] #{state.runner_id} lost its data plane after #{n} rebinds")
@@ -269,27 +278,33 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   # Off this process, so the channel keeps serving the session while it waits.
-  def handle_cast(:rebind_data_streams, %{runner_id: runner_id} = state) do
+  # Every channel lets its stream go first, and a close it reported before
+  # its release answered reaches this mailbox ahead of `:rebind_released`. The
+  # relays are parked before the runner is asked for fresh streams, so none
+  # forwards fresh input onto one ahead of the tail its lost stream dropped.
+  def handle_cast(:rebind_data_streams, %{runner_id: runner_id, identity: identity} = state) do
     channel = self()
 
     Task.start_link(fn ->
+      StreamPool.call_channels(runner_id, :release_stream)
+      Rebind.park_streams(runner_id, identity)
+      send(channel, :rebind_released)
       send(channel, {:rebind_answered, FleetManager.rebind_data_streams(runner_id)})
     end)
 
-    {:noreply, %{state | rebinding?: true, rebinds: state.rebinds + 1}}
+    {:noreply, %{state | rebinding: :releasing, rebinds: state.rebinds + 1}}
   end
 
-  # A channel's binding and routes die with its process, its replacement starts
-  # unbound, and a runner opens data streams only when asked. So a returned
-  # channel is handled as its stream closing: the runner's relays are flagged
-  # and it is asked for a fresh pair set. A killed channel cannot ask; its
-  # replacement is the first process that can.
+  # A channel's binding dies with its process, its replacement starts unbound,
+  # and a runner opens data streams only when asked. So a returned channel is
+  # handled as its stream closing: the runner is asked for a fresh pair set, and
+  # its relays keep running there, routes warming again on their next frame. A
+  # killed channel cannot ask; its replacement is the first process that can.
   def handle_cast({:data_channel_up, name, pid, returned?}, state) do
     state = %{state | data_channels: Watch.watch(state.data_channels, pid, name)}
 
     if returned? and not Marks.runner_retiring?(state.runner_id) do
-      Records.emit_owned_output_stall(state.runner_id, state.identity)
-      rebind_for_returned(state)
+      handle_cast(:rebind_data_streams, state)
     else
       {:noreply, state}
     end
@@ -361,13 +376,15 @@ defmodule Flezha.Runner.ControlChannel do
     handle_connection_closed(state, reason)
   end
 
+  def handle_info(:rebind_released, state), do: {:noreply, %{state | rebinding: :connecting}}
+
   # A refused rebind, whose reason the control unit logged, is asked for again,
-  # as is one a returned channel is still owed; the budget bounds the asking.
-  def handle_info({:rebind_answered, {:ok, _}}, %{rebind_owed?: false} = state),
-    do: {:noreply, %{state | rebinding?: false}}
+  # as is one still owed; the budget bounds the asking.
+  def handle_info({:rebind_answered, {:ok, _}}, %{rebinding: :connecting} = state),
+    do: {:noreply, %{state | rebinding: nil}}
 
   def handle_info({:rebind_answered, _answer}, state),
-    do: handle_cast(:rebind_data_streams, %{state | rebinding?: false, rebind_owed?: false})
+    do: handle_cast(:rebind_data_streams, %{state | rebinding: nil})
 
   # A request `Requests` resolved off this process; writing it is this
   # process's job, because it is the only writer of control frames.
@@ -440,13 +457,6 @@ defmodule Flezha.Runner.ControlChannel do
 
     {:noreply, wake_gate_waiters(state, :closed)}
   end
-
-  # A rebind already running may have bound its fresh streams before the
-  # returned channel existed, so the channel is owed one of its own after it.
-  defp rebind_for_returned(%{rebinding?: true} = state),
-    do: {:noreply, %{state | rebind_owed?: true}}
-
-  defp rebind_for_returned(state), do: handle_cast(:rebind_data_streams, state)
 
   defp report_channel_down(runner_id, name, reason) do
     cause =

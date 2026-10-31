@@ -26,7 +26,8 @@ impl CommandAction for AddRelay {
         // every instance ProcessHub still has tagged to this runner's profile
         // after a restart. An instance already in the local registry keeps
         // its per-Cell state, and a duplicate never initializes twice.
-        if !runner.has_relay(&instance_id) {
+        let kept = runner.has_relay(&instance_id);
+        if !kept {
             match &class {
                 Some(topology) => self.start(runner, topology, &factory_id, &instance_id, errors),
                 None => errors.push(class_not_registered(&factory_id)),
@@ -35,7 +36,7 @@ impl CommandAction for AddRelay {
 
         Reply {
             payload_id: "start_relay",
-            bytes: metadata_response(class.as_deref()),
+            bytes: metadata_response(class.as_deref(), kept),
         }
     }
 }
@@ -154,14 +155,18 @@ fn partition_refusal(
     }
 }
 
-/// The class's metadata as `AddRelayResponse` bytes; empty bytes for a class
-/// that never registered.
-fn metadata_response(class: Option<&RelayTopology>) -> Vec<u8> {
+/// The class's metadata as `AddRelayResponse` bytes, plus `kept` when the
+/// instance was already running here, so the controller restores nothing onto
+/// its live Cells; empty bytes for a class that never registered.
+fn metadata_response(class: Option<&RelayTopology>, kept: bool) -> Vec<u8> {
     match class {
-        Some(topology) => AddRelayResponse {
-            metadata: class_metadata(topology),
+        Some(topology) => {
+            let mut metadata = class_metadata(topology);
+            if kept {
+                metadata.insert("kept".to_string(), "true".to_string());
+            }
+            AddRelayResponse { metadata }.encode_to_vec()
         }
-        .encode_to_vec(),
         None => Vec::new(),
     }
 }
@@ -268,7 +273,7 @@ mod metadata_tests {
     }
 
     fn metadata_of(id: &str) -> std::collections::BTreeMap<String, String> {
-        let encoded = metadata_response(crate::relay::registry::get_class(id).as_deref());
+        let encoded = metadata_response(crate::relay::registry::get_class(id).as_deref(), false);
         AddRelayResponse::decode(encoded.as_slice())
             .expect("response decodes")
             .metadata
@@ -399,9 +404,29 @@ mod metadata_tests {
             ]
         );
         assert!(metadata_response(
-            crate::relay::registry::get_class("meta_never_registered").as_deref()
+            crate::relay::registry::get_class("meta_never_registered").as_deref(),
+            true
         )
         .is_empty());
+    }
+
+    // fails when: a bind onto a runner that kept the instance is not told so,
+    // and the controller re-seats the live Cells from records that lag them.
+    #[test]
+    fn only_a_kept_instance_answers_kept() {
+        let id = format!("meta_kept_{}", std::process::id());
+        register_steps(&id, r#""local""#);
+        let class = crate::relay::registry::get_class(&id);
+        let kept = |kept| {
+            AddRelayResponse::decode(metadata_response(class.as_deref(), kept).as_slice())
+                .expect("response decodes")
+                .metadata
+                .get("kept")
+                .cloned()
+        };
+
+        assert_eq!(kept(true), Some("true".to_string()));
+        assert_eq!(kept(false), None);
     }
 }
 
@@ -457,7 +482,8 @@ mod partition_tests {
         let id = format!("part_declare_{}", std::process::id());
         register(&id, false, "");
 
-        let encoded = super::metadata_response(crate::relay::registry::get_class(&id).as_deref());
+        let encoded =
+            super::metadata_response(crate::relay::registry::get_class(&id).as_deref(), false);
         let decoded = AddRelayResponse::decode(encoded.as_slice()).expect("decodes");
         assert_eq!(
             decoded.metadata.get("keyed").map(String::as_str),
@@ -471,7 +497,8 @@ mod partition_tests {
         register(&id, true, "");
 
         assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
-        let encoded = super::metadata_response(crate::relay::registry::get_class(&id).as_deref());
+        let encoded =
+            super::metadata_response(crate::relay::registry::get_class(&id).as_deref(), false);
         let decoded = AddRelayResponse::decode(encoded.as_slice()).expect("decodes");
         assert!(
             !decoded.metadata.contains_key("keyed"),

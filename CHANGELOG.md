@@ -188,6 +188,20 @@ v0.1.0-alpha.1 pre-release.
   a controller that logged a failed query and never found its peers.
   `FLEZHA_K8S_MASTER_NAME` now defaults to `kubernetes.default.svc`, the API
   server's address inside a cluster, so leaving it unset still boots.
+- An effectively-once flow relay whose data stream closes, or whose data
+  channel is killed, while its runner stays connected no longer loses or
+  doubles acknowledged inputs. Neither flags the relays as stalled any more:
+  the data-plane rebind repairs it: each relay with a durable input log holds
+  its input until its stream is back, then sends the undelivered input again,
+  the frames the broken stream swallowed first. Values between tasklets are
+  delivered again only after a restore. A stream that closes while that rebind
+  is still running is now rebound after it, and a late close for a stream
+  already let go no longer starts another rebind.
+- A running relay bound again onto the runner it runs on keeps its live state:
+  the runner says it kept the instance, and nothing is restored over it from
+  the controller's records. A runner that kept an instance through a move to
+  another runner is still restored over. Such a bind also ends the relay's
+  output stall, so it is no longer bound again and again until it expires.
 - A replayed slice that closed while its Cell was between rounds is no longer
   left buffered: the Cell delivers it instead of waiting for input that may
   never come. It affected every SDK built on the shared core.

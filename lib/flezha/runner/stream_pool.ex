@@ -32,6 +32,18 @@ defmodule Flezha.Runner.StreamPool do
   end
 
   @doc """
+  The primary channel `relay_id`'s input takes on `runner_id`'s session: fixed
+  by the relay's id, so every bind onto the session picks the same one.
+  """
+  @spec channel_for(binary(), binary()) :: atom()
+  def channel_for(runner_id, relay_id) do
+    index =
+      rem(relay_id |> String.to_charlist() |> Enum.sum(), Config.get(:concurrent_channel_count))
+
+    runner_id |> stream_ids(:primary) |> Enum.at(index)
+  end
+
+  @doc """
   Every live channel of `runner_id`'s session: the fixed name set above,
   resolved. A dead or unregistered channel forwards nothing and is skipped.
   """
@@ -62,10 +74,15 @@ defmodule Flezha.Runner.StreamPool do
   """
 
   @spec call_channels(binary(), term(), non_neg_integer()) :: :ok
-  def call_channels(runner_id, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
+  def call_channels(runner_id, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)),
+    do: call_each(channel_pids(runner_id), request, budget_ms)
+
+  @doc "`call_channels/3`'s bounded walk over any set of processes."
+  @spec call_each([pid()], term(), non_neg_integer()) :: :ok
+  def call_each(pids, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
     deadline = System.monotonic_time(:millisecond) + budget_ms
 
-    Enum.each(channel_pids(runner_id), fn pid ->
+    Enum.each(pids, fn pid ->
       _ = SafeCall.bounded(pid, request, max(deadline - System.monotonic_time(:millisecond), 0))
     end)
   end

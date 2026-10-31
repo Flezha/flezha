@@ -429,34 +429,55 @@ defmodule FlezhaTest.Relay.SuspendTest do
   test "a plain stream's bind delivers the edge values its Cells kept, then the tail" do
     inst = instance_id()
     for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
+    keep_edges(inst, 1, [%{channel: 0, consumer: 1, origin: 1, payload: "kept"}])
 
-    cell_id = {inst, "forward", ""}
-    edge = %{channel: 0, consumer: 1, origin: 1, payload: "kept"}
-
-    body =
-      WireEncoders.encode_effect_body(%{
-        changes: [],
-        outputs: [],
-        consumed_offset: 1,
-        edges: [edge]
-      })
-
-    {:ok, writer} = Flezha.State.Supervisor.find_or_start(cell_id)
-    :ok = WalWriter.append(writer, 0, OutboxCase.effect_header(), body)
-    WalWriter.close(writer)
-
-    test_pid = self()
-
-    stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, _id, payload ->
-      send(test_pid, {:delivered, payload})
-      :ok
-    end)
-
-    Flezha.Relay.Replay.reforward_undelivered_tail(state(inst, durable_steps: false))
+    reforward_restored(inst, 1)
 
     assert_received {:delivered, {"kept", %{"flz.edge" => "0:1", "flz.offset" => "1"}}}
     assert_received {:delivered, {"in-0", %{"flz.offset" => "0"}}}
     assert_received {:delivered, {"in-1", %{"flz.offset" => "1"}}}
+  end
+
+  # fails when: a re-forward with no restore since, a live session's lost
+  # stream, delivers again an edge value its consumer took inside the runner,
+  # which counts it twice since edges move no Cell's floor.
+  test "only a restore's re-forward delivers edge values, up to its last offset" do
+    inst = instance_id()
+    for n <- 0..2, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
+
+    keep_edges(inst, 2, [
+      %{channel: 0, consumer: 1, origin: 1, payload: "restored"},
+      %{channel: 0, consumer: 1, origin: 2, payload: "live"}
+    ])
+
+    reforward_restored(inst, nil)
+
+    assert_received {:delivered, {"in-2", %{"flz.offset" => "2"}}}
+    refute_received {:delivered, {"restored", _}}
+
+    reforward_restored(inst, 1)
+
+    assert_received {:delivered, {"restored", %{"flz.edge" => "0:1", "flz.offset" => "1"}}}
+    refute_received {:delivered, {"live", _}}
+  end
+
+  # fails when: a restore's edge values stay owed once its re-forward ran, and a
+  # later one, a lost stream's, delivers them again to consumers that took them.
+  test "a restore's edge values are owed to its own re-forward only" do
+    inst = instance_id()
+    for n <- 0..1, do: {:ok, ^n} = InputLog.append(inst, "in-#{n}", %{})
+    keep_edges(inst, 1, [%{channel: 0, consumer: 1, origin: 1, payload: "kept"}])
+
+    state = reforward_restored(inst, 1)
+    assert_received {:delivered, {"kept", _}}
+    assert_received {:delivered, {"in-0", _}}
+    assert_received {:delivered, {"in-1", _}}
+    assert state.edges_owed_through == nil
+
+    Flezha.Relay.Replay.reforward_undelivered_tail(state)
+
+    assert_received {:delivered, {"in-1", %{"flz.offset" => "1"}}}
+    refute_received {:delivered, {"kept", _}}
   end
 
   # fails when: an edge value a restore delivers again loses the call its origin
@@ -466,23 +487,36 @@ defmodule FlezhaTest.Relay.SuspendTest do
     {:ok, 0} = InputLog.append(inst, "in-0", %{})
     {:ok, 1} = InputLog.append(inst, "in-1", %{"flz.reply_to" => "w:caller"})
 
-    edges = [
+    keep_edges(inst, 1, [
       %{channel: 0, consumer: 1, origin: 0, payload: "plain"},
       %{channel: 0, consumer: 1, origin: 1, payload: "called"}
-    ]
+    ])
 
+    reforward_restored(inst, 1)
+
+    assert_received {:delivered, {"plain", plain}}
+    refute Map.has_key?(plain, "flz.reply_to")
+    assert_received {:delivered, {"called", %{"flz.edge" => "0:1", "flz.reply_to" => "w:caller"}}}
+  end
+
+  # A producer Cell's one record, consuming `offset` and keeping `edges`.
+  defp keep_edges(inst, offset, edges) do
     body =
       WireEncoders.encode_effect_body(%{
         changes: [],
         outputs: [],
-        consumed_offset: 1,
+        consumed_offset: offset,
         edges: edges
       })
 
     {:ok, writer} = Flezha.State.Supervisor.find_or_start({inst, "forward", ""})
     :ok = WalWriter.append(writer, 0, OutboxCase.effect_header(), body)
     WalWriter.close(writer)
+  end
 
+  # The flow relay's re-forward, every frame it sends reported to the test;
+  # `through` is the last offset its last restore owed edge values up to.
+  defp reforward_restored(inst, through) do
     test_pid = self()
 
     stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, _id, payload ->
@@ -490,11 +524,9 @@ defmodule FlezhaTest.Relay.SuspendTest do
       :ok
     end)
 
-    Flezha.Relay.Replay.reforward_undelivered_tail(state(inst, durable_steps: false))
-
-    assert_received {:delivered, {"plain", plain}}
-    refute Map.has_key?(plain, "flz.reply_to")
-    assert_received {:delivered, {"called", %{"flz.edge" => "0:1", "flz.reply_to" => "w:caller"}}}
+    Flezha.Relay.Replay.reforward_undelivered_tail(
+      state(inst, durable_steps: false, edges_owed_through: through)
+    )
   end
 
   test "a stop of a sleeping steps relay wakes it with the stop, and the bind sends it" do

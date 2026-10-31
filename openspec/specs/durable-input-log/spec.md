@@ -415,11 +415,15 @@ On every bind of an instance with durable input, of either kind, the controller 
 the retained records strictly above the instance's floor, in offset order, each stamped with its
 original `flz.offset` and never re-journaled, before the instance's input plugins are brought
 up. There SHALL be one such re-forward function, shared by a fresh bind, a crash resume, a
-migration, a rehydrate from suspension and the bind of a flow relay that could not carry
-an earlier input. A re-forward SHALL be safe to repeat: every receiver, a Cell or a steps
+migration, a rehydrate from suspension, the bind of a flow relay that could not carry
+an earlier input and the rebind a parked relay waits out. A re-forward SHALL be safe to repeat: every receiver, a Cell or a steps
 driver, SHALL drop an input at or below its own consumed floor, so a second bind, an orphaned
-bind or a repeated tail changes no state and emits nothing twice. Whether an instance owes
-undelivered input SHALL be answered from the log's tail and floor, without decoding the file.
+bind or a repeated tail changes no state and emits nothing twice. An inter-tasklet value a
+producer's record kept SHALL be re-delivered only by a re-forward after the Cells were
+restored, for origins above the floor and at or below the log's last offset at that restore:
+any other moved inside the runner, and a consumer that took it live would take it twice.
+Whether an instance owes undelivered input SHALL be answered from the log's tail and floor,
+without decoding the file.
 
 #### Scenario: A rehydrated steps relay receives its tail once
 
@@ -440,6 +444,13 @@ undelivered input SHALL be answered from the log's tail and floor, without decod
 - **WHEN** the same tail 7..9 reaches a steps driver twice, from an orphaned bind and from the
   Overwatch's own bind
 - **THEN** each of 7, 8 and 9 SHALL seed exactly one iteration
+
+#### Scenario: A lost stream on a live session re-delivers no inter-tasklet value
+
+- **WHEN** a flow relay's data stream closes under a live session and its rebind re-forwards
+  the tail, with no restore since the bind
+- **THEN** the tail's inputs are forwarded, no kept inter-tasklet value is delivered again, and
+  each consumer counts each acknowledged input once
 
 #### Scenario: Owed input is judged without a file read
 

@@ -18,6 +18,7 @@ defmodule Flezha.Relay.Replay do
   alias Flezha.Config.Durations
   alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lookup
   alias Flezha.Relay.Overwatch
   alias Flezha.Process.Timer
@@ -390,9 +391,8 @@ defmodule Flezha.Relay.Replay do
   awaited control round-trip, so the SDK has applied state + consumed floor
   before the bind re-forwards the input tail (`reforward_undelivered_tail/1`).
 
-  Runs in the Overwatch process before plugin activation; Cells ahead of the
-  min watermark skip re-forwarded offsets they already consumed (SDK
-  `consumed_floor`).
+  Runs before plugin activation. The restored Cells hold only their records, so
+  the inter-tasklet values kept for inputs journaled by now are owed again.
   """
   @spec restore_cells_awaited(Overwatch.t()) :: {:ok, Overwatch.t()} | {:error, term()}
   def restore_cells_awaited(%Overwatch{} = state) do
@@ -409,7 +409,9 @@ defmodule Flezha.Relay.Replay do
 
     # Stop before the re-forward: re-forwarding the input tail onto a Cell
     # whose baseline never landed is the silent loss this guards.
-    if refused, do: {:error, refused}, else: {:ok, state}
+    if refused,
+      do: {:error, refused},
+      else: {:ok, %Overwatch{state | edges_owed_through: Ingest.journaled(state)}}
   end
 
   # ---------- effect results ----------
@@ -509,7 +511,7 @@ defmodule Flezha.Relay.Replay do
     drop_unrecorded_turns(state)
     redeliver_edges(state)
     replay_slice(state, InputLog.undelivered(Overwatch.relay_class(state)))
-    state
+    %Overwatch{state | edges_owed_through: nil}
   end
 
   # A durable steps relay's turn that was parked but never reached its
@@ -519,23 +521,23 @@ defmodule Flezha.Relay.Replay do
 
   defp drop_unrecorded_turns(%Overwatch{}), do: :ok
 
-  # A flow relay's inter-tasklet value is durable in its producer's
-  # record wherever that record carries the offset: the values kept for inputs
-  # above the floor go first, in origin order, and a consumer whose own records
-  # acknowledge an origin drops its value. With nothing above the floor no value
-  # can be owed, and no record is read. A steps relay's are its journal's.
-  # Each value carries the call its origin input carried, so a downstream answer
-  # still reaches a caller who waits.
-  defp redeliver_edges(%Overwatch{durable_steps: true}), do: :ok
+  # A flow relay's inter-tasklet value is durable in its producer's record, and
+  # only a restore's first re-forward owes it: the values kept for inputs above
+  # the floor and up to the restore's last offset go first, in origin order, and a
+  # consumer whose own records acknowledge an origin drops its value. Any other
+  # moved inside the runner, so sent again it counts twice. Each value carries the
+  # call its origin input carried, so a downstream answer reaches a caller who waits.
+  defp redeliver_edges(%Overwatch{edges_owed_through: nil}), do: :ok
 
-  defp redeliver_edges(%Overwatch{} = state) do
+  defp redeliver_edges(%Overwatch{edges_owed_through: through} = state) do
     relay_class = Overwatch.relay_class(state)
 
-    with {:ok, floor, last} when last > floor <- InputLog.tail(relay_class) do
+    with {:ok, floor, _last} when through > floor <- InputLog.tail(relay_class) do
       edges =
         relay_class
         |> Paths.cells_of()
         |> Enum.flat_map(&WalWriter.edges_above(&1, floor))
+        |> Enum.filter(&(&1.origin <= through))
         |> Enum.sort_by(& &1.origin)
 
       calls = origin_calls(relay_class, edges)
@@ -587,12 +589,14 @@ defmodule Flezha.Relay.Replay do
 
   `:armed` means a re-forward will happen — including the race where the stream
   came up between the failed delivery and this call, settled by handing the
-  Overwatch the notification it just missed. `:unarmed` means the relay has
-  no channel to ask yet; the log still holds the payload, and the bind that
+  Overwatch the notification it just missed, and a parked relay, armed by its
+  park. `:unarmed` means the relay has no channel to ask yet; the bind that
   gives it one re-forwards the tail, as a bind in flight does on adoption.
   """
   @spec arm_bind_reforward(Overwatch.t()) :: :armed | :unarmed
-  def arm_bind_reforward(%Overwatch{bind_task: %{}}), do: :armed
+  def arm_bind_reforward(%Overwatch{} = state)
+      when state.bind_task != nil or (state.channel == nil and state.runner_id != nil),
+      do: :armed
 
   def arm_bind_reforward(%Overwatch{channel: channel} = state) do
     owner = owner_pid(state)

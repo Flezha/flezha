@@ -90,8 +90,9 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
 
     assert_receive {:stream_pair_closed, _socket}, @bound_ms
 
-    assert_receive {:output_stall, relay, runner_id}
-                   when relay == ctx.relay and runner_id == ctx.runner_id
+    # The session rebinds its data plane; the relays keep running, so no stall
+    # sends them to the loop, whose remedy would re-seat their live Cells.
+    refute_received {:output_stall, _relay, _runner}
 
     replacement = GenServer.whereis(name)
     assert is_pid(replacement) and replacement != killed
@@ -129,21 +130,43 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
   test "a channel returning during a rebind is owed one after it", ctx do
     name = start_pool(ctx.runner_id)
     control = Flezha.Identificator.control_channel(ctx.runner_id)
-    :sys.replace_state(control, &%{&1 | rebinding?: true})
+    :sys.replace_state(control, &%{&1 | rebinding: :connecting})
 
     capture_log([level: :warning], fn ->
       Process.exit(GenServer.whereis(name), :kill)
       assert_receive {:channel_down, _m, %{channel: ^name, reason: :killed}}, @bound_ms
-      assert_receive {:output_stall, _relay, _runner}, @bound_ms
     end)
 
-    assert %{rebind_owed?: true, rebinds: 0} = session(ctx.runner_id)
-    refute_received {:rebind, _}
+    assert %{rebinding: :owed, rebinds: 0} = session(ctx.runner_id)
+    assert_owed_rebind_follows(ctx.runner_id)
+  end
 
-    send(GenServer.whereis(control), {:rebind_answered, {:ok, ""}})
+  # fails when: a stream a running rebind bound closes before that rebind
+  # answers, and the close is dropped as the fault already being repaired, so
+  # the channel stays unbound while the runner reads as connected.
+  test "a stream closing after a rebind let the old ones go is owed one after it", ctx do
+    name = start_bound_pool(ctx.runner_id)
+    control = Flezha.Identificator.control_channel(ctx.runner_id)
 
-    assert_receive {:rebind, runner_id} when runner_id == ctx.runner_id, @bound_ms
-    assert %{rebind_owed?: false, rebinds: 1} = session(ctx.runner_id)
+    close = fn step ->
+      :sys.replace_state(control, &%{&1 | rebinding: step})
+      NodeTestHelper.close_bound_stream(name, "closed in test")
+      # Answered once the channel handled the close and asked for its rebind.
+      GenServer.call(name, :stream_ref_status)
+      session(ctx.runner_id)
+    end
+
+    log =
+      capture_log([level: :warning], fn ->
+        assert %{rebinding: :releasing} = close.(:releasing)
+        {stream, close_stream} = StreamPair.open()
+        on_exit(close_stream)
+        :ok = GenServer.call(name, {:bind, stream})
+        assert %{rebinding: :owed, rebinds: 0} = close.(:connecting)
+      end)
+
+    assert [_, _] = Regex.scan(~r/Connection closed for IO socket \(closed in test\)/, log)
+    assert_owed_rebind_follows(ctx.runner_id)
   end
 
   # fails when: the safety valve kills the channel and the session never
@@ -195,11 +218,11 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
   # stopping it, reads as a lost stream and spends a rebind.
   test "a pool's first start and its shutdown ask for no rebind", ctx do
     start_pool(ctx.runner_id)
-    assert %{rebinding?: false, rebinds: 0} = session(ctx.runner_id)
+    assert %{rebinding: nil, rebinds: 0} = session(ctx.runner_id)
 
     :ok = stop_supervised(StreamSup)
 
-    assert %{rebinding?: false, rebinds: 0} = session(ctx.runner_id)
+    assert %{rebinding: nil, rebinds: 0} = session(ctx.runner_id)
     refute_received {:channel_down, _, _}
     refute_received {:output_stall, _, _}
   end
@@ -208,6 +231,16 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
   defp assert_killed_and_rebound(name, runner_id) do
     assert_receive {:channel_down, %{count: 1}, %{channel: ^name, reason: :killed}}, @bound_ms
     assert_receive {:rebind, ^runner_id}, @bound_ms
+  end
+
+  # Nothing more is asked while the rebind runs; once it answers, the one it
+  # owed is asked for.
+  defp assert_owed_rebind_follows(runner_id) do
+    refute_received {:rebind, _}
+    control = GenServer.whereis(Flezha.Identificator.control_channel(runner_id))
+    send(control, {:rebind_answered, {:ok, ""}})
+    assert_receive {:rebind, ^runner_id}, @bound_ms
+    assert %{rebinds: 1} = session(runner_id)
   end
 
   # The supervisor's own report of the restart, which the runtime logs for any

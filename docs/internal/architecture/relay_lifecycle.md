@@ -188,6 +188,7 @@ What an Overwatch refuses or holds while a transition is under way:
 | `handle_cast` of `:io_out` / `:io_out_batch` | `bind_task != nil` and (`phase == :suspended` or `halt_reason != nil`) | holds the output until the bind is adopted |
 | `handle_call({:registry_runner_set, _}, ...)` | `halt_reason != nil` | refuses the start's input with the reason |
 | `handle_info({:stream_bound, _}, ...)` | `halt_reason != nil` | does not re-forward the input tail |
+| `Rebind.park_stream/2` | not `:running` on that runner, `bind_task != nil`, or no durable input log | leaves the relay forwarding; a parked one forwards nothing until its channel binds |
 | `handle_cast({:kick_restore, _}, ...)` | `Replay.carrier/1` names `:handover` | skips the WAL restore |
 | `Rebind.rebind/2` | `bind_task != nil` | answers `{:error, :busy}` |
 | `Rebind.session_replaced/4` | `bind_task != nil` | leaves a restarted runner's binding to the bind under way |

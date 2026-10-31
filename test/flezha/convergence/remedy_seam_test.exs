@@ -281,6 +281,16 @@ defmodule Flezha.Convergence.RemedySeamTest do
     assert Facts.ticks?(:runner_connected, :transient)
   end
 
+  # fails when: a relay that can only go back onto the runner its stall names
+  # is rebound on every rung until the stall ages out.
+  test "a landed bind clears its relay's output stall and releases the ladder it walked" do
+    {facts, :new} = Facts.put(%{}, :output_stall, "op", %{runner_id: "r1"}, 1_000)
+    {facts, :cleared} = Facts.put(facts, :relay_bound, "op", %{}, 1_005)
+
+    refute Map.has_key?(facts, {:output_stall, "op"})
+    assert Facts.cleared_key(:relay_bound, "op") == Planner.ladder_key("op")
+  end
+
   # ---------- clause 4: a remedy entry point outside the loop is a bypass ----------
 
   # The functions only `lib/flezha/convergence/` may call. `drain_hub/2` is

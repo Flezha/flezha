@@ -610,7 +610,10 @@ A data stream that closes while the control channel is alive is not a reason
 to reconnect. The runner lets its whole data plane go, and the controller,
 which sees its own end of each stream close, releases every data channel of the
 session and re-issues `ConnectSocket` on it. A session gets three such rebinds;
-the data-plane loss after them ends the session.
+the data-plane loss after them ends the session. Frames the broken stream had
+not written are lost, so each instance with a durable input log forwards
+nothing until its stream binds again, and then re-forwards its log's tail above
+its floor ahead of any later input.
 
 On the controller the reconnect is a **binding swap**: the re-presented
 `stable_id` resolves to the prior session, its bindings move to the new token,
@@ -657,7 +660,7 @@ controller parks a failed turn sent as `IterCommit.dead_letter`.
 | Field | Value |
 |-------|-------|
 | Behaviour | Create an instance of `factory_id` under `relay_id`. A flow class: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. A steps class: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores and `effect_result_count` effect results have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after`; a class with `max_duration_ms` arms its stop `max_duration_remaining_ms` out, or its whole window when the field is absent, and a 0 is due at once |
-| Idempotency | A duplicate `relay_id` (a reconnect re-issue) is answered `success` without re-registering |
+| Idempotency | A duplicate `relay_id` (a reconnect re-issue, a rebind onto the same runner) is answered `success` without re-registering, its metadata carrying `kept` |
 | Reply | `raw_data` = `AddRelayResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
 
@@ -681,6 +684,7 @@ announcements:
 | `ack` | `"checkpoint"` | the class acknowledges input only at checkpoints |
 | `compact_after_bytes` | bytes | the smallest per-tasklet compaction trigger, when it differs from the default |
 | `compensable_tasks` | list | steps relay tree positions whose tasklet declares `compensate` |
+| `kept` | `"true"` | the runner already ran the instance and kept it, live Cells and all; the controller restores none of them on this bind (sent only when true) |
 
 #### Partition identity
 
@@ -1309,10 +1313,12 @@ as concatenated fields and `Option` as `0x00 | 0x01 ++ T`.
 
 - `edges` keeps each inter-tasklet value the input produced: the channel and
   consuming tasklet as the writing SDK numbers them, the input-log offset it
-  derives from, and the value through the channel's codec. A bind delivers
-  every kept value whose origin is above the instance's floor again, ahead of
+  derives from, and the value through the channel's codec. A bind that
+  restores the Cells delivers every kept value whose origin is above the
+  instance's floor, up to the log's last offset at the restore, again, ahead of
   the re-forwarded tail (`flz.edge`, below); a consumer whose own records took
-  that offset drops it.
+  that offset drops it. A re-forward with no restore since delivers none: such
+  a value moved inside the runner, and a live consumer would take it twice.
 - `event_time` is what the Tasklet's declared clock evaluated to (the input's
   event time under an event-time clock, wall-clock ms under the wall clock, the
   change seq under the logical clock); late-input correction and `{:timestamp, ts}`
@@ -1849,8 +1855,9 @@ offset it took, restored from its records and raised as it takes each forwarded
 input, so a tail forwarded twice is taken once. The controller reports each
 offset into the log's watermark, retention reclaims below the instance's floor,
 and every bind re-forwards exactly the retained records above it, each with its
-original `flz.offset`. A bind first re-delivers the inter-tasklet values the
-Cells' records kept for inputs above the floor, each stamped `flz.edge`
+original `flz.offset`. A bind that restored the Cells first re-delivers the
+inter-tasklet values their records kept for inputs above the floor, up to the
+log's last offset at the restore, each stamped `flz.edge`
 (`"<channel>:<consumer>"`, the record's numbers) and `flz.offset` (its origin);
 the runner hands such a frame to that one consumer, never to an entry channel.
 

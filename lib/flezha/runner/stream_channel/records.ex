@@ -275,9 +275,9 @@ defmodule Flezha.Runner.StreamChannel.Records do
     :refused
   end
 
-  # Emit `output_stall` for each relay a lost or silent stream carried, naming
+  # Emit `output_stall` for each relay a silent stream carried, naming
   # the runner whose stream stalled: the stall is about that binding, and the
-  # loop drops it once the relay is bound elsewhere. A sleeping instance is not
+  # loop drops it once the relay is bound again. A sleeping instance is not
   # mapped to any runner, so it is never flagged.
   def emit_output_stall(runner_id, relay_ids) do
     for relay_id <- relay_ids do
@@ -288,11 +288,6 @@ defmodule Flezha.Runner.StreamChannel.Records do
       )
     end
   end
-
-  # `emit_output_stall/2` for every relay running here that `identity` owns:
-  # what a channel that died carried, whose own route cache died with it.
-  def emit_owned_output_stall(runner_id, identity),
-    do: emit_output_stall(runner_id, ClassRegistry.running(identity))
 
   # Persistence frames are handed to the per-cell WalWriter via a
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes

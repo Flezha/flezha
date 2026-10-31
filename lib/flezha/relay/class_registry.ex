@@ -165,6 +165,13 @@ defmodule Flezha.Relay.ClassRegistry do
     }
   end
 
+  @doc """
+  Whether an `AddRelayResponse` says the runner already ran the instance and
+  kept it, live Cells and all, rather than starting it.
+  """
+  @spec kept?(binary() | nil) :: boolean()
+  def kept?(raw_data), do: Map.get(decode_metadata(raw_data), "kept") == "true"
+
   defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do
     case RunnerCommands.AddRelayResponse.decode(raw_data) do
       {:ok, %RunnerCommands.AddRelayResponse{metadata: metadata}} -> metadata
@@ -589,19 +596,14 @@ defmodule Flezha.Relay.ClassRegistry do
     end
   end
 
-  @doc """
-  Every class whose Overwatch is alive on this node, sorted; given an `owner`,
-  only the classes that identity owns.
-  """
-  @spec running(binary() | :any) :: [binary()]
-  def running(owner \\ :any) do
-    owned_by = if owner == :any, do: :_, else: owner
-
+  @doc "Every class whose Overwatch is alive on this node, sorted; given an `owner`, its own."
+  @spec running(binary() | :_) :: [binary()]
+  def running(owner \\ :_) do
     if :ets.whereis(@table) == :undefined do
       []
     else
       @table
-      |> :ets.select([{{{:"$1", :overwatch}, :"$2", owned_by}, [], [{{:"$1", :"$2"}}]}])
+      |> :ets.select([{{{:"$1", :overwatch}, :"$2", owner}, [], [{{:"$1", :"$2"}}]}])
       |> Enum.flat_map(fn {class, pid} -> if Process.alive?(pid), do: [class], else: [] end)
       |> Enum.sort()
     end

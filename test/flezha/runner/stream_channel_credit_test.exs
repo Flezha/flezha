@@ -299,6 +299,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
         )
 
       # Connection loss voids the session.
+      :ok = GenServer.call(ctx.channel, {:bind, :ref})
       send(ctx.channel, {:flz_closed, :ref, :eof})
       _ = GenServer.call(ctx.channel, :stream_ref_status)
       assert counters_row(ctx.runner_id, ctx.name).credit_active == 0

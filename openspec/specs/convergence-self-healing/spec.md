@@ -274,6 +274,8 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, relay_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_relay` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, relay_id}` key of the one backoff table, so a persistently stalled relay follows the `:heal` row's cooldown and never a per-tick storm. Escalation is counted in attempts, not in elapsed time, so the denser early rungs reach `rebind_relay` sooner in wall-clock terms while the order of remedies is unchanged. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
 
+A bind of the relay that landed SHALL clear its output stall and release the ladder it walked (the counter-fact `relay_bound`), whichever runner it landed on: the binding was made afresh, and a relay that can only go back to the runner its stall names SHALL NOT be rebound on every rung until the stall ages out. A rebind of a running relay onto the runner it is running on SHALL restore none of its Cells when the runner's `AddRelay` answer says `kept`: its live Cells are ahead of every durable record, and re-seating them from those records would lose and double acknowledged inputs still in flight. Any other bind SHALL restore even when the answer says `kept`, since a move elsewhere tells the runner nothing and the instance it kept may lag what another runner took since. The bind re-forwards the undelivered input tail as any bind does.
+
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the relay's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy relay, which an output-stalled relay is not.
 
 #### Scenario: output-stalled relay walks the resync-then-rebind ladder
@@ -283,6 +285,17 @@ An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry 
 - **THEN** the Loop triggers an immediate tick
 - **AND** the first eligible attempt issues a `resync_runner` op with `args: %{reason: :output_stall}`
 - **AND** if the stall persists past the next backoff window, the following attempt issues `rebind_relay`, `skip_rebind?` returns `false` even though `ex1` is still active, and the relay is migrated and begins producing again
+
+#### Scenario: a rebind onto the runner that kept the relay restores nothing and ends the stall
+
+- **GIVEN** a relay under input whose output stall names its own runner, the only one that can run it
+- **WHEN** `rebind_relay` binds it onto that runner again and the runner answers `AddRelay` with `kept`
+- **THEN** no Cell SHALL be restored, each acknowledged input SHALL count once, and the landed bind SHALL clear the stall so no further rung rebinds it
+
+#### Scenario: A runner that kept a relay through a move elsewhere is restored over
+- **GIVEN** a relay moved from runner A, which kept its instance, to runner B, which took further input
+- **WHEN** the relay is bound onto A again and A answers `AddRelay` with `kept`
+- **THEN** its Cells SHALL be restored from the durable records before the tail is re-forwarded
 
 #### Scenario: repeated stalls are backoff-throttled
 
@@ -437,7 +450,7 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 * `driver_loop_frozen` SHALL be minted only when the *previous* sample shows an established driver — a non-zero loop-iteration count and a stamped last-loop time — and the current sample's iteration count has not gone backwards. A driver that has never completed a loop iteration SHALL NOT be reported frozen, and a counter that decreased SHALL be read as a re-created driver at the same transport key rather than as a frozen one. In consequence a reported `driver_loop_frozen` can never carry an infinite loop age.
 * `nif_queue_backing_up` SHALL be minted only when the driver has demonstrably written before — a non-zero written count in the previous sample — so that "nothing was written since" means the driver stopped draining rather than that there was nothing to drain. This is the same exemption `runner_not_consuming` already applies to a stream that has never been read.
 
-A close the controller itself initiated SHALL NOT mint an `output_stall` for the relays mapped to the closing stream, so a planned teardown SHALL NOT enter the loop as a divergence to heal. An unexpected close SHALL continue to emit it unchanged.
+A data-stream close SHALL NOT mint an `output_stall` for the relays mapped to the closing stream. A close the controller itself initiated is a planned teardown, not a divergence to heal. An unexpected close is repaired by the session's own data-plane rebind while the relays keep running on their runner; the loop's remedy would re-seat their live Cells from durable records that lag them, losing and doubling acknowledged inputs. A relay still silent after that rebind SHALL be flagged by the stream-liveness check or the Watchdog.
 
 #### Scenario: A wedged runner pool is restarted from a classifier verdict
 - **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch and handout counters frozen) for a runner that remains in the active set
@@ -489,6 +502,11 @@ A close the controller itself initiated SHALL NOT mint an `output_stall` for the
 - **GIVEN** a driver established across earlier samples, with frames written and a stamped last-loop time
 - **WHEN** its iteration count stops advancing and its last loop ages past the freeze threshold
 - **THEN** `driver_loop_frozen` SHALL be minted exactly as before, with a finite loop age in its detail
+
+#### Scenario: A stream lost under a live session is not a divergence
+- **GIVEN** a runner whose control session stays up
+- **WHEN** one of its data streams closes unexpectedly
+- **THEN** no `output_stall` SHALL be emitted for the relays mapped to that stream, the session SHALL rebind its data plane, and the convergence loop SHALL plan no rebind or resync on account of the close
 
 #### Scenario: A planned teardown is not a divergence
 - **GIVEN** a runner the controller has marked retiring because it initiated the disconnect

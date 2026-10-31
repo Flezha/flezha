@@ -75,8 +75,7 @@ defmodule Flezha.Relay.Overwatch do
     init_values: %{},
     default_input_type: "2",
     arrived_via_hotswap?: false,
-    # `:running | :unbound | :halted | :suspended`, written only by the
-    # transitions.
+    # `:running | :unbound | :halted | :suspended`, written only by the transitions.
     phase: :unbound,
     # The transition under way, `nil` when none is.
     cause: nil,
@@ -91,21 +90,22 @@ defmodule Flezha.Relay.Overwatch do
     # This node's monotonic ms at process start: a Cell writer's dispatch from
     # before it went to an earlier Overwatch (`Replay.redrive_calls/1`).
     started_mono: nil,
-    # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
-    # stall can be localised to "WS plugin stopped feeding" vs "relay stopped
-    # forwarding to the channel".
+    # Liveness counters ref (io_in_received / forwarded / filtered_nil), so a stall
+    # tells a plugin that stopped feeding from a relay that stopped forwarding.
     liveness_ref: nil,
-    # A bind onto another runner (a rebind, a wake, a restarted runner) runs
-    # in a task linked to this process so it never blocks the Overwatch and
-    # never outlives it: `%{pid, then, from, journaled}`, the task, what the
-    # bind carries, the phase it started from and the input log's last offset
-    # then, plus `reforward` once its own re-forward is owed again. `nil` when
-    # no bind is in flight.
+    # A bind onto another runner (a rebind, a wake, a restarted runner) runs in a
+    # task linked to this process, so it never blocks or outlives the Overwatch:
+    # `%{pid, then, from, journaled}`, the task, what the bind carries, the phase
+    # it started from and the input log's last offset then, plus `reforward` once
+    # its own re-forward is owed again. `nil` when no bind is in flight.
     bind_task: nil,
     # Outputs that arrived while a bind task was binding, newest first, and
     # whether any went unsettled with no plugin up, for the next bind to redrive.
     held_outputs: [],
     owes_outputs: false,
+    # The input-log offset the last restore re-seated the Cells through: the
+    # inter-tasklet values kept up to it are owed again (`Replay`), `nil` before one.
+    edges_owed_through: nil,
     # Effectively-once tier, declared by the SDK in the AddRelay response
     # metadata: one of the two ways an instance has durable input, which gates
     # the input-log journal and the `flz.offset` stamp on `:io_in`.
@@ -407,6 +407,9 @@ defmodule Flezha.Relay.Overwatch do
 
   def handle_call(:ping, _from, state), do: {:reply, :pong, state}
 
+  def handle_call({:park_stream, runner_id}, _from, state),
+    do: {:reply, :ok, Rebind.park_stream(state, runner_id)}
+
   # Blocking ingest for source adapters, which act on "accepted" vs "halted" and
   # nothing finer — the same path as the confirming entry point below, reported
   # coarsely.
@@ -586,15 +589,12 @@ defmodule Flezha.Relay.Overwatch do
       when reason != nil,
       do: {:noreply, state}
 
-  # The relay's data stream bound. Anything its durable logs still hold above
-  # the Cells' consumed offsets was issued onto a stream that could not carry
-  # it — re-forward it now, on the replay path a restore uses. Which channel
-  # announced the bind does not matter: the tail is owed either way, and it goes
-  # out on whichever channel this relay is bound to now.
+  # The relay's data stream bound: what its durable logs hold above the Cells'
+  # consumed offsets went onto a stream that could not carry it, so it goes again
+  # on the replay path a restore uses, a parked relay on its own channel again.
   @impl true
-  def handle_info({:stream_bound, _channel}, %__MODULE__{} = state) do
-    {:noreply, Replay.reforward_undelivered_tail(state)}
-  end
+  def handle_info({:stream_bound, _channel}, %__MODULE__{} = state),
+    do: {:noreply, state |> Rebind.unpark() |> Replay.reforward_undelivered_tail()}
 
   # A bind-time restore the SDK refused, reported from the off-process replay.
   # The Cell's durable state never reached the runner, so the relay halts

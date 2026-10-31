@@ -28,7 +28,6 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Runner.FleetManager.Removal
   alias Flezha.Runner.FleetManager.Roster
   alias Flezha.Runner.FleetManager.Session
-  alias Flezha.Runner.StreamPool
   alias Flezha.SDK.SafeCall
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown
@@ -305,13 +304,13 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
-  Rebuild `runner_id`'s data plane in its live session: every data channel lets
-  its stream go, then `ConnectSocket` is re-issued. The SDK opens a whole pair
-  set, and only a pool with every channel free binds all of it; one that still
-  holds the old streams closes the fresh ones it has no room for, and the runner
-  is left emitting on sockets nobody reads (see
-  `runner-controller-connection-healing`). The runner's `ControlChannel` calls
-  this when a data stream is lost.
+  Rebuild `runner_id`'s data plane in its live session: `ConnectSocket` is
+  re-issued once every data channel let its stream go. The SDK opens a whole
+  pair set, and only a pool with every channel free binds all of it; one that
+  still holds the old streams closes the fresh ones it has no room for, and the
+  runner is left emitting on sockets nobody reads (see
+  `runner-controller-connection-healing`). The runner's `ControlChannel`
+  releases the channels and calls this when a data stream is lost.
 
   Answers what the runner answered: `{:ok, _}` once its pair set is up,
   `{:error, reason}` for a refusal, and `{:error, :no_control_unit}` when the
@@ -319,8 +318,6 @@ defmodule Flezha.Runner.FleetManager do
   """
   @spec rebind_data_streams(binary()) :: {:ok, binary()} | {:error, term()}
   def rebind_data_streams(runner_id) when is_binary(runner_id) do
-    StreamPool.call_channels(runner_id, :release_stream)
-
     SafeCall.bounded(
       Identificator.control_unit(runner_id),
       :command_sockets_connect,

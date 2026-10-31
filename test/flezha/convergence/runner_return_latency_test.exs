@@ -84,8 +84,7 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
 
     assert bound_to?(first), "the relay never bound to the first runner"
 
-    # A data stream names only the relays that have taken an input on it,
-    # and only those are flagged when it closes.
+    # The relay takes an input on a data stream of the first runner before it stops.
     RelayTestHelper.cast_io(@relay, @namespace, "before the stop", %{"input_type" => "2"})
 
     assert NodeTestHelper.wait_until(
@@ -95,10 +94,9 @@ defmodule Flezha.Convergence.RunnerReturnLatencyTest do
            "no data stream of the first runner ever carried the relay"
 
     # A runner that dies closes its data streams and its control session in no
-    # fixed order, and only a data stream the controller sees close first
-    # declares the stall. The close is delivered first here, then the runner is
-    # signalled the way a user stops one.
-    Enum.each(data_stream_channels(first), &send(&1, {:flz_closed, :test_close, :eof}))
+    # fixed order. The data streams' close is delivered first here, then the
+    # runner is signalled the way a user stops one.
+    Enum.each(data_stream_channels(first), &NodeTestHelper.close_bound_stream(&1, :eof))
     {:os_pid, os_pid} = :erlang.port_info(first_port, :os_pid)
     {_, 0} = System.cmd("kill", ["-TERM", Integer.to_string(os_pid)])
     assert_receive {^first_port, {:exit_status, _}}, @budget_ms

@@ -61,12 +61,12 @@ The Rust SDK's `command_add_relay` handler SHALL be idempotent: an `AddRelay` fo
 
 ### Requirement: A data channel that dies SHALL be repaired as a closed stream is
 
-A `Flezha.Runner.StreamChannel` that exits for any reason SHALL leave no runner stream behind it: it SHALL close its stream on `terminate/2`, and a replacement that finds a predecessor's stream still published (a killed process runs no `terminate/2`) SHALL close that stream before publishing itself unbound. A channel that crashes SHALL leave its published entry unbound and only a shutdown SHALL erase it, so an entry found at init means the predecessor died. Every channel SHALL announce itself to its session's `Flezha.Runner.ControlChannel` at init, saying whether it found such an entry; for a returned channel, unless the runner is retiring, the control channel SHALL emit `[:flezha, :state, :output_stall]` for every relay the runner's identity owns on this node and SHALL ask the runner for a fresh pair set through the same rebind a closed stream asks for, under the same session budget. A returned channel announced while a rebind runs SHALL be owed one more rebind once that one answers. A channel exit other than a shutdown SHALL be logged in one line by the control channel and SHALL emit `[:flezha, :stream, :channel_down]` with the runner, the channel name and the exit reason. The channel MAY be capped by `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES`, off (`0`) by default: past it the runtime kills the channel, and the kill is repaired and reported as above.
+A `Flezha.Runner.StreamChannel` that exits for any reason SHALL leave no runner stream behind it: it SHALL close its stream on `terminate/2`, and a replacement that finds a predecessor's stream still published (a killed process runs no `terminate/2`) SHALL close that stream before publishing itself unbound. A channel that crashes SHALL leave its published entry unbound and only a shutdown SHALL erase it, so an entry found at init means the predecessor died. Every channel SHALL announce itself to its session's `Flezha.Runner.ControlChannel` at init, saying whether it found such an entry; for a returned channel, unless the runner is retiring, the control channel SHALL ask the runner for a fresh pair set through the same rebind a closed stream asks for, under the same session budget, and SHALL declare no `output_stall`: the runner's relays keep running there and their routes warm again on their next frame. A returned channel announced after a running rebind let the old streams go SHALL be owed one more rebind once that one answers. A channel exit other than a shutdown SHALL be logged in one line by the control channel and SHALL emit `[:flezha, :stream, :channel_down]` with the runner, the channel name and the exit reason. The channel MAY be capped by `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES`, off (`0`) by default: past it the runtime kills the channel, and the kill is repaired and reported as above.
 
 #### Scenario: A killed bound channel is rebound
 - **GIVEN** a bound `StreamChannel` of a live runner session carrying relay inputs
 - **WHEN** the channel process is killed
-- **THEN** its stream is closed, its replacement starts unbound, the control channel logs the death and emits `[:flezha, :stream, :channel_down]` with reason `:killed`, flags the runner's relays with `output_stall` and asks the runner for a fresh pair set, and the replacement is bound again by the acceptor
+- **THEN** its stream is closed, its replacement starts unbound, the control channel logs the death and emits `[:flezha, :stream, :channel_down]` with reason `:killed` and asks the runner for a fresh pair set, no `output_stall` is declared for the runner's relays, and the replacement is bound again by the acceptor
 
 #### Scenario: The heap cap is set only when configured
 - **WHEN** `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES` is positive
@@ -74,7 +74,7 @@ A `Flezha.Runner.StreamChannel` that exits for any reason SHALL leave no runner 
 - **AND** with `0`, the default, no `max_heap_size` is set
 
 #### Scenario: A channel that returns during a rebind is rebound after it
-- **GIVEN** a rebind of the runner's data plane is running
+- **GIVEN** a rebind of the runner's data plane is running and has let the old streams go
 - **WHEN** a killed channel's replacement announces itself
 - **THEN** once the running rebind answers, the control channel asks the runner for another fresh pair set
 
@@ -928,13 +928,23 @@ down the control session to get them back. A data plane is whole or gone: a runn
 loses one data stream lets the rest go, and that is its request for a rebind, carried on
 the wire it already has. The controller, which sees its own end of every data stream
 close, SHALL answer by re-issuing `ConnectSocket` for the live session, the remedy
-`FleetManager.rebind_data_streams/1` implements.
+`ControlChannel.rebind_data_streams/1` runs.
 
 The re-issue SHALL release every data channel of the session first. The runner opens a
 whole pair set, and a pool that still holds the old streams binds only as many fresh ones
 as it has free channels and closes the rest, which leaves the runner emitting on sockets
 nobody reads. One rebind runs at a time, because every channel of a severed data plane
-reports the same fault.
+reports the same fault. A stream that closes after the running rebind let the old streams
+go is one that rebind bound, so it SHALL be owed one more rebind once that one answers. A
+close for a stream the channel no longer holds, one it let go or one a bind replaced, SHALL
+be ignored.
+
+A lost stream drops what its write buffer held, so before the runner is asked for fresh
+streams the rebind SHALL park every running relay with a durable input log that the
+session's identity owns on this node: a parked relay forwards no input, which stays in its
+log, until its own channel binds again, and then SHALL re-forward its log's undelivered
+input tail, edges excluded, before any input it takes after. A relay that does not answer
+the park within the bounded fan-out is parked when it does.
 
 Ending the control session for a data-plane fault is what turns one severed stream into a
 reconnect loop: the session ends, the runner reconnects, the controller admits it, the
@@ -958,6 +968,22 @@ as the backstop.
 - **GIVEN** a runner whose control channel itself closes
 - **WHEN** the close is observed
 - **THEN** the existing reconnect path SHALL run unchanged, on the ladder rung the session left behind
+
+#### Scenario: Input a broken stream swallowed reaches the runner ahead of fresh input
+- **GIVEN** a running relay with a durable input log whose input went into a stream that broke before the runner read it
+- **WHEN** the session's rebind binds a fresh stream and the relay takes another input before it handles the bind
+- **THEN** that input SHALL NOT be forwarded on the fresh stream ahead of the tail, and the relay SHALL re-forward the tail above its floor, the swallowed input first, then the new one
+
+#### Scenario: A close for a stream the channel no longer holds is ignored
+- **GIVEN** a channel that let its stream go, or was bound to a fresh one
+- **WHEN** a close for the old stream reaches it
+- **THEN** the channel SHALL keep its binding and SHALL NOT ask for a rebind
+
+#### Scenario: A stream the rebind bound that closes before it answers is rebound after it
+- **GIVEN** a rebind that has let the old streams go and not yet answered
+- **WHEN** a data stream closes
+- **THEN** once the running rebind answers, the control channel SHALL ask the runner for another fresh pair set
+- **AND** a stream that closed before the old streams were let go SHALL start no second rebind
 
 #### Scenario: A repair that cannot complete ends the session
 - **GIVEN** a controller that cannot bind the runner's data streams

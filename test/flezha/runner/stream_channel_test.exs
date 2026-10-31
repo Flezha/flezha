@@ -1,6 +1,7 @@
 defmodule FlezhaTest.Runner.StreamChannelTest do
   alias Flezha.Convergence.Loop
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Prefix
@@ -33,53 +34,47 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     %{pid: pid, name: name}
   end
 
-  describe "stream closed → output_stall telemetry" do
-    test "{:flz_closed} emits output_stall telemetry for every relay in relay_mapping",
+  describe "stream closed" do
+    # fails when: a stream lost under a live session declares an output stall,
+    # and the loop's remedy re-seats the relays' live Cells from records that
+    # lag them, losing and doubling acknowledged inputs.
+    test "{:flz_closed} declares no output_stall: the session rebinds its data plane",
          %{pid: pid} do
       :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_b", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})
 
       capture_stalls()
+      # The close is a warning, below the test config's primary gate.
+      on_exit(NodeTestHelper.override_log_level(:warning))
 
-      send(pid, {:flz_closed, :ref_x, :eof})
-      # flush through mailbox
-      _ = GenServer.call(pid, :stream_ref_status)
+      log =
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+          send(pid, {:flz_closed, :ref_x, :eof})
+          # flush through mailbox
+          _ = GenServer.call(pid, :stream_ref_status)
+        end)
 
-      assert_receive {:output_stall, "relay_a"}
-      assert_receive {:output_stall, "relay_b"}
-    end
-
-    test "{:flz_closed} with empty relay_mapping emits no output_stall telemetry",
-         %{pid: pid} do
-      capture_stalls()
-
-      :ok = GenServer.call(pid, {:bind, :ref_y})
-      send(pid, {:flz_closed, :ref_y, :eof})
-      _ = GenServer.call(pid, :stream_ref_status)
-
+      assert log =~ "Connection closed for IO socket (eof)."
       refute_received {:output_stall, _}
     end
 
-    test "{:flz_closed} declares each stall against the runner whose stream closed", %{pid: pid} do
-      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
-      :ok = GenServer.call(pid, {:bind, :ref_z})
+    # fails when: a close for a stream the channel already let go, or one a bind
+    # replaced, unbinds the channel or asks for a rebind, which releases the
+    # fresh streams the running rebind bound.
+    test "a close for a stream the channel no longer holds changes nothing", %{pid: pid} do
+      set_mimic_global_until_exit()
+      test_pid = self()
+      stub(ControlChannel, :rebind_data_streams, fn id -> send(test_pid, {:rebind, id}) end)
+      :ok = GenServer.call(pid, {:bind, :ref_fresh})
 
-      MessageTestHelper.become_loop()
-      handler_id = "stall_declare_#{System.unique_integer([:positive])}"
+      send(pid, {:flz_closed, :ref_replaced, :eof})
+      assert GenServer.call(pid, :stream_ref_status) == :ref_fresh
 
-      :telemetry.attach(
-        handler_id,
-        [:flezha, :state, :output_stall],
-        &Loop.handle_telemetry/4,
-        nil
-      )
+      :ok = GenServer.call(pid, :release_stream)
+      send(pid, {:flz_closed, :ref_fresh, :eof})
+      _ = GenServer.call(pid, :stream_ref_status)
 
-      on_exit(fn -> :telemetry.detach(handler_id) end)
-
-      send(pid, {:flz_closed, :ref_z, :eof})
-
-      assert_receive {:declare, :output_stall, "relay_a", %{runner_id: "ce_test"}}
+      refute_received {:rebind, _}
     end
   end
 
@@ -194,6 +189,28 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       assert_receive {:output_stall, "relay_a"}
       assert_receive {:output_stall, "relay_b"}
+    end
+
+    test "a silent stream declares each stall against its runner", %{pid: pid} do
+      :ok = GenServer.call(pid, {:relay_pid_update, "relay_a", [self()]})
+      :ok = GenServer.call(pid, {:bind, :ref_z})
+
+      MessageTestHelper.become_loop()
+      handler_id = "stall_declare_#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:flezha, :state, :output_stall],
+        &Loop.handle_telemetry/4,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      age_stream(pid, @threshold_ms * 3)
+      send(pid, :io_liveness_check)
+
+      assert_receive {:declare, :output_stall, "relay_a", %{runner_id: "ce_test"}}
     end
 
     test "unbound stream is never flagged", %{pid: pid} do

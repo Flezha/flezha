@@ -3,7 +3,8 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
   A close the controller itself asked for is reported differently from one it
   did not — and only reported differently. Without the mark the channel cannot
   tell the two apart, and the teardown a bench or a `stop_namespace` performs
-  enters the convergence loop as a divergence to heal.
+  reads as an incident. Neither enters the convergence loop: an unexpected close
+  is repaired by the session's own data-plane rebind.
 
   The load-bearing assertion is the pairing: the marked and unmarked closes
   must leave identical state, or the mark has started deciding something it
@@ -41,6 +42,7 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
 
     {:ok, pid} = StreamChannel.start_link({"_system", runner_id, name, :primary})
     :ok = GenServer.call(name, {:relay_pid_update, relay_id, [self()]})
+    :ok = GenServer.call(name, {:bind, :marks_stream})
 
     {runner_id, name, pid}
   end
@@ -56,7 +58,7 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
 
     log =
       capture_log(fn ->
-        send(pid, {:flz_closed, 1, :normal})
+        send(pid, {:flz_closed, :marks_stream, :normal})
         # Synchronise on the channel having handled it.
         _ = :sys.get_state(pid)
       end)
@@ -87,7 +89,7 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
     # Reporting differs.
     assert log_a =~ "[warning]"
     assert log_a =~ "Connection closed for IO socket"
-    assert stalled_a, "an unexpected close must still wake the convergence loop"
+    refute stalled_a, "the session rebinds its data plane; the loop has nothing to heal"
 
     refute log_b =~ "[warning]"
     assert log_b =~ "IO socket closed for retiring runner #{runner_b}"
@@ -116,7 +118,7 @@ defmodule FlezhaTest.Runner.FleetManagerMarksTest do
     {log, stalled?, _} = close(name, pid)
 
     assert log =~ "[warning]"
-    assert stalled?
+    refute stalled?
   end
 
   test "clear_retiring drops the mark" do

@@ -23,6 +23,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   alias Flezha.Service.PortPilot
   alias Flezha.Service.RelayManager
   alias Flezha.Transport.LivenessCounters
+  alias Flezha.Transport.Stream
 
   @doc """
   The name this run's node is distributed under: `<base>@<host>` from the two
@@ -892,6 +893,20 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     {:ok, pid} = StreamChannel.start_link({"_system", runner_id, name, :primary})
     ExUnit.Callbacks.on_exit(fn -> ensure_stopped(pid) end)
     {name, pid}
+  end
+
+  @doc """
+  Hand `channel` the close its transport sends when its bound stream ends, as
+  that stream's id: a channel ignores a close for any other stream.
+  """
+  def close_bound_stream(channel, reason) do
+    case GenServer.call(channel, :stream_ref_status) do
+      nil -> :ok
+      ref when is_reference(ref) -> send(channel, {:flz_closed, Stream.stream_id(ref), reason})
+      stand_in -> send(channel, {:flz_closed, stand_in, reason})
+    end
+
+    :ok
   end
 
   @doc """

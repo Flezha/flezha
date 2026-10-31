@@ -9,6 +9,8 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
   use FlezhaTest.Case, fixtures: [:tmp_app_data], async: false
 
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Lifecycle
+  alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Suspend
   alias Flezha.State.Paths
 
@@ -16,6 +18,28 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     ClassRegistry.ensure_table()
 
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
+  end
+
+  # fails when: the controller misses that the runner kept a live instance and
+  # restores its Cells from records that lag them.
+  test "an AddRelay answer says whether the runner kept the instance" do
+    assert ClassRegistry.kept?(add_relay_answer(%{"kept" => "true", "durable" => "local"}))
+    refute ClassRegistry.kept?(add_relay_answer(%{"durable" => "local"}))
+    refute ClassRegistry.kept?("")
+  end
+
+  # fails when: a bind back onto a runner that kept a stale instance through a
+  # move elsewhere skips the restore, and the inputs the other runner took since
+  # are lost from its Cells.
+  test "a kept instance is trusted only when the running relay is bound again where it ran" do
+    kept = add_relay_answer(%{"kept" => "true"})
+    running_on = &%Overwatch{phase: :running, runner_id: &1}
+
+    assert Lifecycle.kept?(running_on.("runner_a"), "runner_a", kept)
+    refute Lifecycle.kept?(running_on.("runner_b"), "runner_a", kept)
+    refute Lifecycle.kept?(running_on.(nil), "runner_a", kept)
+    refute Lifecycle.kept?(%Overwatch{phase: :halted, runner_id: "runner_a"}, "runner_a", kept)
+    refute Lifecycle.kept?(running_on.("runner_a"), "runner_a", add_relay_answer(%{}))
   end
 
   test "an unknown class defaults to :flow", %{class: class} do
@@ -230,17 +254,13 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
   test "the declarations decode from the metadata, and the run from what is established" do
     established = %{run: :steps, each: :per_input, on_failure: :keep_progress}
 
-    {:ok, raw, _size} =
-      Protox.encode(%RunnerCommands.AddRelayResponse{
-        metadata: %{
-          "durable" => "remote",
-          "sleep_after_ms" => "2000",
-          "max_duration_ms" => "60000",
-          "keep_finished_h" => "default"
-        }
+    raw =
+      add_relay_answer(%{
+        "durable" => "remote",
+        "sleep_after_ms" => "2000",
+        "max_duration_ms" => "60000",
+        "keep_finished_h" => "default"
       })
-
-    raw = IO.iodata_to_binary(raw)
 
     assert %{
              run: :steps,
@@ -397,4 +417,10 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
 
   defp correction_sidecar(class),
     do: Path.join(Paths.class_dir(class), "correction_window_ms")
+
+  # The `AddRelayResponse` bytes a runner answers with `metadata`.
+  defp add_relay_answer(metadata) do
+    {:ok, iodata, _size} = Protox.encode(%RunnerCommands.AddRelayResponse{metadata: metadata})
+    IO.iodata_to_binary(iodata)
+  end
 end

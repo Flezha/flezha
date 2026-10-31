@@ -240,13 +240,13 @@ defmodule Flezha.Relay.Lifecycle do
   @spec complete_init(Overwatch.t(), binary(), map(), pid(), :resolve | :pinned) ::
           {:ok, Overwatch.t()} | {:error, term(), Overwatch.t()}
   def complete_init(
-        %Overwatch{} = state,
+        %Overwatch{} = last,
         runner_id,
         relay,
         owner \\ self(),
         placement \\ :resolve
       ) do
-    state = bind_to_runner(state, relay.id, runner_id, owner)
+    state = bind_to_runner(last, relay.id, runner_id, owner)
     relay = Replay.adopt_unlanded_state(state, relay, owner)
     state = %{state | builder: %{state.builder | opts: relay.opts}}
 
@@ -266,6 +266,7 @@ defmodule Flezha.Relay.Lifecycle do
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
          declarations = declarations(add_relay_raw, state.namespace, relay.factory_id),
+         kept? = kept?(last, runner_id, add_relay_raw),
          :ok <- refuse_remote_without_backend(declarations, relay.factory_id),
          state =
            %{
@@ -290,15 +291,14 @@ defmodule Flezha.Relay.Lifecycle do
              relay.factory_id,
              Overwatch.relay_class(state)
            ),
-         # The tier and a sleeping flow relay: restore every persisted Cell
-         # (awaited) before the tail is re-forwarded onto them.
-         {:ok, state} <- awaited_restore(state),
+         # The tier and a sleeping flow relay: every persisted Cell, awaited.
+         {:ok, state} <- awaited_restore(state, kept?),
          # Once per bind, for either kind, BEFORE sources activate: the log's
          # tail above the floor reaches the runner ahead of fresh input (fold
          # order at the SDK), whether this bind is a fresh start, a crash
          # resume, a migration or a rehydrate.
          state = Replay.reforward_undelivered_tail(state) do
-      record_and_replay(state, relay, declarations)
+      record_and_replay(state, relay, declarations, kept?)
     else
       {:error, reason, %Overwatch{} = copy} -> {:error, reason, Plugins.unprepare(copy, state)}
       {:error, reason} -> {:error, reason, state}
@@ -337,7 +337,7 @@ defmodule Flezha.Relay.Lifecycle do
   # Everything a started relay owes once its state is restored and its tail
   # re-forwarded: its plugins, the class facts the State subsystem reads and
   # the retention floors the declaration raised.
-  defp record_and_replay(state, relay, %{correction_window_ms: window} = declarations) do
+  defp record_and_replay(state, relay, %{correction_window_ms: window} = declarations, kept?) do
     # A plugin that fails to come up stays `:prepared`, which the convergence
     # loop diffs as missing and heals under backoff, so the bind does not fail
     # on it.
@@ -371,21 +371,29 @@ defmodule Flezha.Relay.Lifecycle do
     # lost the relay claim it straight back.
     _ = DurabilityTier.adopt_relay(relay_class)
 
-    _ = Replay.restore_on_bind(state, relay)
+    _ = unless kept?, do: Replay.restore_on_bind(state, relay)
 
     {:ok, Suspend.cancel_wake_timer(%{state | phase: :running})}
   end
 
-  # A refused restore is not a cold start: the durable state never reached the
-  # runner, so the relay halts rather than folding new inputs onto empty
-  # state. Rides the existing halted-error contract, so `bind/3` needs no new
-  # failure arm.
-  defp awaited_restore(state) do
-    with true <- Replay.awaited_restore?(state),
+  @doc """
+  Whether a bind finds Cells ahead of every record, so nothing is restored: the
+  runner kept the instance, and the relay was running there when bound again. A
+  move elsewhere tells a runner nothing, so what it kept through one may lag.
+  """
+  @spec kept?(Overwatch.t(), binary(), binary() | nil) :: boolean()
+  def kept?(%Overwatch{} = last, runner_id, raw),
+    do: last.phase == :running and last.runner_id == runner_id and ClassRegistry.kept?(raw)
+
+  # A refused restore halts the relay rather than folding new inputs onto empty
+  # state, on the existing halted-error contract.
+  defp awaited_restore(state, kept?) do
+    with false <- kept?,
+         true <- Replay.awaited_restore?(state),
          {:error, reason} <- Replay.restore_cells_awaited(state) do
       {:error, {:restore_refused, reason}, state}
     else
-      false -> {:ok, state}
+      skipped when is_boolean(skipped) -> {:ok, state}
       {:ok, state} -> {:ok, state}
     end
   end
@@ -408,8 +416,7 @@ defmodule Flezha.Relay.Lifecycle do
     end
   end
 
-  defp stream_bind_wait_ms,
-    do: Durations.get(:stream_bind_wait_ms)
+  defp stream_bind_wait_ms, do: Durations.get(:stream_bind_wait_ms)
 
   @doc """
   Point the state at `runner_id` and the stream channel that serves it, and
@@ -434,7 +441,7 @@ defmodule Flezha.Relay.Lifecycle do
     %Overwatch{
       state
       | runner_id: runner_id,
-        channel: attach_channel(relay_id, runner_id),
+        channel: StreamPool.channel_for(runner_id, relay_id),
         owes_outputs: false
     }
   end
@@ -660,14 +667,6 @@ defmodule Flezha.Relay.Lifecycle do
         Durations.get(:relay_start_call_ms)
       )
     end)
-  end
-
-  defp attach_channel(relay_id, runner_id) do
-    relay_int = String.to_charlist(relay_id) |> Enum.sum()
-    count = Config.get(:concurrent_channel_count)
-    channel_index = rem(relay_int, count)
-
-    StreamPool.stream_ids(runner_id, :primary) |> Enum.at(channel_index)
   end
 
   @doc """
