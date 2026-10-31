@@ -38,7 +38,7 @@ defmodule Flezha.State.WalWriter.Boot do
     # `Supervisor.find_or_start/1` from a StreamChannel never blocks on disk. The
     # continue runs before any queued append, so appends queue in this writer's
     # mailbox — never the channel's. `-1` is the "no records yet" seq sentinel.
-    state = %State{
+    %State{
       cell_id: cell_id,
       file_handle: nil,
       wal_path: Paths.wal_path(cell_id),
@@ -77,8 +77,6 @@ defmodule Flezha.State.WalWriter.Boot do
       header_index: nil,
       refusal: nil
     }
-
-    state
   end
 
   @doc """
@@ -130,7 +128,7 @@ defmodule Flezha.State.WalWriter.Boot do
     end
   end
 
-  defp opened(state, file, last_seq) do
+  defp opened(%{cell_id: {rc, _sh, _key}} = state, file, last_seq) do
     size = RecordFrame.file_size(state.wal_path)
 
     Metrics.put(state.metrics, :wal_seq, last_seq)
@@ -143,34 +141,15 @@ defmodule Flezha.State.WalWriter.Boot do
     # the age trigger under-fires by at most one boot-to-sweep interval.
     oldest = if size > 0, do: State.now_ms()
 
-    # Restart re-drive (effectively-once): every durable effect record above
-    # the flush cursor re-enters the outbox queue with identical identity —
-    # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
-    {rc, _sh, key} = state.cell_id
-    %{record: lineage, progress: dedup, cut: cut} = Lineage.read(state.cell_id)
-    mint? = key not in Paths.reserved_cell_keys() and (lineage.landed or lineage.id == nil)
-    state = %{state | folded_offset: dedup.folded_offset, lineage: lineage, mint?: mint?}
-    durable = RemoteGate.durable_through(state, last_seq, dedup.outbox_flushed_seq)
-
-    {redrive, max_consumed} =
-      Epoch.scan_effect_records_above(state, file, dedup.outbox_flushed_seq, durable)
-
-    if max_consumed >= 0 and cut == nil,
-      do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
-
     state = %{
       state
       | file_handle: file,
         seq_index: SeqIndex.new(size),
         last_persisted_seq: last_seq,
-        oldest_unsnapshotted_at: oldest,
-        outbox_flushed_seq: dedup.outbox_flushed_seq,
-        outbox_epoch: dedup.epoch,
-        outbox_durable_seq: durable,
-        pending_outbox: :queue.from_list(redrive),
-        outbox_last_seq: redrive_last_seq(redrive, dedup.outbox_flushed_seq)
+        oldest_unsnapshotted_at: oldest
     }
 
+    {state, cut} = redrive(state, file)
     state = complete_bump(state, cut)
 
     # A predecessor may have cut this log for a refusing disk while awaiting a
@@ -184,6 +163,35 @@ defmodule Flezha.State.WalWriter.Boot do
       :record -> RemoteGate.synced(%{state | credit_pending: RemoteGate.take_owed(state.cell_id)})
       :stage -> Settlement.seed_commits(state, TaskJournal.committed_records(rc), :hold)
     end
+  end
+
+  # Restart re-drive (effectively-once): every durable effect record above
+  # the flush cursor re-enters the outbox queue with identical identity —
+  # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
+  # Answers the state with the lineage loaded, and the bump the lineage
+  # record names as not yet completed on disk.
+  defp redrive(state, file) do
+    {rc, _sh, key} = state.cell_id
+    %{record: lineage, progress: dedup, cut: cut} = Lineage.read(state.cell_id)
+    mint? = key not in Paths.reserved_cell_keys() and (lineage.landed or lineage.id == nil)
+    state = %{state | folded_offset: dedup.folded_offset, lineage: lineage, mint?: mint?}
+    flushed = dedup.outbox_flushed_seq
+    durable = RemoteGate.durable_through(state, state.last_persisted_seq, flushed)
+    {redrive, max_consumed} = Epoch.scan_effect_records_above(state, file, flushed, durable)
+
+    if max_consumed >= 0 and cut == nil,
+      do: InputLog.record_consumed(rc, state.cell_id, max_consumed)
+
+    state = %{
+      state
+      | outbox_flushed_seq: flushed,
+        outbox_epoch: dedup.epoch,
+        outbox_durable_seq: durable,
+        pending_outbox: :queue.from_list(redrive),
+        outbox_last_seq: redrive_last_seq(redrive, flushed)
+    }
+
+    {state, cut}
   end
 
   # A bump whose lineage record landed and whose dedup file did not runs its disk step

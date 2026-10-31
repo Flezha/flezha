@@ -13,7 +13,7 @@ defmodule Flezha.State.WalWriterFullDiskTest do
   import ExUnit.CaptureLog
   import FlezhaTest.Helper.MessageTestHelper, only: [become_loop: 0]
   import FlezhaTest.Helper.MimicGlobal
-  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1]
+  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 3]
 
   alias Flezha.State.{Commands, Paths, Recovery, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.State.WriterRegistry
@@ -48,7 +48,10 @@ defmodule Flezha.State.WalWriterFullDiskTest do
     WalWriter.append_async(pid, seq, TestHelpers.stub_header(), body, "exec-1", credit)
   end
 
-  defp seqs(cell_id), do: TestHelpers.record_seqs(Paths.wal_path(cell_id))
+  defp seqs(cell_id) do
+    {:ok, seqs} = TestHelpers.record_seqs(Paths.wal_path(cell_id))
+    seqs
+  end
 
   defp stub_control() do
     parent = self()
@@ -150,14 +153,14 @@ defmodule Flezha.State.WalWriterFullDiskTest do
     # Counted in the bytes the stream window debited: one larger than the cap
     # alone is released at once, never drained.
     append!(pid, 5, "aaaaaaaa", 25)
-    assert_received {:credit_released, @session, 25, ^cell_id}
     assert kept_bytes(pid) == 0
+    assert_received {:credit_released, @session, 25, ^cell_id}
 
     # Two that do not fit together: the older is released, the newer kept.
     append!(pid, 6, "bbbbbbbb", 11)
     append!(pid, 7, "cccccccc", 12)
-    assert_received {:credit_released, @session, 11, ^cell_id}
     assert kept_bytes(pid) == 12
+    assert_received {:credit_released, @session, 11, ^cell_id}
     assert WalWriter.last_persisted_seq(pid) == 2
 
     # A baseline at 5 is below the 6 let go: the change at 7 stays kept with
@@ -279,7 +282,10 @@ defmodule Flezha.State.WalWriterFullDiskTest do
   } do
     stub_control()
     :ok = WalWriter.close(pid)
+    # The registry drops a stopped writer's name after it exits.
+    assert wait_until(fn -> WriterRegistry.lookup(cell_id) == :error end, 1_000, 1)
     {:ok, restarted} = Supervisor.find_or_start(cell_id)
+    refute restarted == pid
     assert %{awaiting_baseline?: true} = WalWriter.stall_status(restarted)
 
     assert {:ok, _ref} = Recovery.resync(cell_id, runner_id: "exec-1", reason: :seq_gap)
