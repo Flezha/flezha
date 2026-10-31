@@ -235,8 +235,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     # ships again, and survives a second disk loss.
     #
     # It does NOT pin the epoch specifically — this fixture's epoch never
-    # diverges, because a runner replacement restores contiguous seqs and so
-    # never realigns. `durability_tier_test.exs` sets a bumped epoch directly
+    # diverges, because a runner replacement restores contiguous seqs. `durability_tier_test.exs` sets a bumped epoch directly
     # and is where "a recovered Cell keeps shipping instead of fencing itself
     # off" actually bites.
     assert wait_until(

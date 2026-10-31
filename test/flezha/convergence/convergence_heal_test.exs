@@ -64,13 +64,13 @@ defmodule Flezha.Convergence.HealTest do
       assert [%{primitive: :restart_runner, target: "e_live"}] = plan_for(verdict)
     end
 
-    test "a wedged channel resyncs every relay on that runner, in place" do
+    # fails when: a wedged connection moves every healthy relay on its runner,
+    # or re-seats their live Cells in place.
+    test "a wedged channel cuts its runner's control channel, once" do
       verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
 
-      assert [
-               %{primitive: :resync_runner, namespace: :ns, target: "rc_a"},
-               %{primitive: :resync_runner, namespace: :ns, target: "rc_b"}
-             ] = plan_for(verdict)
+      assert [%{primitive: :reset_control_channel, namespace: :ns, target: "e_live"}] =
+               plan_for(verdict)
     end
 
     test "a wedged relay is rebound, named by the verdict" do
@@ -99,22 +99,24 @@ defmodule Flezha.Convergence.HealTest do
       assert Diff.empty?(delta)
     end
 
-    test "wedge ops ride the standard per-target backoff" do
-      verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
+    # fails when: a connection reset shares the runner ladder's key, so applying
+    # it skips the runner's restart for its eviction.
+    test "a connection reset rides its own backoff and never advances the runner ladder" do
+      channel = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
+      [reset] = plan_for(channel)
       now = System.monotonic_time(:millisecond)
-
-      backoff =
-        Backoff.update(
-          Backoff.new(:heal),
-          Planner.ladder_key(:data_plane_wedge, "rc_a"),
-          :error,
-          now
-        )
-        |> Backoff.update(Planner.ladder_key(:data_plane_wedge, "rc_b"), :error, now)
+      backoff = Backoff.update(Backoff.new(:heal), Planner.key(reset), :error, now)
 
       assert wedge_intent()
-             |> diff(wedge_reality(), %{stall_verdict: verdict})
+             |> diff(wedge_reality(), %{stall_verdict: channel})
              |> Planner.plan(backoff) == []
+
+      runner = {:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}}
+
+      assert [%{primitive: :restart_runner, target: "e_live"}] =
+               wedge_intent()
+               |> diff(wedge_reality(), %{stall_verdict: runner})
+               |> Planner.plan(backoff)
     end
 
     # The terminal order goes to the session the verdict named: eviction ends
@@ -360,28 +362,22 @@ defmodule Flezha.Convergence.HealTest do
       assert Diff.empty?(delta)
     end
 
-    test "the first eligible attempt resyncs the existing binding, not a migration" do
-      assert [%{primitive: :resync_runner, target: "op_a", args: %{reason: :output_stall}}] =
+    # fails when: the ladder re-seats a live binding in place from a WAL that
+    # lags it, rather than rebinding it.
+    test "a stalled relay is rebound, on every attempt past its cooldown" do
+      assert [%{primitive: :rebind_relay, target: "op_a", args: %{reason: :output_stall}}] =
                Planner.plan(stalled_diff("op_a"), Backoff.new(:heal))
-    end
 
-    test "a stall that survived the resync escalates to rebind_relay" do
       now = System.monotonic_time(:millisecond)
 
-      # One ladder attempt recorded and its cooldown already elapsed: the same
-      # stall is still flagged, so the next rung is the migration.
       backoff =
         Backoff.update(Backoff.new(:heal), Planner.ladder_key("op_a"), :error, now - 10_000)
 
       assert [%{primitive: :rebind_relay, target: "op_a", args: %{reason: :output_stall}}] =
                Planner.plan(stalled_diff("op_a"), backoff)
-    end
 
-    test "both rungs share one cooldown key, so escalating does not restart the throttle" do
-      for primitive <- [:resync_runner, :rebind_relay] do
-        assert Planner.key(%{primitive: primitive, target: "r", args: %{reason: :output_stall}}) ==
-                 Planner.ladder_key("r")
-      end
+      assert Planner.key(%{primitive: :rebind_relay, target: "r", args: %{reason: :output_stall}}) ==
+               Planner.ladder_key("r")
     end
 
     test "a stalled relay already covered by the plan is not laddered too" do
@@ -405,13 +401,13 @@ defmodule Flezha.Convergence.HealTest do
       %Diff{} = stalled = stalled_diff("op_a")
       delta = %Diff{stalled | stalled_relays: [{@stall_ns, "op_a"}]}
 
-      assert [%{primitive: :resync_runner, target: "op_a"}] =
+      assert [%{primitive: :rebind_relay, target: "op_a"}] =
                Planner.plan(delta, Backoff.new(:heal), max_ops: 0)
     end
 
     test "a ladder rung is recognisable as one; a structural op is not" do
       assert Planner.ladder?(%{
-               primitive: :resync_runner,
+               primitive: :rebind_relay,
                target: "r",
                args: %{reason: :output_stall}
              })

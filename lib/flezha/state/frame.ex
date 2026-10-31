@@ -111,6 +111,10 @@ defmodule Flezha.State.Frame do
       crc32(header, change_bytes)::32-big>>
   end
 
+  @doc "The bytes `encode_record/3` frames a body of `body_size` bytes into."
+  @spec record_bytes(non_neg_integer()) :: pos_integer()
+  def record_bytes(body_size), do: 16 + @header_size + body_size
+
   @doc """
   The crc32 over `header <> body` — the one expression in the tree.
 

@@ -217,14 +217,13 @@ owns the mechanism; for concepts, [`architecture/`](https://github.com/flezha/fl
   (late-input correction, `flz relay replay`) **bumps** it so the new output passes
   dedup and overwrites by natural key. A steps relay rewind bumps only the journal epoch; its re-run's
   output is a newer record and passes on its higher `flz.seq`.
-- **Owner / fence / realign** — a relay's **owner** is the stable identity its ownership
+- **Owner / fence** — a relay's **owner** is the stable identity its ownership
   record names (the `ClassRegistry` row its Overwatch writes before `AddRelay`); a frame about
   the relay from a runner of any other identity is refused, counted as `foreign_frame_refused`
   and answered with `RemRelay`. Within that identity exactly one session writes a cell's WAL:
   a takeover is newest-wins and unbinds the old session first, so its stream channels flip
-  `fenced?` and the WAL writer refuses an append from a superseded session token before any realign
-  decision.
-  **Realign** is the writer adopting a current runner's non-contiguous sequence and bumping the epoch.
+  `fenced?` and the WAL writer refuses an append from a superseded session token, or from a
+  runner other than the one the last bind re-seated.
 - **Minimum watermark** — `min(consumed offset)` across a relay's cells, advanced only
   from the post-fsync path. It is the input-log retention floor and what mints source credit, so
   a permanently-failing payload must never freeze it.

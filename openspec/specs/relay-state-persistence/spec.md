@@ -10,8 +10,8 @@ Each Cell whose Relay has `keeps_state = true` and whose Tasklet's `Change` is n
 
 `seq` SHALL be strictly monotonic per Cell and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Cell; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
 
-- **Populated WAL** (`last_persisted_seq >= 0`) and not a runner-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
-- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for a Cell the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Cell, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive a `CompactCell` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `cell_state_snapshot` establishes the baseline. The pull SHALL be retried on a bounded interval for as long as the Cell remains awaiting-baseline: a pull that fails to dispatch (for example a torn control channel answering `:no_control_channel`) MUST NOT strand the Cell, because no snapshot will arrive to clear the awaiting-baseline state and every subsequent frame would be shed indefinitely. Retries SHALL be rate-limited so a per-frame gap flood cannot fan out into unbounded concurrent pulls.
+- **Populated WAL** (`last_persisted_seq >= 0`): a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
+- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0`: a cold-takeover where this Controller holds no baseline for a Cell the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Cell, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive a `CompactCell` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `cell_state_snapshot` establishes the baseline. The pull SHALL be retried on a bounded interval for as long as the Cell remains awaiting-baseline: a pull that fails to dispatch (for example a torn control channel answering `:no_control_channel`) MUST NOT strand the Cell, because no snapshot will arrive to clear the awaiting-baseline state and every subsequent frame would be shed indefinitely. Retries SHALL be rate-limited so a per-frame gap flood cannot fan out into unbounded concurrent pulls.
 
 A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Cell `WalWriter`. The migrator SHALL walk every directory under `storage/app/state/` of the form `{runner_id}/{relay_class}/{tasklet_id}/` and atomically move its contents into `{relay_class}/{tasklet_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
 
@@ -44,7 +44,7 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 
 #### Scenario: Gap on an empty WAL seeds a baseline instead of disconnecting
 
-- **GIVEN** a freshly-assigned Controller with no WAL for a Cell (`last_persisted_seq = -1`) whose live runner has been producing changes and next emits `seq = 5001`, and the frame is not a runner-restart realign
+- **GIVEN** a freshly-assigned Controller with no WAL for a Cell (`last_persisted_seq = -1`) whose live runner has been producing changes and next emits `seq = 5001`
 - **WHEN** the agent receives the `cell_state_change` frame
 - **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Cell awaiting-baseline, and dispatch a `CompactCell` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error and SHALL NOT each dispatch their own pull
 - **AND** once the pulled `cell_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the runner's next new delta SHALL append contiguously
@@ -160,7 +160,7 @@ The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assem
 
 Restore SHALL be:
 
-1. **Unconditional on every Overwatch bind, and performed by the bind** — `Lifecycle.complete_init/4` restores the persisted Cells of the relay it binds, awaited for the effectively-once tier and dispatched from the bind for every other class, and stamps `AddRelay.resume_cell_count` from the same enumeration so a durable steps driver is held until they land. Every way a relay comes onto a runner is that bind: a fresh bind, an un-park, a rehydrate, a rewind, the convergence loop's rebind after its runner died, and the takeover by a restarted runner presenting the same stable identity. The heal's `rebind_relay` SHALL dispatch no restore of its own after the bind; `Flezha.State.Recovery.resync_for_overwatch/2` serves the `resync_runner` primitive alone, the remedy for a binding that is intact but stopped agreeing. When the relay arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
+1. **Unconditional on every Overwatch bind, and performed by the bind** — `Lifecycle.complete_init/4` restores the persisted Cells of the relay it binds, awaited for the effectively-once tier and dispatched from the bind for every other class, and stamps `AddRelay.resume_cell_count` from the same enumeration so a durable steps driver is held until they land. Every way a relay comes onto a runner is that bind: a fresh bind, an un-park, a rehydrate, a rewind, the convergence loop's rebind after its runner died, and the takeover by a restarted runner presenting the same stable identity. The heal's `rebind_relay` SHALL dispatch no restore of its own after the bind, and no other repair SHALL ship a `RestoreInitState`: `resync_runner` pulls the live Cell's state (`CompactCell`), since a copy behind a live Cell would rewind it. When the relay arrived via HotSwap handover, the in-band state is authoritative and the bind's restore SHALL skip to avoid double-applying.
 2. **Keyed by relay instance id, not factory id** — the Cell wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the relay *instance*, so two relays of the same factory class never collide on one WAL.
 3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
 4. **Re-armed from the controller's terminal** — `RestoreInitState.terminal_seq` SHALL carry the controller's `max(snapshot seq, last WAL seq shipped)`, and the SDK SHALL re-arm `change_seq = max(change-log terminal, terminal_seq) + 1`. A snapshot-only restore — the WAL tail is empty after a compaction — carries no change-log record to derive the seq from; re-armed below the snapshot's seq, its next Changes would be dropped by the writer as duplicates.
@@ -605,8 +605,8 @@ On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.Sta
 
 #### Scenario: Boot completes a bump a crash interrupted
 
-- **WHEN** the agent boots after a crash between a realign's lineage write and its WAL truncation, leaving a lineage record at epoch 5 with a pending whole cut and a dedup file at epoch 4
-- **THEN** boot SHALL truncate the WAL, remove the Cell's snapshots and write a dedup file at epoch 5 before the writer serves, and SHALL re-drive no output of the discarded records
+- **WHEN** the agent boots after a crash between a rewind's lineage write and its WAL cut, leaving a lineage record at epoch 5 with a pending cut above seq S and a dedup file at epoch 4
+- **THEN** boot SHALL cut the WAL and the snapshots above S and write a dedup file at epoch 5 before the writer serves, and SHALL re-drive no output of the discarded records
 
 ### Requirement: flz state CLI subcommand surface
 
@@ -787,7 +787,7 @@ The Controller SHALL NOT leave a Cell indefinitely rejecting Changes with `{:err
 
 The Controller SHALL track, per persistence-enabled Cell, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Cell whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (one controller setting, the application key `:default_output_stall_timeout_ms`; default 60_000; no per-class map), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Cell metadata).
 
-The sweep SHALL do nothing else. It SHALL NOT invoke `Flezha.State.Recovery.resync/2` or any other remedy, and SHALL keep no dedup bookkeeping of its own: the remedy is the convergence Loop's output-stall ladder (`resync_runner`, escalating to `rebind_relay`, under one per-target backoff — see `convergence-self-healing`). A sensor that also heals is a second, uncoordinated actor for one signal.
+The sweep SHALL do nothing else. It SHALL NOT invoke `Flezha.State.Recovery.resync/2` or any other remedy, and SHALL keep no dedup bookkeeping of its own: the remedy is the convergence Loop's output-stall ladder (`rebind_relay`, under its per-target backoff — see `convergence-self-healing`). A sensor that also heals is a second, uncoordinated actor for one signal.
 
 This bounds the duration of any silent persistence/output freeze to at most one `output_stall_timeout_ms` window plus one convergence tick. Because WAL persistence and output-plugin delivery share the per-Cell outbox, recovering WAL advance SHALL also resume output (e.g. Kafka production) for that Cell.
 
@@ -879,55 +879,49 @@ support are prohibited because they orphan state.
 - **THEN** the directory layout it produces SHALL be exactly the layout `Flezha.State.Paths` reads
 - **AND** any layout the reader does not support SHALL NOT be produced by the migrator
 
-### Requirement: Per-Cell WAL SHALL realign to a restarted runner's seq base
+### Requirement: Per-Cell WAL SHALL take Changes only from its owner
 
-The Controller's per-Cell WAL SHALL adopt a restarted runner's sequence base as the
-live source of truth rather than freezing. When a runner process restarts and reconnects
-under a new runner id, it resumes emitting Changes from a fresh sequence base derived from
-its post-restart rebuild (e.g. a Kafka replay), which may diverge from the persisted
-`last_persisted_seq`. The WAL SHALL realign its baseline — discarding the superseded
-pre-restart WAL/snapshots so a later `RestoreInitState` ships only the new epoch — instead
-of dedup-dropping the new runner's Changes as stale. A Change at or below
-`last_persisted_seq` from the *same* runner SHALL remain a legitimate dedup. A realignment
-SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
+The Controller's per-Cell WAL SHALL take Changes only from its owner: the runner the last
+bind re-seated from the log (by a restore, or by a hand-over onto that instance), or, with no
+owner yet (a writer just started, or a correction rewind), the runner whose Change it writes
+next. The owner SHALL be compared by stable identity, so a reconnect's new session stays the
+owner. A Change from any other runner, or from a session a takeover superseded, SHALL be
+refused with its credit released and SHALL change neither the WAL, its snapshots nor its
+epoch; one `[:flezha, :state, :stale_writer_refused]` event SHALL be emitted per refused
+session. A Change at or below `last_persisted_seq` from the owner SHALL remain a legitimate
+dedup. A restarted runner continues the log, since its bind restores it before it starts.
 
-A realign SHALL be honoured only when the divergent Changes arrive via the Cell's
-current owner binding — the session the takeover logic most recently bound to the
-Cell's write path — and only from a session whose stable identity the relay's
-ownership record names as its owner or as pending, or when the record is absent on
-this node and the relay's durable state belongs to that session's namespace. Changes forwarded by a superseded session SHALL be refused at the binding
-(the superseded session's channels are unbound during takeover, before the new session
-is bound) and SHALL NOT trigger a realign; a Change from a session whose identity the
-record does not name SHALL be refused at the stream channel before it reaches the
-writer, counted and reported as `runner-identity-and-session` prescribes, and SHALL
-NOT trigger a realign; neither refusal SHALL add any per-record check to the owning
-session's append path.
+Changes forwarded by a superseded session SHALL be refused at the binding (the superseded
+session's channels are unbound during takeover, before the new session is bound); a Change
+from a session whose identity the relay's ownership record does not name SHALL be refused at
+the stream channel before it reaches the writer, counted and reported as
+`runner-identity-and-session` prescribes; no refusal SHALL add any per-record check to the
+owning session's append path.
 
-#### Scenario: A restarted runner's diverged seq base realigns the WAL
-- **GIVEN** a Cell whose WAL has advanced to seq N under runner A
-- **WHEN** runner A restarts and a new runner B, bound as the Cell's owner by takeover, resumes emitting Changes from a seq base diverged from N
-- **THEN** the WAL SHALL realign to runner B's seq base and resume advancing rather than freeze at N
-- **AND** a `[:flezha, :state, :wal_realign]` event SHALL be emitted
+#### Scenario: A runner that is not the owner never rewrites the WAL
+- **GIVEN** a Cell whose WAL has advanced to seq N under runner A, with a snapshot
+- **WHEN** a runner B that no bind seated sends Changes from a lower seq base
+- **THEN** each SHALL be refused, the WAL SHALL stay at seq N with its snapshot, and one `[:flezha, :state, :stale_writer_refused]` event SHALL name B's session
 
 #### Scenario: A same-runner duplicate is still deduped
 - **GIVEN** a Cell whose WAL has advanced to seq N under runner A
 - **WHEN** runner A re-sends a Change at or below seq N (a retransmit, not a restart)
-- **THEN** the Change SHALL be deduped and the WAL SHALL NOT realign
+- **THEN** the Change SHALL be deduped and the WAL SHALL NOT change
 
 #### Scenario: A user-triggered resync resolves the owning runner
 - **WHEN** a caller with no runner id of its own triggers a resync for a Cell (`flz state rotate`)
 - **THEN** `Flezha.State.Recovery.resolve_runner/1` SHALL resolve the owning runner id from the durable registry entry's metadata tag, keyed by the relay's relay_class (its `:relay_class` opt, defaulting to its id)
 - **AND** an output stall SHALL NOT be such a caller: the Watchdog emits only, and the convergence Loop's output-stall ladder owns that remedy (see `convergence-self-healing`)
 
-#### Scenario: A superseded session's divergent frames do not realign
+#### Scenario: A superseded session's divergent frames are refused
 - **GIVEN** a Cell whose stable identity was taken over by a new session while the old session's frames are still in flight
 - **WHEN** the superseded session's channel forwards a Change with a divergent seq base
-- **THEN** the frame SHALL be refused at the binding, the WAL SHALL NOT realign, and a `[:flezha, :state, :stale_writer_refused]` event SHALL be emitted once for the episode
+- **THEN** the frame SHALL be refused at the binding, the WAL SHALL NOT change, and a `[:flezha, :state, :stale_writer_refused]` event SHALL be emitted once for the episode
 
-#### Scenario: A runner that does not own the relay never realigns its WAL
+#### Scenario: A runner that does not own the relay never writes its WAL
 - **GIVEN** a Cell of relay `X` whose ownership record names runner B's stable identity, with the WAL at seq N under B
 - **WHEN** a session of another identity forwards a Change for that Cell with a divergent seq base
-- **THEN** the frame SHALL be refused at the stream channel, the WAL SHALL stay at seq N with its snapshots, no `[:flezha, :state, :wal_realign]` SHALL be emitted, and `[:flezha, :runner, :foreign_frame_refused]` SHALL name the session, B and `X`
+- **THEN** the frame SHALL be refused at the stream channel, the WAL SHALL stay at seq N with its snapshots, and `[:flezha, :runner, :foreign_frame_refused]` SHALL name the session, B and `X`
 
 ### Requirement: Output is persisted before it is emitted (flush-before-emit)
 
@@ -1338,7 +1332,7 @@ A refusal SHALL leave the bytes on disk untouched and SHALL leave the relay unbo
 
 #### Scenario: A rewind boundary is not located past a corrupt record
 
-- **GIVEN** a Cell whose WAL holds a corrupt record below the seq an epoch realign rewinds to
+- **GIVEN** a Cell whose WAL holds a corrupt record below the seq a rewind cuts to
 - **WHEN** the rewind locates its boundary
 - **THEN** it SHALL refuse rather than cut at the corrupt record's offset and delete the valid records between it and the intended boundary
 
@@ -1418,9 +1412,9 @@ An ownership marker that shares a directory with durable data — a fencing clai
 
 ### Requirement: A Cell's durable cursors SHALL be one record with one stated ordering
 
-The four cursors a Cell's writer carries — the last persisted seq, the outbox durable seq, the outbox flush cursor and the realign epoch they are counted under — SHALL be read through one accessor that returns them together, and a reader SHALL NOT copy the individual fields out of the writer's state. The epoch is the higher of the Cell's lineage record's and its dedup file's; the accessor SHALL read both, from disk when no writer runs.
+The four cursors a Cell's writer carries — the last persisted seq, the outbox durable seq, the outbox flush cursor and the epoch they are counted under — SHALL be read through one accessor that returns them together, and a reader SHALL NOT copy the individual fields out of the writer's state. The epoch is the higher of the Cell's lineage record's and its dedup file's; the accessor SHALL read both, from disk when no writer runs.
 
-The ordering the cursors assume SHALL be stated once at the value and asked before the record is written, not restated by each reader: an output is confirmed only after its record is fsynced and a record is fsynced only after it is appended, so the flush cursor SHALL NOT exceed the durable seq and the durable seq SHALL NOT exceed the last persisted seq. Advance SHALL be monotone; a rewind SHALL happen only under an epoch realign.
+The ordering the cursors assume SHALL be stated once at the value and asked before the record is written, not restated by each reader: an output is confirmed only after its record is fsynced and a record is fsynced only after it is appended, so the flush cursor SHALL NOT exceed the durable seq and the durable seq SHALL NOT exceed the last persisted seq. Advance SHALL be monotone; a rewind SHALL happen only under an epoch bump.
 
 The snapshot cursor is deliberately outside that chain. It counts how much state a compaction folded away and the flush cursor how much output was confirmed, so a Cell that emits nothing snapshots past a flush cursor that never leaves its empty-log floor; ordering the two against each other would be false of every Cell outside the effectively-once tier.
 
@@ -1436,10 +1430,10 @@ A cursor's name SHALL mean one thing. Where several names denote "the last durab
 - **WHEN** the cursor record is about to be persisted
 - **THEN** the ordering SHALL be asked of the record, and a record that does not hold it SHALL be refused and reported rather than written, leaving the older record that does
 
-#### Scenario: A rewind happens only under an epoch realign
+#### Scenario: A rewind happens only under an epoch bump
 
 - **WHEN** a cursor moves backwards
-- **THEN** the move SHALL be attributable to an epoch realign, and any other backwards move SHALL be refused
+- **THEN** the move SHALL be attributable to an epoch bump, and any other backwards move SHALL be refused
 
 ### Requirement: The input-silence sweep is off by default and reports as a warning
 
@@ -1573,7 +1567,7 @@ crash-atomic ceremony with an fsync of the file and then of its directory: the C
 (or none), the trail of the lineage ids it continues each with the seq it continued from (at most
 16, newest first), the epoch, the folded offset, whether its files landed from another
 controller's copy, and the cut a bump has not yet completed. It SHALL be written only by a bump (a
-realign, a rewind, a correction), a mint, a prefix cut, a landing, or the first write of a Cell
+rewind, a correction), a mint, a prefix cut, a landing, or the first write of a Cell
 that has none, always before the dedup file or the WAL change that depends on it, and by a
 landing only after the Cell's data files landed. It SHALL be written by the Cell's running
 writer, or with none running under the Cell's file lock, which the offline cut and a landing
@@ -1621,7 +1615,7 @@ durability backend of an entry another controller wrote, or a pull from another 
 SHALL mint a new lineage id, continuing the old one in its trail, when its writer takes its
 first record there; a hydration or a pull alone SHALL NOT mint, and a Cell hydrated from an entry
 this controller wrote SHALL NOT be marked landed. A Cell whose lineage record holds no id SHALL
-mint one at its first record. A restart, a rebind, a realign or a rewind on the same
+mint one at its first record. A restart, a rebind or a rewind on the same
 controller SHALL NOT mint. Minting SHALL change neither the epoch nor any output's `flz.epoch` or
 `flz.seq`. When a relay arrives and its local copy is compared with the newest copy (the one on
 the controller it moves from, else the backend's), on every reference both hold the newest copy

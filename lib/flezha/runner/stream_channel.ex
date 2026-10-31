@@ -551,12 +551,30 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, Gate.wake_waiters(state, :send_gate, {:send_gate, state.name, :open})}
   end
 
-  # A close for a stream this channel no longer holds, one it released or one a
-  # bind replaced, is stale: acting on it would release the fresh streams.
+  # NIF transport: stream closed. Synchronous rebindability contract — once
+  # this clause runs, state.stream_ref is nil and no outbound send may use
+  # the dead ref. The acceptor will pick this channel up via :stream_ref_status
+  # on the next incoming data stream for the same runner_id. A close for a
+  # stream this channel no longer holds (released, or replaced by a bind) is
+  # stale: acting on it would release the fresh streams.
   def handle_info({:flz_closed, stream_id, reason}, state) do
-    if stream_id == bound_id(state.stream_ref),
-      do: stream_closed(state, reason),
-      else: {:noreply, state}
+    if stream_id != bound_id(state.stream_ref) do
+      {:noreply, state}
+    else
+      # A close the controller itself asked for is not an incident: it is
+      # reported, not diagnosed. Only the REPORTING sits inside this branch —
+      # the binding clear and the credit reset below are unconditional, because
+      # a real socket close drops the runner either way. No stall is declared:
+      # the relays keep running on the runner while the session rebinds.
+      if Marks.runner_retiring?(state.runner_id) do
+        Logger.info("IO socket closed for retiring runner #{state.runner_id}.")
+      else
+        Logger.warning("Connection closed for IO socket (#{reason}).")
+        ControlChannel.rebind_data_streams(state.runner_id)
+      end
+
+      {:noreply, unbind(state)}
+    end
   end
 
   # The only monitors this process holds are the route cache's, so a `:DOWN`
@@ -603,30 +621,6 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   defp drain_credit(state, _session, _bytes), do: state
-
-  # NIF transport: stream closed. Synchronous rebindability contract — once
-  # this clause runs, state.stream_ref is nil and no outbound send may use
-  # the dead ref. The acceptor will pick this channel up via :stream_ref_status
-  # on the next incoming data stream for the same runner_id.
-  defp stream_closed(state, reason) do
-    # A close the controller itself asked for is not an incident: it is
-    # reported, not diagnosed. Only the REPORTING sits inside this branch —
-    # the binding clear and the credit reset below are unconditional, because
-    # a real socket close drops the runner either way.
-    #
-    # The session rebinds its data plane, and the relays keep running on the
-    # runner: no stall is declared, since the loop's remedy re-seats their live
-    # Cells from records that lag them. A relay still silent after the rebind
-    # is the Watchdog's to flag.
-    if Marks.runner_retiring?(state.runner_id) do
-      Logger.info("IO socket closed for retiring runner #{state.runner_id}.")
-    else
-      Logger.warning("Connection closed for IO socket (#{reason}).")
-      ControlChannel.rebind_data_streams(state.runner_id)
-    end
-
-    {:noreply, unbind(state)}
-  end
 
   # A test binds a stand-in handle, which names itself.
   defp bound_id(ref) when is_reference(ref), do: TStream.stream_id(ref)

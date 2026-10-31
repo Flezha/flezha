@@ -12,7 +12,7 @@ The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.
 - **WHEN** the Watchdog flags the stall
 - **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{relay_class, relay_instance, tasklet, key}`
 - **AND** the Watchdog performs no heal action of its own — no direct `Recovery.resync`, no dedup bookkeeping
-- **AND** the Convergence Loop holds the declared stall as a fact, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_relay`) under per-target backoff.
+- **AND** the Convergence Loop holds the declared stall as a fact, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall op (`rebind_relay`) under per-target backoff.
 
 #### Scenario: a compaction give-up is declared, not resynced
 - **GIVEN** the Watchdog's strike table reaches its give-up count for a Cell
@@ -91,7 +91,7 @@ The guard protects a target that is merely *observed* healthy. It SHALL NOT prot
 
 #### Scenario: an output-stalled relay is always re-wired
 - **GIVEN** relay `btc_feed` is bound to an active runner but has not produced output past the stall grace
-- **WHEN** the Planner emits the output-stall ladder op (`resync_runner`, then `rebind_relay` on persistence) with `reason: :output_stall`
+- **WHEN** the Planner emits the output-stall op (`rebind_relay`) with `reason: :output_stall`
 - **THEN** the Heal applies it even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
 
 ### Requirement: A failed heal SHALL NOT erase the divergence it failed to fix
@@ -272,25 +272,24 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 ### Requirement: Output-stalled relays SHALL be actively rebound, not only reported as degraded
 
-An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, relay_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans the ladder — `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_relay` on subsequent eligible attempts while the stall persists — with `args: %{reason: :output_stall}` on the `{:output_stall, relay_id}` key of the one backoff table, so a persistently stalled relay follows the `:heal` row's cooldown and never a per-tick storm. Escalation is counted in attempts, not in elapsed time, so the denser early rungs reach `rebind_relay` sooner in wall-clock terms while the order of remedies is unchanged. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
+An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, relay_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans `rebind_relay` on every eligible attempt while the stall persists, with `args: %{reason: :output_stall}` on the `{:output_stall, relay_id}` key of the one backoff table, so a persistently stalled relay follows the `:heal` row's cooldown and never a per-tick storm. A binding SHALL NOT be re-seated in place: its live Cells may be ahead of every durable record. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
 
-A bind of the relay that landed SHALL clear its output stall and release the ladder it walked (the counter-fact `relay_bound`), whichever runner it landed on: the binding was made afresh, and a relay that can only go back to the runner its stall names SHALL NOT be rebound on every rung until the stall ages out. A rebind of a running relay onto the runner it is running on SHALL restore none of its Cells when the runner's `AddRelay` answer says `kept`: its live Cells are ahead of every durable record, and re-seating them from those records would lose and double acknowledged inputs still in flight. Any other bind SHALL restore even when the answer says `kept`, since a move elsewhere tells the runner nothing and the instance it kept may lag what another runner took since. The bind re-forwards the undelivered input tail as any bind does.
+No bind SHALL clear an output stall: a rebind that cannot unwedge the instance keeps its backoff, and the stall ages out on its grace or clears on evidence. A rebind of a running relay onto the runner it is running on SHALL restore none of its Cells when the runner's `AddRelay` answer says `kept`: its live Cells are ahead of every durable record, and re-seating them from those records would lose and double acknowledged inputs still in flight. Any other bind SHALL restore even when the answer says `kept`, since a move elsewhere tells the runner nothing and the instance it kept may lag what another runner took since. The bind re-forwards the undelivered input tail as any bind does.
 
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the relay's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy relay, which an output-stalled relay is not.
 
-#### Scenario: output-stalled relay walks the resync-then-rebind ladder
+#### Scenario: output-stalled relay is rebound
 
 - **GIVEN** relay `btc_feed` is bound to active runner `ex1` and has not produced output past the output-stall grace period
 - **WHEN** the Watchdog flags it and the convergence Loop receives the stall event
 - **THEN** the Loop triggers an immediate tick
-- **AND** the first eligible attempt issues a `resync_runner` op with `args: %{reason: :output_stall}`
-- **AND** if the stall persists past the next backoff window, the following attempt issues `rebind_relay`, `skip_rebind?` returns `false` even though `ex1` is still active, and the relay is migrated and begins producing again
+- **AND** each eligible attempt issues a `rebind_relay` op with `args: %{reason: :output_stall}`, and `skip_rebind?` returns `false` even though `ex1` is still active
 
-#### Scenario: a rebind onto the runner that kept the relay restores nothing and ends the stall
+#### Scenario: a rebind onto the runner that kept the relay restores nothing
 
 - **GIVEN** a relay under input whose output stall names its own runner, the only one that can run it
 - **WHEN** `rebind_relay` binds it onto that runner again and the runner answers `AddRelay` with `kept`
-- **THEN** no Cell SHALL be restored, each acknowledged input SHALL count once, and the landed bind SHALL clear the stall so no further rung rebinds it
+- **THEN** no Cell SHALL be restored, each acknowledged input SHALL count once, and the stall SHALL age out under its backoff rather than clear on the bind
 
 #### Scenario: A runner that kept a relay through a move elsewhere is restored over
 - **GIVEN** a relay moved from runner A, which kept its instance, to runner B, which took further input
@@ -299,7 +298,7 @@ A bind of the relay that landed SHALL clear its output stall and release the lad
 
 #### Scenario: repeated stalls are backoff-throttled
 
-- **GIVEN** relay `btc_feed` was just resynced due to an output stall 1 second ago
+- **GIVEN** relay `btc_feed` was just rebound due to an output stall 1 second ago
 - **WHEN** the Watchdog flags another output stall for `btc_feed`
 - **THEN** the planned op is filtered out by Backoff (the first rung's cooldown has not yet elapsed)
 - **AND** no op is issued on this tick
@@ -439,7 +438,7 @@ When an SDK runner process restarts and presents its stable identity with a new 
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
 
-The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its relays; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; relay-scoped verdicts (`relay_not_forwarding`, `cell_dispatch_stalled`) to `rebind_relay` for the relay named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `restart_runner` first and `evict_runner` only on a later rung (the process the verdict named is ended on its own session — the one moment it can be identified — and the existing disconnect reroute moves its relays; see *A runner the classifier proves wedged is terminally restarted, not only evicted*); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `reset_control_channel` on the runner whose channel is wedged, never a rebind of each relay on it, under a backoff of its own that never advances that runner's restart/evict ladder; relay-scoped verdicts (`relay_not_forwarding`, `cell_dispatch_stalled`) to `rebind_relay` for the relay named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
 
 `cell_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged cell and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
 
@@ -466,9 +465,9 @@ A data-stream close SHALL NOT mint an `output_stall` for the relays mapped to th
 - **WHEN** the two heartbeats report the same dispatch count and a handout count that moved
 - **THEN** the classifier SHALL NOT report `runner_pool_wedged` for that runner
 
-#### Scenario: A wedged channel is resynced, a wedged relay is rebound
+#### Scenario: A wedged channel is cut, a wedged relay is rebound
 - **WHEN** the classifier reports `channel_not_sending` for a fed channel, and on a later tick `relay_not_forwarding` for a fed relay
-- **THEN** the plan issues `resync_runner` for the first and `rebind_relay` for the second, each under per-target backoff, and `skip_rebind?` does not skip the rebind despite the bound runner being active
+- **THEN** the plan issues `reset_control_channel` on the channel's runner for the first and `rebind_relay` for the second, each under per-target backoff, and `skip_rebind?` does not skip the rebind despite the bound runner being active
 
 #### Scenario: One verdict per tick, deepest first
 - **WHEN** both a channel and the runner beneath it are wedged
@@ -767,7 +766,7 @@ on a healthy target; every primitive advances its key on `:error` and resets on 
 declared evidence, a ladder op resetting on evidence only; every declared kind is
 consumed by exactly one Diff field and planned by exactly one Planner rule; and a source
 walk over `lib/**/*.ex` finds no call to a remedy entry point — `Recovery.resync/2`,
-`Recovery.resync_for_overwatch/2`, any `Heal` function, `FleetManager.evict_runner/2`,
+any `Heal` function, `FleetManager.evict_runner/2`,
 `FleetManager.reset_control_channel/1`, `Overwatch.plugin_restart/3`,
 `Extension.Table.attempt_restart/3`,
 `Lifecycle.publish_binding/1`, a terminal `ControlUnit.disconnect/2` — outside

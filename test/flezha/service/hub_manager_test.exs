@@ -228,20 +228,6 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "relay_set_runner/3" do
-    # fails when: a bind that lands back on the runner its stall names leaves the
-    # stall held, and the loop rebinds the relay on every rung until it ages out.
-    test "publishing a runner declares the relay bound, clearing a runner declares nothing" do
-      FlezhaTest.Helper.MessageTestHelper.become_loop()
-
-      assert {:error, {:hub_down, _}} = HubManager.relay_set_runner("bound-no-hub", "op", "r1")
-      assert_received {:declare, :relay_bound, "op", %{}}
-
-      assert {:error, {:hub_down, _}} = HubManager.relay_set_runner("bound-no-hub", "op", nil)
-      refute_received {:declare, _kind, _target, _args}
-    end
-  end
-
   describe "rewrite_cspec_plugins/2" do
     test "appends a binding to a cspec with empty opts[:bindings]" do
       builder = relay_builder(bindings: [])

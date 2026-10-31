@@ -34,9 +34,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
   alias Flezha.State.CreditLedger
   alias Flezha.State.Paths
   alias Flezha.State.PersistenceResolver
-  alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter
-  alias Flezha.State.Watchdog
   alias Flezha.State.Wire
   alias Flezha.Transport.LivenessCounters
 
@@ -277,7 +275,7 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
   # Emit `output_stall` for each relay a silent stream carried, naming
   # the runner whose stream stalled: the stall is about that binding, and the
-  # loop drops it once the relay is bound again. A sleeping instance is not
+  # loop drops it once the relay is bound elsewhere. A sleeping instance is not
   # mapped to any runner, so it is never flagged.
   def emit_output_stall(runner_id, relay_ids) do
     for relay_id <- relay_ids do
@@ -630,14 +628,14 @@ defmodule Flezha.Runner.StreamChannel.Records do
     Config.get(:credit_flow_control_enabled)
   end
 
-  # Writing a snapshot fsyncs and truncates the per-cell WAL (a call back
-  # into its writer), so run it in a separate process — off this channel's loop
-  # and outside the writer (which would self-call).
+  # A snapshot is cast to its Cell's writer as its records are, so the writer
+  # installs it in the order the runner shipped them.
   def handle_cell_state_snapshot(state, frame) do
     case Wire.decode_frame(frame) do
       {:ok, %{cell_id: {rc, _sh, _pk} = cell_id, seq: seq, header: header, body: body}} ->
-        if admit(state, rc, :cell_state_snapshot),
-          do: DurableTasks.start(fn -> write_snapshot(cell_id, seq, header, body) end)
+        with true <- admit(state, rc, :cell_state_snapshot),
+             {:ok, pid} <- Flezha.State.Supervisor.find_or_start(cell_id),
+             do: WalWriter.install_snapshot(pid, state.runner_id, seq, header, body)
 
       {:error, reason} ->
         undecodable(state, "cell_state_snapshot", reason)
@@ -680,21 +678,6 @@ defmodule Flezha.Runner.StreamChannel.Records do
 
       {:error, reason} ->
         undecodable(state, "delete_cell_state", reason)
-    end
-  end
-
-  def write_snapshot(cell_id, seq, header, body) do
-    case StateSnapshot.write_snapshot(cell_id, seq, header, body) do
-      # Completed once the snapshot is on disk: what hears it acts on the
-      # file, and a failed write is left to the watchdog's timeout.
-      {:ok, _path} ->
-        Watchdog.compaction_completed(cell_id)
-
-      {:error, reason} ->
-        Logger.error(
-          "[stream] cell_state_snapshot write failed " <>
-            "cell=#{inspect(cell_id)}: #{inspect(reason)}"
-        )
     end
   end
 end

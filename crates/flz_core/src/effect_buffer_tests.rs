@@ -183,11 +183,18 @@ fn a_cell_consuming_offsets_keeps_its_edge_values_in_the_record() {
     assert_eq!(buffer.effects[0].consumed_offset, Some(4));
 }
 
-/// A compaction re-states the offset of the state its snapshot holds.
+/// A compaction re-states the offset of the state its snapshot holds, and the
+/// pending timers with it, as one record.
+// fails when: they are two records, and the controller, holding one refused
+// record for a pulled baseline, loses the other.
 #[test]
 fn a_snapshot_re_states_the_offset_it_holds() {
     let identity = encode_cell_identity("op", "task", "k");
     let header = HeaderTemplate::new(0x010203, 1);
+    let ops = vec![TimerOp::register(
+        crate::schema::TimerKind::ProcessingTime,
+        7,
+    )];
     let mut buffer = EffectBuffer::<RawBodies>::default();
     assert!(
         !buffer.restate_above_snapshot(Vec::new()),
@@ -201,8 +208,12 @@ fn a_snapshot_re_states_the_offset_it_holds() {
         None,
     );
     buffer.drain_to_frames(&identity, &AtomicU64::new(0), &header);
-    assert!(buffer.restate_above_snapshot(Vec::new()));
+    assert!(buffer.restate_above_snapshot(ops.clone()));
+    assert!(buffer.timer_ops.is_empty());
     assert_eq!(buffer.effects.len(), 1);
     assert_eq!(buffer.effects[0].consumed_offset, Some(7));
+    assert_eq!(buffer.effects[0].timers, ops);
     assert!(buffer.effects[0].changes.is_empty());
+    let (count, _frames) = buffer.drain_to_frames(&identity, &AtomicU64::new(1), &header);
+    assert_eq!(count, 1);
 }

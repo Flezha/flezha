@@ -26,10 +26,10 @@ defmodule Flezha.State.WalWriterProgressTest do
   defp assert_advanced(later, earlier, step) do
     for key <- [:last_persisted_seq, :outbox_durable_seq, :outbox_flushed_seq] do
       assert Map.fetch!(later, key) >= Map.fetch!(earlier, key),
-             "#{step}: #{key} moved backwards without an epoch realign"
+             "#{step}: #{key} moved backwards without an epoch bump"
     end
 
-    assert later.epoch == earlier.epoch, "#{step}: the epoch moved with no realign"
+    assert later.epoch == earlier.epoch, "#{step}: the epoch moved with no bump"
     later
   end
 

@@ -280,8 +280,9 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     assert quiet_tick()
   end
 
-  # Three faults, one primitive: a seq gap the WAL declares, a compaction the
-  # Watchdog gives up on, and an output stall — each keyed on its own reason.
+  # Two faults, one primitive: a seq gap the WAL declares and a compaction the
+  # Watchdog gives up on, each keyed on its own reason. An output stall rides
+  # the same row: it rebinds the relay, and ages out on the Watchdog's grace.
   defp row(:resync_runner, namespace) do
     {_port, runner} = boot_runner(namespace, unique_id_path("drill"), [])
     id = start_relay(namespace, "resynced", factory: "store_input")
@@ -336,7 +337,7 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
     :ok = Watchdog.sweep_now()
 
-    assert_receive {:heal, %{primitive: :resync_runner, target: ^id, namespace: ^namespace}},
+    assert_receive {:heal, %{primitive: :rebind_relay, target: ^id, namespace: ^namespace}},
                    30_000
 
     assert wait_until(fn -> attempt({:output_stall, id}) >= 1 end, 10_000)

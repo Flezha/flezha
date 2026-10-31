@@ -143,22 +143,10 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     refute_received {:adopted, _, _, _}
   end
 
-  # fails when: the restore a heal kicks on a bound relay adopts again, and
-  # swaps the files of writers that are taking its frames.
-  test "a restore kicked on a bound relay adopts nothing" do
-    expect_adopt(self())
-    scanned = expect_scan(self())
-
-    :ok = Replay.dispatch_restore(state("ohlc#p1"), [state_source_node: @peer], "runner-1")
-
-    assert_receive ^scanned, 2_000
-    refute_received {:adopted, _, _, _}
-  end
-
   # fails when: arriving by HotSwap is read off the transition under way, so a
-  # later rebind or heal, which names its own cause, replays the WAL over the
-  # state the handover already delivered.
-  test "a relay that arrived by HotSwap restores at no later bind or heal" do
+  # later rebind, which names its own cause, replays the WAL over the state the
+  # handover already delivered.
+  test "a relay that arrived by HotSwap restores at no later bind" do
     arrived = %{state("arrived") | arrived_via_hotswap?: true, cause: :rebind}
     scanned = expect_scan(self())
 
@@ -166,9 +154,6 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
     refute_received ^scanned
     assert :ok = Replay.restore_on_bind(%{arrived | arrived_via_hotswap?: false}, arrived.builder)
     assert_received ^scanned
-
-    reject(&Replay.dispatch_restore/3)
-    assert {:noreply, ^arrived} = Overwatch.handle_cast({:kick_restore, "runner-1"}, arrived)
   end
 
   # fails when: the carriers' precedence moves: a handover stops excluding the
@@ -277,6 +262,33 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
 
     # Already answered when the bind goes on, not on its way.
     assert_received {:restored, ^id}
+  end
+
+  # fails when: a bind carried by a hand-over, which restores nothing, leaves its
+  # writers owned by the runner the relay left, so the bound runner's records are
+  # refused and a stale instance's pull can still become the baseline.
+  test "a bind re-seats every live writer of its relay, a hand-over's too" do
+    {class, _, _} = id = cell("reseat")
+    {:ok, writer} = Flezha.State.Supervisor.find_or_start(id)
+    on_exit(fn -> Flezha.State.Supervisor.delete_cell(id) end)
+    header = TestHelpers.stub_header()
+    :ok = WalWriter.append(writer, 0, header, "a", "runner_a")
+    credit = %{channel: self(), session: "s", wire_size: 4}
+    WalWriter.append_async(writer, 5, header, "held", "runner_a", credit)
+
+    state = %Overwatch{
+      id: class,
+      namespace: "_system",
+      factory_id: "f",
+      runner_id: "runner_b",
+      arrived_via_hotswap?: true,
+      builder: %Builder{id: class, factory_id: "f", run: :flow}
+    }
+
+    assert Replay.reseat_writers(state) == :ok
+    assert %{owning_runner: "runner_b", last_persisted_seq: 0} = WalWriter.stall_status(writer)
+    assert_received {:credit_released, "s", 4, ^id}
+    refute :sys.get_state(writer).gap_open?
   end
 
   describe "await_restore/2" do
@@ -862,43 +874,5 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
       },
       overrides
     )
-  end
-end
-
-defmodule FlezhaTest.Relay.OverwatchRestoreAsyncTest do
-  @moduledoc """
-  The per-Cell restore replay must run off the Overwatch process so its
-  blocking disk reads cannot freeze the GenServer mailbox.
-  """
-  use ExUnit.Case, async: true
-  use Mimic
-
-  alias Flezha.Relay.Builder
-  alias Flezha.Relay.Overwatch
-  alias FlezhaTest.Helper.NodeTestHelper
-
-  test "kick_restore does not block the Overwatch on a slow restore disk scan" do
-    # Private stub bites only the in-process (regression) path; the spawned
-    # worker calls through to the real (fast) scan. A regression therefore
-    # hangs here rather than returning late.
-    stub(Flezha.State.Paths, :all_cells, fn ->
-      NodeTestHelper.park()
-      []
-    end)
-
-    state = %Overwatch{
-      id: "btc_feed",
-      namespace: "default",
-      runner_id: "ex_1",
-      factory_id: "market",
-      builder: %Builder{id: "btc_feed", factory_id: "market", opts: []},
-      arrived_via_hotswap?: false
-    }
-
-    {elapsed_us, {:noreply, ^state}} =
-      :timer.tc(fn -> Overwatch.handle_cast({:kick_restore, "ex_1"}, state) end)
-
-    assert elapsed_us < 500_000,
-           "kick_restore blocked the Overwatch for #{div(elapsed_us, 1000)}ms on the restore disk scan"
   end
 end

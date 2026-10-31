@@ -512,14 +512,18 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
         std::mem::take(&mut self.holds)
     }
 
+    // Exactly one record above the snapshot, the one the controller holds for
+    // a pulled baseline: the timers ride in the offset's entry.
     fn restate_above_snapshot(&mut self, register_ops: Vec<TimerOp>) -> bool {
-        let owed = !register_ops.is_empty() || self.shipped.is_some();
-        self.timer_ops = register_ops;
-        if let Some((offset, event_time)) = self.shipped {
-            self.effects
-                .push(EffectEntry::offset_only(Some(offset), event_time));
+        match self.shipped {
+            Some((offset, event_time)) => self.effects.push(EffectEntry {
+                timers: register_ops,
+                ..EffectEntry::offset_only(Some(offset), event_time)
+            }),
+            None if register_ops.is_empty() => return false,
+            None => self.timer_ops = register_ops,
         }
-        owed
+        true
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

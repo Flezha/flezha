@@ -21,12 +21,10 @@ defmodule Flezha.Convergence.Heal do
       not yet bound, or halted) onto an available one through the full bind:
       resume state, the durable Cells restored, the input log's tail
       re-forwarded, then the registry tag and the route published.
-    * `resync_runner` — re-run the `RestoreInitState` handshake for a
-      relay against the runner it is already bound to, or resync ONE Cell
-      against the runner a declared gap named (`Flezha.State.Recovery.resync/2`
-      picks which way the state goes). The rung below
-      `rebind_relay`: no placement decision, no migration, no handover —
-      the remedy for a binding that is intact but has stopped agreeing.
+    * `resync_runner` — pull ONE Cell's live state, as its log's baseline,
+      from the runner a declared gap named (`Flezha.State.Recovery.resync/2`):
+      no placement decision, no migration, no handover — the remedy for a
+      Cell whose log has stopped agreeing with the runner.
     * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin
       set against its declared cspec manifest.
     * `restart_plugin` — re-run a declared plugin's provider, whether it
@@ -72,11 +70,7 @@ defmodule Flezha.Convergence.Heal do
   # reason's evidence instead (`Flezha.Convergence.Facts`).
   @table [
     %{name: :rebind_relay, executor: "Overwatch {:rebind, target}", evidence: :ok},
-    %{
-      name: :resync_runner,
-      executor: "State.Recovery.resync_for_overwatch/2 | resync/2",
-      evidence: :ok
-    },
+    %{name: :resync_runner, executor: "State.Recovery.resync/2", evidence: :ok},
     %{
       name: :start_plugin,
       executor: "Overwatch.plugin_heal/4 → Plugins.subscribe/4",
@@ -147,23 +141,6 @@ defmodule Flezha.Convergence.Heal do
       {:ok, _} -> :ok
       _ -> :error
     end
-  end
-
-  # Re-issue `RestoreInitState` for every persisted Cell of a relay against
-  # the runner it is ALREADY bound to — the same replay a rebind performs after
-  # migrating, without the migration. A relay with no live pid or no binding
-  # has nothing to resync; that is a failed heal, and the next tick reaches it
-  # through `rebind_relay` instead.
-  defp apply_primitive(:resync_runner, %{namespace: namespace, target: relay_id}) do
-    on_relay(namespace, relay_id, fn pid ->
-      case Probe.overwatch(pid) do
-        {:ok, %{runner_id: runner_id}} when is_binary(runner_id) ->
-          Recovery.resync_for_overwatch(pid, runner_id)
-
-        _ ->
-          :error
-      end
-    end)
   end
 
   # (re)subscribe a declared-but-missing plugin into the running relay through

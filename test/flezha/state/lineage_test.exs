@@ -84,9 +84,11 @@ defmodule Flezha.State.LineageTest do
 
   test "a pending cut counts only while the dedup file is behind the lineage record", ctx do
     write_records(ctx.cell_id, 0..3)
-    :ok = Lineage.put(ctx.cell_id, %{stored(ctx.cell_id) | epoch: 1, folded_offset: 2, cut: :all})
+    record = %{stored(ctx.cell_id) | epoch: 1, folded_offset: 2, cut: {:above, 1}}
+    :ok = Lineage.put(ctx.cell_id, record)
 
-    assert %{progress: %{epoch: 1, folded_offset: 2}, cut: :all} = Lineage.read(ctx.cell_id)
+    assert %{progress: %{epoch: 1, folded_offset: 2}, cut: {:above, 1}} =
+             Lineage.read(ctx.cell_id)
   end
 
   # fails when: a bump whose cut-clearing record landed and whose dedup file did
@@ -168,28 +170,6 @@ defmodule Flezha.State.LineageTest do
     assert File.read!(Paths.outbox_dedup_path(ctx.cell_id)) == dedup
     {:ok, restarted} = Supervisor.lookup(ctx.cell_id)
     TestHelpers.close_and_await(restarted, ctx.cell_id)
-  end
-
-  # fails when: a boot leaves a realign its lineage write committed half done,
-  # so the discarded records' outputs are re-driven under the new epoch.
-  test "a realign interrupted after its lineage write is completed at boot, re-driving nothing" do
-    for empty_wal? <- [false, true] do
-      cell_id = effect_cell(7)
-      for seq <- [2, 5], do: snapshot(cell_id, seq)
-      if empty_wal?, do: File.write!(Paths.wal_path(cell_id), "")
-      :ok = Lineage.put(cell_id, %{stored(cell_id) | epoch: 5, folded_offset: -1, cut: :all})
-      :ok = Lineage.put_dedup(cell_id, %{Lineage.dedup(cell_id) | epoch: 4})
-
-      {pid, status} = boot(cell_id)
-
-      assert %{pending: 0, held: 0, epoch: 5, outbox_flushed_seq: -1} = status
-      assert WalWriter.last_persisted_seq(pid) == -1
-      assert records(cell_id) == 0
-      assert Paths.snapshot_paths(cell_id) == []
-      assert %{epoch: 5, folded_offset: -1} = Lineage.dedup(cell_id)
-      assert %{epoch: 5, cut: nil} = stored(cell_id)
-      TestHelpers.close_and_await(pid, cell_id)
-    end
   end
 
   # fails when: a boot leaves a rewind its lineage write committed half done:

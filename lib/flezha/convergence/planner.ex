@@ -49,7 +49,7 @@ defmodule Flezha.Convergence.Planner do
   @rules [
     misbound_relays: [:evict_runner, :rebind_relay],
     halted_relays: [:reset_control_channel, :rebind_relay],
-    data_plane_wedge: [:restart_runner, :evict_runner, :resync_runner, :rebind_relay],
+    data_plane_wedge: [:restart_runner, :evict_runner, :reset_control_channel, :rebind_relay],
     unbound_relays: [:rebind_relay],
     resync_cells: [:resync_runner],
     missing_plugins: [:start_plugin],
@@ -58,7 +58,7 @@ defmodule Flezha.Convergence.Planner do
     stale_tags: [:publish_binding],
     unplaced_relays: [:start_relay],
     not_started_plugins: [:start_plugin],
-    stalled_relays: [:resync_runner, :rebind_relay]
+    stalled_relays: [:rebind_relay]
   ]
 
   @doc """
@@ -142,8 +142,10 @@ defmodule Flezha.Convergence.Planner do
       when primitive in @plugin_primitives,
       do: {primitive, {target, plugin_id}}
 
-  def key(%{target: target, args: %{reason: reason}}) when is_atom(reason),
-    do: ladder_key(reason, target)
+  # A connection reset is no rung of its runner's ladder, so it never advances it.
+  def key(%{primitive: primitive, target: target, args: %{reason: reason}})
+      when is_atom(reason) and primitive != :reset_control_channel,
+      do: ladder_key(reason, target)
 
   def key(%{primitive: primitive, target: target}), do: {primitive, target}
 
@@ -178,11 +180,9 @@ defmodule Flezha.Convergence.Planner do
   def proved_wedged?(%{args: %{reason: reason}}), do: reason in @proved_not_producing
   def proved_wedged?(_op), do: false
 
-  # One op per stalled relay the plan does not already cover, laddered:
-  # resync the existing binding first (cheap, no migration), migrate only once
-  # that failed to restore production. The rung is read off the ladder's own
-  # cooldown attempt count — the counter that already throttles it — so there
-  # is no second piece of per-relay bookkeeping.
+  # One rebind per stalled relay the plan does not already cover, under the
+  # ladder's backoff: a binding is never re-seated in place, since its live
+  # Cells may be ahead of every record.
   defp stall_ops(%Diff{stalled_relays: []}, _backoff, _planned), do: []
 
   defp stall_ops(%Diff{stalled_relays: stalled}, backoff, planned) do
@@ -190,11 +190,7 @@ defmodule Flezha.Convergence.Planner do
 
     stalled
     |> Enum.reject(fn {_ns, rid} -> MapSet.member?(covered, rid) end)
-    |> Enum.map(fn {ns, rid} ->
-      op(rung(backoff, @ladder_reason, rid, :resync_runner, :rebind_relay), ns, rid, %{
-        reason: @ladder_reason
-      })
-    end)
+    |> Enum.map(fn {ns, rid} -> op(:rebind_relay, ns, rid, %{reason: @ladder_reason}) end)
     |> Backoff.filter(backoff, &key/1)
   end
 
@@ -230,8 +226,8 @@ defmodule Flezha.Convergence.Planner do
 
   # The tick's classifier verdict, already resolved to the cell that can be
   # healed. Remedy by scope: a wedged runner is evicted (its relays rebind
-  # through the existing ordering), a wedged connection is resynced in place,
-  # a wedged relay is rebound.
+  # through the existing ordering), a wedged connection's channel is cut, a
+  # wedged relay is rebound.
   defp wedge_ops(%Diff{data_plane_wedge: nil}, _backoff), do: []
 
   # A runner rides its own two-rung ladder. The terminal restart first, on the
@@ -254,9 +250,11 @@ defmodule Flezha.Convergence.Planner do
     ]
   end
 
-  defp wedge_ops(%Diff{data_plane_wedge: {:connection, refs}, data_plane_layer: layer}, _backoff) do
-    Enum.map(refs, fn {ns, rid} -> op(:resync_runner, ns, rid, wedge_args(layer)) end)
-  end
+  defp wedge_ops(
+         %Diff{data_plane_wedge: {:connection, ns, runner_id}, data_plane_layer: layer},
+         _backoff
+       ),
+       do: [op(:reset_control_channel, ns, runner_id, wedge_args(layer))]
 
   defp wedge_ops(%Diff{data_plane_wedge: {:relay, refs}, data_plane_layer: layer}, _backoff) do
     Enum.map(refs, fn {ns, rid} -> op(:rebind_relay, ns, rid, wedge_args(layer)) end)

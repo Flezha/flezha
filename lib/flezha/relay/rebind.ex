@@ -2,8 +2,7 @@ defmodule Flezha.Relay.Rebind do
   @moduledoc """
   The bind task every move runs (a rebind, a wake, a restarted runner): it runs
   `Flezha.Relay.Lifecycle.complete_init/5` off the Overwatch and reports, and
-  the result is folded back here. And a reconnect's session swap, and the park
-  that carries a relay across its session's data-plane rebind.
+  the result is folded back here. And a reconnect's session swap, and the park.
   """
 
   alias Flezha.Identificator
@@ -73,21 +72,13 @@ defmodule Flezha.Relay.Rebind do
   def session_replaced(%Overwatch{} = state, _old_session, _new_session, _continuity), do: state
 
   @doc """
-  Park a running relay with a durable input log bound to `runner_id`, which its
-  session's data-plane rebind asks (`{:park_stream, runner_id}`,
-  `StreamPool.release_streams/1`) once the lost streams are let go: it
-  forwards on no channel and is armed for its own to bind again, so every input
-  journaled meanwhile stays in the tail its re-forward sends first
-  (`unpark/1`), at once when that channel is bound already.
+  Park a running relay with a durable input log on `runner_id`'s rebinding data
+  plane: it forwards nothing until its channel binds again (`unpark/1`).
   """
   @spec park_stream(Overwatch.t(), binary()) :: Overwatch.t()
-  def park_stream(
-        %Overwatch{runner_id: runner_id, phase: :running, bind_task: nil} = state,
-        runner_id
-      ) do
-    own = %Overwatch{state | channel: StreamPool.channel_for(runner_id, state.id)}
-
-    if Replay.floor_reporter(state) && Replay.arm_bind_reforward(own) == :armed,
+  def park_stream(%Overwatch{runner_id: id, phase: :running, bind_task: nil} = state, id)
+      when state.channel != nil do
+    if Replay.floor_reporter(state) && Replay.arm_bind_reforward(state) == :armed,
       do: %Overwatch{state | channel: nil},
       else: state
   end

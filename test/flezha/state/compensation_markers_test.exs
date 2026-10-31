@@ -11,7 +11,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
   import Mimic
 
-  alias Flezha.Runner.{ControlChannel, StreamChannel}
+  alias Flezha.Runner.{ControlUnit, StreamChannel}
   alias Flezha.State.Wire
   alias Flezha.State.{Commands, Paths, TestHelpers}
   alias FlezhaTest.Helper.NodeTestHelper
@@ -74,12 +74,12 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
     test_pid = self()
 
-    expect(ControlChannel, :send_control, fn "exec-ship", command ->
+    expect(ControlUnit, :send_control_await, fn "exec-ship", command, _opts ->
       send(test_pid, {:captured, command})
-      {:ok, make_ref()}
+      {:error, :captured}
     end)
 
-    Commands.dispatch_restore_init_state("exec-ship", seg)
+    Commands.await_restore_init_state("exec-ship", seg)
 
     assert_receive {:captured, {:restore_init_state, cmd}}
     assert cmd.has_compensation_intent, "intent marker rides RestoreInitState"

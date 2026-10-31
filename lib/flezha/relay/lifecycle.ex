@@ -383,13 +383,13 @@ defmodule Flezha.Relay.Lifecycle do
   """
   @spec kept?(Overwatch.t(), binary(), binary() | nil) :: boolean()
   def kept?(%Overwatch{phase: :running, runner_id: id}, id, raw), do: ClassRegistry.kept?(raw)
-
   def kept?(%Overwatch{}, _runner_id, _raw), do: false
 
-  # A refused restore halts the relay rather than folding new inputs onto empty
-  # state, on the existing halted-error contract.
+  # An instance not kept is re-seated, so its writers name the runner first; a
+  # refused restore halts the relay rather than folding new inputs onto empty state.
   defp awaited_restore(state, kept?) do
     with false <- kept?,
+         :ok <- Replay.reseat_writers(state),
          true <- Replay.awaited_restore?(state),
          {:error, reason} <- Replay.restore_cells_awaited(state) do
       {:error, {:restore_refused, reason}, state}

@@ -281,14 +281,11 @@ defmodule Flezha.Convergence.RemedySeamTest do
     assert Facts.ticks?(:runner_connected, :transient)
   end
 
-  # fails when: a relay that can only go back onto the runner its stall names
-  # is rebound on every rung until the stall ages out.
-  test "a landed bind clears its relay's output stall and releases the ladder it walked" do
-    {facts, :new} = Facts.put(%{}, :output_stall, "op", %{runner_id: "r1"}, 1_000)
-    {facts, :cleared} = Facts.put(facts, :relay_bound, "op", %{}, 1_005)
-
-    refute Map.has_key?(facts, {:output_stall, "op"})
-    assert Facts.cleared_key(:relay_bound, "op") == Planner.ladder_key("op")
+  # fails when: a landed bind clears its relay's output stall and resets the
+  # ladder's backoff, so a rebind that cannot unwedge the instance repeats.
+  test "an output stall is cleared by no bind: it ages out on its grace" do
+    refute Enum.any?(Facts.kinds(), fn {_kind, entry} -> entry[:clears] == :output_stall end)
+    refute Map.has_key?(Facts.kinds().output_stall, :cleared_by)
   end
 
   # ---------- clause 4: a remedy entry point outside the loop is a bypass ----------
@@ -300,7 +297,6 @@ defmodule Flezha.Convergence.RemedySeamTest do
   # executor's body lives in `Plugins.restart/3`.
   @entry_points [
     {Flezha.State.Recovery, :resync, []},
-    {Flezha.State.Recovery, :resync_for_overwatch, []},
     {Flezha.Convergence.Heal, :any, []},
     {Flezha.Runner.FleetManager, :evict_runner, []},
     {Flezha.Runner.FleetManager, :reset_control_channel, []},

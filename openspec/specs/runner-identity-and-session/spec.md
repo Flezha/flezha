@@ -239,9 +239,8 @@ bound session's channels by it; no other mechanism SHALL seed a route.
 - **WHEN** A is frozen, the controller is told A disconnected and moves `X` to B, B
   takes two more inputs, and A resumes and reconnects under the same stable identity
 - **THEN** the first frame A's copy of `X` sends SHALL be refused and reported with
-  A's new session and `X`, A SHALL be sent `RemRelay` for `X` once, no
-  `[:flezha, :state, :wal_realign]` SHALL name A's new session, no output of A's copy
-  SHALL reach `X`'s outputs, and `X`'s WAL SHALL keep the lineage B wrote
+  A's new session and `X`, A SHALL be sent `RemRelay` for `X` once, no output of
+  A's copy SHALL reach `X`'s outputs, and `X`'s WAL SHALL keep the lineage B wrote
 
 #### Scenario: A rebind names its target as the owner before the start
 

@@ -284,6 +284,21 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  A compaction's two steps: `Flezha.State.Snapshot.write_snapshot/4`, then the
+  Cell's live writer, if any, cut up to `seq`.
+  """
+  @spec compact(Paths.cell_id(), non_neg_integer(), binary(), binary()) ::
+          {:ok, binary()} | {:error, term()}
+  def compact(cell_id, seq, header, bytes) do
+    with {:ok, path} <- Flezha.State.Snapshot.write_snapshot(cell_id, seq, header, bytes) do
+      with {:ok, pid} <- Flezha.State.WriterRegistry.lookup(cell_id),
+           do: :ok = WalWriter.truncate_up_to(pid, seq)
+
+      {:ok, path}
+    end
+  end
+
+  @doc """
   The byte offset every record in the record log at `path` starts at, read out
   of the file's own framing rather than rebuilt from what a test appended.
   """

@@ -46,7 +46,7 @@ defmodule Flezha.State.RestoreTest do
 
     for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
 
-    {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
+    {:ok, _} = TestHelpers.compact(pid, 3, header, "snap@3")
 
     assert {:ok, payload} = Restore.payload(pid, :latest)
     assert payload.snapshot_bytes == "snap@3"
@@ -144,14 +144,14 @@ defmodule Flezha.State.SnapshotTest do
     assert {:ok, ^header, "state-blob"} = Snapshot.read_snapshot(path)
   end
 
-  test "write_snapshot truncates the WAL up to the snapshot's seq", %{cell_id: pid} do
+  test "a compaction truncates the WAL up to the snapshot's seq", %{cell_id: pid} do
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, srv} = Supervisor.lookup(pid)
     header = TestHelpers.stub_header()
 
     for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
 
-    {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
+    {:ok, _} = TestHelpers.compact(pid, 3, header, "snap@3")
 
     # WAL retains records 4, 5.
     {:ok, dev} = :file.open(Paths.wal_path(pid), [:raw, :read, :binary])
@@ -219,7 +219,7 @@ defmodule Flezha.State.TimeTravelTest do
     {:ok, srv} = Supervisor.lookup(pid)
 
     for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "v" <> Integer.to_string(n))
-    {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
+    {:ok, _} = TestHelpers.compact(pid, 2, header, "snap@2")
 
     assert {:ok, result} = TimeTravel.query(pid, {:seq, 4})
     assert result.snapshot_bytes == "snap@2"
@@ -268,7 +268,7 @@ defmodule Flezha.State.TimeTravelTest do
     {:ok, srv} = Supervisor.lookup(cell_id)
 
     for n <- 0..3, do: :ok = WalWriter.append(srv, n, header, "i" <> Integer.to_string(n))
-    {:ok, _} = Snapshot.write_snapshot(cell_id, 1, header, "iter@1")
+    {:ok, _} = TestHelpers.compact(cell_id, 1, header, "iter@1")
 
     assert {:ok, result} = TimeTravel.query(cell_id, {:seq, 3})
     assert result.snapshot_bytes == "iter@1"
@@ -435,7 +435,7 @@ defmodule Flezha.State.RetentionTest do
       header = TestHelpers.stub_header()
 
       for n <- 0..6, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
-      {:ok, _} = Snapshot.write_snapshot(pid, 4, header, "snap@4")
+      {:ok, _} = TestHelpers.compact(pid, 4, header, "snap@4")
       # After snapshot the writer is at seq 6 with WAL = [5, 6].
       assert WalWriter.last_persisted_seq(srv) == 6
 
@@ -445,7 +445,7 @@ defmodule Flezha.State.RetentionTest do
       assert {4, _} = Snapshot.latest_snapshot(pid)
 
       # Add an older snapshot to demonstrate it gets reaped under 0 retention.
-      {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
+      {:ok, _} = TestHelpers.compact(pid, 5, header, "snap@5")
       :ok = Retention.sweep_cell(pid, 0)
       assert [{5, _}] = Paths.snapshot_paths(pid)
     end
@@ -458,8 +458,8 @@ defmodule Flezha.State.RetentionTest do
       {:ok, srv} = Supervisor.lookup(pid)
 
       for n <- 0..3, do: :ok = WalWriter.append(srv, n, header, "x")
-      {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
-      {:ok, _} = Snapshot.write_snapshot(pid, 3, header, "snap@3")
+      {:ok, _} = TestHelpers.compact(pid, 2, header, "snap@2")
+      {:ok, _} = TestHelpers.compact(pid, 3, header, "snap@3")
 
       # 1-hour retention; both snaps are within the window. Per design.md
       # Decision 5: when no snap is older than cutoff, kept_seq = latest_seq
@@ -597,8 +597,8 @@ defmodule Flezha.State.RetentionTest do
         {:ok, _} = Supervisor.find_or_start(pid)
         {:ok, srv} = Supervisor.lookup(pid)
         for n <- 0..5, do: :ok = WalWriter.append(srv, n, header, "x")
-        {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
-        {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
+        {:ok, _} = TestHelpers.compact(pid, 2, header, "snap@2")
+        {:ok, _} = TestHelpers.compact(pid, 5, header, "snap@5")
 
         # snap@2 is older than the 48h window, so it stays as the floor a
         # point-in-time query reads from.
@@ -619,7 +619,7 @@ defmodule Flezha.State.RetentionTest do
       header = TestHelpers.stub_header()
 
       for n <- 0..6, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
-      {:ok, _} = Snapshot.write_snapshot(pid, 4, header, "snap@4")
+      {:ok, _} = TestHelpers.compact(pid, 4, header, "snap@4")
       # Compaction already cut the WAL to [5, 6]; a retention tick that keeps
       # the latest snapshot has nothing below seq 4 left to remove.
       {:ok, %{inode: inode}} = File.stat(Paths.wal_path(pid))
@@ -647,12 +647,12 @@ defmodule Flezha.State.RetentionTest do
       end
 
       for n <- 0..599, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
-      {:ok, _} = Snapshot.write_snapshot(pid, 400, header, "snap@400")
+      {:ok, _} = TestHelpers.compact(pid, 400, header, "snap@400")
       assert seqs.() == Enum.to_list(401..599)
 
       # The second cut works against the rebased index and appends land after it.
       :ok = WalWriter.append(srv, 600, header, "x600")
-      {:ok, _} = Snapshot.write_snapshot(pid, 550, header, "snap@550")
+      {:ok, _} = TestHelpers.compact(pid, 550, header, "snap@550")
       assert seqs.() == Enum.to_list(551..600)
       assert WalWriter.last_persisted_seq(srv) == 600
     end

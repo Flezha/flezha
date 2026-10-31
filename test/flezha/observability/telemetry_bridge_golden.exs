@@ -807,12 +807,6 @@
          outcome: :failure,
          meaning: "Copying a relay's saved state from another node failed."
        ]},
-    [:flezha, :state, :wal_realign] =>
-      {:flezha_state, :wal_realign, :event,
-       [
-         label: "Sequence realigned",
-         meaning: "A relay's saved state moved its sequence number to match its runner's."
-       ]},
     [:flezha, :state, :wal_rewind] =>
       {:flezha_state, :wal_rewind, :event,
        [
@@ -997,7 +991,6 @@
     [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
     [:flezha, :state, :wal, :backpressure] => {:flezha_state, :wal_backpressure, :metric},
     [:flezha, :state, :wal_pull_failed] => {:flezha_state, :wal_pull_failed, :event},
-    [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
     [:flezha, :state, :wal_rewind] => {:flezha_state, :wal_rewind, :event},
     [:flezha, :steps, :failed] => {:flezha_health, :failed, :event},
     [:flezha, :steps, :suspend_requested] => {:flezha_health, :suspend_requested, :event},
@@ -2049,13 +2042,6 @@
           label: "Copy from node failed",
           name: :wal_pull_failed,
           outcome: :failure
-        },
-        %{
-          description: "A relay's saved state moved its sequence number to match its runner's.",
-          kind: :event,
-          label: "Sequence realigned",
-          name: :wal_realign,
-          outcome: :normal
         },
         %{
           description: "A relay's saved state was rewound to an earlier point.",

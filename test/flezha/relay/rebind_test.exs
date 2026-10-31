@@ -387,9 +387,9 @@ defmodule FlezhaTest.Relay.RebindTest do
 
   # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
   # handover that carried nothing. The flag suppresses the per-Cell WAL
-  # restore at bind time AND the explicit `kick_restore` repair, so a migration
-  # away from a DEAD runner — where the state source is gone and the handover is
-  # empty by construction — starts fresh and can never be replayed back.
+  # restore at bind time, so a migration away from a DEAD runner — where the
+  # state source is gone and the handover is empty by construction — starts
+  # fresh and can never be replayed back.
   test "an empty handover does not suppress the WAL restore" do
     handover = %{
       id: "handover_guard",

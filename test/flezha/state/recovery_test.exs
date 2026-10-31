@@ -1,7 +1,7 @@
 defmodule Flezha.State.RecoveryTest do
   @moduledoc """
-  `Flezha.State.Recovery`: the three ways a desynced Cell is put back on a
-  consistent point, and what each one needs to know first.
+  `Flezha.State.Recovery`: a desynced Cell is put back on a consistent point
+  by pulling the live Cell's state, and the runner it is pulled from.
   """
 
   # async: false: writes Application env; Mimic stubs; a shared on-disk root.
@@ -28,66 +28,25 @@ defmodule Flezha.State.RecoveryTest do
       %{header: TestHelpers.stub_header()}
     end
 
-    test "no persisted state resyncs via CompactCell pull, never an empty RestoreInitState" do
-      cell_id = TestHelpers.sample_cell_id("nodata_" <> uniq())
-      # The writer's lazily-created zero-byte WAL is not persisted state.
-      {:ok, _} = Supervisor.find_or_start(cell_id)
+    # fails when: a resync with state on disk pushes `RestoreInitState`,
+    # rewinding a live Cell to a copy behind it.
+    test "every resync pulls, with or without persisted state", %{header: header} do
+      bare = TestHelpers.sample_cell_id("nodata_" <> uniq())
+      {:ok, _} = Supervisor.find_or_start(bare)
+      refute Restore.has_persisted_state?(bare)
 
-      refute Restore.has_persisted_state?(cell_id)
-
-      assert {:ok, _ref} = Recovery.resync(cell_id, runner_id: "exec-1", reason: :seq_gap)
-
-      assert_receive {:control_sent, "exec-1", :compact_cell}, 1_000
-      refute_received {:control_sent, _, :restore_init_state}
-    end
-
-    test "persisted WAL records resync via RestoreInitState push", %{header: header} do
-      cell_id = TestHelpers.sample_cell_id("data_" <> uniq())
-      {:ok, _} = Supervisor.find_or_start(cell_id)
-      {:ok, writer} = Supervisor.lookup(cell_id)
+      held = TestHelpers.sample_cell_id("data_" <> uniq())
+      {:ok, writer} = Supervisor.find_or_start(held)
       :ok = WalWriter.append(writer, 0, header, "x")
+      assert Restore.has_persisted_state?(held)
 
-      assert Restore.has_persisted_state?(cell_id)
-
-      assert {:ok, _ref} = Recovery.resync(cell_id, runner_id: "exec-1", reason: :seq_gap)
-
-      assert_receive {:control_sent, "exec-1", :restore_init_state}, 1_000
-      refute_received {:control_sent, _, :compact_cell}
-    end
-  end
-
-  describe "resync_for_overwatch/2" do
-    defmodule SpyOverwatch do
-      use GenServer
-
-      def start_link(forward_to), do: GenServer.start_link(__MODULE__, forward_to)
-
-      @impl true
-      def init(forward_to), do: {:ok, %{forward_to: forward_to}}
-
-      @impl true
-      def handle_cast({:kick_restore, runner_id}, state) do
-        send(state.forward_to, {:kick_restore_received, runner_id})
-        {:noreply, state}
+      for cell_id <- [bare, held],
+          reason <- [:seq_gap, :shed, :baseline_seed, :unsynced, :compaction_gave_up] do
+        assert {:ok, _ref} = Recovery.resync(cell_id, runner_id: "exec-1", reason: reason)
+        assert_receive {:control_sent, "exec-1", :compact_cell}, 1_000
       end
-    end
 
-    test "casts :kick_restore with the runner_id" do
-      {:ok, spy} = SpyOverwatch.start_link(self())
-
-      assert :ok = Recovery.resync_for_overwatch(spy, "default_exec_1")
-
-      assert_receive {:kick_restore_received, "default_exec_1"}, 500
-    end
-
-    test "takes a pid and a runner_id, and consults no registry" do
-      # A class->runner lookup through HubManager / ProcessHub.tag_query would
-      # crash with no stub present, so running clean here is what proves the
-      # bind-driven trigger needs neither. No `Mimic.stub` and no Application env.
-      {:ok, spy} = SpyOverwatch.start_link(self())
-
-      assert :ok = Recovery.resync_for_overwatch(spy, "exec_9")
-      assert_receive {:kick_restore_received, "exec_9"}, 500
+      refute_received {:control_sent, _, :restore_init_state}
     end
   end
 

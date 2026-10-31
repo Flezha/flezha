@@ -155,9 +155,8 @@ fn partition_refusal(
     }
 }
 
-/// The class's metadata as `AddRelayResponse` bytes, plus `kept` when the
-/// instance was already running here, so the controller restores nothing onto
-/// its live Cells; empty bytes for a class that never registered.
+/// The class's metadata as `AddRelayResponse` bytes, plus `kept` for an
+/// instance already running here; empty bytes for a class never registered.
 fn metadata_response(class: Option<&RelayTopology>, kept: bool) -> Vec<u8> {
     match class {
         Some(topology) => {
@@ -417,16 +416,9 @@ mod metadata_tests {
         let id = format!("meta_kept_{}", std::process::id());
         register_steps(&id, r#""local""#);
         let class = crate::relay::registry::get_class(&id);
-        let kept = |kept| {
-            AddRelayResponse::decode(metadata_response(class.as_deref(), kept).as_slice())
-                .expect("response decodes")
-                .metadata
-                .get("kept")
-                .cloned()
-        };
-
-        assert_eq!(kept(true), Some("true".to_string()));
-        assert_eq!(kept(false), None);
+        let kept = |kept| AddRelayResponse::decode(&metadata_response(class.as_deref(), kept)[..]);
+        assert_eq!(kept(true).unwrap().metadata["kept"], "true");
+        assert!(!kept(false).unwrap().metadata.contains_key("kept"));
     }
 }
 

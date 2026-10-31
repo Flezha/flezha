@@ -213,7 +213,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert InputLog.watermark(rc) == 17
 
     # Compaction: the snapshot covers seq 0 and the WAL is cut through it.
-    {:ok, _} = Flezha.State.Snapshot.write_snapshot(cell_id, 0, TestHelpers.stub_header(), "s")
+    {:ok, _} = TestHelpers.compact(cell_id, 0, TestHelpers.stub_header(), "s")
     close_writer(pid, cell_id)
 
     assert WalWriter.consumed_offset_on_disk(cell_id) == 17,

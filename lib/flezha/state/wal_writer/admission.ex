@@ -7,8 +7,8 @@ defmodule Flezha.State.WalWriter.Admission do
   credit attribution a durable drain releases, and the bounds themselves,
   resolved once at boot. A shed is the last resort — a conformant
   credit-speaking sender can never reach it, so one is a protocol anomaly
-  rather than back-pressure. It also answers the callers a sync settles
-  (`reply_synced/1`) and measures how long written records waited for it (`fsync_lag_ms/2`).
+  rather than back-pressure. It also settles a sync (`synced/2`): the credit it
+  drains and the callers it answers.
   """
 
   alias Flezha.Config
@@ -16,7 +16,7 @@ defmodule Flezha.State.WalWriter.Admission do
   alias Flezha.Config.Durations
   alias Flezha.Convergence.Facts
   alias Flezha.State.{Commands, Metrics, PersistenceResolver}
-  alias Flezha.State.WalWriter.State
+  alias Flezha.State.WalWriter.{RemoteGate, Settlement, State}
 
   @reservoir_capacity 1024
 
@@ -55,24 +55,28 @@ defmodule Flezha.State.WalWriter.Admission do
 
   def open_gap(state, runner_id, trigger) do
     Facts.declare({:seq_gap, state.cell_id, %{runner_id: runner_id, trigger: trigger}})
-    %{state | gap_open?: true}
+    %{state | gap_open?: true, owning_runner: state.owning_runner || runner_id}
   end
 
-  # A contiguous append, or the pulled baseline, is the evidence the gap
-  # healed: the episode ends, its counter-fact releases the loop's ladder, and
-  # the next gap may declare at once. A Cell pulling its baseline heals only
-  # once its log reaches the highest seq the episode lost, nothing kept left.
+  # A contiguous append, the pulled baseline, or a bind's re-seat is the
+  # evidence the gap healed: the episode ends, its counter-fact releases the
+  # loop's ladder, and the next gap may declare at once.
   @spec close_gap(State.t()) :: State.t()
   def close_gap(%{gap_open?: false} = state), do: state
 
-  def close_gap(%{awaiting_baseline?: true, kept: {_bytes, kept, lost}} = state)
-      when state.last_persisted_seq < lost or kept != [],
-      do: state
-
   def close_gap(state) do
     Facts.declare({:seq_gap_closed, state.cell_id, %{}})
-    %{state | gap_open?: false, awaiting_baseline?: false, kept: {0, [], -1}}
+    %{release_held(state) | gap_open?: false}
   end
+
+  # The Change held for a pulled baseline, let go: never written, so its credit
+  # confirms no marker.
+  def release_held(%{held: {_record, credit}} = state) do
+    release_credit(state, credit, :credit_released)
+    %{state | held: nil}
+  end
+
+  def release_held(state), do: state
 
   # Drop the Change without writing; the resulting seq gap is declared so the
   # loop drives the resync handshake and the SDK (authoritative) re-sends. The
@@ -164,6 +168,42 @@ defmodule Flezha.State.WalWriter.Admission do
 
   def add_credit(credit, _), do: credit
 
+  # A sync that started at `t0` (monotonic µs) landed.
+  def synced(state, t0) do
+    t1 = System.monotonic_time(:microsecond)
+    Metrics.add(state.metrics, :fsync_total, 1)
+
+    record_latency_sample(state.metrics, state.latency_reservoir, div(t1 - t0, 1000))
+    |> case do
+      {p99_ms, new_reservoir} ->
+        Metrics.put(state.metrics, :flush_latency_ms_p99, p99_ms)
+
+        Metrics.put(
+          state.metrics,
+          :fsync_durability_lag_ms,
+          fsync_lag_ms(state.pending_since_us, t1)
+        )
+
+        new_state = %{
+          state
+          | pending_bytes: 0,
+            pending_since_us: nil,
+            latency_reservoir: new_reservoir
+        }
+
+        new_state = maybe_signal_backpressure(new_state, 0)
+
+        # Durable drain: report the fsynced wire bytes back to each owning
+        # stream's ledger — the only point that mints credit for written
+        # records (append alone never does) — and dispatch the gated
+        # `:on_output` flush; behind the remote gate, once the ship lands.
+        # The dedup file advances once per batch (never per record).
+        new_state = RemoteGate.synced(new_state)
+
+        new_state |> Settlement.persist_dedup() |> reply_synced()
+    end
+  end
+
   # Everything appended is durable: answer the batched appends, oldest first,
   # and every caller waiting on a record the sync covered.
   def reply_synced(state) do
@@ -209,8 +249,8 @@ defmodule Flezha.State.WalWriter.Admission do
     )
   end
 
-  def fsync_lag_ms(nil, _now_us), do: 0
-  def fsync_lag_ms(pending_since_us, now_us), do: div(max(now_us - pending_since_us, 0), 1000)
+  defp fsync_lag_ms(nil, _now_us), do: 0
+  defp fsync_lag_ms(pending_since_us, now_us), do: div(max(now_us - pending_since_us, 0), 1000)
 
   def record_latency_sample(_metrics, reservoir, sample_ms) do
     capped =
@@ -249,17 +289,13 @@ defmodule Flezha.State.WalWriter.Admission do
   # `outbox_resettle_ms` is how long a dispatched entry may go without its chain
   # run reporting back before it is re-dispatched — long enough that a merely
   # backlogged Overwatch is not duplicated into, and a re-dispatch is safe
-  # either way. `kept_cap` bounds the credit the Changes kept for a pulled
-  # baseline hold at a sixteenth of the soft watermark, the default size of the
-  # runner's credit window; a pull the exhausted window refuses releases them
-  # (`Epoch.pull_refused/2`).
+  # either way.
   @spec limits() :: State.limits()
   def limits() do
     high = PersistenceResolver.wal_high_watermark_bytes()
 
     %{
       high_watermark: high,
-      kept_cap: div(high, 16),
       low_watermark: Config.get(:wal_low_watermark_bytes),
       hard_watermark: Config.get(:wal_hard_watermark_bytes),
       pending_msg_cap: Config.get(:wal_pending_msg_cap),

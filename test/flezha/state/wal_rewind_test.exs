@@ -3,21 +3,17 @@ defmodule Flezha.State.WalRewindTest do
   The non-destructive rewind primitive (`stream-late-input-correction` G2)
   and the event-time baseline it rewinds to.
 
-  The distinction from `realign_epoch/4` is the whole point: a realign is a
-  cold-takeover wipe (WAL truncated to zero, every snapshot deleted), while a
-  rewind keeps the history at or below a boundary the controller means to
-  rebuild. These tests pin that difference, plus the two properties a correction
-  rests on — the epoch is explicit (so a re-run cannot double-bump) and the
-  input-log watermark falls back with the records that reported it.
+  A rewind keeps the history at or below a boundary the controller means to
+  rebuild. These tests pin that, plus the two properties a correction rests on —
+  the epoch is explicit (so a re-run cannot double-bump) and the input-log
+  watermark falls back with the records that reported it.
   """
   # async: false: writes Application env; a shared on-disk root; registered singletons.
   use FlezhaTest.Case, fixtures: [:tmp_app_data, :state_tree], async: false
 
   alias Flezha.Relay.ClassRegistry
 
-  alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, WalWriter}
-
-  alias Flezha.State.Snapshot, as: StateSnapshot
+  alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, TestHelpers, WalWriter}
   alias FlezhaTest.Helper.WireEncoders
 
   setup do
@@ -87,14 +83,14 @@ defmodule Flezha.State.WalRewindTest do
       assert WalWriter.last_persisted_seq(pid) == 3
     end
 
-    test "drops only the snapshots above the boundary — a realign drops them all", ctx do
+    test "drops only the snapshots above the boundary", ctx do
       {:ok, pid} = Supervisor.find_or_start(ctx.cell_id)
       seed(pid, 0..5)
 
       # Two baselines: one below the boundary, one above it.
       for seq <- [2, 5] do
         {:ok, _path} =
-          StateSnapshot.write_snapshot(
+          TestHelpers.compact(
             ctx.cell_id,
             seq,
             <<0::unit(8)-size(16)>>,
@@ -105,8 +101,8 @@ defmodule Flezha.State.WalRewindTest do
       :ok = WalWriter.rewind_to(pid, 3, 1)
 
       # The snapshot at 2 is precisely what a restore to seq 3 needs. Deleting it
-      # (as a realign would) would leave the Cell with no baseline to rebuild
-      # from — a wipe wearing a rewind's name.
+      # would leave the Cell with no baseline to rebuild from — a wipe wearing a
+      # rewind's name.
       assert [{2, _}] = Paths.snapshot_paths(ctx.cell_id)
     end
 

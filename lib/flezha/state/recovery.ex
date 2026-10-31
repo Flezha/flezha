@@ -1,9 +1,10 @@
 defmodule Flezha.State.Recovery do
   @moduledoc """
-  Single recovery primitive for per-Cell persistence: re-run the
-  `RestoreInitState` handshake, or pull the live Cell's state where the
-  controller's log lacks it, so a desynced or stalled Cell resumes from a
-  consistent point.
+  Single recovery primitive for per-Cell persistence: pull the live Cell's
+  state (`CompactCell`) as the log's baseline, so a desynced or stalled Cell
+  resumes from a consistent point. It never pushes: a runner Cell is re-seated
+  only by a bind or a correction, since a copy behind the live Cell would
+  rewind it.
 
   Used by the failure edges that are otherwise silent:
 
@@ -21,12 +22,9 @@ defmodule Flezha.State.Recovery do
   require Logger
 
   alias Flezha.Config
-  alias Flezha.Relay.Replay
   alias Flezha.Process.Cspec
   alias Flezha.Service.HubManager
   alias Flezha.State.Commands
-  alias Flezha.State.Restore
-  alias Flezha.State.{WalWriter, WriterRegistry}
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
   def resync({_rc, _sh, _pk} = cell_id, opts \\ []) do
@@ -37,26 +35,10 @@ defmodule Flezha.State.Recovery do
   end
 
   @doc """
-  Re-issue the per-Cell WAL replay for a relay that is already bound,
-  against `runner_id`, the runner its Overwatch is bound to, so the replay
-  never depends on a class→runner lookup in the durable registry. The
-  convergence loop's `resync_runner` heal is the caller; a bind restores its
-  Cells on its own. The heavy lifting lives in
-  `Flezha.State.Commands.dispatch_restore_init_state/2`.
-  """
-  @spec resync_for_overwatch(pid(), binary()) :: :ok
-  def resync_for_overwatch(overwatch_pid, runner_id)
-      when is_pid(overwatch_pid) and is_binary(runner_id) do
-    Replay.kick_restore_for_bound_runner(overwatch_pid, runner_id)
-    :ok
-  end
-
-  @doc """
   Resolve the `runner_id` currently owning `relay_class` from the
   ProcessHub registry. Returns `{:ok, runner_id}` or `{:error, term}`.
 
-  The CLI `flz state rotate` surface is its only caller; the resync path
-  resolves its runner through `resync_for_overwatch/2` instead.
+  The CLI `flz state rotate` surface is its only caller.
   """
   @spec resolve_runner(tuple()) :: {:ok, binary()} | {:error, term()}
   def resolve_runner({rc, _sh, _pk}) do
@@ -114,22 +96,8 @@ defmodule Flezha.State.Recovery do
     end
   end
 
-  # Direction is chosen by who holds authoritative history: with a local
-  # baseline the controller pushes `RestoreInitState`; without one it pulls a
-  # full-state snapshot via `CompactCell` — an empty RestoreInitState
-  # would rebuild the live Cell to `init_state` and wipe accumulated state.
-  # A writer awaiting a baseline holds a log that lacks changes the live Cell
-  # already applied, so it pulls too: its push would rewind that Cell. A
-  # writer that does not answer may be one, and a pull is always safe.
   defp dispatch_resync(cell_id, runner_id, reason) do
-    result =
-      if Restore.has_persisted_state?(cell_id) and not awaiting_baseline?(cell_id) do
-        Commands.dispatch_restore_init_state(runner_id, cell_id)
-      else
-        Commands.dispatch_compact_cell(runner_id, cell_id)
-      end
-
-    case result do
+    case Commands.dispatch_compact_cell(runner_id, cell_id) do
       {:ok, _ref} = ok ->
         ok
 
@@ -140,13 +108,6 @@ defmodule Flezha.State.Recovery do
         )
 
         other
-    end
-  end
-
-  defp awaiting_baseline?(cell_id) do
-    case WriterRegistry.lookup(cell_id) do
-      {:ok, writer} -> not match?(%{awaiting_baseline?: false}, WalWriter.stall_status(writer))
-      :error -> false
     end
   end
 

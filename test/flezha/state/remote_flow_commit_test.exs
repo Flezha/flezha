@@ -223,22 +223,6 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       refute_received {:credit_drained, _, _, _}
     end
 
-    test "a realign releases what the discarded lineage held", ctx do
-      Stub.hold_manifests(self())
-      pid = armed_writer(ctx.rc, ctx.cell_id)
-
-      :ok = WalWriter.append_async(pid, 0, effect_header(), effect_body([], 0), "r1", credit(10))
-      :ok = WalWriter.fsync(pid)
-      _shipper = held({:cell, ctx.cell_id})
-
-      # A restarted runner's diverged seq discards record 0's lineage.
-      :ok = WalWriter.append_async(pid, 5, effect_header(), effect_body([], 5), "r2", credit(6))
-      _ = WalWriter.last_persisted_seq(pid)
-
-      assert_received {:credit_released, "s", 10, _}
-      refute_received {:credit_drained, _, _, _}
-    end
-
     test "a rewind frees what it discards and keeps holding what survives", ctx do
       Stub.hold_manifests(self())
       pid = armed_writer(ctx.rc, ctx.cell_id)
@@ -266,8 +250,8 @@ defmodule Flezha.State.RemoteFlowCommitTest do
       append_credited(pid, 0, 10)
       shipper = held({:cell, ctx.cell_id})
 
-      # A gap: refused unwritten, its bytes owed back at once without the gate.
-      :ok = WalWriter.append_async(pid, 5, effect_header(), effect_body([], 5), nil, credit(7))
+      # A duplicate: dropped unwritten, its bytes owed back at once without the gate.
+      :ok = WalWriter.append_async(pid, 0, effect_header(), effect_body([], 0), nil, credit(7))
       _ = WalWriter.last_persisted_seq(pid)
       refute_received {:credit_drained, _, _, _}
 

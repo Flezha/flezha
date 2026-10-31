@@ -55,7 +55,6 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
     ConvergenceSnapshot.reset_recovery_states()
     collect([:flezha, :convergence, :tick], :tick)
-    collect([:flezha, :state, :wal_realign], :wal_realign)
     collect([:flezha, :runner, :foreign_frame_refused], :foreign_frame_refused)
 
     on_exit(fn -> stop_namespace(namespace) end)
@@ -118,9 +117,6 @@ defmodule FlezhaTest.System.RunnerOwnershipE2ETest do
 
     assert wait_until(fn -> refusals(runner_a2) != [] end, 30_000),
            "A's copy was never refused after reconnecting as #{runner_a2}"
-
-    realigned = for {:wal_realign, %{runner: ^runner_a2} = m} <- mailbox(), do: m
-    assert realigned == [], "the copy's frames realigned the owner's WAL: #{inspect(realigned)}"
 
     # Nothing of the copy was admitted: its session routed no output for the
     # relay, so none reached the relay's sinks, and the owner's lineage

@@ -211,7 +211,7 @@ defmodule Flezha.State.RecordFrame do
     # `-1`, not `0`, for an empty file: the SDK's per-Cell seq is 0-based
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
-    # relay. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
+    # relay.
     # The step answers a literal, so the walk allocates nothing per record.
     each = fn _, _, _, _, nil -> {:cont, nil} end
     fold(device, path, 0, -1, nil, {each, fn nil, tail -> repair(device, path, tail) end})
@@ -309,44 +309,20 @@ defmodule Flezha.State.RecordFrame do
   end
 
   @doc """
-  Drop a log's tail in place: the cut for a disk that refused a write or a
-  sync, where `cut_above/4`'s copy needs space the disk does not have and a
-  truncation frees it. `device` may be the handle that failed, so the file is
-  reopened at `path` and `locate.(file)` answers `{:ok, bound, found}` from
-  it; the file is truncated at `bound` and answered `{:ok, file, found}` at
-  its new end, and `device` is closed. `cut_in_place/4` locates by seq.
+  Truncate a log at `bound` in place, for a disk with no room for `cut_above/4`'s
+  copy. `device` may have failed, so `path` is reopened and `device` closed.
   """
-  @spec cut_in_place(Path.t(), :file.io_device(), (:file.io_device() ->
-                                                     {:ok, non_neg_integer(), found}
-                                                     | {:error, term()})) ::
-          {:ok, :file.io_device(), found} | {:error, term()}
-        when found: term()
-  def cut_in_place(path, device, locate) do
+  @spec cut_in_place(Path.t(), :file.io_device(), non_neg_integer()) ::
+          {:ok, :file.io_device()} | {:error, term()}
+  def cut_in_place(path, device, bound) do
     with {:ok, file} <- :file.open(path, [:raw, :read, :write, :binary]) do
-      with {:ok, bound, found} <- locate.(file),
-           {:ok, _} <- :file.position(file, bound),
-           :ok <- :file.truncate(file) do
+      with {:ok, _} <- :file.position(file, bound), :ok <- :file.truncate(file) do
         _ = :file.close(device)
-        {:ok, file, found}
+        {:ok, file}
       else
-        refused ->
-          _ = :file.close(file)
-          refused
+        refused -> tap(refused, fn _ -> :file.close(file) end)
       end
     end
-  end
-
-  @doc """
-  `cut_in_place/3` at the first record with seq >= `floor`, found as
-  `cut_above/4` finds it; `found` is the index after the cut.
-  """
-  @spec cut_in_place(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
-          {:ok, :file.io_device(), SeqIndex.t()} | {:error, term()}
-  def cut_in_place(path, device, index, floor) do
-    cut_in_place(path, device, fn file ->
-      with {:ok, bound} <- position_of(index, file, path, floor),
-           do: {:ok, bound, SeqIndex.cut_above(index, floor, bound)}
-    end)
   end
 
   # Copy the bytes `[from, to)` of `path` into `<path>.rewriting`, fsync it,

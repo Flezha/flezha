@@ -163,9 +163,8 @@ defmodule Flezha.Runner.ControlChannel do
        control_unit: Identificator.control_unit(runner_id),
        liveness_ref: LivenessCounters.register_channel(runner_id, :control),
        last_seen: System.monotonic_time(:millisecond),
-       # `nil`, or the running rebind's step: `:releasing` the old streams,
-       # `:connecting` while the runner opens fresh ones, or `:owed` once a loss
-       # past the release owes another rebind after it answers.
+       # The running rebind's step: `:releasing`, `:connecting`, or `:owed`
+       # another after it; `nil` when none runs.
        rebinding: nil,
        rebinds: 0,
        # Every data channel that announced itself, tagged with its name.
@@ -262,10 +261,8 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, state}
   end
 
-  # A loss while the old streams are let go is the fault being repaired, which
-  # every channel of a severed data plane reports. After that, a closed stream
-  # is one this rebind bound, and a returned channel may have come up after the
-  # fresh streams were bound, so another rebind is owed.
+  # A loss while the old streams are let go is the fault being repaired; one
+  # after that may hit a stream this rebind bound, so another is owed.
   def handle_cast(:rebind_data_streams, %{rebinding: :releasing} = state), do: {:noreply, state}
 
   def handle_cast(:rebind_data_streams, %{rebinding: step} = state) when step != nil,
@@ -277,10 +274,8 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   # Off this process, so the channel keeps serving the session while it waits.
-  # Every channel lets its stream go first, and a close it reported before
-  # its release answered reaches this mailbox ahead of `:rebind_released`. The
-  # relays are parked before the runner is asked for fresh streams, so none
-  # forwards fresh input onto one ahead of the tail its lost stream dropped.
+  # The relays are parked before the runner is asked for fresh streams, so none
+  # forwards fresh input ahead of the tail its lost stream dropped.
   def handle_cast(:rebind_data_streams, %{runner_id: runner_id} = state) do
     channel = self()
 
@@ -293,11 +288,11 @@ defmodule Flezha.Runner.ControlChannel do
     {:noreply, %{state | rebinding: :releasing, rebinds: state.rebinds + 1}}
   end
 
-  # A channel's binding dies with its process, its replacement starts unbound,
-  # and a runner opens data streams only when asked. So a returned channel is
-  # handled as its stream closing: the runner is asked for a fresh pair set, and
-  # its relays keep running there, routes warming again on their next frame. A
-  # killed channel cannot ask; its replacement is the first process that can.
+  # A channel's binding and routes die with its process, its replacement starts
+  # unbound, and a runner opens data streams only when asked. So a returned
+  # channel is handled as its stream closing: the runner is asked for a fresh
+  # pair set. A killed channel cannot ask; its replacement is the first process
+  # that can.
   def handle_cast({:data_channel_up, name, pid, returned?}, state) do
     state = %{state | data_channels: Watch.watch(state.data_channels, pid, name)}
 

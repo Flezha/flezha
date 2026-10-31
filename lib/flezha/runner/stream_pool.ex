@@ -31,10 +31,7 @@ defmodule Flezha.Runner.StreamPool do
     end
   end
 
-  @doc """
-  The primary channel `relay_id`'s input takes on `runner_id`'s session: fixed
-  by the relay's id, so every bind onto the session picks the same one.
-  """
+  @doc "The primary channel `relay_id` takes on `runner_id`'s session, fixed by its id."
   @spec channel_for(binary(), binary()) :: atom()
   def channel_for(runner_id, relay_id) do
     index =
@@ -80,25 +77,17 @@ defmodule Flezha.Runner.StreamPool do
   end
 
   @doc """
-  Let every channel of `runner_id`'s session go of its stream, then park every
-  relay they route output to (`{:park_stream, runner_id}`, which the relay
-  answers), each walk within the pool budget. A lost stream dropped what its
-  write buffer held, so a relay is parked before the runner is asked for fresh
-  streams: its input log's tail is owed again, ahead of any fresh input.
+  Let every channel of `runner_id` go of its stream, then park the relays they
+  routed (`Flezha.Relay.Rebind.park_stream/2`), each walk within the budget.
   """
   @spec release_streams(binary()) :: :ok
   def release_streams(runner_id) do
-    relays =
-      for {:ok, routed} <- call_each(channel_pids(runner_id), :release_stream),
-          pid <- routed,
-          uniq: true,
-          do: pid
-
+    routed = call_each(channel_pids(runner_id), :release_stream)
+    relays = for {:ok, pids} <- routed, pid <- pids, uniq: true, do: pid
     _ = call_each(relays, {:park_stream, runner_id})
     :ok
   end
 
-  # The bounded walk both share: each reply, in order.
   defp call_each(pids, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
     deadline = System.monotonic_time(:millisecond) + budget_ms
 

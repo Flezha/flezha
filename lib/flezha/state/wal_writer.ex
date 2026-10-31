@@ -18,7 +18,7 @@ defmodule Flezha.State.WalWriter do
   alias Flezha.Config.Durations
   alias Flezha.State.Frame
   alias Flezha.SDK.SafeCall
-  alias Flezha.State.{Metrics, RecordFrame, SeqIndex, WriterRegistry}
+  alias Flezha.State.{Metrics, RecordFrame, SeqIndex, Snapshot, WriterRegistry}
   alias Flezha.State.WalWriter.{Admission, Boot, Epoch, RemoteGate, Settlement, State}
 
   @type t :: State.t()
@@ -39,7 +39,6 @@ defmodule Flezha.State.WalWriter do
           wal_size_bytes: non_neg_integer(),
           oldest_unsnapshotted_at: integer() | nil,
           owning_runner: binary() | nil,
-          awaiting_baseline?: boolean(),
           out_pending_seq: integer(),
           outbox_flushed_seq: integer(),
           outbox_unconfirmed_ms: non_neg_integer()
@@ -53,16 +52,14 @@ defmodule Flezha.State.WalWriter do
 
   @doc """
   Append a Change at `seq`. `runner_id` identifies the runner that emitted
-  it; a Change from a *different* runner than the one that wrote the current
-  epoch realigns the WAL to the new runner's seq base (runner-restart
-  recovery — see `handle_call/3`) — unless a takeover superseded that session
-  (`Flezha.Runner.FleetManager.Marks.superseded_session?/1`), in which case the
-  frame is refused with `{:error, :stale_writer}` instead of realigning. Pass
-  `nil` (the default) to disable epoch tracking — the single-runner / test
-  path keeps the prior dedup/gap/append semantics.
+  it; a Change from a runner that is not the writer's owner, or from a session
+  a takeover superseded (`Flezha.Runner.FleetManager.Marks.superseded_session?/1`),
+  is refused with `{:error, :stale_writer}`. Pass `nil` (the default) to disable
+  owner tracking — the single-runner / test path keeps the dedup/gap/append
+  semantics.
   """
   @spec append(GenServer.server(), non_neg_integer(), binary(), binary(), binary() | nil) ::
-          :ok | :duplicate | :awaiting_baseline | {:error, term()}
+          :ok | :duplicate | {:error, term()}
   def append(server, seq, header, change_bytes, runner_id \\ nil) do
     call(server, {:append, seq, header, change_bytes, runner_id})
   end
@@ -81,13 +78,11 @@ defmodule Flezha.State.WalWriter do
   `channel` exactly once as a `{:credit_drained, session, bytes, cell_id}`
   message — on fsync for written records (durable drain, mints credit and
   confirms processed-prefix markers), or immediately for a Change that never
-  occupies the un-fsynced buffer (dedup drop, gap rejection, shed, stale-writer
-  refusal, epoch realign, truncation), except a gap kept while a baseline is
-  pulled, which drains once that baseline appends it. A Change the disk refuses,
-  and every record written since the last sync then, is `{:credit_released,
-  ...}`, confirming no marker. The session tag lets the channel drop credit for
-  bytes debited under a pre-reconnect session. An empty map (the default)
-  accounts nothing.
+  occupies the un-fsynced buffer (dedup drop, shed, truncation); one never
+  written (a gap, a refused disk, a stale writer) as `{:credit_released, ...}`,
+  confirming no marker. The session tag lets the channel drop credit for bytes
+  debited under a pre-reconnect session. An empty map (the default) accounts
+  nothing.
   """
   @spec append_async(
           GenServer.server(),
@@ -120,9 +115,8 @@ defmodule Flezha.State.WalWriter do
   — the `FsyncBatcher` tick, a prefix cut, or a clean close — so every append
   that lands in one tick shares one fsync, and the reply is never earlier than
   the sync. A writer that dies in between never answers, which fails the
-  caller's call (or its `send_request`, see `append_next_async/6`); a disk
-  that refuses the write or the sync answers `{:error, {:wal_writer_unavailable,
-  reason}}`, the record not kept.
+  caller's call (or its `send_request`, see `append_next_async/6`); a refused
+  write or sync answers `{:error, {:wal_writer_unavailable, reason}}`.
 
   `dedup: true` refuses a record whose 16-byte header matches one still in the
   file, answering `{:duplicate, seq}` with the existing record's seq — the
@@ -173,9 +167,8 @@ defmodule Flezha.State.WalWriter do
   Rewind the Cell to `seq` under `epoch`: keep the records at or below it,
   drop the snapshots above it, and re-seat the outbox on the survivors.
 
-  The non-destructive sibling of the realign wipe. A realign discards a stale
-  runner's whole lineage; a rewind discards only the history above a boundary
-  the controller means to rebuild, which is what a late-input correction needs.
+  A rewind discards only the history above a boundary the controller means to
+  rebuild, which is what a late-input correction needs.
 
   `epoch` is explicit rather than `current + 1` so that re-running an
   interrupted correction re-asserts the epoch it already committed to. A
@@ -293,14 +286,21 @@ defmodule Flezha.State.WalWriter do
   @spec stall_status(GenServer.server()) :: stall_status()
   def stall_status(server), do: call(server, :stall_status)
 
-  @doc "A pull `runner_id` refused: the writers awaiting its baselines let go of what they keep."
+  @doc "A pull `runner_id` refused for credit: the writers it owns let go of what they hold."
   @spec pull_refused(binary()) :: :ok
   def pull_refused(runner_id) do
-    for {_cell, writer} <- WriterRegistry.cell_writers(),
-        do: GenServer.cast(writer, {:pull_refused, runner_id})
-
+    for {_, w} <- WriterRegistry.cell_writers(), do: GenServer.cast(w, {:pull_refused, runner_id})
     :ok
   end
+
+  @doc "Install `runner_id`'s snapshot behind the records it shipped first (`Snapshot.install/4`)."
+  @spec install_snapshot(GenServer.server(), binary(), integer(), binary(), binary()) :: :ok
+  def install_snapshot(server, runner_id, seq, header, body),
+    do: GenServer.cast(server, {:install_snapshot, runner_id, seq, {header, body}})
+
+  @doc "A bind re-seated `runner_id`'s Cell from this log (`Epoch.reseat/2`)."
+  @spec reseat(GenServer.server(), binary()) :: :ok
+  def reseat(server, runner_id), do: GenServer.cast(server, {:reseat, runner_id})
 
   # Two closers can race for one writer, a relay's teardown and its move; the
   # one that finds it gone has closed it all the same.
@@ -358,46 +358,25 @@ defmodule Flezha.State.WalWriter do
   end
 
   def handle_call({:append, seq, header, change_bytes, runner_id}, _from, state) do
-    # Every received Change frame — accepted, deduped, realigned, or rejected
-    # as a gap — proves the SDK is still emitting, which distinguishes a
+    # Every received Change frame — accepted, deduped, or refused — proves the SDK is still emitting, which distinguishes a
     # stalled Cell from a genuinely idle one for the watchdog.
     now = State.now_ms()
     state = %{state | last_change_seen_at: now}
 
     cond do
       Epoch.stale_writer?(state, runner_id) ->
-        # A takeover superseded this session — its channels were unbound
-        # before the new owner was bound, so this frame is late in-flight
-        # residue (typically a wedged channel flushing after the swap).
-        # Refuse instead of realigning onto the stale lineage; the owner's
-        # restore/resync handshake re-covers anything durable.
+        # Late residue of an instance the last bind or a takeover replaced
+        # (typically a wedged channel flushing after the swap): refused, it
+        # never rewrites the owner's history.
         {:reply, {:error, :stale_writer}, Epoch.refuse_stale(state, runner_id)}
-
-      Epoch.realign?(state, runner_id, seq) ->
-        # A *different* runner than the one that wrote the current epoch is
-        # emitting a non-contiguous seq — the signature of a runner pod
-        # restart whose post-rebuild seq base has diverged from our WAL. The
-        # rebuilt runner is the live source of truth, so adopt its epoch
-        # instead of dedup-dropping its Changes as stale retransmits, which
-        # would freeze the WAL while the runner keeps producing.
-        case Epoch.realign_epoch(state, seq, runner_id, now) do
-          {:ok, state} -> write_record(state, seq, header, change_bytes, runner_id, now)
-          {:error, _reason} = refused -> {:reply, refused, state}
-        end
 
       seq <= state.last_persisted_seq ->
         Metrics.add(state.metrics, :dedup_drops_total, 1)
         {:reply, :duplicate, state}
 
-      seq != state.last_persisted_seq + 1 and state.last_persisted_seq == -1 ->
-        # Empty-WAL gap: a cold takeover — this controller holds no baseline
-        # for a Cell the live runner already has state for. Not a
-        # protocol violation: shed the frame and pull a full-state baseline
-        # via CompactCell instead of disconnecting the SDK.
-        {:reply, :awaiting_baseline, Epoch.await_baseline(state, seq, runner_id)}
-
       seq != state.last_persisted_seq + 1 ->
-        {:reply, {:error, {:gap, expected: state.last_persisted_seq + 1, got: seq}}, state}
+        gap = {:gap, expected: state.last_persisted_seq + 1, got: seq}
+        {:reply, {:error, gap}, Epoch.refuse_gap(state, seq, runner_id)}
 
       true ->
         write_record(state, seq, header, change_bytes, runner_id, now)
@@ -448,11 +427,10 @@ defmodule Flezha.State.WalWriter do
   def handle_call({:truncate_up_to, seq, opts}, _from, state) do
     case Epoch.cut_below(trim_header_index(state, seq), seq, Keyword.get(opts, :min_bytes, 0)) do
       {:ok, state} ->
-        {:reply, :ok, state |> Epoch.after_prefix_cut(seq) |> Epoch.append_kept(&write_record/6)}
+        {:reply, :ok, state |> after_prefix_cut(seq) |> append_held()}
 
       {:none, state} ->
-        {:reply, :ok,
-         state |> Epoch.establish_baseline(seq) |> Epoch.append_kept(&write_record/6)}
+        {:reply, :ok, state |> Epoch.establish_baseline(seq) |> append_held()}
 
       # Nothing cut, the handle untouched: the file went away under a queued cut, the
       # lineage install failed, or a record was refused, which stops this writer serving.
@@ -506,7 +484,6 @@ defmodule Flezha.State.WalWriter do
       wal_size_bytes: Metrics.get(state.metrics, :wal_size_bytes),
       oldest_unsnapshotted_at: state.oldest_unsnapshotted_at,
       owning_runner: state.owning_runner,
-      awaiting_baseline?: state.awaiting_baseline?,
       out_pending_seq: state.outbox_last_seq,
       outbox_flushed_seq: state.outbox_flushed_seq,
       outbox_unconfirmed_ms: Settlement.unconfirmed_age_ms(state)
@@ -558,6 +535,14 @@ defmodule Flezha.State.WalWriter do
   def handle_cast({:pull_refused, runner_id}, state),
     do: {:noreply, Epoch.pull_refused(state, runner_id)}
 
+  def handle_cast({:reseat, runner_id}, state), do: {:noreply, Epoch.reseat(state, runner_id)}
+
+  def handle_cast({:install_snapshot, runner_id, seq, frame}, state) do
+    if Snapshot.install(state, runner_id, seq, frame),
+      do: handle_cast({:truncate_up_to, seq, []}, state),
+      else: {:noreply, state}
+  end
+
   def handle_cast({:truncate_up_to, seq, opts}, state) do
     {:reply, _reply, state} = handle_call({:truncate_up_to, seq, opts}, nil, state)
     {:noreply, state}
@@ -598,19 +583,14 @@ defmodule Flezha.State.WalWriter do
 
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
-      {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
-        Admission.emit_seq_gap(new_state.cell_id, expected, got)
-        new_state = Admission.open_gap(new_state, runner_id, :seq_gap)
-        {:noreply, Epoch.refused(new_state, {seq, header, change_bytes, runner_id}, credit_opts)}
-
-      {:reply, :awaiting_baseline, new_state} ->
-        {:noreply, Epoch.refused(new_state, {seq, header, change_bytes, runner_id}, credit_opts)}
-
       {:reply, :ok, new_state} ->
         {:noreply, Admission.track_credit(new_state, credit_opts)}
 
+      {:reply, {:error, {:gap, _at}}, new_state} ->
+        {:noreply, Epoch.hold(new_state, {seq, header, change_bytes, runner_id}, credit_opts)}
+
       # Never written: released, so no marker confirms the input behind it.
-      {:reply, {:error, {:wal_writer_unavailable, _reason}}, new_state} ->
+      {:reply, {:error, _refused}, new_state} ->
         Admission.release_credit(new_state, credit_opts, :credit_released)
         {:noreply, new_state}
 
@@ -621,6 +601,18 @@ defmodule Flezha.State.WalWriter do
         {:stop, reason, RemoteGate.released(new_state, credit_opts)}
     end
   end
+
+  # The held Change once the baseline below it lands (`Epoch.hold/3`); a Cell
+  # dropped meanwhile stops its writer at its next write.
+  defp append_held(%{held: {{seq, header, body, runner}, credit}} = state)
+       when seq == state.last_persisted_seq + 1 do
+    case do_append_async(seq, header, body, runner, %{state | held: nil}, credit) do
+      {:noreply, state} -> state
+      {:stop, :normal, state} -> state
+    end
+  end
+
+  defp append_held(state), do: state
 
   # Overwatch was not yet resolvable when durable outbox entries arrived
   # (cold-boot re-drive before the relay bound): retry the gated flush.
@@ -654,7 +646,7 @@ defmodule Flezha.State.WalWriter do
   def terminate(reason, %{file_handle: file} = state) when not is_nil(file) do
     synced = :file.datasync(file)
     _ = :file.close(file)
-    _ = Epoch.release_kept(state)
+    _ = Admission.release_held(state)
     _ = if synced == :ok, do: RemoteGate.close(state), else: RemoteGate.reset(state)
     _ = Settlement.persist_dedup(state)
 
@@ -664,53 +656,17 @@ defmodule Flezha.State.WalWriter do
   end
 
   def terminate(_reason, state) do
-    _ = Epoch.release_kept(state)
+    _ = Admission.release_held(state)
     _ = RemoteGate.reset(state)
     :ok
   end
 
   defp do_fsync(state) do
     t0 = System.monotonic_time(:microsecond)
-    synced(state, t0, :file.datasync(state.file_handle))
-  end
 
-  defp synced(state, _t0, {:error, reason}), do: Epoch.drop_unsynced(state, reason)
-
-  defp synced(%{disk_refused: r, pending_bytes: n} = state, t0, :ok) when r != nil and n > 0,
-    do: synced(Epoch.disk_back(state), t0, :ok)
-
-  defp synced(state, t0, :ok) do
-    t1 = System.monotonic_time(:microsecond)
-    Metrics.add(state.metrics, :fsync_total, 1)
-
-    Admission.record_latency_sample(state.metrics, state.latency_reservoir, div(t1 - t0, 1000))
-    |> case do
-      {p99_ms, new_reservoir} ->
-        Metrics.put(state.metrics, :flush_latency_ms_p99, p99_ms)
-
-        Metrics.put(
-          state.metrics,
-          :fsync_durability_lag_ms,
-          Admission.fsync_lag_ms(state.pending_since_us, t1)
-        )
-
-        new_state = %{
-          state
-          | pending_bytes: 0,
-            pending_since_us: nil,
-            latency_reservoir: new_reservoir
-        }
-
-        new_state = Admission.maybe_signal_backpressure(new_state, 0)
-
-        # Durable drain: report the fsynced wire bytes back to each owning
-        # stream's ledger — the only point that mints credit for written
-        # records (append alone never does) — and dispatch the gated
-        # `:on_output` flush; behind the remote gate, once the ship lands.
-        # The dedup file advances once per batch (never per record).
-        new_state = RemoteGate.synced(new_state)
-
-        new_state |> Settlement.persist_dedup() |> Admission.reply_synced()
+    case :file.datasync(state.file_handle) do
+      :ok -> state |> Epoch.disk_back() |> Admission.synced(t0)
+      {:error, reason} -> Epoch.drop_unsynced(state, reason)
     end
   end
 
@@ -741,7 +697,26 @@ defmodule Flezha.State.WalWriter do
   defp trim_header_index(state, seq),
     do: %{state | header_index: Map.reject(state.header_index, fn {_, s} -> s <= seq end)}
 
-  # ---------- Append / realign ----------
+  # The bookkeeping a prefix cut owes once the file is shorter: the rewrite
+  # fsynced the kept tail, so everything pending is durable.
+  defp after_prefix_cut(state, seq) do
+    size = RecordFrame.file_size(state.wal_path)
+    Metrics.put(state.metrics, :wal_size_bytes, size)
+
+    # Surviving tail records post-date the snapshot's baseline by at most the
+    # compaction round-trip, so "now" is a safe age floor for the next trigger.
+    oldest = if size > 0, do: State.now_ms()
+
+    state = RemoteGate.drained(state)
+    state = Epoch.establish_baseline(state, seq)
+
+    state = %{state | pending_bytes: 0, pending_since_us: nil, oldest_unsnapshotted_at: oldest}
+
+    # Rotation/compaction is one of the dedup file's advance points.
+    state |> Settlement.persist_dedup() |> Admission.reply_synced()
+  end
+
+  # ---------- Append ----------
 
   # One open per fsync window: `pending_since_us` is nil exactly when nothing
   # written since the last sync is waiting on the batcher, and the open starts
@@ -793,8 +768,7 @@ defmodule Flezha.State.WalWriter do
         {:reply, :ok, Admission.close_gap(new_state)}
 
       {:error, reason} ->
-        {:reply, {:error, {:wal_writer_unavailable, reason}},
-         Epoch.drop_unsynced(state, reason, seq)}
+        {:reply, {:error, {:wal_writer_unavailable, reason}}, Epoch.drop_unsynced(state, reason)}
     end
   end
 end

@@ -38,8 +38,8 @@ defmodule Flezha.State.WalWriter.RemoteGate do
   # `held`: synced batches not yet acknowledged, `{seq, credit}` oldest first.
   # `shipping`: `nil`, `{:to, seq}` while a ship covering `seq` is in flight,
   # or `:cooling` while a failed one waits for its retry. `generation` names
-  # the lineage a ship was started for, so the answer to a ship a realign or a
-  # rewind outdated changes nothing.
+  # the lineage a ship was started for, so the answer to a ship a rewind
+  # outdated changes nothing.
   defstruct checkpoint?: false,
             held: :queue.new(),
             shipping: nil,
@@ -109,8 +109,8 @@ defmodule Flezha.State.WalWriter.RemoteGate do
 
   @doc """
   The writer's lineage was cut, or it is going without its pending records
-  synced: a realign keeps nothing, a rewind keeps the records through its
-  boundary. Held batches through `keep_through` stay held behind a fresh ship;
+  synced: a stop keeps nothing, a rewind or a refused disk keeps the records
+  through its boundary. Held batches through `keep_through` stay held behind a fresh ship;
   every other held or pending drain is released, freeing the stream's window
   without counting toward its markers, since the backend may never hold those
   records. The ship in flight is forgotten. Without the gate every pending

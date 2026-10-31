@@ -1,7 +1,6 @@
 defmodule FlezhaTest.RunnerLossHandover do
   alias Flezha.Convergence.Loop
   alias Flezha.Convergence.Snapshot, as: ConvergenceSnapshot
-  alias Flezha.Relay.Replay
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -182,26 +181,9 @@ defmodule FlezhaTest.RunnerLossHandover do
       "{\"store_input_tasklet\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{relay_id}\"]}}"
     end
 
-    # The convergence Loop dispatches the WAL restore once, inside the rebind
-    # heal — but once the tag is `runner_id_3` the relay is not misbound,
-    # so a later tick won't re-dispatch. Re-drive the documented,
-    # idempotent restore re-dispatch path per relay each poll so a restore
-    # that raced the new runner's readiness retries until state converges.
+    # The rebind restores every persisted Cell itself, before the relay runs.
     assert NodeTestHelper.wait_until(
              fn ->
-               for {relay_id, _info} <- relay_infos do
-                 case HubManager.get_pid(namespace, relay_id) do
-                   {:ok, pid} when is_pid(pid) ->
-                     Replay.kick_restore_for_bound_runner(
-                       pid,
-                       runner_id_3
-                     )
-
-                   _ ->
-                     :ok
-                 end
-               end
-
                Enum.all?(relay_infos, fn {relay_id, _info} ->
                  RelayManager.get_cell_state(namespace, relay_id) ===
                    {:ok, expected_state.(relay_id)}

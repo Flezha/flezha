@@ -91,9 +91,9 @@ When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub doe
 
 ### Requirement: Cell state restoration fires on first stream attach
 
-When a Cell's data stream attaches to a `StreamChannel` AND the owning Relay has `keeps_state = true` AND `Restore.payload/2` at `:latest` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Relay did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Cell exactly once per Relay-startup BEFORE allowing input frames to flow.
+When a Cell's data stream attaches to a `StreamChannel` AND the owning Relay has `keeps_state = true` AND `Restore.payload/2` at `:latest` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Relay did NOT arrive via HotSwap, the controller SHALL ship that Cell's `RestoreInitState` from the bind (`Flezha.State.Commands.await_restore_init_state/2`) exactly once per Relay-startup BEFORE allowing input frames to flow.
 
-The Relay's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
+The Relay's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, the bind's `RestoreInitState` SHALL NOT fire — the in-band handover state stands.
 
 This works identically across: ProcessHub-driven cold-boot replay, fresh `flz relay start`, ProcessHub redistribution, AddRelay reissue after runner restart.
 
@@ -107,14 +107,14 @@ This works identically across: ProcessHub-driven cold-boot replay, fresh `flz re
 
 - **GIVEN** a Relay arrives via HotSwap carrying a non-empty serialized state; `arrived_via_hotswap? = true`
 - **WHEN** the Cell's data stream attaches
-- **THEN** `dispatch_restore_init_state/2` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
+- **THEN** the bind's `RestoreInitState` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
 
 #### Scenario: HotSwap-arrived Cell with an EMPTY handover does not skip dispatch
 
 - **GIVEN** a Relay migrates while its source runner is already gone, so `prepare_handover_state/1` has no runner to serialize from and ships an empty payload
 - **WHEN** `alter_handover_state/2` runs on the destination
 - **THEN** `arrived_via_hotswap?` SHALL remain `false` — an empty handover carries nothing to double-apply, and the on-disk state is the only surviving copy
-- **AND** neither the bind-time restore nor the `kick_restore` repair SHALL be suppressed
+- **AND** the bind-time restore SHALL NOT be suppressed
 
 ### Requirement: A migration whose handover is empty SHALL pull the source controller's Cell files
 

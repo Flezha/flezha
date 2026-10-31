@@ -223,7 +223,7 @@ than at emit.
 | `flz.cell` | runner → controller | Output-identity stamp on `.keyed()` channels: `<relay_instance_id>/<tasklet_name>/<cell_key>` (empty key for single-mode). |
 | `flz.seq` | runner → controller | Output-identity stamp: `<change_seq>.<emit_ordinal>`; for a Cell that records effects (a flow relay on the effectively-once tier, or a durable steps relay Cell) the controller stamps `<record seq>.<emit_ordinal>` from the effect record. |
 | `flz.key` | runner → controller | Output-identity stamp: the emitting Cell's own key, or the caller's natural key from `emit_keyed(key, value)`. |
-| `flz.epoch` | controller → plugins | The Cell's WAL realign epoch, for a flow relay on the effectively-once tier and a durable steps relay Cell alike; a steps relay rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming output deduplicates on. |
+| `flz.epoch` | controller → plugins | The Cell's WAL epoch, for a flow relay on the effectively-once tier and a durable steps relay Cell alike; a steps relay rewind does not move it. `(flz.cell, flz.seq, flz.epoch)` is the exact dedup identity a conforming output deduplicates on. |
 | `flz.ack` | controller → plugins | Delivery-confirmation token minted by a durable outbox flush; the owning writer advances its cursor when the output confirms or parks it. Absent on live non-durable output. |
 | `flz.offset` | controller → runner | The durable input-log offset of this forwarded input, for an instance with durable input: a flow relay on the effectively-once tier or a durable steps relay (§11). A flow relay's invocation carries it back as its effect record's `consumed_offset`, a steps relay's iteration as `IterCommit.consumed_offset`. |
 | `flz.msg_id` | sender → controller | Sender-supplied message id: an append whose id the instance's input log still retains is absorbed (§11). |
@@ -1740,7 +1740,7 @@ stream's output carries, minted by the Cell's writer from the effect record:
 |-----|-------|
 | `flz.cell` | `<instance_id>/<tasklet_name>/<cell_key>` of the producing Cell |
 | `flz.seq` | `<record seq>.<emit ordinal>`; an undo output is a newer record of the compensating Cell, so its seq sorts above the forward output's |
-| `flz.epoch` | the Cell's realign epoch, carried verbatim across crash re-drives; a rewind does not move it (a rewind bumps only the journal epoch, which keys barrier identity) |
+| `flz.epoch` | the Cell's WAL epoch, carried verbatim across crash re-drives; a rewind does not move it (a rewind bumps only the journal epoch, which keys barrier identity) |
 | `channel` | the producing plugin channel's name |
 | `flz.key` | the emit's key, when the channel is keyed |
 | author metadata | every pair the emit supplied |

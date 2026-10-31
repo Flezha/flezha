@@ -17,15 +17,17 @@ defmodule Flezha.State.Snapshot do
        own `cell.wal.rewriting` -> rename sequence.
   """
 
+  require Logger
+
   alias Flezha.State.Frame
-  alias Flezha.State.{Metrics, Paths, WalWriter, WriterRegistry}
+  alias Flezha.State.{Metrics, Paths, WalWriter, Watchdog}
+  alias Flezha.State.WalWriter.Epoch
 
   @header_size Frame.header_size()
 
   @doc """
-  Persist a snapshot for `cell_id`. Truncates the WAL up to `seq`
-  on success, after the rename is durable. Returns the absolute path
-  the snapshot was written to.
+  Persist a snapshot for `cell_id`, the rename durable before it answers.
+  Returns the absolute path the snapshot was written to.
   """
   @spec write_snapshot(Paths.cell_id(), non_neg_integer(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
@@ -40,16 +42,33 @@ defmodule Flezha.State.Snapshot do
       bytes = <<header::binary, snapshot_bytes::binary, crc::32-big>>
 
       with :ok <- Paths.atomic_install(final_path, &:file.write(&1, bytes), :snapshot) do
-        case WriterRegistry.lookup(cell_id) do
-          {:ok, pid} -> WalWriter.truncate_up_to(pid, seq)
-          :error -> :ok
-        end
-
         metrics = Metrics.for_cell(cell_id)
         Metrics.put(metrics, :snapshot_seq, seq)
 
         {:ok, final_path}
       end
+    end
+  end
+
+  @doc """
+  Whether `runner_id`'s snapshot is installed, from its writer's loop: only the
+  owner's, or with no owner (a rewind) one the log reaches, so no stale instance's.
+  """
+  @spec install(WalWriter.t(), binary(), non_neg_integer(), {binary(), binary()}) :: boolean()
+  def install(%{cell_id: cell_id} = state, runner_id, seq, {header, body}) do
+    with true <-
+           Epoch.owner?(state, runner_id) or
+             (state.owning_runner == nil and seq <= state.last_persisted_seq),
+         {:ok, _path} <- write_snapshot(cell_id, seq, header, body) do
+      Watchdog.compaction_completed(cell_id)
+      true
+    else
+      false ->
+        false
+
+      {:error, reason} ->
+        Logger.warning("[wal] cell=#{inspect(cell_id)}: snapshot refused: #{inspect(reason)}")
+        false
     end
   end
 

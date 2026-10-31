@@ -75,7 +75,8 @@ defmodule Flezha.Relay.Overwatch do
     init_values: %{},
     default_input_type: "2",
     arrived_via_hotswap?: false,
-    # `:running | :unbound | :halted | :suspended`, written only by the transitions.
+    # `:running | :unbound | :halted | :suspended`, written only by the
+    # transitions.
     phase: :unbound,
     # The transition under way, `nil` when none is.
     cause: nil,
@@ -90,14 +91,16 @@ defmodule Flezha.Relay.Overwatch do
     # This node's monotonic ms at process start: a Cell writer's dispatch from
     # before it went to an earlier Overwatch (`Replay.redrive_calls/1`).
     started_mono: nil,
-    # Liveness counters ref (io_in_received / forwarded / filtered_nil), so a stall
-    # tells a plugin that stopped feeding from a relay that stopped forwarding.
+    # Liveness counters ref (io_in_received / forwarded / filtered_nil) so a
+    # stall can be localised to "WS plugin stopped feeding" vs "relay stopped
+    # forwarding to the channel".
     liveness_ref: nil,
-    # A bind onto another runner (a rebind, a wake, a restarted runner) runs in a
-    # task linked to this process, so it never blocks or outlives the Overwatch:
-    # `%{pid, then, from, journaled}`, the task, what the bind carries, the phase
-    # it started from and the input log's last offset then, plus `reforward` once
-    # its own re-forward is owed again. `nil` when no bind is in flight.
+    # A bind onto another runner (a rebind, a wake, a restarted runner) runs
+    # in a task linked to this process so it never blocks the Overwatch and
+    # never outlives it: `%{pid, then, from, journaled}`, the task, what the
+    # bind carries, the phase it started from and the input log's last offset
+    # then, plus `reforward` once its own re-forward is owed again. `nil` when
+    # no bind is in flight.
     bind_task: nil,
     # Outputs that arrived while a bind task was binding, newest first, and
     # whether any went unsettled with no plugin up, for the next bind to redrive.
@@ -552,17 +555,6 @@ defmodule Flezha.Relay.Overwatch do
   def handle_cast({:apply_external_snapshot, binary}, %__MODULE__{} = state)
       when is_binary(binary) do
     {:noreply, %__MODULE__{state | snapshot: binary}}
-  end
-
-  # External callers (the convergence loop's `resync_runner` heal) trigger a fresh
-  # per-Cell replay against the bound runner without knowing this process's
-  # internals. Used by `Flezha.State.Recovery.resync_for_overwatch/2`. A relay a
-  # handover carried has no durable restore to replay (`Replay.carrier/1`).
-  def handle_cast({:kick_restore, runner_id}, %__MODULE__{} = state) do
-    if :durable in Replay.carrier(state),
-      do: Replay.dispatch_restore(state, state.builder.opts, runner_id)
-
-    {:noreply, state}
   end
 
   # The bound runner connected again under a new session with the same stable

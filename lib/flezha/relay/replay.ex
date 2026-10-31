@@ -9,9 +9,9 @@ defmodule Flezha.Relay.Replay do
   correction — they differ only in how the baseline was chosen.
 
   Everything here runs in the `Overwatch` process and reads its state without
-  changing it. Invariant: the exceptions are `arm_bind_reforward/1` and
-  `dispatch_restore/3`, because the un-park path drives
-  `Lifecycle.complete_init/5` inside a task where `self()` is not the Overwatch.
+  changing it. Invariant: the exception is `arm_bind_reforward/1`, because the
+  un-park path drives `Lifecycle.complete_init/5` inside a task where `self()`
+  is not the Overwatch.
   """
 
   alias Flezha.Config
@@ -60,22 +60,6 @@ defmodule Flezha.Relay.Replay do
         {:replay_from, cell_id, baseline_seq},
         Durations.get(:replay_call_ms)
       )
-
-  @doc """
-  External trigger for the bind-driven per-Cell replay. Called from
-  `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind caller
-  (the convergence loop's `resync_runner` heal) needs to re-issue the
-  `RestoreInitState` handshake for an already-bound Overwatch.
-
-  Routes the work back to the Overwatch process via a cast so the caller never
-  blocks on enumeration / dispatch — the Overwatch is the single owner of
-  "enumerate my cells, dispatch RestoreInitState for each".
-  """
-  @spec kick_restore_for_bound_runner(pid(), binary()) :: :ok
-  def kick_restore_for_bound_runner(overwatch_pid, runner_id)
-      when is_pid(overwatch_pid) and is_binary(runner_id) do
-    GenServer.cast(overwatch_pid, {:kick_restore, runner_id})
-  end
 
   @doc """
   Fold a correction request into the pending set, arming the debounce on the
@@ -153,27 +137,6 @@ defmodule Flezha.Relay.Replay do
   def awaited_restore?(%Overwatch{} = state), do: floor_reporter(state) == :cells
 
   @doc """
-  Enumerate this relay's persisted Cells and ship a `RestoreInitState` for
-  each, off-process — the replay does blocking disk reads and never touches state.
-
-  The convergence heal reaches it through the Overwatch's `{:kick_restore, _}`
-  cast; the bind restores in its own process (`restore_on_bind/2`).
-  """
-  @spec dispatch_restore(Overwatch.t(), keyword(), binary()) :: :ok
-  def dispatch_restore(%Overwatch{} = state, relay_opts, runner_id) do
-    # The SDK keys per-Cell state by the relay INSTANCE id (== `state.id`),
-    # so the WAL lives under `state/{relay_id}/...`. Enumerate by the same key.
-    relay_class = Keyword.get(relay_opts, :relay_class, state.id)
-    overwatch = owner_pid(state)
-
-    # Linked to its caller, the Overwatch or its bind task, so it stops with
-    # the bind it belongs to.
-    spawn_link(fn -> replay_persisted_cells(relay_class, runner_id, overwatch) end)
-
-    :ok
-  end
-
-  @doc """
   The relay an arriving instance binds with, once its durable state is the
   newest copy there is (`Flezha.State.Adoption.adopt_newest/3`): the copy on
   the node its `:state_source_node` names, which the hub stamps on a moved
@@ -238,7 +201,7 @@ defmodule Flezha.Relay.Replay do
       |> Enum.filter(&match?({:error, _}, &1))
 
     # The verdict travels to the Overwatch as a message, the one thing that can
-    # stop the relay, whether this ran in the bind or in a heal's process.
+    # stop the relay.
     case refusals do
       [] -> :ok
       [{:error, reason} | _] -> send(overwatch, {:restore_refused, reason})
@@ -275,6 +238,18 @@ defmodule Flezha.Relay.Replay do
   end
 
   def seed_steps_outboxes(%Overwatch{}), do: :ok
+
+  @doc """
+  Name the bound runner the owner of this relay's running Cell writers: a bind
+  re-seats its Cells, by a restore or a hand-over (`WalWriter.reseat/2`).
+  """
+  @spec reseat_writers(Overwatch.t()) :: :ok
+  def reseat_writers(%Overwatch{} = state) do
+    for writer <- Flezha.State.Supervisor.live_writers(Overwatch.relay_class(state)),
+        do: WalWriter.reseat(writer, state.runner_id)
+
+    :ok
+  end
 
   @doc """
   Hand a new `owner`, before it is recorded, what the Cell writers sent an

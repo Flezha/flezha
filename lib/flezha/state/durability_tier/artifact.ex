@@ -90,7 +90,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @doc """
   How new `ref`'s local copy is: its WAL-owner epoch, then the highest seq it
   holds (`-1` for none), or `:unreadable` when its WAL refuses a record. A
-  rewind or a realign bumps the epoch and every write raises the seq, so of
+  rewind bumps the epoch and every write raises the seq, so of
   two copies of one lineage the greater marker is the newer;
   `Manifest.freshness/1` reads a shipped cut the same way.
   """

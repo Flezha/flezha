@@ -58,7 +58,7 @@ commit unit has committed it: for a flow relay Cell the record's fsync is the co
 Cell the commit is the durable `task_committed` or `compensated` entry that names the record
 within its Cell's range, and the commit worker SHALL mark that range committed on the Cell's
 writer after the entry's ack. Each outbox entry SHALL carry the durable identity `(flz.cell, outbox_seq, epoch)`
-where `outbox_seq` is `<record WAL seq>.<emit ordinal>` and `epoch` is the Cell's realign epoch,
+where `outbox_seq` is `<record WAL seq>.<emit ordinal>` and `epoch` is the Cell's WAL epoch,
 plus `flz.key` when the channel is keyed and the author's metadata, for both kinds. This closes
 the `flz.seq` exactness boundary: `outbox_seq` SHALL be a sufficient handle for exact append-only
 dedup.

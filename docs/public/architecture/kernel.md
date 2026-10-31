@@ -253,12 +253,13 @@ explicitly:
 
 | Situation | What happens |
 | --- | --- |
-| the controller has the WAL, the runner is fresh | the controller **pushes** `RestoreInitState` |
-| the controller has no WAL, the runner has live state (a change arrives that is not sequence 0) | the controller holds the frame back, **pulls** a snapshot with `CompactCell`, and appends from there |
-| the controller cut its WAL because the disk refused a write or a sync | the WAL lacks changes the runner already applied, so the controller **pulls** a snapshot too, and appends from there |
+| the controller has the WAL, a bind meets a fresh runner instance | the controller **pushes** `RestoreInitState` |
+| the controller has no WAL, the runner has live state (a change arrives that is not sequence 0) | the controller holds the change back, **pulls** a snapshot with `CompactCell`, and appends from there |
+| the WAL lacks changes the runner applied (a gap, a shed, a disk that refused a write or a sync) | the controller **pulls** a snapshot too, and appends from there |
 
-The pull is retried until a snapshot lands, and no resync pushes the WAL meanwhile. The changes
-that arrive before the snapshot are held back and appended after it. A zero-byte WAL counts as no state
+The pull is retried until a snapshot lands. Only a bind or a correction pushes: any other repair
+would rewind a live cell to a copy behind it. The one change the runner restates
+above its snapshot is held back and appended after it. A zero-byte WAL counts as no state
 (`Flezha.State.Restore.has_persisted_state?/1`), so the controller never pushes an empty
 restore that would reset a live cell. Deeper detail, with every setting:
 [the state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md).
@@ -452,7 +453,6 @@ holds, and admits a higher one, overwriting by natural key.
 | a retry or re-send from the same runner session | kept | the same identity comes back and the output plugin drops it |
 | the outbox re-send after a controller restart | kept | the same |
 | `flz dlq replay` | kept | the payload comes back as a new input, with a new offset and a new seq |
-| a runner restart that rewrites the cell's history (realign) | raised | the new run replaces the old one |
 | late-input correction | raised | the corrected output must replace the old one |
 | `flz relay replay` | raised | the same |
 
@@ -588,16 +588,12 @@ fences cover that:
    `cell_state_snapshot`, `delete_cell_state`, `compensation_intent`, `compensation_done`,
    `park_payload`).
 2. **The writer's owner token.** Every append carries its session, and the writer refuses one
-   from a session it knows is superseded, before it considers a realign, so an old runner can
-   never rewrite the log onto its own history. The refusal emits
+   from a session it knows is superseded, or from a runner other than the one the last bind
+   seated, so an old runner can never rewrite the log onto its own history. The refusal emits
    `[:flezha, :state, :stale_writer_refused]` once per session.
 
 The owning session pays nothing for this: its first comparison matches and the superseded
 lookup never runs.
-
-A realign is the legitimate version of the same event: a different, current session that the
-ownership record admits sends a sequence that does not follow on, which is what a restarted
-runner does. The writer adopts its history and raises the epoch.
 
 ## Health and liveness
 
@@ -615,7 +611,7 @@ flowchart LR
     H --> S
 ```
 
-The heal step has ten primitives, among them rebinding a relay, resyncing a runner,
+The heal step has ten primitives, among them rebinding a relay, resyncing a cell,
 starting, stopping or restarting a plugin, evicting a runner, and starting a relay that is
 still declared but has run nowhere for longer than the unmet-intent grace
 (`FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS`, 120 s). The hub's own reconcile normally starts
@@ -675,7 +671,7 @@ watchdog that hangs without crashing shows up as `sensor_stale`.
 
 | Check | When it fires | What it does |
 | --- | --- | --- |
-| output staleness | fed, but the sequence has not moved for 60 s | emits `[:flezha, :state, :output_stall]`; the loop resyncs, then rebinds |
+| output staleness | fed, but the sequence has not moved for 60 s | emits `[:flezha, :state, :output_stall]`; the loop rebinds the relay |
 | input silence | a cell that produced before has received nothing for the window | emits `[:flezha, :state, :input_silence]`; off by default (`input_silence_timeout_ms` is 0) |
 | compaction trigger | the WAL passed its size or age floor | sends `CompactCell` |
 | compaction timeout | a requested snapshot has not arrived in 30 s | tells the loop, which plans a resync |
@@ -703,7 +699,7 @@ stopped. It compares two snapshots of driver, channel and relay counters and ret
 Two more verdicts report a cell whose work went missing on the runner and a producer held back
 by a slow consumer. Each check has its own "is it fed?" test, so a quiet system does not read as
 a stalled one. A change of verdict emits `[:flezha, :data_plane, :stall_localized]`. Where a
-remedy exists inside the controller (evict a wedged runner, resync a connection, rebind a
+remedy exists inside the controller (evict a wedged runner, cut a wedged connection, rebind a
 relay) the loop applies it; where only a process restart helps, `/healthz` answers 503.
 
 ### The health endpoint

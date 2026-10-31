@@ -73,8 +73,8 @@ named stops (`@named_stops`) are `:stopped`; any other value falls back to the d
 (declared there is `:moved`, absent is `:stopped`). The `:process` walk's `:lineage` and
 `:plugin_table` rows act on that answer. `arrived_via_hotswap?` and `handed_over?` stay separate
 booleans because later code reads them long after the transition: `Replay.carrier/1` reads
-`arrived_via_hotswap?` for `Replay.restore_on_bind/2`, the `{:kick_restore, _}` cast and
-`Rebind.bind_relay/1`, in one precedence: a handover that reached a runner excludes the durable
+`arrived_via_hotswap?` for `Replay.restore_on_bind/2` and `Rebind.bind_relay/1`, in one
+precedence: a handover that reached a runner excludes the durable
 restore, which overrides the seed, and a shutdown snapshot seeds before the init values.
 
 ## The walk
@@ -189,7 +189,6 @@ What an Overwatch refuses or holds while a transition is under way:
 | `handle_call({:registry_runner_set, _}, ...)` | `halt_reason != nil` | refuses the start's input with the reason |
 | `handle_info({:stream_bound, _}, ...)` | `halt_reason != nil` | does not re-forward the input tail |
 | `Rebind.park_stream/2` | not `:running` on that runner, `bind_task != nil`, or no durable input log | leaves the relay forwarding; a parked one forwards nothing until its channel binds |
-| `handle_cast({:kick_restore, _}, ...)` | `Replay.carrier/1` names `:handover` | skips the WAL restore |
 | `Rebind.rebind/2` | `bind_task != nil` | answers `{:error, :busy}` |
 | `Rebind.session_replaced/4` | `bind_task != nil` | leaves a restarted runner's binding to the bind under way |
 | `Suspend.wake/2` | `phase != :suspended` | does nothing; with a bind in flight it carries `then` onto it |

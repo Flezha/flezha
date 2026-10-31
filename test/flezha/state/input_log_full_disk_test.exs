@@ -51,8 +51,7 @@ defmodule Flezha.State.InputLogFullDiskTest do
                  InputLog.append(class, "in hand", %{"flz.msg_id" => "id-2"})
       end)
 
-    assert log_text =~ "the disk refused a write or a sync (:enospc)"
-    assert log_text =~ "appends from offset 1 on are refused"
+    assert log_text =~ "disk refused :enospc"
 
     # The owed answer is a refusal, not silence and not an exit, and the
     # record it named is gone from the file with the one in hand.
@@ -69,7 +68,7 @@ defmodule Flezha.State.InputLogFullDiskTest do
     refute capture_log(fn ->
              assert {:error, {:input_log_unavailable, :enospc}} =
                       InputLog.append(class, "in hand", %{"flz.msg_id" => "id-2"})
-           end) =~ "the disk refused"
+           end) =~ "disk refused"
 
     # Space again: both retries are journaled as new at the offsets the cut
     # handed back, and the acknowledged input still absorbs its own retry.
@@ -103,8 +102,7 @@ defmodule Flezha.State.InputLogFullDiskTest do
         assert bodies(class) == ["acked"]
       end)
 
-    assert log_text =~ "the disk refused a write or a sync (:einval)"
-    assert log_text =~ "appends from offset 1 on are refused"
+    assert log_text =~ "disk refused :einval"
 
     :ok = Syncer.call(syncer, &{:reopen, path, &1, &2})
     assert {:ok, 1} = InputLog.append(class, "owed", %{"flz.msg_id" => "id-1"})
@@ -119,8 +117,7 @@ defmodule Flezha.State.InputLogFullDiskTest do
     syncer = :sys.get_state(log).syncer
     :ok = Syncer.call(syncer, &{:reopen, "/dev/full", &1, &2})
 
-    assert capture_log(fn -> :ok = GenServer.stop(log) end) =~
-             "appends from offset 1 on are refused"
+    assert capture_log(fn -> :ok = GenServer.stop(log) end) =~ "disk refused :einval"
 
     assert {{:reply, {:error, {:input_log_unavailable, :einval}}}, "id-1", _} =
              :gen_server.wait_response(owed, 1_000, true)
@@ -129,6 +126,30 @@ defmodule Flezha.State.InputLogFullDiskTest do
     :ok = :sys.resume(batcher)
     assert wait_until(fn -> Supervisor.lookup({class, :input_log}) == :error end, 2_000)
     assert {:ok, 1} = InputLog.append(class, "owed", %{"flz.msg_id" => "id-1"})
+  end
+
+  # fails when: a log restarted from its file, whose index holds no samples,
+  # cuts anywhere but at the records it refuses (the bound is computed).
+  test "after a restart the cut lands where the refused records start",
+       %{class: class, log: log, batcher: batcher} do
+    :ok = GenServer.stop(log)
+    assert wait_until(fn -> Supervisor.lookup({class, :input_log}) == :error end, 2_000)
+    owed = owe(class, "owed", "id-1")
+    {:ok, restarted} = Supervisor.lookup({class, :input_log})
+    TestHelpers.fill_disk(restarted)
+
+    capture_log(fn ->
+      assert {:error, {:input_log_unavailable, :enospc}} =
+               InputLog.append(class, "in hand", %{"flz.msg_id" => "id-2"})
+    end)
+
+    assert {{:reply, {:error, {:input_log_unavailable, :enospc}}}, "id-1", _} =
+             :gen_server.wait_response(owed, 1_000, true)
+
+    assert bodies(class) == ["acked"]
+    :ok = :sys.resume(batcher)
+    assert {:ok, 1} = InputLog.append(class, "owed", %{"flz.msg_id" => "id-1"})
+    assert {:duplicate, 0} = InputLog.append(class, "acked", %{"flz.msg_id" => "id-0"})
   end
 
   test "a refused effect write is cut back and refused, and its retry is kept",
@@ -156,7 +177,7 @@ defmodule Flezha.State.InputLogFullDiskTest do
     assert capture_log(fn ->
              assert {:error, {:input_log_unavailable, :einval}} =
                       InputLog.keep_effect(class, 0, "second", "cell", "r1")
-           end) =~ "the disk refused a write or a sync (:einval)"
+           end) =~ "disk refused :einval"
 
     # Cut, not only refused: a retry is synced again rather than told kept.
     assert InputLog.effect_results(class, -1) == [{0, "first", "cell", "r0"}]

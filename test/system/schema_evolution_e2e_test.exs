@@ -183,7 +183,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # `relay-state-persistence`, "A refused restore fails the bind instead of
     # cold-starting the Cell": the relay is left unbound. Whether
     # `start_relay/2`'s own reply carried the refusal is NOT part of that
-    # guarantee and is a real race — `Replay.dispatch_restore/3` reports the
+    # guarantee and is a real race — `Replay.restore_on_bind/2` reports the
     # verdict off-process, so `{:restore_refused, _}` and the
     # `:registry_runner_set` call `finalize_init_relay/3` makes reach the
     # Overwatch in either order. The park is the outcome, and it is not a race.

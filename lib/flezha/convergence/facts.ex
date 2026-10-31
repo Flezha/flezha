@@ -55,8 +55,7 @@ defmodule Flezha.Convergence.Facts do
       reason: :output_stall,
       reset: :evidence,
       grace: true,
-      tick: :now,
-      cleared_by: :relay_bound
+      tick: :now
     },
     runner_disconnected: %{
       holds: true,
@@ -142,9 +141,7 @@ defmodule Flezha.Convergence.Facts do
     reconcile_started: %{holds: false, tick: :now},
     seq_gap_closed: %{clears: :seq_gap},
     compaction_completed: %{clears: :compaction_gave_up},
-    node_drained: %{clears: :node_draining},
-    # A bind that landed made the binding afresh, onto the same runner too.
-    relay_bound: %{clears: :output_stall}
+    node_drained: %{clears: :node_draining}
   }
 
   @doc """
@@ -320,8 +317,7 @@ defmodule Flezha.Convergence.Facts do
   end
 
   # A stall a runner's stream declared is about that binding, so it is repaired
-  # once the probe sees the relay bound to any other runner, or not at all; a
-  # bind that landed, on the same runner too, clears it (`relay_bound`).
+  # once the probe sees the relay bound to any other runner, or not at all.
   # The Watchdog's stall names no runner and ages out on its grace.
   defp repaired?(:output_stall, id, %{runner_id: runner_id}, reality) do
     reality

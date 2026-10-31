@@ -75,8 +75,7 @@ defmodule Flezha.State.InputLog.Server do
     # result, and the largest result it keeps.
     effects: nil,
     effects_cap: 0,
-    # Why the disk last refused a write or a sync, until a write lands again:
-    # one warning per episode, not one per refused retry.
+    # Why the disk last refused, until a write lands again: one warning per episode.
     disk_refused: nil
   ]
 
@@ -388,8 +387,7 @@ defmodule Flezha.State.InputLog.Server do
     if not synced? and :file.datasync(state.file_handle) == :ok,
       do: Syncer.answer(Enum.reverse(state.owed))
 
-    # A failed last sync is cut back as a live log cuts one; the companion
-    # holds its answers, the owed ones among them.
+    # A failed last sync is cut back as a live log cuts one.
     receive do
       {:unsynced, reason} -> unsynced(%{state | owed: []}, reason)
     after
@@ -397,9 +395,8 @@ defmodule Flezha.State.InputLog.Server do
     end
   end
 
-  # A sync the disk refused: the companion holds every answer from it on. The
-  # resume hands them back, and nothing is handed to it before the cut. A
-  # companion gone instead stops this log through its exit.
+  # A sync the disk refused: the companion holds every answer from it on, and
+  # hands them back on the resume. A companion gone stops this log instead.
   defp unsynced(state, reason) do
     case Syncer.call(state.syncer, &{:resume, &1, &2}) do
       held when is_list(held) -> refuse_unsynced(state, held, state.next_offset, reason)
@@ -528,35 +525,28 @@ defmodule Flezha.State.InputLog.Server do
     end
   end
 
-  # The disk refused a write or a sync. No record from the oldest one still
-  # owed its answer on was answered, so none was forwarded: they are cut from
-  # the file in place, with their ids and their credit, and every append owed,
-  # in hand or parked is refused, retryably. A retry is then journaled as new,
-  # never absorbed by a record nobody acknowledged, and a parked append cannot
-  # overtake a refused one. `floor` bounds the cut from above. A held effect
-  # answer cuts the effect log back below the record it waited on.
+  # The disk refused a write or a sync. No record from the oldest unanswered one
+  # on was forwarded: they are cut, with their ids and credit, and every append
+  # owed, in hand or parked is refused, retryably, so a retry is journaled as
+  # new. A held effect answer cuts the effect log back below its record.
   defp refuse_unsynced(state, answers, floor, reason) do
     parked = for {from, _body, _id} <- :queue.to_list(state.waiters), do: {from, :parked}
     answers = answers ++ state.owed ++ parked
-    floor = Enum.reduce(answers, floor, &lowest_written/2)
-
-    {:ok, file, positions} =
-      RecordFrame.cut_in_place(state.path, state.file_handle, state.positions, floor)
-
-    if state.disk_refused == nil do
-      Logger.warning(
-        "[input_log] relay=#{state.relay_class}: the disk refused a write or a sync " <>
-          "(#{inspect(reason)}); appends from offset #{floor} on are refused, to be sent again"
-      )
-    end
-
+    floor = Enum.min([floor | for({_from, {:ok, offset}} <- answers, do: offset)])
     {sizes, dropped} = Enum.split_with(:queue.to_list(state.offset_sizes), &(elem(&1, 0) < floor))
+    # Every unanswered record is still in `offset_sizes`: the bound needs no scan.
+    bound = state.positions.end - Enum.sum_by(dropped, &Frame.record_bytes(elem(&1, 1)))
+    {:ok, file} = RecordFrame.cut_in_place(state.path, state.file_handle, bound)
+
+    unless state.disk_refused,
+      do: Logger.warning("[input_log] #{state.relay_class}: disk refused #{inspect(reason)}")
+
     Syncer.refuse(answers, reason)
 
     %{
       state
       | file_handle: file,
-        positions: positions,
+        positions: SeqIndex.cut_above(state.positions, floor, bound),
         next_offset: floor,
         offset_sizes: :queue.from_list(sizes),
         ledger: CreditLedger.refund(state.ledger, Enum.sum_by(dropped, &elem(&1, 1))),
@@ -568,9 +558,6 @@ defmodule Flezha.State.InputLog.Server do
         disk_refused: reason
     }
   end
-
-  defp lowest_written({_from, {:ok, offset}}, floor), do: min(offset, floor)
-  defp lowest_written(_answer, floor), do: floor
 
   defp cut_effects(effects, answers) do
     case for({_from, {:effect_at, seq}} when is_integer(seq) <- answers, do: seq) do

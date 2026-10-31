@@ -73,8 +73,7 @@ defmodule Flezha.State.InputLog.Effects do
 
   @doc """
   Write one result after the last, framed under `header`; not yet synced. A
-  write the disk refuses is cut back out of the file and answered
-  `{:error, reason, effects}`, the effect log as it was before.
+  write the disk refuses is cut back out: `{:error, reason, effects}`.
   """
   @spec append(t(), result(), binary()) :: t() | {:error, term(), t()}
   def append(%__MODULE__{} = effects, result, header) do
@@ -87,15 +86,13 @@ defmodule Flezha.State.InputLog.Effects do
     end
   end
 
-  @doc """
-  The effect log without its records from seq `floor` on, which the disk did
-  not take: cut from the file in place and read back.
-  """
+  @doc "The effect log cut in place from seq `floor` on, which the disk did not take."
   @spec cut_from(t(), non_neg_integer()) :: t()
   def cut_from(%__MODULE__{} = effects, floor) do
-    {:ok, file, _index} =
-      RecordFrame.cut_in_place(effects.path, effects.file, SeqIndex.new(), floor)
-
+    _ = :file.close(effects.file)
+    {:ok, reader} = :file.open(effects.path, [:raw, :read, :binary])
+    {:ok, bound} = RecordFrame.position_of(SeqIndex.new(), reader, effects.path, floor)
+    {:ok, file} = RecordFrame.cut_in_place(effects.path, reader, bound)
     %{effects | file: file, results: read(file, effects.path), seq: floor}
   end
 
@@ -109,8 +106,7 @@ defmodule Flezha.State.InputLog.Effects do
   @doc """
   Drop the results of the inputs below `floor`: the file is rewritten with what
   is left, synced, and swapped in, its records under `header`. Nothing below is
-  nothing done, and neither is a rewrite the disk refuses: the next sweep tries
-  again.
+  nothing done, and so is a rewrite the disk refuses.
   """
   @spec drop_below(t() | nil, non_neg_integer(), binary()) :: t() | nil
   def drop_below(nil, _floor, _header), do: nil

@@ -34,12 +34,8 @@ defmodule Flezha.State.WalWriter.State do
     :backpressured?,
     :shedding?,
     :gap_open?,
-    # A baseline is being pulled because the log lacks changes the runner
-    # applied; `kept` holds the Changes refused as gaps meanwhile, oldest last,
-    # with their byte total, for the baseline to append, and the highest seq
-    # the episode lost, which that baseline must reach.
-    :awaiting_baseline?,
-    :kept,
+    # `{record, credit}` refused while the gap is open (`Epoch.hold/3`), or `nil`.
+    :held,
     :oldest_unsnapshotted_at,
     :credit_pending,
     :credit_active?,
@@ -49,7 +45,7 @@ defmodule Flezha.State.WalWriter.State do
     # committed?}`, dispatchable once `seq <= outbox_durable_seq` and
     # committed), what commits an entry (`:record`, its own fsync, a flow
     # relay's Cell's; or `:stage`, the steps stage marker naming it), the flush
-    # cursor, the realign epoch, and the retry timer armed while the
+    # cursor, the epoch, and the retry timer armed while the
     # relay's Overwatch is not yet resolvable.
     :pending_outbox,
     :commit_unit,
@@ -99,8 +95,7 @@ defmodule Flezha.State.WalWriter.State do
     # acknowledged and cannot parse past, and a `:transient` child that raised
     # here would be restarted straight back into it.
     :refusal,
-    # Why the disk last refused a write or a sync, until a sync after a write
-    # lands again: one warning per episode, not one per refused resend.
+    # Why the disk last refused, until a write syncs again: one warning per episode.
     :disk_refused
   ]
 
@@ -120,8 +115,7 @@ defmodule Flezha.State.WalWriter.State do
           backpressured?: boolean(),
           shedding?: boolean(),
           gap_open?: boolean(),
-          awaiting_baseline?: boolean(),
-          kept: {non_neg_integer(), [{tuple(), map()}], integer()},
+          held: {tuple(), map()} | nil,
           oldest_unsnapshotted_at: integer() | nil,
           credit_pending: %{optional({pid(), binary() | nil}) => pos_integer()},
           credit_active?: boolean(),
@@ -151,7 +145,6 @@ defmodule Flezha.State.WalWriter.State do
           high_watermark: pos_integer(),
           low_watermark: pos_integer(),
           hard_watermark: pos_integer(),
-          kept_cap: non_neg_integer(),
           pending_msg_cap: pos_integer(),
           outbox_inflight_max: pos_integer(),
           outbox_resettle_ms: pos_integer()
@@ -160,7 +153,7 @@ defmodule Flezha.State.WalWriter.State do
   @typedoc """
   A Cell's durable progress, read as one value: how far its records are
   persisted, how far they are fsynced, how far its outbox has been confirmed,
-  and the realign epoch all three are counted under.
+  and the epoch all three are counted under.
   """
   @type progress :: %{
           last_persisted_seq: integer(),

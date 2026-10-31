@@ -11,7 +11,7 @@ defmodule Flezha.State.Lineage do
 
   alias Flezha.State.{Frame, Paths, WriterRegistry}
 
-  @type cut :: nil | :all | {:above, non_neg_integer()}
+  @type cut :: nil | {:above, non_neg_integer()}
   @type stored :: %{
           id: binary() | nil,
           trail: [{binary(), integer()}],

@@ -188,9 +188,10 @@ v0.1.0-alpha.1 pre-release.
 - A controller whose state disk fills no longer loses input it had already
   acknowledged. An input the disk refuses is refused back to its sender, which
   sends it again. State changes written since the last disk sync are cut from
-  the file, and the controller takes the cell's current state from its runner
-  again. The input log and the WAL writer keep running instead
-  of restarting in a loop, and take input again once space frees
+  the file, and the controller pulls the cell's current state from its runner;
+  no repair other than a bind or a correction pushes a saved copy over a live
+  cell any more. The input log and the WAL writer keep running, and take input
+  again once space frees
   ([durability](docs/public/topics/core/durability.md#what-happens-in-each-situation)).
 - With `FLEZHA_CLUSTER_DISCOVERY=k8s_pod_discovery`, a controller whose
   service account has no `token` or `ca.crt` mounted now refuses to start.
@@ -204,18 +205,15 @@ v0.1.0-alpha.1 pre-release.
   server's address inside a cluster, so leaving it unset still boots.
 - An effectively-once flow relay whose data stream closes, or whose data
   channel is killed, while its runner stays connected no longer loses or
-  doubles acknowledged inputs. Neither flags the relays as stalled any more:
-  the data-plane rebind repairs it: each relay with a durable input log holds
-  its input until its stream is back, then sends the undelivered input again,
-  the frames the broken stream swallowed first. Values between tasklets are
-  delivered again only after a restore. A stream that closes while that rebind
-  is still running is now rebound after it, and a late close for a stream
-  already let go no longer starts another rebind.
-- A running relay bound again onto the runner it runs on keeps its live state:
-  the runner says it kept the instance, and nothing is restored over it from
-  the controller's records. A runner that kept an instance through a move to
-  another runner is still restored over. Such a bind also ends the relay's
-  output stall, so it is no longer bound again and again until it expires.
+  doubles acknowledged inputs. The data-plane rebind repairs it without
+  flagging a stall: each relay with a durable input log holds its input until
+  its stream is back, then sends the undelivered input again, the frames the
+  broken stream swallowed first. A running relay bound again onto the runner
+  it runs on keeps its live state, and a stalled relay is rebound instead of
+  restored in place.
+- A runner that no bind gave a cell can no longer replace the cell's saved
+  history with its own: its writes are refused, and the `flezha_state`
+  `wal_realign` event is gone.
 - A replayed slice that closed while its Cell was between rounds is no longer
   left buffered: the Cell delivers it instead of waiting for input that may
   never come. It affected every SDK built on the shared core.

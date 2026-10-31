@@ -426,8 +426,7 @@ defmodule Flezha.State.DurabilityTierTest do
     setup ctx do
       Stub.install()
       TestHelpers.write_wal(ctx.cell_id, 0..3)
-      # A runner restart realigned this Cell, which is the ordinary case: the
-      # epoch is bumped by `WalWriter.realign_epoch/4`, not only by a rewind.
+      # A correction's rewind bumped this Cell's epoch.
       set_epoch(ctx.cell_id, 2)
       start_shipper(ctx.class)
       ctx

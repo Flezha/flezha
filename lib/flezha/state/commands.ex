@@ -37,21 +37,6 @@ defmodule Flezha.State.Commands do
   # ---------- restore ----------
 
   @doc """
-  Ship a `RestoreInitState` command to the SDK and return the controller's
-  freshly assembled payload. The caller is expected to await the
-  matching `RestoreInitStateResponse` over the control channel before
-  unblocking input streaming for the Cell.
-  """
-  @spec dispatch_restore_init_state(binary(), {binary(), binary(), binary()}) ::
-          {:ok, reference()} | {:error, term()}
-  def dispatch_restore_init_state(runner_id, cell_id) do
-    case restore_command(cell_id) do
-      {:ok, command} -> ControlChannel.send_control(runner_id, command)
-      {:error, _refused} = refused -> refused
-    end
-  end
-
-  @doc """
   Ship a `RestoreInitState` and block until the SDK acknowledges it — the SDK
   has applied state and the consumed floor when the reply lands.
 
@@ -358,9 +343,9 @@ defmodule Flezha.State.Commands do
       {:failed, :no_snapshot}
     else
       # The Cell holds a retried attempt's changes, which no record can carry
-      # until the item resolves, or the runner's credit window is exhausted,
-      # possibly by Changes writers keep for their pulled baselines: those let
-      # go, so the next pull finds room. No snapshot now, and no strike either.
+      # until the item resolves, or the runner's credit window, shared by its
+      # Cells, is exhausted, possibly by the Changes writers hold for pulled
+      # baselines: those let go. No snapshot now, and no strike either.
       {:error, %Flezha.Error{code: "state.cell_busy"}} ->
         WalWriter.pull_refused(runner_id)
         Watchdog.compaction_deferred(cell_id)

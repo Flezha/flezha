@@ -185,8 +185,7 @@ defmodule Flezha.Relay.Handover do
         # Only a handover that actually reached a runner suppresses the WAL
         # restore. One that carried nothing, or that found nothing bound to
         # carry it to, falls through to the on-disk state the bind already
-        # restored from — otherwise the explicit `kick_restore` repair would
-        # be locked out too.
+        # restored from.
         arrived_via_hotswap?: arrived?,
         cause: if(arrived?, do: :arrive, else: state.cause)
     }

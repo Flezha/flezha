@@ -17,9 +17,8 @@ defmodule Flezha.State.InputLog.Syncer do
   end
 
   # `effects` is a second handle, on the effect log, once it exists; only an
-  # effect append syncs it. `log` is the log's pid while syncs succeed, and
-  # the answers held unsynced from the first that fails until the log resumes
-  # this loop.
+  # effect append syncs it. `log` is the log's pid while syncs succeed, else
+  # the answers held since the first that failed, until the log resumes.
   defp syncer_loop(fh, effects, log) do
     receive do
       {:sync, answers} ->
@@ -32,15 +31,13 @@ defmodule Flezha.State.InputLog.Syncer do
         send(from, {ref, :ok})
         syncer_loop(fh, effects, log)
 
-      # `seq` is the effect record the answers wait on, `nil` for none. Held,
-      # each answer names it in place of its reply, which a refusal drops, so
-      # the log can cut the effect log back below it.
+      # `seq` is the effect record the answers wait on, `nil` for none: a held
+      # answer names it, so the log can cut the effect log back below it.
       {:sync_effects, answers, seq} ->
         held = for {from, _reply} <- answers, do: {from, {:effect_at, seq}}
         syncer_loop(fh, effects, sync(effects, answers, held, log))
 
-      # The log takes back what was held, to cut its file below it and refuse
-      # it; what it hands over after names records written past that cut.
+      # The log takes back what was held, to cut its file below it and refuse it.
       {:resume, from, ref} ->
         send(from, {ref, if(is_list(log), do: log, else: [])})
         syncer_loop(fh, effects, from)
@@ -64,10 +61,9 @@ defmodule Flezha.State.InputLog.Syncer do
     end
   end
 
-  # A failed datasync leaves every write since the last good one in doubt, and
-  # a later datasync may report them synced when they are not. So nothing is
-  # synced or answered from then on: the log is told, and every answer is held
-  # for it, as `held`, until it resumes this loop.
+  # A failed datasync leaves every write since the last good one in doubt, and a
+  # later one may report them synced when they are not: from then on every
+  # answer is held for the log, which is told, until it resumes this loop.
   defp sync(fh, answers, held, log) when is_pid(log) do
     case :file.datasync(fh) do
       :ok ->
@@ -95,16 +91,12 @@ defmodule Flezha.State.InputLog.Syncer do
   def answer(answers),
     do: Enum.each(answers, fn {from, reply} -> GenServer.reply(from, reply) end)
 
-  @doc """
-  Refuse each `{from, _reply}` in `answers`, retryably: the disk did not take
-  what it answers for, so its sender sends it again.
-  """
+  @doc "Refuse each of `answers`, retryably: the disk did not take what it answers for."
   @spec refuse([{GenServer.from(), term()}], term()) :: :ok
-  def refuse(answers, reason),
-    do:
-      answer(
-        for {from, _reply} <- answers, do: {from, {:error, {:input_log_unavailable, reason}}}
-      )
+  def refuse(answers, reason) do
+    refusal = {:error, {:input_log_unavailable, reason}}
+    answer(for {from, _reply} <- answers, do: {from, refusal})
+  end
 
   @doc """
   A request only the companion can answer: the synchronous flush

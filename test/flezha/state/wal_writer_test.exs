@@ -14,7 +14,6 @@ defmodule Flezha.State.WalWriterTest do
   alias Flezha.State.{Lineage, Metrics, Paths, RecordFrame, SeqIndex, Supervisor, TestHelpers}
   alias Flezha.State.WriterRegistry
   alias Flezha.State.WalWriter
-  alias Flezha.State.Snapshot, as: StateSnapshot
   alias Flezha.State.WalWriter.State, as: WriterState
 
   setup do
@@ -159,7 +158,8 @@ defmodule Flezha.State.WalWriterTest do
       header = TestHelpers.stub_header()
 
       for seq <- 5001..5050 do
-        assert :awaiting_baseline = WalWriter.append(srv, seq, header, "d", "exec-cold")
+        assert {:error, {:gap, expected: 0, got: ^seq}} =
+                 WalWriter.append(srv, seq, header, "d", "exec-cold")
       end
 
       assert_receive {:declare, :seq_gap, ^pid,
@@ -178,11 +178,13 @@ defmodule Flezha.State.WalWriterTest do
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
-      assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
+      assert {:error, {:gap, expected: 0, got: 5001}} =
+               WalWriter.append(srv, 5001, header, "d1", "exec-cold")
+
       assert_receive {:declare, :seq_gap, ^pid, _}, 1_000
 
       # The CompactCell round-trip lands as a snapshot at the runner's seq.
-      assert {:ok, _path} = StateSnapshot.write_snapshot(pid, 5005, header, "full-state")
+      assert {:ok, _path} = TestHelpers.compact(pid, 5005, header, "full-state")
 
       assert WalWriter.last_persisted_seq(srv) == 5005
       assert_receive {:declare, :seq_gap_closed, ^pid, %{}}, 1_000
@@ -211,7 +213,7 @@ defmodule Flezha.State.WalWriterTest do
       header = TestHelpers.stub_header()
 
       :ok = WalWriter.append(srv, 0, header, "a")
-      {:ok, _} = StateSnapshot.write_snapshot(pid, 50, header, "full-state")
+      {:ok, _} = TestHelpers.compact(pid, 50, header, "full-state")
       # Closed and booted again from disk, as a controller restart leaves it:
       # nothing yet names its owning runner.
       TestHelpers.close_and_await(srv, pid)
@@ -231,7 +233,7 @@ defmodule Flezha.State.WalWriterTest do
       WalWriter.append_async(srv, 7, header, "z", "exec-1")
       assert_receive {:declare, :seq_gap, ^pid, _}, 1_000
 
-      assert {:ok, _} = StateSnapshot.write_snapshot(pid, 30, header, "full-state")
+      assert {:ok, _} = TestHelpers.compact(pid, 30, header, "full-state")
       assert_receive {:declare, :seq_gap_closed, ^pid, %{}}, 1_000
       assert WalWriter.last_persisted_seq(srv) == 30
       assert :ok = WalWriter.append(srv, 31, header, "b", "exec-1")

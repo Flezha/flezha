@@ -107,15 +107,16 @@ defmodule Flezha.State.WalWriterCreditTest do
       refute_received {:credit_drained, _, _, _}
     end
 
-    test "a realign that truncates them", %{pid: pid, cell_id: cell_id} do
+    # fails when: a runner that is not the owner rewrites the log, or its
+    # refused frame drains, confirming an input no record holds.
+    test "a frame from a runner that is not the owner", %{pid: pid, cell_id: cell_id} do
       append!(pid, 0, "a", opts(70))
       assert sync(pid) == 0
 
-      # A restarted runner's diverged seq discards record 0's lineage.
       WalWriter.append_async(pid, 5, TestHelpers.stub_header(), "b", "exec-2", opts(30))
-      assert sync(pid) == 5
+      assert sync(pid) == 0
 
-      assert_received {:credit_released, @session, 70, ^cell_id}
+      assert_received {:credit_released, @session, 30, ^cell_id}
       refute_received {:credit_drained, _, _, _}
     end
 
@@ -144,14 +145,22 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert_receive {:credit_drained, @session, 50, _cell}
   end
 
-  test "a gap-rejected Change releases its bytes immediately and declares the gap", %{pid: pid} do
+  # fails when: a gap-refused Change drains its bytes, so a marker confirms an
+  # input whose record was never written.
+  test "a gap-refused Change is held, and released unconfirmed once let go", %{pid: pid} do
     become_loop()
     append!(pid, 0, "a", opts(40))
     assert sync(pid) == 0
 
     append!(pid, 5, "z", opts(60))
-    assert_receive {:credit_drained, @session, 60, _cell}
     assert_receive {:declare, :seq_gap, _, %{trigger: :seq_gap}}
+    refute_received {:credit_drained, @session, 60, _cell}
+
+    # A contiguous append closes the gap and lets the held Change go.
+    append!(pid, 1, "b", opts(10))
+    assert sync(pid) == 1
+    assert_receive {:credit_released, @session, 60, _cell}
+    refute_received {:credit_drained, @session, 60, _cell}
   end
 
   test "a hard-bound shed releases its bytes immediately", %{pid: pid, cell_id: cell_id} do

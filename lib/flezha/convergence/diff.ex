@@ -23,7 +23,7 @@ defmodule Flezha.Convergence.Diff do
   @type wedge ::
           nil
           | {:runner, atom(), binary()}
-          | {:connection, [relay_ref()]}
+          | {:connection, atom(), binary()}
           | {:relay, [relay_ref()]}
 
   @typedoc "One judged record per subject, keyed by subject — the tick's health input."
@@ -358,7 +358,7 @@ defmodule Flezha.Convergence.Diff do
   defp wedged_connection(ctx, observed) do
     case relays_on_runner(ctx, observed) do
       nil -> nil
-      refs -> {:connection, refs}
+      [{ns, _rid} | _] -> {:connection, ns, StallClassifier.runner_of(ctx)}
     end
   end
 
@@ -381,11 +381,11 @@ defmodule Flezha.Convergence.Diff do
   defp wedged_relay(_ctx, _observed), do: nil
 
   # Every relay bound to the runner the verdict names. Two verdicts resolve
-  # through it: a wedged connection carries all of them, and a runner's handout
-  # self-report is process-global — it proves one activation is stuck, not
-  # which relay owns it — so the runner's relays are the healable set
-  # either way. A rebind resumes each from durable state, which is safe whether
-  # or not that relay was the stuck one.
+  # through it: a wedged connection carries all of them, so its channel's
+  # namespace is theirs, and a runner's handout self-report is process-global —
+  # it proves one activation is stuck, not which relay owns it — so the runner's
+  # relays are the healable set. A rebind resumes each from durable state, which
+  # is safe whether or not that relay was the stuck one.
   defp relays_on_runner(ctx, observed) do
     case StallClassifier.relays_of(observed, ctx) do
       [] -> nil

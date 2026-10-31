@@ -99,8 +99,8 @@ defmodule Flezha.Runner.FleetManager.Marks do
 
   @doc """
   Mark a session token superseded by a newest-wins takeover. The mark is the
-  WAL-side half of the write-path fence: `Flezha.State.WalWriter` refuses a
-  realign (or any append) from a marked session, closing the in-flight window
+  WAL-side half of the write-path fence: `Flezha.State.WalWriter` refuses any
+  append from a marked session, closing the in-flight window
   the channel-side flip cannot cover — a wedged `StreamChannel` that flushes
   its queued frames only after the binding swap.
   """

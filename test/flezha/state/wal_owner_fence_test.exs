@@ -1,27 +1,11 @@
-defmodule Flezha.State.RunnerRestartRealignTest do
+defmodule Flezha.State.WalOwnerFenceTest do
   @moduledoc """
-  §16 — Per-Cell WAL realignment on runner restart.
-
-  Reproduces the production durability defect: after a runner pod restarts
-  and rebuilds its state from its input log, it reconnects under a NEW runner id and
-  resumes emitting Changes from a fresh (lower) seq base. The controller's
-  `WalWriter` — still alive across the restart, with `last_persisted_seq` at the
-  pre-restart high-water mark — drops every incoming Change as a duplicate
-  (`seq <= last_persisted_seq`), so the WAL freezes forever while its sink keeps
-  producing: `dedup_drops_total` climbs, no `seq_gap` fires (the seq regressed,
-  it did not jump), and the Watchdog's `output_stall` resync cannot help because
-  it would push the controller's stale snapshot back onto the freshly-rebuilt
-  runner.
-
-  The fix (`Flezha.State.WalWriter`): a Change from a *different* runner than
-  the one that wrote the current epoch realigns the WAL to the new runner's
-  seq base — the rebuilt runner is the live source of truth — instead of
-  freezing. A same-runner low seq stays a legitimate dedup.
-
-  Owner fencing (`wal-owner-fencing`): a realign is honoured only from the
-  Cell's current owner binding. A session superseded by a newest-wins
-  takeover is fenced at its StreamChannel (unbind-old before bind-new) and,
-  for late in-flight residue, refused at the WalWriter — never realigned on.
+  A Cell's WAL takes Changes only from its owner, the runner the last bind
+  re-seated: a frame from any other runner, or from a session a newest-wins
+  takeover superseded, is refused and never rewrites the log. A superseded
+  session is fenced at its StreamChannel (unbind-old before bind-new) and, for
+  late in-flight residue, refused at the WalWriter. A same-runner low seq stays
+  a legitimate dedup.
   """
 
   # async: false: writes Application env; a shared on-disk root; the live controller and its fleet.
@@ -33,94 +17,52 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.Wire
-  alias Flezha.State.{Metrics, Paths, RecordFrame, Snapshot, Supervisor, TestHelpers, WalWriter}
+  alias Flezha.State.{Metrics, Snapshot, Supervisor, TestHelpers, WalWriter}
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.Telemetry
 
   setup do
-    cell_id = TestHelpers.sample_cell_id("realign_" <> uniq())
+    cell_id = TestHelpers.sample_cell_id("fence_" <> uniq())
     {:ok, _} = Supervisor.find_or_start(cell_id)
     {:ok, writer} = Supervisor.lookup(cell_id)
     header = TestHelpers.stub_header()
 
     parent = self()
     Telemetry.capture([:flezha, :state, :seq_gap], as: :seq_gap)
-    Telemetry.capture([:flezha, :state, :wal_realign], as: :wal_realign)
     Telemetry.capture([:flezha, :state, :stale_writer_refused], as: :stale_refused)
 
     %{cell_id: cell_id, writer: writer, header: header, parent: parent}
   end
 
-  test "a runner restart realigns the frozen WAL to the new runner's seq base", ctx do
-    # The pre-restart runner advances the WAL to seq 5.
-    old = start_channel("exec_old")
-    feed(old, ctx, 0..4)
-    assert WalWriter.last_persisted_seq(ctx.writer) == 4
-
-    # A pre-restart snapshot exists; realignment must discard it so a later
-    # RestoreInitState ships only the new epoch (not stale snapshot + new WAL).
+  # fails when: a runner the writer does not own, resuming from a lower seq
+  # base, empties the log and its snapshots and adopts its own history.
+  test "a runner that is not the owner never rewrites the log", ctx do
+    feed(start_channel("exec_old"), ctx, 0..4)
     {:ok, _} = Snapshot.write_snapshot(ctx.cell_id, 3, ctx.header, "old-snap")
-    assert Snapshot.latest_snapshot(ctx.cell_id) != nil
 
-    # The runner pod restarts: a NEW runner id reconnects and, after its
-    # rebuild, resumes from a fresh low seq base (1, 2, 3...).
     new = start_channel("exec_new")
     feed(new, ctx, 0..2)
 
-    # Realignment fires once on the first regressed Change, adopting the new
-    # runner's epoch as the WAL's source of truth.
-    assert_receive {:wal_realign, %{from_seq: 4, to_seq: 0}, meta}, 1_000
-    assert meta.relay == "TestRelay"
-    assert meta.runner == "exec_new"
-
-    # The WAL does not stay frozen at 5: it follows the new runner down to 3,
-    # then keeps advancing on the new epoch.
-    assert WalWriter.last_persisted_seq(ctx.writer) == 2
-    feed(new, ctx, 3..5)
-    assert WalWriter.last_persisted_seq(ctx.writer) == 5
-
-    # The stale pre-restart snapshot was discarded by the realignment.
-    assert Snapshot.latest_snapshot(ctx.cell_id) == nil
-
-    # The regression was healed by realignment — not mistaken for a forward gap.
+    assert_receive {:stale_refused, %{count: 1}, %{session: "exec_new"}}, 1_000
+    assert WalWriter.last_persisted_seq(ctx.writer) == 4
+    assert Snapshot.latest_snapshot(ctx.cell_id) != nil
     refute_received {:seq_gap, _, _}
   end
 
-  # fails when: a compaction after a realign cuts the WAL mid-record, so the
-  # next restore refuses the whole Cell with crc_mismatch at offset 0.
-  test "a compaction after a realign keeps the WAL walkable from its first byte", ctx do
-    old = start_channel("exec_old")
-    feed(old, ctx, 0..299)
-
-    new = start_channel("exec_new")
-    feed(new, ctx, 0..299)
-    assert_receive {:wal_realign, %{from_seq: 299, to_seq: 0}, _meta}, 1_000
-
-    # The index tracks the emptied file, not the discarded lineage.
-    path = Paths.wal_path(ctx.cell_id)
-    assert :sys.get_state(ctx.writer).seq_index.end == RecordFrame.file_size(path)
-
-    assert :ok = WalWriter.truncate_up_to(ctx.writer, 260)
-
-    assert TestHelpers.record_seqs(path) == {:ok, Enum.to_list(261..299)}
-  end
-
-  test "a same-runner duplicate is still deduped (no spurious realign)", ctx do
+  test "a same-runner duplicate is still deduped", ctx do
     same = start_channel("exec_same")
     feed(same, ctx, 0..4)
 
     # The SAME runner resends an already-persisted seq: a legitimate
-    # retransmit, deduped — not a restart, so the WAL must not realign.
+    # retransmit, deduped.
     feed(same, ctx, [3])
 
-    refute_received {:wal_realign, _, _}
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
     assert Metrics.get(Metrics.for_cell(ctx.cell_id), :dedup_drops_total) >= 1
   end
 
-  test "a superseded session's divergent frames refuse at the writer instead of realigning",
-       ctx do
+  test "a superseded session's divergent frames refuse at the writer", ctx do
     owner_id = "exec_owner_" <> uniq()
     stale_id = supersede("exec_stale_" <> uniq())
 
@@ -136,7 +78,6 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     assert_receive {:stale_refused, %{count: 1}, meta}, 1_000
     assert meta.session == stale_id
-    refute_received {:wal_realign, _, _}
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
 
     # The owning session's path is untouched by the fence — it keeps advancing
@@ -200,7 +141,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     refute_received {:stale_refused, _, _}
   end
 
-  test "takeover race: in-flight old-session Changes never land past the unbind; the new owner realigns cleanly",
+  test "takeover race: in-flight old-session Changes never land past the unbind; the new owner writes on",
        ctx do
     old_id = "exec_old_" <> uniq()
     new_id = "exec_new_" <> uniq()
@@ -223,29 +164,27 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 6
     assert_receive {:stale_refused, %{count: 1}, %{session: ^old_id}}, 1_000
 
-    # Bind-new: the owner's divergent seq base realigns exactly as before.
+    # Bind-new: the bind re-seats the new owner from the log, which it continues.
     new = start_channel(new_id)
-    feed(new, ctx, 0..2)
-    assert_receive {:wal_realign, %{from_seq: 6, to_seq: 0}, %{runner: ^new_id}}, 1_000
-    assert WalWriter.last_persisted_seq(ctx.writer) == 2
+    :ok = WalWriter.reseat(ctx.writer, new_id)
+    feed(new, ctx, 7..8)
+    assert WalWriter.last_persisted_seq(ctx.writer) == 8
 
     # Wedged-channel residue hitting the writer directly after the swap must
     # not drag the WAL back onto the superseded lineage.
     WalWriter.append_async(ctx.writer, 42, ctx.header, "zombie", old_id)
-    assert WalWriter.last_persisted_seq(ctx.writer) == 2
+    assert WalWriter.last_persisted_seq(ctx.writer) == 8
     assert_receive {:stale_refused, %{count: 1}, %{session: ^old_id}}, 1_000
 
-    # Exactly one realign for the whole episode, and the new owner advances.
-    feed(new, ctx, 3..4)
-    assert WalWriter.last_persisted_seq(ctx.writer) == 4
-    refute_received {:wal_realign, _, _}
+    feed(new, ctx, 9..10)
+    assert WalWriter.last_persisted_seq(ctx.writer) == 10
   end
 
   # ---------- helpers ----------
 
   # Mark + register cleanup — the table is owned by the app's FleetManager and
   # outlives this test otherwise.
-  test "a session whose identity does not own the relay never realigns its WAL", ctx do
+  test "a session whose identity does not own the relay never writes its WAL", ctx do
     {relay, _tasklet, _key} = ctx.cell_id
     feed(start_channel("exec_owner"), ctx, 0..4)
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
@@ -261,7 +200,6 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
     assert Snapshot.latest_snapshot(ctx.cell_id) != nil
-    refute_received {:wal_realign, _, _}
 
     assert_received {:foreign, %{count: 1},
                      %{runner_id: ^other, owner: "exec_owner", relay_id: ^relay}}

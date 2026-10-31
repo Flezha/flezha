@@ -87,7 +87,6 @@ Compiling 34 files (.ex)
 | `flezha_state` | `stale_writer_refused` | event |  | A runner that no longer owns a relay tried to write its state and was refused. |
 | `flezha_state` | `wal_backpressure` | metric | `flezha_state_wal_backpressure` | A relay wrote faster than its saved state could keep up, so its writes waited. |
 | `flezha_state` | `wal_pull_failed` | event |  | Copying a relay's saved state from another node failed. |
-| `flezha_state` | `wal_realign` | event |  | A relay's saved state moved its sequence number to match its runner's. |
 | `flezha_state` | `wal_rewind` | event |  | A relay's saved state was rewound to an earlier point. |
 <!-- bridge-signals:end -->
 

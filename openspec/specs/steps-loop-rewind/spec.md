@@ -89,7 +89,7 @@ unwound, and their records SHALL be released as any committed stage's are.
 A rewind SHALL bump the instance's journal epoch, which keys every later barrier's identity so
 a re-run's `TaskCommit` for a `(task_idx, iter)` the rewind unwound is a new entry and not a
 re-send of the old one. Outputs carry no journal epoch: an output's `flz.epoch` is its Cell's
-realign epoch, unchanged by a rewind, and an output emitted after a rewind is a newer record of
+WAL epoch, unchanged by a rewind, and an output emitted after a rewind is a newer record of
 the same Cell, so its `flz.seq` sorts above every output of the unwound iterations and a
 conforming output accepts it as newer. Crash-retry re-emits within an un-rewound run SHALL keep
 their identity and be deduplicated. This is the same ordering rule a flow relay's outputs follow,
