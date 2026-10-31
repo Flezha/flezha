@@ -6,11 +6,9 @@ defmodule Flezha.Relay.Rebind do
   that carries a relay across its session's data-plane rebind.
   """
 
-  alias Flezha.Convergence.Facts
   alias Flezha.Identificator
   alias Flezha.Payloader
   alias Flezha.Relay.Builder
-  alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
@@ -75,23 +73,9 @@ defmodule Flezha.Relay.Rebind do
   def session_replaced(%Overwatch{} = state, _old_session, _new_session, _continuity), do: state
 
   @doc """
-  Park every relay `runner_id`'s session `identity` owns on this node, once its
-  data streams are let go and before fresh ones are asked for: a lost stream
-  dropped what its write buffer held, and the input log's tail above the
-  floor is owed again, ahead of any fresh input.
-  """
-  @spec park_streams(binary(), binary()) :: :ok
-  def park_streams(runner_id, identity) do
-    pids =
-      for class <- ClassRegistry.running(identity),
-          {:ok, pid} <- [ClassRegistry.overwatch_pid(class)],
-          do: pid
-
-    StreamPool.call_each(pids, {:park_stream, runner_id})
-  end
-
-  @doc """
-  Park a running relay with a durable input log bound to `runner_id`: it
+  Park a running relay with a durable input log bound to `runner_id`, which its
+  session's data-plane rebind asks (`{:park_stream, runner_id}`,
+  `StreamPool.release_streams/1`) once the lost streams are let go: it
   forwards on no channel and is armed for its own to bind again, so every input
   journaled meanwhile stays in the tail its re-forward sends first
   (`unpark/1`), at once when that channel is bound already.
@@ -232,7 +216,6 @@ defmodule Flezha.Relay.Rebind do
     Logger.info("[Overwatch] relay #{state.id} bound onto runner #{recovered.runner_id}")
 
     Lifecycle.publish_binding(recovered, state.runner_id)
-    Facts.declare({:relay_bound, state.id, %{}})
 
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 

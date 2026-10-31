@@ -941,7 +941,7 @@ be ignored.
 
 A lost stream drops what its write buffer held, so before the runner is asked for fresh
 streams the rebind SHALL park every running relay with a durable input log that the
-session's identity owns on this node: a parked relay forwards no input, which stays in its
+session's channels route output to: a parked relay forwards no input, which stays in its
 log, until its own channel binds again, and then SHALL re-forward its log's undelivered
 input tail, edges excluded, before any input it takes after. A relay that does not answer
 the park within the bounded fan-out is parked when it does.

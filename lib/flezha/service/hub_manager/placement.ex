@@ -41,6 +41,10 @@ defmodule Flezha.Service.HubManager.Placement do
   end
 
   def relay_set_runner(namespace, relay_id, runner_id) do
+    # Every bind that lands publishes its runner here, onto the same runner too:
+    # the counter-fact of a stall its last binding declared.
+    if is_binary(runner_id), do: Facts.declare({:relay_bound, relay_id, %{}})
+
     Rows.with_live_hub(namespace, {:error, {:hub_down, namespace}}, fn hub_id ->
       # propagate: true — `runner_relays/2` is a local-table tag query, so a
       # peer handling this runner's disconnect misses the relay otherwise.

@@ -594,9 +594,9 @@ defmodule Flezha.Relay.Replay do
   gives it one re-forwards the tail, as a bind in flight does on adoption.
   """
   @spec arm_bind_reforward(Overwatch.t()) :: :armed | :unarmed
-  def arm_bind_reforward(%Overwatch{} = state)
-      when state.bind_task != nil or (state.channel == nil and state.runner_id != nil),
-      do: :armed
+  def arm_bind_reforward(%Overwatch{bind_task: %{}}), do: :armed
+
+  def arm_bind_reforward(%Overwatch{phase: :running, channel: nil}), do: :armed
 
   def arm_bind_reforward(%Overwatch{channel: channel} = state) do
     owner = owner_pid(state)

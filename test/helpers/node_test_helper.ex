@@ -900,10 +900,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   that stream's id: a channel ignores a close for any other stream.
   """
   def close_bound_stream(channel, reason) do
-    case GenServer.call(channel, :stream_ref_status) do
+    pid = GenServer.whereis(channel)
+
+    case GenServer.call(pid, :stream_ref_status) do
       nil -> :ok
-      ref when is_reference(ref) -> send(channel, {:flz_closed, Stream.stream_id(ref), reason})
-      stand_in -> send(channel, {:flz_closed, stand_in, reason})
+      ref when is_reference(ref) -> send(pid, {:flz_closed, Stream.stream_id(ref), reason})
+      stand_in -> send(pid, {:flz_closed, stand_in, reason})
     end
 
     :ok

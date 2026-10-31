@@ -316,13 +316,15 @@ defmodule Flezha.Runner.StreamChannel do
   # A rebind replaces the runner's whole pair set, so every channel lets its
   # stream go first and each fresh stream finds a free channel. A close this
   # channel asks for is not reported back to it, so nothing here reads as a
-  # fault.
+  # fault. The answer is the relays this channel routes, for the rebind to
+  # park (`StreamPool.release_streams/1`).
   @impl true
-  def handle_call(:release_stream, _from, %{stream_ref: nil} = state), do: {:reply, :ok, state}
+  def handle_call(:release_stream, _from, %{stream_ref: nil} = state),
+    do: {:reply, Watch.pids(state.route_monitors), state}
 
   def handle_call(:release_stream, _from, state) do
     close_stream(state.stream_ref)
-    {:reply, :ok, unbind(state)}
+    {:reply, Watch.pids(state.route_monitors), unbind(state)}
   end
 
   # Takeover fence: unbind this channel from the Cell write path.

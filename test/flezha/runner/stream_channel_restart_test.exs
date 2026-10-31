@@ -137,6 +137,8 @@ defmodule FlezhaTest.Runner.StreamChannelRestartTest do
       assert_receive {:channel_down, _m, %{channel: ^name, reason: :killed}}, @bound_ms
     end)
 
+    # Answered once the replacement started, which announced itself from init.
+    _ = Supervisor.which_children(Flezha.Identificator.stream_sup_primary(ctx.runner_id))
     assert %{rebinding: :owed, rebinds: 0} = session(ctx.runner_id)
     assert_owed_rebind_follows(ctx.runner_id)
   end

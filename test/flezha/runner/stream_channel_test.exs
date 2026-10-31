@@ -70,7 +70,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       send(pid, {:flz_closed, :ref_replaced, :eof})
       assert GenServer.call(pid, :stream_ref_status) == :ref_fresh
 
-      :ok = GenServer.call(pid, :release_stream)
+      [] = GenServer.call(pid, :release_stream)
       send(pid, {:flz_closed, :ref_fresh, :eof})
       _ = GenServer.call(pid, :stream_ref_status)
 
@@ -344,10 +344,18 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok
     end
 
-    test "a steps relay is flagged for output_stall on stream close, as a stream is",
-         %{pid: pid} do
+    test "a steps relay is flagged for output_stall on a silent stream, as a stream is",
+         %{name: name} do
+      FlezhaTest.Case.install([:env])
+      Application.put_env(:flezha, :io_stream_liveness_threshold_ms, 25)
+      Application.put_env(:flezha, :io_stream_liveness_interval_ms, 0)
       ClassRegistry.put("bnd_op", :steps)
       on_exit(fn -> ClassRegistry.delete("bnd_op") end)
+
+      {:ok, pid} =
+        StreamChannel.start_link({"_system", "ce_test", :"#{name}_secondary", :secondary})
+
+      on_exit(fn -> NodeTestHelper.ensure_stopped(pid) end)
 
       :ok = GenServer.call(pid, {:relay_pid_update, "bnd_op", [self()]})
       :ok = GenServer.call(pid, {:relay_pid_update, "cont_op", [self()]})
@@ -355,8 +363,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       capture_stalls()
 
-      send(pid, {:flz_closed, :ref_g, :eof})
-      _ = GenServer.call(pid, :stream_ref_status)
+      age_stream(pid, 75)
+      send(pid, :io_liveness_check)
 
       assert_receive {:output_stall, "cont_op"}
       assert_receive {:output_stall, "bnd_op"}

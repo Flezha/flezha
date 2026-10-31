@@ -382,8 +382,9 @@ defmodule Flezha.Relay.Lifecycle do
   move elsewhere tells a runner nothing, so what it kept through one may lag.
   """
   @spec kept?(Overwatch.t(), binary(), binary() | nil) :: boolean()
-  def kept?(%Overwatch{} = last, runner_id, raw),
-    do: last.phase == :running and last.runner_id == runner_id and ClassRegistry.kept?(raw)
+  def kept?(%Overwatch{phase: :running, runner_id: id}, id, raw), do: ClassRegistry.kept?(raw)
+
+  def kept?(%Overwatch{}, _runner_id, _raw), do: false
 
   # A refused restore halts the relay rather than folding new inputs onto empty
   # state, on the existing halted-error contract.

@@ -25,7 +25,6 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Config.Durations
   alias Flezha.Identificator
   alias Flezha.Process.Watch
-  alias Flezha.Relay.Rebind
   alias Flezha.Runner.ControlChannel.Requests
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
@@ -282,12 +281,11 @@ defmodule Flezha.Runner.ControlChannel do
   # its release answered reaches this mailbox ahead of `:rebind_released`. The
   # relays are parked before the runner is asked for fresh streams, so none
   # forwards fresh input onto one ahead of the tail its lost stream dropped.
-  def handle_cast(:rebind_data_streams, %{runner_id: runner_id, identity: identity} = state) do
+  def handle_cast(:rebind_data_streams, %{runner_id: runner_id} = state) do
     channel = self()
 
     Task.start_link(fn ->
-      StreamPool.call_channels(runner_id, :release_stream)
-      Rebind.park_streams(runner_id, identity)
+      StreamPool.release_streams(runner_id)
       send(channel, :rebind_released)
       send(channel, {:rebind_answered, FleetManager.rebind_data_streams(runner_id)})
     end)

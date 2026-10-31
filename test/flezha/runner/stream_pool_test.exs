@@ -76,6 +76,49 @@ defmodule FlezhaTest.Runner.StreamPoolTest do
     end
   end
 
+  describe "release_streams/1" do
+    # fails when: the rebind leaves a relay of the session unparked, and it
+    # forwards fresh input ahead of the tail its lost stream dropped.
+    test "lets every channel's stream go, then parks each relay they route, once" do
+      runner_id = "release_runner_#{System.unique_integer([:positive])}"
+      elsewhere = "#{runner_id}_elsewhere"
+      [first, second | _] = StreamPool.stream_ids(runner_id, :primary)
+      start_channel({runner_id, first, :primary})
+      start_channel({runner_id, second, :primary})
+      start_channel({elsewhere, hd(StreamPool.stream_ids(elsewhere, :primary)), :primary})
+      :ok = GenServer.call(first, {:bind, :old_ref})
+      mine = answering_relay()
+      other = answering_relay()
+      :ok = StreamPool.put_route(runner_id, "routed_op", mine)
+      :ok = StreamPool.put_route(elsewhere, "routed_op", other)
+
+      assert StreamPool.release_streams(runner_id) == :ok
+
+      assert GenServer.call(first, :stream_ref_status) == nil
+      assert_received {:asked, ^mine, {:park_stream, ^runner_id}}
+      refute_received {:asked, ^mine, _}
+      refute_received {:asked, ^other, _}
+    end
+  end
+
+  # A stand-in Overwatch that answers every call `:ok` and tells the test what
+  # it was asked.
+  defp answering_relay do
+    test_pid = self()
+    pid = spawn(fn -> answer_calls(test_pid) end)
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    pid
+  end
+
+  defp answer_calls(test_pid) do
+    receive do
+      {:"$gen_call", from, request} ->
+        send(test_pid, {:asked, self(), request})
+        GenServer.reply(from, :ok)
+        answer_calls(test_pid)
+    end
+  end
+
   defp start_channel({runner_id, name, type}) do
     args = {"_system", runner_id, name, type}
     start_supervised!(Supervisor.child_spec({StreamChannel, args}, id: name))

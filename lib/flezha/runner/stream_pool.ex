@@ -74,16 +74,36 @@ defmodule Flezha.Runner.StreamPool do
   """
 
   @spec call_channels(binary(), term(), non_neg_integer()) :: :ok
-  def call_channels(runner_id, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)),
-    do: call_each(channel_pids(runner_id), request, budget_ms)
+  def call_channels(runner_id, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
+    _ = call_each(channel_pids(runner_id), request, budget_ms)
+    :ok
+  end
 
-  @doc "`call_channels/3`'s bounded walk over any set of processes."
-  @spec call_each([pid()], term(), non_neg_integer()) :: :ok
-  def call_each(pids, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
+  @doc """
+  Let every channel of `runner_id`'s session go of its stream, then park every
+  relay they route output to (`{:park_stream, runner_id}`, which the relay
+  answers), each walk within the pool budget. A lost stream dropped what its
+  write buffer held, so a relay is parked before the runner is asked for fresh
+  streams: its input log's tail is owed again, ahead of any fresh input.
+  """
+  @spec release_streams(binary()) :: :ok
+  def release_streams(runner_id) do
+    relays =
+      for {:ok, routed} <- call_each(channel_pids(runner_id), :release_stream),
+          pid <- routed,
+          uniq: true,
+          do: pid
+
+    _ = call_each(relays, {:park_stream, runner_id})
+    :ok
+  end
+
+  # The bounded walk both share: each reply, in order.
+  defp call_each(pids, request, budget_ms \\ Durations.get(:stream_pool_budget_ms)) do
     deadline = System.monotonic_time(:millisecond) + budget_ms
 
-    Enum.each(pids, fn pid ->
-      _ = SafeCall.bounded(pid, request, max(deadline - System.monotonic_time(:millisecond), 0))
+    Enum.map(pids, fn pid ->
+      SafeCall.bounded(pid, request, max(deadline - System.monotonic_time(:millisecond), 0))
     end)
   end
 
