@@ -163,14 +163,17 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     # The slots hold the zero a runner starts at until its first heartbeat
     # lands, so wait for a real self-report rather than for a number of
     # heartbeat intervals to pass: on a loaded box five intervals of wall clock
-    # do not buy five heartbeats.
+    # do not buy five heartbeats. The channel writes a report slot by slot and
+    # a snapshot reads it slot by slot, so a sample can hold this heartbeat's
+    # dispatches beside the previous one's handouts: wait on both.
     channels =
       wait_until(
         fn ->
           channels = LivenessCounters.snapshot_all().channels
 
           case channels |> LivenessCounters.by_runner() |> Map.get(runner_id) do
-            %{hb_count: count, hb_dispatches: dispatches} when count > 0 and dispatches >= 1 ->
+            %{hb_count: count, hb_dispatches: dispatches, hb_handouts: handouts}
+            when count > 0 and dispatches >= 1 and handouts >= 1 ->
               channels
 
             _ ->
