@@ -163,15 +163,16 @@ defmodule Flezha.State.InputLog do
   @doc """
   The lowest offset that a live call's record, or a recent message id below
   the sweep's `floor`, holds in this log, or `nil`: the retention sweep never
-  truncates at or above it. A log that does not answer, slow or gone, is an error, which
-  the sweep takes as holding everything.
+  truncates at or above it. A log not open here is `nil`, as for
+  `offset_before_time/3`: the sweep cuts only a log it found open. An open log
+  that does not answer, slow or gone, is an error, which the sweep takes as
+  holding everything.
   """
   @spec held_floor(binary(), non_neg_integer()) :: non_neg_integer() | nil | {:error, term()}
   def held_floor(relay_class, floor) do
-    case Supervisor.lookup({relay_class, :input_log}) do
-      {:ok, pid} -> call(pid, {:held_floor, floor})
-      :error -> {:error, {:input_log_unavailable, :closed}}
-    end
+    with {:ok, pid} <- Supervisor.lookup({relay_class, :input_log}),
+         do: call(pid, {:held_floor, floor}),
+         else: (:error -> nil)
   end
 
   defp retained_last_offset(relay_class) do

@@ -13,7 +13,7 @@ defmodule Flezha.State.InputLogCallRetentionTest do
   use Mimic
 
   import ExUnit.CaptureLog
-  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+  import FlezhaTest.Helper.NodeTestHelper, only: [override_log_level: 1, wait_until: 2]
 
   alias Flezha.State.{InputLog, Paths, RecordFrame, Supervisor, TestHelpers}
   alias Flezha.State.InputLog.{MsgIndex, Sweep}
@@ -98,7 +98,9 @@ defmodule Flezha.State.InputLogCallRetentionTest do
     :ok = :file.pwrite(file, first_end + 28, <<0>>)
     :ok = :file.close(file)
 
-    assert InputLog.held_floor(class, 3) == 0
+    refused = capture_log(fn -> assert InputLog.held_floor(class, 3) == 0 end)
+    assert refused =~ "record_frame_refused"
+    assert refused =~ "reason=crc_mismatch"
   end
 
   test "a log that does not answer the sweep's question is not cut", %{class: class} do
@@ -113,6 +115,8 @@ defmodule Flezha.State.InputLogCallRetentionTest do
     expect(Supervisor, :lookup, &Mimic.call_original(Supervisor, :lookup, [&1]))
     expect(Supervisor, :lookup, fn {^class, :input_log} -> {:ok, gone} end)
 
+    # The refusal is a warning, below the suite's level.
+    on_exit(override_log_level(:warning))
     refused = capture_log(fn -> assert :ok = Sweep.run(class) end)
     assert refused =~ "request=:held_floor reason={:noproc"
     assert offsets(class) == [0, 1, 2]

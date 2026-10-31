@@ -166,7 +166,8 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
       assert :ok = ingest(ns, relay, "k1:3", m3)
       last = :erpc.call(p3, InputLog, :msg_offset, [relay, m3])
       assert wait(fn -> (:erpc.call(p3, InputLog, :watermark, [relay]) || -1) >= last end, 30_000)
-      assert count(ns, relay, "tier_pass", "k1") == 3
+      # `tier_pass` is unkeyed: its one Cell counts every input it forwarded.
+      assert count(ns, relay, "tier_pass") == 3
     end
   end
 
@@ -217,9 +218,8 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
     RelayTestHelper.send_confirmed(relay, ns, body, %{"flz.msg_id" => msg_id}, deadline)
   end
 
-  defp count(ns, relay, tasklet, key) do
-    with {:ok, json, _seq} <-
-           RelayManager.get_cell_state(ns, relay, %{tasklet: tasklet, cell_key: key}),
+  defp count(ns, relay, tasklet) do
+    with {:ok, json, _seq} <- RelayManager.get_cell_state(ns, relay, %{tasklet: tasklet}),
          [_, value] <- Regex.run(~r/"value"\s*:\s*(-?\d+)/, json),
          do: String.to_integer(value),
          else: (unread -> unread)
