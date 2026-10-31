@@ -51,7 +51,6 @@ __pycache__/
 
 # Openspecs
 /openspec/changes
-!/openspec/changes/archive
 /openspec/parked
 
 # Ad-hoc local test scripts (e.g. test-recovery-start.sh/stop.sh).
