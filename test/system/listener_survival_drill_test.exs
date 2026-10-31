@@ -399,7 +399,14 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
         Listener.listen(
           ns,
           id,
-          [window_ms: 240_000, idle_ms: 100] ++ Keyword.take(opts, [:direction]),
+          [
+            window_ms: 240_000,
+            idle_ms: 100,
+            before: fn ->
+              send(test, {:attached, self()})
+              :ok
+            end
+          ] ++ Keyword.take(opts, [:direction]),
           fn
             :idle ->
               receive do
@@ -414,6 +421,11 @@ defmodule FlezhaTest.System.ListenerSurvivalDrillTest do
           end
         )
       end)
+
+    # The binding row is written before the relay subscribes, so only the
+    # attach returning says a frame sent now is heard.
+    listener = task.pid
+    assert_receive {:attached, ^listener}, 30_000, "no listener was attached to #{id}"
 
     for target <- Keyword.get(opts, :on, [id]) do
       assert wait_until(fn -> listeners(ns, target) != [] end, 30_000),
