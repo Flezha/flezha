@@ -786,8 +786,13 @@ namespace and for the schedules:
 
 A controller on the side that stops:
 
-- stops its relays before it takes over any relay of the controllers it lost.
-  Its runners drop them and their writers flush, as on any stop;
+- stops its relays rather than take over any relay of the controllers it lost.
+  Its runners drop them and their writers flush, as on any stop. Nothing
+  orders this against the other side: each side acts on its own once it has
+  noticed the loss and the grace has passed, so for a moment a relay can run on
+  both. A cut shorter than that makes neither side act, and every relay stays
+  where it was; Erlang distribution notices a silent cut only after 45 to 75 s
+  by default, before the grace starts;
 - answers `/healthz` with `200` and `"status":"no_quorum"`, naming the
   namespaces. It is not a restart signal: a restart does not bring the other
   side back;

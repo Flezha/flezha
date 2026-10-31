@@ -1218,7 +1218,7 @@ still reach the called relay's plugins.
 | --- | --- | --- |
 | `call_pending_max` (`FLEZHA_CALL_PENDING_MAX`) | 10 000 | the answers one relay owes its waiting callers; past it, `call.busy` |
 | `call_grace_ms` | 1 000 | how long an outside caller waits past its deadline, so the relay's own `call.timeout` reaches it first |
-| `call_retention_margin_ms` (`FLEZHA_CALL_RETENTION_MARGIN_MS`) | 300 000 | how long an input log keeps a record carrying a relay call past the call's deadline |
+| `call_retention_margin_ms` (`FLEZHA_CALL_RETENTION_MARGIN_MS`) | 300 000 | how long an input log keeps a record carrying a relay call past the call's deadline, and one carrying a `flz.msg_id` past its writing |
 | `call_worker_idle_ms` | 30 000 | how long a relay call's delivery worker (one per caller and target) waits with an empty queue before it stops |
 
 All are in [Application env keys](../../configuration/application_env.md#runner-and-relay-lifecycle). A long deadline makes the called relay keep

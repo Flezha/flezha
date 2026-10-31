@@ -281,6 +281,11 @@ in every SDK.
   always appended. The log is trimmed only below the instance's floor, the
   prefix of inputs every cell has processed durably; a floor that does not move
   past the size threshold emits `[:flezha, :state, :input_log_frozen_watermark]`.
+  A record carrying an id is kept, with its id in memory, for
+  `FLEZHA_CALL_RETENTION_MARGIN_MS` (5 minutes) after it was written even once
+  processed, so a repeat within that window is absorbed; at 600 inputs a second
+  that is about 180 000 records and ids per relay. `0` turns the window off,
+  and the call retention with it.
 - **One atomic record per invocation**: state changes, outputs, the consumed
   offset, a dead-letter entry and event time are written together, in one
   sync, never partly and never merged away.
