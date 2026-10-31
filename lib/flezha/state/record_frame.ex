@@ -75,7 +75,8 @@ defmodule Flezha.State.RecordFrame do
   end
 
   @doc """
-  Reduce over a record file's framed records, oldest first.
+  Reduce over a record file's framed records, oldest first, from the record at
+  byte `start` (`sample_start/3` finds one).
 
   `fun.({seq, header, body}, acc)` returns `{:cont, acc}` or `{:halt, acc}`; the
   walk also stops at a torn tail. A record that fails its crc with complete
@@ -84,14 +85,18 @@ defmodule Flezha.State.RecordFrame do
 
   The one place the `decode_record/2` recursion lives.
   """
-  @spec fold_records(:file.io_device(), Path.t(), acc, ({non_neg_integer(), binary(), binary()},
-                                                        acc ->
-                                                          {:cont, acc} | {:halt, acc})) ::
+  @spec fold_records(
+          :file.io_device(),
+          Path.t(),
+          acc,
+          ({non_neg_integer(), binary(), binary()}, acc -> {:cont, acc} | {:halt, acc}),
+          non_neg_integer()
+        ) ::
           {:ok, acc} | {:error, Frame.refusal()}
         when acc: term()
-  def fold_records(device, path, acc, fun) do
+  def fold_records(device, path, acc, fun, start \\ 0) do
     step = fn seq, header, body, _position, acc -> fun.({seq, header, body}, acc) end
-    fold(device, path, 0, -1, acc, {step, fn acc, _tail -> acc end})
+    fold(device, path, start, -1, acc, {step, fn acc, _tail -> acc end})
   end
 
   @doc """
@@ -239,16 +244,25 @@ defmodule Flezha.State.RecordFrame do
   @spec position_of(SeqIndex.t(), :file.io_device(), Path.t(), non_neg_integer()) ::
           {:ok, non_neg_integer()} | {:error, Frame.refusal()}
   def position_of(index, device, path, floor) do
-    {sample_seq, start} = SeqIndex.sample_at(index, floor)
-    start = if start > 0 and not record_at?(device, start, sample_seq), do: 0, else: start
+    start = sample_start(index, device, floor)
     at_floor = fn seq, _, _, at, nil -> if seq >= floor, do: {:halt, at}, else: {:cont, nil} end
     result = fold(device, path, start, -1, nil, {at_floor, fn nil, {_, at, _, _} -> at end})
     {:ok, _} = :file.position(device, :eof)
     result
   end
 
-  # A sample is trusted only while the record at its position still carries its
-  # seq: from a stale one a seek would cut mid-record or past the end.
+  @doc """
+  The file position of `index`'s newest sample at or below seq `floor`, where a
+  walk that needs only the records from `floor` on can start; `0` when there is
+  none. A sample is trusted only while the record at its position still carries
+  its seq: from a stale one a seek would land mid-record or past the end.
+  """
+  @spec sample_start(SeqIndex.t(), :file.io_device(), non_neg_integer()) :: non_neg_integer()
+  def sample_start(index, device, floor) do
+    {sample_seq, start} = SeqIndex.sample_at(index, floor)
+    if start > 0 and not record_at?(device, start, sample_seq), do: 0, else: start
+  end
+
   defp record_at?(device, position, seq),
     do: match?({:ok, ^seq, _header, _body, _consumed}, decode_record(device, position))
 

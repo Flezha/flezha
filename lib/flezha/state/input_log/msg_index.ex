@@ -4,15 +4,18 @@ defmodule Flezha.State.InputLog.MsgIndex do
   offset of the record carrying it, which absorbs a payload sent again, and the
   `flz.deadline_at` of each record carrying a live call.
 
-  A call's request in its callee's log and its `Response` in its caller's carry
-  a deadline, and the log keeps each until that deadline plus
-  `call_retention_margin_ms` has passed, whatever the watermark allows (see
-  `floor/1`), so a request sent again is absorbed by its message id and a
-  recovered caller finds its `Response`. Both are learned from the append, or
-  from the one walk of the file that builds the index, so a deadline costs no
-  read of its own. A log whose senders never stamp an id walks nothing.
+  The log keeps a record carrying an id until its append time plus
+  `call_retention_margin_ms` has passed, and one carrying a call until the
+  call's deadline plus that margin, whatever the watermark allows (see
+  `floor/2`). So a sender that never saw its answer can send again within the
+  margin and be absorbed, and a recovered caller finds its `Response`. Ids and
+  deadlines are learned from the append, or from the one walk of the file that
+  builds the index, so a deadline costs no read of its own; the append times
+  the id hold needs are read by the sweep, only over the records it releases,
+  never by an append. A log whose senders never stamp an id walks nothing.
   """
 
+  alias Flezha.Config.Durations
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.State.RecordFrame
 
@@ -90,14 +93,37 @@ defmodule Flezha.State.InputLog.MsgIndex do
   end
 
   @doc """
-  The lowest offset a live call still holds, or `nil`: no truncation may reach
-  it. A deadline plus the margin that has passed holds nothing and is dropped.
+  The lowest offset a live call or a recent message id still holds, or `nil`:
+  no truncation may reach it. A deadline plus the margin that has passed holds
+  nothing and is dropped. Only an id below `sweep_floor` can lower the floor,
+  so only those are judged: `aged_out.(time, from)` answers the highest offset
+  from `from` on appended before `time`, and is not asked when no id is below
+  the floor.
   """
-  @spec floor(t()) :: {non_neg_integer() | nil, t()}
-  def floor(index) do
+  @spec floor(
+          t(),
+          non_neg_integer(),
+          (integer(), non_neg_integer() -> non_neg_integer() | nil | {:error, term()})
+        ) :: {non_neg_integer() | nil, t()}
+  def floor(index, sweep_floor, aged_out) do
     now = System.system_time(:millisecond)
     live = Map.filter(index.deadlines, fn {_offset, at} -> Inbound.retained_until(at) > now end)
-    lowest = if live == %{}, do: nil, else: live |> Map.keys() |> Enum.min()
-    {lowest, %{index | deadlines: live}}
+    held = Map.keys(live) ++ recent_ids(index.ids, sweep_floor, aged_out, now)
+    {Enum.min(held, fn -> nil end), %{index | deadlines: live}}
+  end
+
+  # A record appended at or before `now - margin` has had its margin.
+  defp recent_ids(ids, sweep_floor, aged_out, now) do
+    case for {_id, offset} <- ids, offset < sweep_floor, do: offset do
+      [] ->
+        []
+
+      below ->
+        case aged_out.(now - Durations.get(:call_retention_margin_ms) + 1, Enum.min(below)) do
+          aged when is_integer(aged) -> Enum.filter(below, &(&1 > aged))
+          # No record that old, or a walk the log refused: every id is held.
+          _none_or_refused -> below
+        end
+    end
   end
 end

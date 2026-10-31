@@ -298,7 +298,9 @@ the dead-letter queue: after its retries a cell parks the bad payload and moves 
 
 The log is cut at `min(watermark, newest offset older than the hold window)`. The hold window is
 `:input_log_hold_window_ms` (0 by default), raised to a class's correction window when it
-declares one, so the inputs a correction replays are still on disk. A cut finds its start
+declares one, so the inputs a correction replays are still on disk. Nor is it cut at or above a
+record carrying a `flz.msg_id` written within `:call_retention_margin_ms`, or one carrying a call
+whose deadline plus that margin is ahead, so a repeat of either is absorbed. A cut finds its start
 through a sparse index (one sample every 256 records) and copies only what stays. The sweep
 asks for the cut and does not wait for it. This lives in `Flezha.State.InputLog`.
 

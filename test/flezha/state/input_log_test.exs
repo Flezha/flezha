@@ -568,8 +568,10 @@ defmodule Flezha.State.InputLogTest do
       assert :sys.get_state(log).msg_ids == nil
     end
 
-    test "a truncated id is a new message; a retained one is still absorbed",
+    test "an id past the margin is a new message; a retained one is still absorbed",
          %{class: class} do
+      on_exit(TestHelpers.override_env(:call_retention_margin_ms, 0))
+
       for {id, n} <- [{"a", 0}, {"b", 1}, {"c", 2}],
           do: {:ok, ^n} = InputLog.append(class, id, %{"flz.msg_id" => id})
 

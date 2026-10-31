@@ -191,10 +191,13 @@ defmodule Flezha.State.InputLog.Server do
     {:reply, collect_range(state.file_handle, state.path, from, to), state}
   end
 
-  # The lowest offset a live call holds, which the sweep's floor may not pass.
-  def handle_call(:call_floor, _from, state) do
-    {floor, index} = MsgIndex.floor(ensure_ids(state).msg_ids)
-    {:reply, floor, %{state | msg_ids: index}}
+  # The lowest offset a live call, or a recent message id below the sweep's
+  # floor, holds.
+  def handle_call({:held_floor, sweep_floor}, _from, state) do
+    state = ensure_ids(state)
+    aged_out = &scan_offset_before(state, &1, &2, sweep_floor)
+    {held, index} = MsgIndex.floor(state.msg_ids, sweep_floor, aged_out)
+    {:reply, held, %{state | msg_ids: index}}
   end
 
   def handle_call({:msg_offset, msg_id}, _from, state) do
@@ -206,8 +209,8 @@ defmodule Flezha.State.InputLog.Server do
     end
   end
 
-  def handle_call({:offset_before_time, ts_ms}, _from, state) do
-    {:reply, scan_offset_before(state.file_handle, state.path, ts_ms), state}
+  def handle_call({:offset_before_time, ts_ms, below}, _from, state) do
+    {:reply, scan_offset_before(state, ts_ms, 0, below), state}
   end
 
   # The first payload kept for an identity wins. Either answer leaves through
@@ -708,16 +711,24 @@ defmodule Flezha.State.InputLog.Server do
   end
 
   # Highest offset whose append-time is strictly before `ts_ms`, or `nil` when
-  # every retained record is at or after it (nothing has aged out). Records with
-  # no timestamp are never eligible — an unknown age cannot be judged against a
-  # window.
-  defp scan_offset_before(device, path, ts_ms) do
-    case RecordFrame.fold_records(device, path, nil, fn {seq, header, _body}, found ->
-           case header_time(header) do
-             ts when is_integer(ts) and ts < ts_ms -> {:cont, seq}
-             _ -> {:cont, found}
-           end
-         end) do
+  # nothing has aged out. Records are in append order, so the walk stops at the
+  # first younger record, or at offset `to`: it costs the records that aged out,
+  # starting from the index sample at or below `from`. A clock stepped back
+  # stops it early, which only holds more. Records with no timestamp are never
+  # eligible — an unknown age cannot be judged against a window.
+  defp scan_offset_before(state, ts_ms, from, to) do
+    start = RecordFrame.sample_start(state.positions, state.file_handle, from)
+
+    aged_out = fn {seq, header, _body}, found ->
+      case header_time(header) do
+        _ when is_integer(to) and seq >= to -> {:halt, found}
+        ts when is_integer(ts) and ts < ts_ms -> {:cont, seq}
+        nil -> {:cont, found}
+        _younger -> {:halt, found}
+      end
+    end
+
+    case RecordFrame.fold_records(state.file_handle, state.path, nil, aged_out, start) do
       {:ok, offset} -> offset
       {:error, _refusal} = refused -> refused
     end

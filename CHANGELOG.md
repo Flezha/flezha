@@ -178,6 +178,13 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- An effectively-once relay no longer counts an input twice when its sender
+  never saw the answer and sends it again after the input was processed, as
+  happens across a network cut. The input log keeps a record carrying a
+  `flz.msg_id` for `FLEZHA_CALL_RETENTION_MARGIN_MS` (5 minutes) after it was
+  written, so a repeat within that window is absorbed
+  ([durability](docs/public/topics/core/durability.md#effectively-once)). A
+  relay fed with ids keeps that much more input on disk.
 - A controller whose state disk fills no longer loses input it had already
   acknowledged. An input the disk refuses is refused back to its sender, which
   sends it again. State changes written since the last disk sync are cut from

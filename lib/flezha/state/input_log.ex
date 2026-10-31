@@ -161,15 +161,17 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  The lowest offset a live call's record holds in this log, or `nil`: the
-  retention sweep never truncates at or above it.
+  The lowest offset that a live call's record, or a recent message id below
+  the sweep's `floor`, holds in this log, or `nil`: the retention sweep never
+  truncates at or above it. A log that does not answer, slow or gone, is an error, which
+  the sweep takes as holding everything.
   """
-  @spec call_floor(binary()) :: non_neg_integer() | nil
-  def call_floor(relay_class) do
-    with {:ok, pid} <- Supervisor.lookup({relay_class, :input_log}),
-         floor when is_integer(floor) <- call(pid, :call_floor),
-         do: floor,
-         else: (_none_or_down -> nil)
+  @spec held_floor(binary(), non_neg_integer()) :: non_neg_integer() | nil | {:error, term()}
+  def held_floor(relay_class, floor) do
+    case Supervisor.lookup({relay_class, :input_log}) do
+      {:ok, pid} -> call(pid, {:held_floor, floor})
+      :error -> {:error, {:input_log_unavailable, :closed}}
+    end
   end
 
   defp retained_last_offset(relay_class) do
@@ -315,15 +317,17 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Highest offset appended strictly before `ts_ms`, or `nil` when no retained
-  record is that old or the log is not open here (the retention sweep's
-  question, which never opens a log). Pre-timestamp records are never
-  eligible — an unknown age cannot be judged against a window.
+  Highest offset below `below` (all when `nil`) appended strictly before
+  `ts_ms`, or `nil` when no retained record is that old or the log is not open
+  here (the retention sweep's question, which never opens a log).
+  Pre-timestamp records are never eligible — an unknown age cannot be judged
+  against a window.
   """
-  @spec offset_before_time(binary(), integer()) :: non_neg_integer() | nil | {:error, term()}
-  def offset_before_time(relay_class, ts_ms) do
+  @spec offset_before_time(binary(), integer(), non_neg_integer() | nil) ::
+          non_neg_integer() | nil | {:error, term()}
+  def offset_before_time(relay_class, ts_ms, below \\ nil) do
     with {:ok, pid} <- Supervisor.lookup({relay_class, :input_log}),
-         do: call(pid, {:offset_before_time, ts_ms}),
+         do: call(pid, {:offset_before_time, ts_ms, below}),
          else: (:error -> nil)
   end
 

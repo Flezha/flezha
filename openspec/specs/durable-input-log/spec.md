@@ -126,7 +126,9 @@ each released input under the journal's reserved identity, seeded on every bind 
 offset the journal released. A reporter that has consumed nothing holds the watermark at the log
 start. A truncation SHALL rewrite the file only once the prefix below the floor exceeds the
 record-log cut threshold, so a loop's log is rewritten once per threshold rather than once per
-turn.
+turn. A record carrying a live call or a recent `flz.msg_id` holds the truncation lower still
+(Requirement: A sender's message id is the one duplicate identity; Requirement: A record carrying
+a live call SHALL be kept until its deadline has passed).
 
 `hold_window` SHALL resolve **per instance** as the greater of the user-configured value and
 the instance's own declared `correction_window`. It SHALL default to zero for an instance that
@@ -165,7 +167,8 @@ non-correcting instance truncates at its floor exactly as it does with no hold w
 
 - **WHEN** an instance declares no correction window, the user configures no hold window,
   and its floor is offset 4711
-- **THEN** truncation removes every offset below 4711 immediately
+- **THEN** truncation removes every offset below 4711 immediately, except from the lowest record
+  carrying a `flz.msg_id` appended within `call_retention_margin_ms` or a live call on
 
 ### Requirement: The log owns its watermark
 
@@ -386,7 +389,14 @@ ids are two messages, for a flow relay and for a steps relay alike. The log SHAL
 itself, in memory over its retained records, built from the file on the first append that carries
 an id, maintained on every such append and trimmed by every truncation; an append SHALL NOT
 re-read the file. The record header SHALL keep carrying the append time; the id rides the
-metadata the record already holds.
+metadata the record already holds. The retention sweep SHALL NOT truncate at or above the lowest
+record carrying an id whose append time plus `call_retention_margin_ms` is still ahead, whatever
+the watermark and the hold window allow, so a sender that never saw its answer can send again
+within that margin and be absorbed. Only an id below the sweep's floor SHALL be judged, so a sweep
+with none walks nothing; otherwise the sweep SHALL read the append times from the index sample at
+or below the lowest such id up to the first record younger than the margin or the floor, so it
+reads only what that sweep releases plus one sample span, and an append SHALL read none. A log that
+does not answer the sweep's question in time SHALL hold every record for that sweep.
 
 #### Scenario: A re-sent message is absorbed once
 
@@ -403,6 +413,13 @@ metadata the record already holds.
 
 - **WHEN** the log process is restarted and an id already retained in the file is appended again
 - **THEN** the append answers the retained record's offset from the index rebuilt off the file
+
+#### Scenario: A consumed record keeps its id for the margin
+
+- **WHEN** a record carrying `flz.msg_id` `"m1"` is consumed, the watermark passes it, and its
+  append time plus the margin is ahead
+- **THEN** the sweep SHALL keep it and an append carrying `"m1"` SHALL answer its offset; once the
+  margin has passed, the next sweep SHALL truncate it and `"m1"` SHALL be a new message
 
 #### Scenario: A log that never sees an id builds no index
 
@@ -507,8 +524,9 @@ The log SHALL learn, with its message-id index and at no extra read of the file,
 call's `Response` in the caller's. The retention sweep SHALL NOT truncate at or above the lowest
 such record whose `flz.deadline_at` plus `call_retention_margin_ms` is still ahead, whatever the
 watermark and the hold window allow. A record whose deadline plus the margin has passed SHALL be
-retained by the watermark and the hold window alone, as any record is. A log whose records carry no
-deadline SHALL truncate exactly as it did before.
+retained by the watermark, the hold window and its message id's margin alone, as any record is. A
+log whose records carry neither a deadline nor a message id SHALL truncate exactly as it did
+before.
 
 #### Scenario: A consumed request is kept until its call is over
 
@@ -517,12 +535,12 @@ deadline SHALL truncate exactly as it did before.
 
 #### Scenario: A finished call's records go with the watermark
 
-- **WHEN** a call's deadline plus the margin has passed and the watermark is above its records
+- **WHEN** a call's deadline plus the margin and its records' append times plus the margin have passed, and the watermark is above its records
 - **THEN** the next sweep SHALL truncate them like any consumed record
 
 #### Scenario: A log without calls is unchanged
 
-- **WHEN** no record of a log carries `flz.deadline_at`
+- **WHEN** no record of a log carries `flz.deadline_at` or `flz.msg_id`
 - **THEN** the sweep SHALL truncate below `min(watermark, now - hold_window)` as before
 
 ### Requirement: The log's server SHALL keep effect results under the input's retention

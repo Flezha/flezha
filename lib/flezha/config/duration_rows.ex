@@ -147,7 +147,8 @@ defmodule Flezha.Config.DurationRows do
     {:call_channel_deadline_ms, :ms, 30_000, key: true},
     # How long an input log keeps a record carrying a call past the call's
     # deadline, so a request sent again is absorbed and a caller's recovery
-    # still finds its `Response`.
+    # still finds its `Response`; and one carrying a `flz.msg_id` past its
+    # append, so an input sent again is absorbed.
     {:call_retention_margin_ms, :ms, 300_000, key: true, env: "FLEZHA_CALL_RETENTION_MARGIN_MS"},
     # How long a relay call's delivery worker waits with an empty queue
     # before it stops.

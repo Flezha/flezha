@@ -21,8 +21,9 @@ defmodule Flezha.State.InputLog.Sweep do
   @doc """
   Sweep one instance: truncate its input log strictly below
   `min(watermark, now - hold_window)`, and below the lowest record a live call
-  still holds (`Flezha.State.InputLog.CallRetention`), and emit the frozen-watermark warning
-  when the log grows past the size threshold without the watermark advancing.
+  or a recent message id still holds (`Flezha.State.InputLog.MsgIndex`), and
+  emit the frozen-watermark warning when the log grows past the size threshold
+  without the watermark advancing.
 
   Only a log open on this node is swept, and the sweep never opens one: the log
   of a relay that moved away stays closed, so its return can set the stale
@@ -74,7 +75,7 @@ defmodule Flezha.State.InputLog.Sweep do
 
   defp watermark_and_floor(relay_class) do
     watermark = InputLog.watermark(relay_class)
-    {watermark, relay_class |> truncation_floor(watermark) |> below_live_calls(relay_class)}
+    {watermark, relay_class |> truncation_floor(watermark) |> below_held(relay_class)}
   end
 
   # The *floor* decides whether there is work, not the watermark: under a hold
@@ -98,13 +99,16 @@ defmodule Flezha.State.InputLog.Sweep do
     end
   end
 
-  # A record carrying a live call is kept whatever the watermark allows.
-  defp below_live_calls(nil, _relay_class), do: nil
+  # A record carrying a live call or a recent message id is kept whatever the
+  # watermark allows. A log that cannot say which holds everything this sweep:
+  # cutting at the watermark would drop the ids it keeps.
+  defp below_held(nil, _relay_class), do: nil
 
-  defp below_live_calls(floor, relay_class) do
-    case InputLog.call_floor(relay_class) do
+  defp below_held(floor, relay_class) do
+    case InputLog.held_floor(relay_class, floor) do
       nil -> floor
-      held -> min(floor, held)
+      held when is_integer(held) -> min(floor, held)
+      {:error, _unanswered} -> nil
     end
   end
 
@@ -127,7 +131,8 @@ defmodule Flezha.State.InputLog.Sweep do
       hold_window ->
         case InputLog.offset_before_time(
                relay_class,
-               System.system_time(:millisecond) - hold_window
+               System.system_time(:millisecond) - hold_window,
+               watermark + 1
              ) do
           aged_out when is_integer(aged_out) -> min(watermark, aged_out)
           # No record is that old, or the log refused one: either way there is

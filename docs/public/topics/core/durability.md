@@ -163,6 +163,12 @@ conforming output plugin drops a repeat. A durable workflow has the same
 guarantee without asking. What the tier does, what it costs, and how a late
 input corrects the past are in [Effectively once](effectively_once.md).
 
+A repeat of an input's `flz.msg_id` is absorbed while the input log holds the
+input: until it is processed, and at least `FLEZHA_CALL_RETENTION_MARGIN_MS`
+(5 minutes) after it was written. So a sender whose answer was lost, in a crash
+or a network cut, can send again within that window and the input counts once.
+A repeat sent later is a new input.
+
 ### Workflows: released at the step's commit
 
 A durable workflow's step does not let its output escape before the step is
@@ -185,7 +191,8 @@ and what a cell still owes with `flz state outbox <relay/tasklet/key>`
 
 A durable workflow's input goes through the same input log: written before it
 is forwarded, delivered again after a crash, and a repeated `flz.msg_id` is
-absorbed, so an at-least-once sender cannot cause a duplicate turn. A rewind
+absorbed while the log holds it, so an at-least-once sender that retries within
+that window cannot cause a duplicate turn. A rewind
 never re-delivers a consumed message. Its appends use the same 16 MiB source
 credit, so a sender waits until the instance commits an iteration. Inspect the
 log with `flz state inbox <relay/instance>`.
