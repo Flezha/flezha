@@ -186,6 +186,8 @@ v0.1.0-alpha.1 pre-release.
   selector, node base name, service name, cluster name or namespace is blank,
   or the API server port is outside 1 to 65535. Such a setting used to boot
   a controller that logged a failed query and never found its peers.
+  `FLEZHA_K8S_MASTER_NAME` now defaults to `kubernetes.default.svc`, the API
+  server's address inside a cluster, so leaving it unset still boots.
 - A replayed slice that closed while its Cell was between rounds is no longer
   left buffered: the Cell delivers it instead of waiting for input that may
   never come. It affected every SDK built on the shared core.

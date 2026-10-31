@@ -8,8 +8,8 @@ retries for one relay.
 Where you change it depends on what the setting is about:
 
 - **The node**: ports, directories, the cluster, durability, security. An
-  environment variable when you start the controller, or application env when
-  Flezha runs inside your own Elixir application.
+  environment variable when you start the controller, or application env in
+  the config files of a build from source.
 - **What a relay promises**: flow or steps, where it keeps its work, how it
   retries. The relay's own code.
 - **One plugin**: the URL it polls, the topic it writes to. The plugin's options
@@ -64,9 +64,8 @@ variable is in [Controller environment variables](configuration/environment_vari
 
 ## Setting application env
 
-When Flezha runs [inside your own Elixir application](topics/deploying/deploying_a_controller.md#inside-an-elixir-application),
-the `FLEZHA_*` variables are not read. Set the same settings as keys of the
-`:flezha` application:
+In a build from source, the same settings are keys of the `:flezha`
+application:
 
 ```elixir
 # config/config.exs

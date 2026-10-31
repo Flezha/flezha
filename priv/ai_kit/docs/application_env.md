@@ -215,7 +215,7 @@ setting has one layer: there is no per-class map over a class's own value.
 | `:k8s_cluster_name` | string | `cluster` |
 | `:k8s_host_identifier` | one of `ip`, `hostname`, `dns` | `ip` |
 | `:k8s_ip_lookup_mode` | one of `endpoints`, `pods` | `pods` |
-| `:k8s_master_name` | string | `""` |
+| `:k8s_master_name` | string | `kubernetes.default.svc` |
 | `:k8s_master_port` | int | `6443` |
 | `:k8s_namespace` | string | `flezha` |
 | `:k8s_selector` | string | `app=flezha` |

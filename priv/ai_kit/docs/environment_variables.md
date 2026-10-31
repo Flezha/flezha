@@ -253,7 +253,7 @@ skipped as a block.
 | `FLEZHA_K8S_CLUSTER_NAME` | string | `cluster` |
 | `FLEZHA_K8S_HOST_IDENTIFIER` | one of `ip`, `hostname`, `dns` | `ip` |
 | `FLEZHA_K8S_IP_LOOKUP_MODE` | one of `endpoints`, `pods` | `pods` |
-| `FLEZHA_K8S_MASTER_NAME` | string | `""` |
+| `FLEZHA_K8S_MASTER_NAME` | string | `kubernetes.default.svc` |
 | `FLEZHA_K8S_MASTER_PORT` | int | `6443` |
 | `FLEZHA_K8S_NAMESPACE` | string | `flezha` |
 | `FLEZHA_K8S_SELECTOR` | string | `app=flezha` |

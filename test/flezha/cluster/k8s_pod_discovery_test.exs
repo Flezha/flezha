@@ -78,9 +78,14 @@ defmodule Flezha.Cluster.K8sPodDiscoveryTest do
     end
   end
 
-  test "the controller refuses to boot with the default empty API server name" do
-    Application.put_env(:flezha, :cluster_discovery, "k8s_pod_discovery")
+  test "the API server name defaults to the in-cluster service" do
     Application.delete_env(:flezha, :k8s_master_name)
+    assert Flezha.Config.get(:k8s_master_name) == "kubernetes.default.svc"
+  end
+
+  test "the controller refuses to boot with a blank API server name" do
+    Application.put_env(:flezha, :cluster_discovery, "k8s_pod_discovery")
+    Application.put_env(:flezha, :k8s_master_name, "")
 
     assert_raise ArgumentError, ~r/:invalid_setting, :master_name, ""/, fn ->
       Orchestrator.init([])

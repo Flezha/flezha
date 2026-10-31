@@ -154,8 +154,7 @@ defmodule Flezha.Config.Keys do
     # `static`: the quorum, in nodes (required). `dynamic`: how many nodes a
     # node that knows no cluster waits for before it runs relays.
     {:quorum_nodes, :positive_int, nil, key: true, env: "FLEZHA_QUORUM_NODES"},
-    # `dynamic`: the share of the cluster, 51 to 100, that must survive a
-    # sudden loss.
+    # `dynamic`: the share of the cluster, 51 to 100, that must survive a sudden loss.
     {:quorum_percent, :positive_int, 51, key: true, env: "FLEZHA_QUORUM_PERCENT"},
 
     # ---- Kubernetes ---------------------------------------------------------
@@ -169,7 +168,8 @@ defmodule Flezha.Config.Keys do
     {:k8s_host_identifier, {:enum, [:ip, :hostname, :dns]}, :ip,
      key: true, env: "FLEZHA_K8S_HOST_IDENTIFIER"},
     {:k8s_master_port, :int, 6443, key: true, env: "FLEZHA_K8S_MASTER_PORT"},
-    {:k8s_master_name, :string, "", key: true, env: "FLEZHA_K8S_MASTER_NAME"},
+    {:k8s_master_name, :string, "kubernetes.default.svc",
+     key: true, env: "FLEZHA_K8S_MASTER_NAME"},
     {:k8s_namespace, :string, "flezha", key: true, env: "FLEZHA_K8S_NAMESPACE"},
     {:k8s_ip_lookup_mode, {:enum, [:endpoints, :pods]}, :pods,
      key: true, env: "FLEZHA_K8S_IP_LOOKUP_MODE"},

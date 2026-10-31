@@ -27,14 +27,13 @@ Several controllers form one cluster ([`clustering.md`](clustering.md)).
 
 ## Ways to run it
 
-The four ways give you the same controller:
+The three ways give you the same controller:
 
 | Way | Pick it when |
 | --- | --- |
 | Binaries (a release) | you deploy to a machine and want no container runtime |
 | Docker | you want one command and no toolchain on the host |
 | Kubernetes | you run a cluster: one controller per node, as a DaemonSet ([`kubernetes.md`](kubernetes.md)) |
-| Inside an Elixir application | your own Elixir application should be the controller |
 
 <!-- tabs-open -->
 
@@ -147,51 +146,6 @@ The reference manifests are in
 `make k8s-apply` applies the six manifests in dependency order, and
 `make k8s-delete` deletes the DaemonSet and ConfigMap. The walk-through is
 [`kubernetes.md`](kubernetes.md).
-
-### Inside an Elixir application
-
-Your application depends on `flezha` and becomes the controller. There is
-nothing to start: Flezha is an OTP application, and its controller tree comes
-up with yours. This way is not confirmed end to end yet.
-
-```elixir
-# mix.exs
-defp deps do
-  [{:flezha, github: "flezha/flezha", branch: "dev"}]   # TODO: hex package
-end
-```
-
-```elixir
-# config/config.exs
-config :flezha, healthz_enabled: true
-```
-
-**`FLEZHA_*` environment variables do nothing here.** They are read by
-Flezha's own `config/runtime.exs`, and a dependency's config files are not
-evaluated. Configure through application env, one key per variable:
-
-```elixir
-config :flezha,
-  state_root: "/var/lib/flezha/state",
-  socket_files_path: "/run/flezha"
-```
-
-**Authorization is off by default here.** Enforcement is the release's default,
-set for `MIX_ENV=prod` by Flezha's own config, so a library host gets the open
-posture and a warning on every boot until it sets
-`config :flezha, authn_authz: [enabled: true]`.
-
-Start it with `mix run --no-halt`, `iex -S mix` or your release. In the node,
-`Flezha.Boot.Readiness.verdict()` answers `{:ready, [...]}` with the same
-conditions `flz boot status` lists; it answers `recovering` for a moment after
-start, so poll it. From outside, with `healthz_enabled: true`,
-`curl localhost:9569/healthz` answers the health JSON
-([Health and liveness](../../architecture/kernel.md#health-and-liveness)). `flz` cannot reach this
-controller: the CLI runs the `flzvm` script, which only exists in a release.
-
-An Elixir runner can run in the same BEAM; it connects over the
-controller's socket like any other runner
-([`connecting_a_runner.md`](connecting_a_runner.md)).
 
 <!-- tabs-close -->
 
@@ -502,8 +456,6 @@ each phase boundary also logs a `[shutdown] ...` line:
   `FLEZHA_STATE_DIR` to an absolute path.
 - **`make clean` deletes a release's `storage/app/`** when the controller runs
   from the build directory.
-- **The CLI cannot reach an embedded controller**: there is no `flzvm` beside
-  it.
 - **One disk is one copy.** Without a durability backend, losing the disk
   loses the state ([`durability.md`](../core/durability.md)).
 - **Upgrade every controller together** to the release that moves relays by
