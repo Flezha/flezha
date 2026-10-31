@@ -616,7 +616,6 @@ defmodule Flezha.MixProject do
     ]
   end
 
-  # TODO: Also copy windows binaries
   defp copy_release_extras(release) do
     env =
       case Mix.env() do

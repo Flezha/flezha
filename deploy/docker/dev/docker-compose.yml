@@ -7,7 +7,6 @@ services:
     # To rebuild locally without pushing:
     #   docker build -f deploy/docker/dev/Dockerfile.toolchain -t flezha/flezha:latest-toolchain .
     image: flezha/flezha:latest-toolchain
-    # TODO: remove the build section later.
     build:
       context: ../../../
       dockerfile: deploy/docker/dev/Dockerfile.toolchain
