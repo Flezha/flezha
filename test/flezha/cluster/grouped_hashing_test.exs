@@ -217,6 +217,21 @@ defmodule Flezha.Cluster.GroupedHashingTest do
       refute_recheck()
     end
 
+    # fails when: a row counts whatever the node list says, so a node that
+    # announced and then left before its join landed here, which ProcessHub
+    # sends no leave for, keeps being handed children it will never run.
+    test "a row counts only while its node is a hub member", %{hub: hub} do
+      d = :"d@127.0.0.1"
+      serve(hub, d, ["report"])
+      assert GroupedHashing.group_nodes(hub.hub_id, "report") == []
+
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), @a, @b, @c, d])
+      GroupedHashing.admit_node(hub, d)
+      assert GroupedHashing.group_nodes(hub.hub_id, "report") == [d]
+      run_recheck(hub)
+      assert_receive :pre_redistribution, 1_000
+    end
+
     test "an announcement lost on the way is repaired by the next one", %{hub: hub} do
       # `a` served `report` before this node's hub existed and its cast was
       # dropped, so the table never held the row.
@@ -260,6 +275,7 @@ defmodule Flezha.Cluster.GroupedHashingTest do
     test "a node's leave is written by the coordinator, after what it is applying" do
       hub_id = live_hub(%GroupedHashing{})
       hub = ProcessHub.Hub.get(hub_id)
+      Storage.insert(hub.storage.misc, StorageKey.hn(), [node(), @a])
 
       GenServer.cast(
         hub_id,

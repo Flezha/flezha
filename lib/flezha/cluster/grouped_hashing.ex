@@ -21,6 +21,9 @@ defmodule Flezha.Cluster.GroupedHashing do
       that node. A change sends the owner's WHOLE set to every peer hub, so an
       announcement is idempotent and a later one repairs a lost earlier one. A
       joining node is sent every node's row; a leaving node's row is dropped.
+      Only the rows of hub members count: a row that arrives before its
+      node's join counts once the join lands, and one from a node that left
+      before its join landed here, which no leave ever drops, never counts.
       A node whose coordinator restarted starts from an empty table, never a
       saved one. Its owner declares its set again, and only then does the node
       send that row to every peer, which replaces the old one and answers with
@@ -222,8 +225,15 @@ defmodule Flezha.Cluster.GroupedHashing do
     # The hub's node set is one of the member sets rings are cached for.
     prune_rings(hub, group_nodes_map(hub.storage.misc))
 
+    # A row the joining node announced before its join landed here counts now.
+    GenServer.cast(hub.hub_id, {:exec_cast, {__MODULE__, :admit_node, [joining]}})
+
     :ok
   end
+
+  @doc false
+  def admit_node(hub, joining),
+    do: apply_announcement(hub, joining, Map.get(node_groups(hub.storage.misc), joining, []))
 
   @doc """
   Drops the leaving node from every group.
@@ -461,7 +471,7 @@ defmodule Flezha.Cluster.GroupedHashing do
         groups -> Map.put(node_groups(misc), node, groups)
       end
 
-    derived = derive_group_nodes(rows)
+    derived = derive_group_nodes(rows, hub_nodes(misc))
 
     Storage.insert(misc, @node_groups, rows)
     Storage.insert(misc, @group_nodes, derived)
@@ -470,8 +480,9 @@ defmodule Flezha.Cluster.GroupedHashing do
     derived != before
   end
 
-  defp derive_group_nodes(rows) do
+  defp derive_group_nodes(rows, members) do
     rows
+    |> Map.take(members)
     |> Enum.reduce(%{}, fn {node, groups}, acc ->
       Enum.reduce(groups, acc, &Map.update(&2, &1, [node], fn nodes -> [node | nodes] end))
     end)
