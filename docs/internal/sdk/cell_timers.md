@@ -32,5 +32,4 @@ fixture on every runtime, including a re-seat from disk that proves the
 pending timer survived it, and a `timer_cap` fixture whose refused items park
 and whose restored Cell reads as the live one. `test/system/steps_timers_e2e_test.exs` drives
 the steps relay rules on every runtime, and `steps_crash_resume_e2e_test.exs`
-the two crash placements around a firing's commit. Examples: `sdk/rust/examples/session_timeout.rs`,
-Java `E12_SessionTimeout`.
+the two crash placements around a firing's commit.

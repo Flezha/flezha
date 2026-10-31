@@ -18,5 +18,4 @@ Tests: `sdk/rust/tests/stream_transforms.rs` (asserts fusion by counting
 traversals), `sdk/rust/tests/ui/tasklet_cell_key_removed.rs`, Java
 `RelayTopologyBuilderTest` / `CellRoutingTest` /
 `StepsDispatchTest`, and
-`test/system/dynamic_cell_e2e_test.exs` on both runtimes. Examples:
-`sdk/rust/examples/stream_transforms.rs`, Java `E10_StreamTransforms`.
+`test/system/dynamic_cell_e2e_test.exs` on both runtimes.

@@ -25,4 +25,4 @@ has no model of a Channel's consumers, so a merge is invisible to it.
 Tests: `sdk/rust/tests/merged_input.rs`; the steps fixtures
 `MergeSteps`, `PanickingMergeSteps` and `PanickingTransformSteps` in
 `sdk/rust/src/steps/mod.rs`, each run forward and resumed from a journal
-so both mapping sites are exercised; Java `MergedInputTest`.
+so both mapping sites are exercised.

@@ -539,9 +539,7 @@ Flezha.Service.Steps.state_get("ohlc/candle/BTCUSD@1m", caller_context)
 
 **Cost.** One control round-trip plus one state-lock acquisition, bounded by one invocation: a
 point read for users and low-rate readers, not a serving API and not a subscription — a
-high-rate path is an output plugin (`.output(...)` into Kafka or Postgres). Worked examples:
-`sdk/rust/examples/live_state_read.rs`,
-`sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/state/`.
+high-rate path is an output plugin (`.output(...)` into Kafka or Postgres).
 
 | | `flz state get` | `flz state at` |
 |---|---|---|

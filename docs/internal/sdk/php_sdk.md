@@ -94,7 +94,7 @@ final class SessionRelay extends \Flezha\Relay
 Flezha::createRunner('default')->registerFactory(SessionRelay::class)->run();
 ```
 
-That is `examples/E04_SessionTimeout.php`. A tasklet is a class extending
+A tasklet is a class extending
 `Tasklet` with a `#[Tasklet\Spec]` attribute. The attribute carries the scalar
 declarations; the methods carry the behaviour. Only `run()` is required. Which
 optional hooks a tasklet declares is read from the methods it **overrides**:

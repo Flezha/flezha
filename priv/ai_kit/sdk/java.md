@@ -62,9 +62,7 @@ above is all you need.
 
 [Building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md)
 walks through what each of the three parts is and why the split is the way it
-is. The other worked examples, covering state, keys, timers, steps relays and the
-rest, stay inside the SDK's own build at
-[`sdk/java/flezha-sdk-examples/`](../../flezha-sdk-examples/README.md).
+is.
 ````
 
 ## examples/echo/pom.xml
