@@ -286,7 +286,8 @@ defmodule Flezha.State.InputLogTest do
     assert {:pending, state} = Ingest.ingest(state, "message", %{"input_type" => "2"}, :cast)
 
     refute_received {:forwarded, _}
-    assert_receive reply
+    # The answer waits for a datasync, which a busy disk takes past 100 ms.
+    assert_receive reply, 1_000
     assert {:ok, %Overwatch{}} = Ingest.journal_reply(state, reply)
 
     assert_receive {:forwarded, {"message", %{"flz.offset" => "0", "input_type" => "2"}}}

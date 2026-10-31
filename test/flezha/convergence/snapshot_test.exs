@@ -84,22 +84,27 @@ defmodule FlezhaTest.Convergence.SnapshotTest do
   end
 
   describe "cost" do
-    # Best of several runs, so one scheduler hiccup does not decide the ratio.
-    defp best_us(fun), do: Enum.min(for _ <- 1..5, do: elem(:timer.tc(fun), 0))
-
     defp fleet(n), do: for(i <- 1..n, do: {relay("scale", "r#{i}"), :healthy})
 
-    defp lookups_us() do
-      best_us(fn -> for i <- 1..1_000, do: Snapshot.record(relay("scale", "r#{i}")) end)
-    end
-
     test "one lookup does not grow with the fleet, and publishing stays cheap" do
-      publish(fleet(1_000))
-      small = lookups_us()
-
+      small_fleet = verdicts(fleet(1_000))
       large_fleet = verdicts(fleet(8_000))
-      publish_us = best_us(fn -> Snapshot.publish(%{relay_health: large_fleet}) end)
-      large = lookups_us()
+      subjects = for i <- 1..1_000, do: relay("scale", "r#{i}")
+      lookups = fn -> for subject <- subjects, do: Snapshot.record(subject) end
+
+      # The two sizes take turns, so a stretch of load on the box lands on
+      # both; the best round of each is its cost with the load left out.
+      rounds =
+        for _ <- 1..7 do
+          Snapshot.publish(%{relay_health: small_fleet})
+          {small, _} = :timer.tc(lookups)
+          {publish_us, _} = :timer.tc(fn -> Snapshot.publish(%{relay_health: large_fleet}) end)
+          {large, _} = :timer.tc(lookups)
+          {small, large, publish_us}
+        end
+
+      {small, large, publish_us} =
+        Enum.reduce(rounds, fn {s, l, p}, {bs, bl, bp} -> {min(s, bs), min(l, bl), min(p, bp)} end)
 
       assert large / max(small, 1) < 2,
              "1,000 lookups took #{small} µs at 1,000 subjects and #{large} µs at 8,000"
