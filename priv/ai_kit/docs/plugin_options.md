@@ -75,5 +75,4 @@ They have no page; `flz plugin help <provider>` lists their options.
 |---|---|
 | `relay_stdout` | Prints each payload to the controller's standard output and passes it on unchanged. |
 | `relay_io_filter` | Passes or drops each payload by a regular expression. |
-| `relay_message_forward` | Forwards an `on_message` request to the relay's SDK side and returns the reply. |
 | `relay_beam_msg`, `monitored_io_forward` | Send each payload to a BEAM process; they take a process id, so they serve tests and embedded nodes. |

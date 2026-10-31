@@ -178,6 +178,14 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- With `FLEZHA_CLUSTER_DISCOVERY=k8s_pod_discovery`, a controller whose
+  service account has no `token` or `ca.crt` mounted now refuses to start.
+  It used to skip checking the API server's certificate when the CA was
+  missing, while still sending the service-account token.
+- Kubernetes discovery also refuses to start when the API server name,
+  selector, node base name, service name, cluster name or namespace is blank,
+  or the API server port is outside 1 to 65535. Such a setting used to boot
+  a controller that logged a failed query and never found its peers.
 - A replayed slice that closed while its Cell was between rounds is no longer
   left buffered: the Cell delivers it instead of waiting for input that may
   never come. It affected every SDK built on the shared core.

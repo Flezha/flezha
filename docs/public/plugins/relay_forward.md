@@ -187,7 +187,7 @@ that needs the payload held uses the confirming path.
 
 ## `:on_message` or `:on_output` forward?
 
-| | `:on_message` + `MessageForward` | `:on_output` + `RelayForward` |
+| | `:on_message` hook | `:on_output` + `RelayForward` |
 |---|---|---|
 | Shape | synchronous request/reply | asynchronous data flow |
 | Destination | an `on_message/2` handler on the target's Overwatch | the relay's **input stream** |

@@ -119,10 +119,6 @@ runtime for AI services.
   framework you already use. [The agentdesk tutorial](docs/public/tutorials/agentdesk/agentdesk.md)
   builds one.
 
-<!-- TODO: AI plugins, for example a model-call plugin (one place for provider keys,
-retries, rate limits and token accounting) and a vector-store source and output.
-Decide which ones, then specify each in OpenSpec. -->
-
 ## Documentation
 
 | Where to go | What you find |

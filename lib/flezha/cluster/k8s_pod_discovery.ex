@@ -59,7 +59,6 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
       end
     end
 
-    # TODO: port should be configurable.
     defp query(settings, service_account_path, namespace) do
       selector = URI.encode(settings.selector)
 
@@ -111,17 +110,38 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
       []
     end
 
-    # TODO: add other field validations here.
     @impl true
-    def validate_settings(_settings) do
+    def validate_settings(settings) do
       with :ok <- validate_service_account_path(),
            :ok <- validate_cluster_domain(),
-           :ok <- validate_pod_ip_lookup() do
+           :ok <- validate_pod_ip_lookup(),
+           :ok <- validate_names(settings),
+           :ok <- validate_master_port(settings.master_port) do
         {:ok, __MODULE__}
       else
         {:error, reason} -> {:error, reason}
       end
     end
+
+    # A blank name would surface only later, as a malformed API URL or node name.
+    defp validate_names(settings) do
+      required = [:node_base_name, :selector, :master_name, :service_name, :cluster_name]
+      # A nil namespace is read from the service account instead.
+      required = if settings.namespace == nil, do: required, else: [:namespace | required]
+
+      blank? = fn key ->
+        value = Map.fetch!(settings, key)
+        not (is_binary(value) and String.trim(value) != "")
+      end
+
+      case Enum.find(required, blank?) do
+        nil -> :ok
+        key -> {:error, {:invalid_setting, key, Map.fetch!(settings, key)}}
+      end
+    end
+
+    defp validate_master_port(port) when port in 1..65_535, do: :ok
+    defp validate_master_port(port), do: {:error, {:invalid_setting, :master_port, port}}
 
     defp validate_pod_ip_lookup() do
       ip_lookup_mode = Config.get(:k8s_ip_lookup_mode)
@@ -136,17 +156,29 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
     defp validate_service_account_path() do
       service_account_path = Config.get(:k8s_service_account_path)
 
-      if File.dir?(service_account_path) do
-        :ok
-      else
-        {:error, {:service_account_path_missing, service_account_path}}
+      # Without the CA the token would go to an unverified peer.
+      missing =
+        Enum.find(["token", "ca.crt"], fn file ->
+          not File.regular?(Path.join(service_account_path, file))
+        end)
+
+      cond do
+        not File.dir?(service_account_path) ->
+          {:error, {:service_account_path_missing, service_account_path}}
+
+        missing != nil ->
+          {:error, {:service_account_file_missing, Path.join(service_account_path, missing)}}
+
+        true ->
+          :ok
       end
     end
 
     defp validate_cluster_domain() do
       cluster_domain = Config.get(:k8s_cluster_domain)
 
-      if String.valid?(cluster_domain) && String.length(cluster_domain) > 0 do
+      # Empty is valid: the API server name is then used as given.
+      if is_binary(cluster_domain) and String.valid?(cluster_domain) do
         :ok
       else
         {:error, {:invalid_cluster_domain, cluster_domain}}
@@ -165,18 +197,10 @@ defmodule Flezha.Cluster.K8sPodDiscovery do
 
     @spec get_ssl_opts(Path.t()) :: Keyword.t()
     defp get_ssl_opts(service_account_path) do
-      path = Path.join(service_account_path, "ca.crt")
-
-      case File.exists?(path) do
-        true ->
-          [
-            verify: :verify_peer,
-            cacertfile: String.to_charlist(path)
-          ]
-
-        false ->
-          [verify: :verify_none]
-      end
+      [
+        verify: :verify_peer,
+        cacertfile: String.to_charlist(Path.join(service_account_path, "ca.crt"))
+      ]
     end
 
     defp get_namespace(service_account_path, nil) do

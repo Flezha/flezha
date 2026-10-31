@@ -65,6 +65,8 @@ defmodule Flezha.Cluster.Orchestrator do
 
   @impl true
   def init(_) do
+    discovery_handler = get_discovery_handler()
+
     :ets.new(@ets_table, [:set, :protected, :named_table, read_concurrency: true])
     :ets.insert(@ets_table, {:ready, false})
 
@@ -72,7 +74,7 @@ defmodule Flezha.Cluster.Orchestrator do
     # single-node deployment is not blocked forever on the formation gate.
     state =
       arm_timer(
-        %{discovery_handler: get_discovery_handler()},
+        %{discovery_handler: discovery_handler},
         :degrade_to_solo,
         formation_timeout_ms(),
         :degrade_to_solo
@@ -255,10 +257,10 @@ defmodule Flezha.Cluster.Orchestrator do
           {:error, {:unknown_discovery_handler, handler}}
       end
 
-    case result do
-      {:ok, handler} ->
-        handler
-
+    with {:ok, handler} <- result,
+         {:ok, _} <- DiscoveryProtocol.validate_settings(handler) do
+      handler
+    else
       {:error, reason} ->
         raise ArgumentError, "cluster discovery refused its settings: #{inspect(reason)}"
     end
