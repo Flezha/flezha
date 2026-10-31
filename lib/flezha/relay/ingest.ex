@@ -370,7 +370,8 @@ defmodule Flezha.Relay.Ingest do
     nil
   end
 
-  # The log refuses only once it refused its own file, which it reported then.
+  # The log refuses once it refused its own file, or while its disk refuses
+  # writes; it reported either then.
   defp journaled(%Overwatch{}, _payload, {:error, _refusal}), do: :refused
 
   # A journaled payload's forward and the reply it owed, once the log answered.

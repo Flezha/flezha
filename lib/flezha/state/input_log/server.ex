@@ -74,7 +74,10 @@ defmodule Flezha.State.InputLog.Server do
     # The effect log (`Flezha.State.InputLog.Effects`), `nil` until the first
     # result, and the largest result it keeps.
     effects: nil,
-    effects_cap: 0
+    effects_cap: 0,
+    # Why the disk last refused a write or a sync, until a write lands again:
+    # one warning per episode, not one per refused retry.
+    disk_refused: nil
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -217,10 +220,10 @@ defmodule Flezha.State.InputLog.Server do
   def handle_call({:keep_effect, offset, identity, cell, payload}, from, state) do
     case Effects.judge(state.effects, offset, identity, payload, @max_effects_per_offset) do
       :kept ->
-        {:noreply, owe_effect(state, from, :kept)}
+        {:noreply, owe_effect(state, from, :kept, nil)}
 
       {:first, first} ->
-        {:noreply, owe_effect(state, from, {:first, first})}
+        {:noreply, owe_effect(state, from, {:first, first}, nil)}
 
       :full ->
         {:reply, {:error, {:effect_refused, offset, byte_size(payload)}}, state}
@@ -228,9 +231,14 @@ defmodule Flezha.State.InputLog.Server do
       :new ->
         case open_effects(state, true) do
           %{refusal: nil} = state ->
-            result = {offset, identity, cell, payload}
-            effects = Effects.append(state.effects, result, now_header())
-            {:noreply, owe_effect(%{state | effects: effects}, from, :kept)}
+            case Effects.append(state.effects, {offset, identity, cell, payload}, now_header()) do
+              {:error, reason, effects} ->
+                Syncer.refuse([{from, :new}], reason)
+                {:noreply, %{state | effects: effects}}
+
+              effects ->
+                {:noreply, owe_effect(%{state | effects: effects}, from, :kept, effects.seq - 1)}
+            end
 
           state ->
             {:reply, {:error, state.refusal}, state}
@@ -261,7 +269,12 @@ defmodule Flezha.State.InputLog.Server do
         _ = Syncer.call(state.syncer, &{:reopen, state.path, &1, &2})
 
         {:noreply,
-         %{state | file_handle: file, positions: positions, msg_ids: trim_ids(state, floor)}
+         %{
+           state
+           | file_handle: file,
+             positions: positions,
+             msg_ids: drop_ids(state, &(&1 < floor))
+         }
          |> drop_effects_below(floor)}
 
       # Too little below the floor to cut the inputs yet; the results of inputs
@@ -278,7 +291,13 @@ defmodule Flezha.State.InputLog.Server do
   end
 
   # The batcher's tick: the companion syncs, then answers every append the
-  # sync made durable, while this loop keeps appending.
+  # sync made durable, while this loop keeps appending. A tick after a refused
+  # write with a record written since ends the episode.
+  def handle_cast(:fsync, %{disk_refused: reason, dirty: true} = state) when reason != nil do
+    Logger.warning("[input_log] relay=#{state.relay_class}: the disk takes writes again")
+    handle_cast(:fsync, %{state | disk_refused: nil})
+  end
+
   def handle_cast(:fsync, state) do
     send(state.syncer, {:sync, Enum.reverse(state.owed)})
     {:noreply, %{state | owed: [], dirty: false}}
@@ -329,6 +348,8 @@ defmodule Flezha.State.InputLog.Server do
     {:stop, {:input_log_syncer_died, reason}, state}
   end
 
+  def handle_info({:unsynced, reason}, state), do: {:noreply, unsynced(state, reason)}
+
   # Defining any `handle_info/2` replaces `GenServer`'s default one, which is
   # what names an unrouted message. This says the same thing, at the same level.
   def handle_info(message, state) do
@@ -343,7 +364,7 @@ defmodule Flezha.State.InputLog.Server do
   @impl true
   def terminate(_reason, state) do
     if state.file_handle do
-      settle_owed(state)
+      state = settle_owed(state)
       _ = :file.close(state.file_handle)
     end
 
@@ -363,6 +384,24 @@ defmodule Flezha.State.InputLog.Server do
 
     if not synced? and :file.datasync(state.file_handle) == :ok,
       do: Syncer.answer(Enum.reverse(state.owed))
+
+    # A failed last sync is cut back as a live log cuts one; the companion
+    # holds its answers, the owed ones among them.
+    receive do
+      {:unsynced, reason} -> unsynced(%{state | owed: []}, reason)
+    after
+      0 -> state
+    end
+  end
+
+  # A sync the disk refused: the companion holds every answer from it on. The
+  # resume hands them back, and nothing is handed to it before the cut. A
+  # companion gone instead stops this log through its exit.
+  defp unsynced(state, reason) do
+    case Syncer.call(state.syncer, &{:resume, &1, &2}) do
+      held when is_list(held) -> refuse_unsynced(state, held, state.next_offset, reason)
+      :error -> state
+    end
   end
 
   # The companion syncs and gives the owed answers, behind everything it
@@ -443,7 +482,7 @@ defmodule Flezha.State.InputLog.Server do
           {park(st, append), io, answers, true}
       end)
 
-    state |> flush_records(iodata) |> owe(answers)
+    flush_records(state, iodata, answers)
   end
 
   # One append's admission: absorbed by an id the log retains, held back by the
@@ -473,12 +512,68 @@ defmodule Flezha.State.InputLog.Server do
     state
   end
 
-  defp flush_records(state, []), do: state
+  defp flush_records(state, [], answers), do: owe(state, answers)
 
-  defp flush_records(state, iodata) do
-    :ok = :file.write(state.file_handle, iodata)
-    FsyncBatcher.mark_dirty({state.relay_class, :input_log})
-    %{state | dirty: true}
+  defp flush_records(state, iodata, answers) do
+    case :file.write(state.file_handle, iodata) do
+      :ok ->
+        FsyncBatcher.mark_dirty({state.relay_class, :input_log})
+        owe(%{state | dirty: true}, answers)
+
+      {:error, reason} ->
+        refuse_unsynced(state, answers, state.next_offset, reason)
+    end
+  end
+
+  # The disk refused a write or a sync. No record from the oldest one still
+  # owed its answer on was answered, so none was forwarded: they are cut from
+  # the file in place, with their ids and their credit, and every append owed,
+  # in hand or parked is refused, retryably. A retry is then journaled as new,
+  # never absorbed by a record nobody acknowledged, and a parked append cannot
+  # overtake a refused one. `floor` bounds the cut from above. A held effect
+  # answer cuts the effect log back below the record it waited on.
+  defp refuse_unsynced(state, answers, floor, reason) do
+    parked = for {from, _body, _id} <- :queue.to_list(state.waiters), do: {from, :parked}
+    answers = answers ++ state.owed ++ parked
+    floor = Enum.reduce(answers, floor, &lowest_written/2)
+
+    {:ok, file, positions} =
+      RecordFrame.cut_in_place(state.path, state.file_handle, state.positions, floor)
+
+    if state.disk_refused == nil do
+      Logger.warning(
+        "[input_log] relay=#{state.relay_class}: the disk refused a write or a sync " <>
+          "(#{inspect(reason)}); appends from offset #{floor} on are refused, to be sent again"
+      )
+    end
+
+    {sizes, dropped} = Enum.split_with(:queue.to_list(state.offset_sizes), &(elem(&1, 0) < floor))
+    Syncer.refuse(answers, reason)
+
+    %{
+      state
+      | file_handle: file,
+        positions: positions,
+        next_offset: floor,
+        offset_sizes: :queue.from_list(sizes),
+        ledger: CreditLedger.refund(state.ledger, Enum.sum_by(dropped, &elem(&1, 1))),
+        msg_ids: drop_ids(state, &(&1 >= floor)),
+        effects: cut_effects(state.effects, answers),
+        waiters: :queue.new(),
+        owed: [],
+        dirty: false,
+        disk_refused: reason
+    }
+  end
+
+  defp lowest_written({_from, {:ok, offset}}, floor), do: min(offset, floor)
+  defp lowest_written(_answer, floor), do: floor
+
+  defp cut_effects(effects, answers) do
+    case for({_from, {:effect_at, seq}} when is_integer(seq) <- answers, do: seq) do
+      [] -> effects
+      seqs -> Effects.cut_from(effects, Enum.min(seqs))
+    end
   end
 
   defp encode_append(state, body, id) do
@@ -515,8 +610,8 @@ defmodule Flezha.State.InputLog.Server do
 
   defp open_effects(state, _wanted), do: state
 
-  defp owe_effect(state, from, reply) do
-    send(state.syncer, {:sync_effects, [{from, reply}]})
+  defp owe_effect(state, from, reply, seq) do
+    send(state.syncer, {:sync_effects, [{from, reply}], seq})
     state
   end
 
@@ -546,8 +641,8 @@ defmodule Flezha.State.InputLog.Server do
   defp retained(_state, nil), do: :none
   defp retained(state, key), do: MsgIndex.retained(state.msg_ids, key)
 
-  defp trim_ids(%{msg_ids: nil}, _floor), do: nil
-  defp trim_ids(state, floor), do: MsgIndex.trim(state.msg_ids, floor)
+  defp drop_ids(%{msg_ids: nil}, _gone?), do: nil
+  defp drop_ids(state, gone?), do: MsgIndex.drop(state.msg_ids, gone?)
 
   # Free the tracked bytes of every journaled offset at or below the
   # watermark (its consumption is durable; the log slot is reclaimable).
@@ -572,8 +667,7 @@ defmodule Flezha.State.InputLog.Server do
         case admit(state, append) do
           {:ok, offset, record, state} ->
             %{state | waiters: rest}
-            |> flush_records([record])
-            |> owe([{from, {:ok, offset}}])
+            |> flush_records([record], [{from, {:ok, offset}}])
             |> unpark_waiters()
 
           {:duplicate, _offset} = dup ->

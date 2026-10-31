@@ -55,6 +55,7 @@ defmodule Flezha.State.WalWriter.Boot do
       shedding?: false,
       gap_open?: false,
       awaiting_baseline?: false,
+      kept: {0, [], -1},
       oldest_unsnapshotted_at: nil,
       credit_pending: %{},
       credit_active?: false,
@@ -171,6 +172,12 @@ defmodule Flezha.State.WalWriter.Boot do
     }
 
     state = complete_bump(state, cut)
+
+    # A predecessor may have cut this log for a refusing disk while awaiting a
+    # baseline, so the runner can hold changes it lacks: until one lands, a
+    # resync pulls and a gap keeps its frames (`Epoch.refused/3`).
+    last = state.last_persisted_seq
+    state = %{state | awaiting_baseline?: last >= 0, kept: {0, [], last}}
 
     # What a closed writer left owed rides this writer's first acknowledgement.
     case state.commit_unit do

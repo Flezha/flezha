@@ -8,8 +8,13 @@ defmodule Flezha.State.WalWriter.Epoch do
   `rewind/3` cuts only above a boundary and keeps the baselines below it, and
   the takeover fence refuses a frame from a superseded session outright. Every
   one of them bumps the epoch, which is what makes a re-run's output supersede
-  the run it replaces at a guarded sink.
+  the run it replaces at a guarded sink. A disk that refused a write or a sync
+  cuts what was written since the last sync (`drop_unsynced/2`) and keeps the
+  epoch: the runner's current state, pulled again, becomes the baseline, and
+  the Changes refused meanwhile are appended after it (`append_kept/2`).
   """
+
+  require Logger
 
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.State.{Frame, Wire}
@@ -65,6 +70,8 @@ defmodule Flezha.State.WalWriter.Epoch do
            Settlement.put_lineage(state, %{epoch: epoch + 1, folded_offset: -1, cut: :all}) do
       emit_realign(state.cell_id, state.last_persisted_seq, seq, runner_id)
       state = realign_disk(%{state | last_persisted_seq: seq - 1, owning_runner: runner_id})
+      # The new runner's log starts here: nothing kept for a baseline applies.
+      state = %{release_kept(state) | kept: {0, [], -1}, awaiting_baseline?: false}
       {:ok, %{state | last_advance_at: now}}
     end
   end
@@ -138,7 +145,9 @@ defmodule Flezha.State.WalWriter.Epoch do
   def await_baseline(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
 
-    unless state.awaiting_baseline? do
+    if state.awaiting_baseline? do
+      state
+    else
       {rc, sh, pk} = state.cell_id
 
       :telemetry.execute(
@@ -146,30 +155,142 @@ defmodule Flezha.State.WalWriter.Epoch do
         %{first_seq: seq},
         %{relay: rc, tasklet: sh, key: pk, runner: runner_id}
       )
-    end
 
-    Admission.open_gap(%{state | awaiting_baseline?: true}, runner_id, :baseline_seed)
+      # The log lacks every seq below the first one shipped to it.
+      pull_baseline(state, runner_id, :baseline_seed, seq - 1)
+    end
+  end
+
+  # The log lacks changes the runner applied, up to `top` at least: declare
+  # the gap and pull its state as the baseline (`Flezha.State.Recovery` never
+  # pushes meanwhile). The episode remembers the highest seq it lost, so only
+  # a baseline at or above it ends it (`Admission.close_gap/1`).
+  defp pull_baseline(%{kept: {bytes, kept, lost}} = state, runner_id, trigger, top \\ -1) do
+    state = %{state | awaiting_baseline?: true, kept: {bytes, kept, max(lost, top)}}
+    Admission.open_gap(state, runner_id, trigger)
   end
 
   # Baseline established: a snapshot ahead of the WAL supersedes what the WAL
   # lacks (the deltas a cold takeover shed, or those a gap refused), so adopt
-  # its seq and let the runner's next delta append contiguously.
+  # its seq and let the runner's next delta append contiguously. A pulled
+  # baseline ends its episode in `append_kept/2` instead.
   def establish_baseline(%{last_persisted_seq: last} = state, seq) when seq > last do
-    now = State.now_ms()
     Metrics.put(state.metrics, :wal_seq, seq)
+    state = %{state | last_persisted_seq: seq, last_advance_at: State.now_ms()}
 
-    state =
-      Admission.close_gap(%{
-        state
-        | awaiting_baseline?: false,
-          last_persisted_seq: seq,
-          last_advance_at: now
-      })
-
-    Settlement.persist_dedup(state)
+    if state.awaiting_baseline?,
+      do: state,
+      else: state |> Admission.close_gap() |> Settlement.persist_dedup()
   end
 
-  def establish_baseline(state, _seq), do: %{state | awaiting_baseline?: false}
+  def establish_baseline(state, _seq), do: state
+
+  # The bookkeeping a prefix cut owes once the file is shorter: the rewrite
+  # fsynced the kept tail, so everything pending is durable.
+  def after_prefix_cut(state, seq) do
+    size = RecordFrame.file_size(state.wal_path)
+    Metrics.put(state.metrics, :wal_size_bytes, size)
+
+    # Surviving tail records post-date the snapshot's baseline by at most the
+    # compaction round-trip, so "now" is a safe age floor for the next trigger.
+    oldest = if size > 0, do: State.now_ms()
+
+    state = RemoteGate.drained(state)
+    state = establish_baseline(state, seq)
+
+    state = %{state | pending_bytes: 0, pending_since_us: nil, oldest_unsnapshotted_at: oldest}
+
+    # Rotation/compaction is one of the dedup file's advance points.
+    state |> Settlement.persist_dedup() |> Admission.reply_synced()
+  end
+
+  # A Change refused while a baseline is pulled is kept, in order, for that
+  # baseline to append: the runner shipped it after the state the snapshot
+  # holds, or with it (the re-stated record at `seq + 1` that precedes the
+  # snapshot frame). Its credit waits with it, counted in the bytes the stream
+  # window debited, under `limits.kept_cap`: past it the older kept Changes are
+  # released, and the newest too if it alone does not fit, so the runner's
+  # window always has room for the pull's snapshot. Any other gap drains at once.
+  def refused(%{awaiting_baseline?: true, kept: {bytes, kept, lost}} = state, record, credit) do
+    {_seq, header, body, _runner_id} = record
+    size = Map.get(credit, :wire_size, byte_size(header) + byte_size(body))
+
+    cond do
+      bytes + size <= state.limits.kept_cap ->
+        %{state | kept: {bytes + size, [{record, credit} | kept], lost}}
+
+      kept != [] ->
+        refused(release_kept(state), record, credit)
+
+      true ->
+        release_kept(%{state | kept: {size, [{record, credit}], lost}})
+    end
+  end
+
+  def refused(state, _record, credit), do: RemoteGate.released(state, credit)
+
+  # After a baseline lands: append the kept Changes above it, oldest first,
+  # each through `write` (the writer's own append), its credit drained by the
+  # sync that follows. One at or below the baseline is covered by it and drains
+  # now. A hole, or a disk that refuses again, releases the rest and pulls
+  # again. A baseline below the highest seq the episode lost (a retention cut,
+  # an older snapshot) is not the pulled one: everything stays as it is.
+  def append_kept(%{awaiting_baseline?: false} = state, _write), do: state
+
+  def append_kept(%{kept: {_bytes, _kept, lost}} = state, _write)
+      when state.last_persisted_seq < lost,
+      do: state
+
+  def append_kept(%{kept: {_bytes, kept, lost}} = state, write) do
+    case write_kept(%{state | kept: {0, [], lost}}, Enum.reverse(kept), write) do
+      {:ok, state} ->
+        state |> Admission.close_gap() |> Settlement.persist_dedup()
+
+      {:hole, runner_id, rest, state} ->
+        state = release_kept(%{state | kept: put_elem(state.kept, 1, rest)})
+        pull_baseline(state, runner_id, :baseline_seed)
+    end
+  end
+
+  defp write_kept(state, [], _write), do: {:ok, state}
+
+  defp write_kept(state, [{{seq, _, _, _}, credit} | rest], write)
+       when seq <= state.last_persisted_seq,
+       do: write_kept(RemoteGate.released(state, credit), rest, write)
+
+  defp write_kept(state, [{{seq, header, body, runner_id}, credit} | rest] = kept, write)
+       when seq == state.last_persisted_seq + 1 do
+    case write.(state, seq, header, body, runner_id, State.now_ms()) do
+      {:reply, :ok, state} -> write_kept(Admission.track_credit(state, credit), rest, write)
+      {:reply, _refused, state} -> {:hole, runner_id, kept, state}
+      {:stop, _reason, _dropped, state} -> {:hole, runner_id, kept, state}
+    end
+  end
+
+  defp write_kept(state, [{{_seq, _, _, runner_id}, _credit} | _] = kept, _write),
+    do: {:hole, runner_id, kept, state}
+
+  # A runner refused a pull for credit, which the Changes kept from it may
+  # hold: they are let go, and the baseline the next pull brings must still
+  # reach the seqs let go.
+  def pull_refused(%{kept: {_bytes, [{{_, _, _, runner_id}, _} | _], _}} = state, runner_id),
+    do: release_kept(state)
+
+  def pull_refused(state, _runner_id), do: state
+
+  @doc """
+  Lets go of every kept Change, its credit released so no marker confirms the
+  input behind it, and remembers the highest seq let go as lost to the episode.
+  """
+  def release_kept(%{kept: {_bytes, kept, lost}} = state) do
+    top =
+      Enum.reduce(kept, lost, fn {{seq, _, _, _}, credit}, top ->
+        Admission.release_credit(state, credit, :credit_released)
+        max(seq, top)
+      end)
+
+    %{state | kept: {0, [], top}}
+  end
 
   defp emit_realign({rc, sh, pk}, from_seq, to_seq, runner_id) do
     :telemetry.execute(
@@ -370,6 +491,64 @@ defmodule Flezha.State.WalWriter.Epoch do
     case RecordFrame.cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1) do
       {:ok, file, seq_index} -> {:ok, do_rewind(state, seq, file, seq_index)}
       {:error, refusal} -> {:error, refusal, %{state | refusal: refusal}}
+    end
+  end
+
+  # The disk refused a write or a sync. Nothing written since the last sync
+  # was answered or drained, and none of it is known durable, so it goes: cut
+  # from the file in place, its credit released, its waiters refused,
+  # retryably, and, for a runner's Cell, a baseline pulled from its runner
+  # (`append_kept/2`), since a push of this log would rewind the live Cell.
+  # The gate lets go of it before the seq falls back to the last synced one.
+  # `refused_seq`, a write the disk refused, is lost with them.
+  def drop_unsynced(state, reason, refused_seq \\ -1) do
+    lost = max(state.last_persisted_seq, refused_seq)
+    bound = state.seq_index.end - state.pending_bytes
+    locate = fn file -> {:ok, bound, first_seq(file, bound, state.last_persisted_seq + 1)} end
+    {:ok, file, floor} = RecordFrame.cut_in_place(state.wal_path, state.file_handle, locate)
+
+    if state.disk_refused == nil do
+      Logger.warning(
+        "[wal] cell=#{inspect(state.cell_id)}: the disk refused a write or a sync " <>
+          "(#{inspect(reason)}); records from seq #{floor} on are dropped, to be sent again"
+      )
+    end
+
+    refusal = {:error, {:wal_writer_unavailable, reason}}
+    Enum.each(state.sync_waiters, fn {from, _reply} -> GenServer.reply(from, refusal) end)
+    Metrics.put(state.metrics, :wal_seq, floor - 1)
+    Metrics.put(state.metrics, :wal_size_bytes, bound)
+    state = RemoteGate.reset(state, floor - 1)
+
+    state = %{
+      state
+      | file_handle: file,
+        last_persisted_seq: floor - 1,
+        seq_index: SeqIndex.cut_above(state.seq_index, floor, bound),
+        header_index: nil,
+        pending_bytes: 0,
+        pending_since_us: nil,
+        sync_waiters: [],
+        pending_outbox: :queue.filter(&(&1.seq < floor), state.pending_outbox),
+        disk_refused: reason
+    }
+
+    if state.owning_runner,
+      do: pull_baseline(state, state.owning_runner, :unsynced, lost),
+      else: state
+  end
+
+  # A sync with a record written since the disk refused one ends the episode.
+  def disk_back(state) do
+    Logger.warning("[wal] cell=#{inspect(state.cell_id)}: the disk takes writes again")
+    %{state | disk_refused: nil}
+  end
+
+  # The seq of the first whole record at `position`, else `default`.
+  defp first_seq(file, position, default) do
+    case RecordFrame.decode_record(file, position) do
+      {:ok, seq, _header, _body, _consumed} -> seq
+      _none -> default
     end
   end
 

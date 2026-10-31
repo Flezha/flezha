@@ -396,6 +396,21 @@ defmodule Flezha.State.TestHelpers do
   def uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 
   @doc """
+  Point a record log's process (a WAL writer or an input log) at `device`:
+  `/dev/full`, a disk that is always full (every write answers
+  `{:error, :enospc}` and a datasync fails), or `/dev/null`, one that takes
+  every write and fails every datasync. Opened inside it, since a raw handle
+  belongs to its opener.
+  """
+  @spec fill_disk(pid(), Path.t()) :: term()
+  def fill_disk(pid, device \\ "/dev/full") do
+    :sys.replace_state(pid, fn state ->
+      {:ok, full} = :file.open(device, [:raw, :write, :binary])
+      %{state | file_handle: full}
+    end)
+  end
+
+  @doc """
   Construct a deterministic `cell_id` tuple usable as a fixture.
   """
   @spec sample_cell_id(binary()) :: Paths.cell_id()

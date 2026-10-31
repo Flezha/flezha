@@ -53,6 +53,9 @@ defmodule Flezha.State.CreditLedger do
     end
   end
 
+  @doc "Take back `size` debited bytes whose work was dropped before it ever drained."
+  def refund(%__MODULE__{} = ledger, size), do: %{ledger | debited: ledger.debited - size}
+
   @doc """
   Register `bytes` of durable drain. Returns `{grant, ledger}`: `grant` is
   the batched replenishment owed to the sender — all freed-but-ungranted

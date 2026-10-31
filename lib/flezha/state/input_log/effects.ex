@@ -11,7 +11,7 @@ defmodule Flezha.State.InputLog.Effects do
   """
 
   alias Flezha.State.Frame
-  alias Flezha.State.{Paths, RecordFrame}
+  alias Flezha.State.{Paths, RecordFrame, SeqIndex}
 
   defstruct [:path, :file, results: %{}, seq: 0]
 
@@ -71,11 +71,32 @@ defmodule Flezha.State.InputLog.Effects do
     end
   end
 
-  @doc "Write one result after the last, framed under `header`; not yet synced."
-  @spec append(t(), result(), binary()) :: t()
+  @doc """
+  Write one result after the last, framed under `header`; not yet synced. A
+  write the disk refuses is cut back out of the file and answered
+  `{:error, reason, effects}`, the effect log as it was before.
+  """
+  @spec append(t(), result(), binary()) :: t() | {:error, term(), t()}
   def append(%__MODULE__{} = effects, result, header) do
-    :ok = :file.write(effects.file, Frame.encode_record(effects.seq, header, encode(result)))
-    %{effects | results: put(effects.results, result), seq: effects.seq + 1}
+    case :file.write(effects.file, Frame.encode_record(effects.seq, header, encode(result))) do
+      :ok ->
+        %{effects | results: put(effects.results, result), seq: effects.seq + 1}
+
+      {:error, reason} ->
+        {:error, reason, cut_from(effects, effects.seq)}
+    end
+  end
+
+  @doc """
+  The effect log without its records from seq `floor` on, which the disk did
+  not take: cut from the file in place and read back.
+  """
+  @spec cut_from(t(), non_neg_integer()) :: t()
+  def cut_from(%__MODULE__{} = effects, floor) do
+    {:ok, file, _index} =
+      RecordFrame.cut_in_place(effects.path, effects.file, SeqIndex.new(), floor)
+
+    %{effects | file: file, results: read(file, effects.path), seq: floor}
   end
 
   @doc "The kept results for inputs above `above`, in offset then identity order."
@@ -88,7 +109,8 @@ defmodule Flezha.State.InputLog.Effects do
   @doc """
   Drop the results of the inputs below `floor`: the file is rewritten with what
   is left, synced, and swapped in, its records under `header`. Nothing below is
-  nothing done.
+  nothing done, and neither is a rewrite the disk refuses: the next sweep tries
+  again.
   """
   @spec drop_below(t() | nil, non_neg_integer(), binary()) :: t() | nil
   def drop_below(nil, _floor, _header), do: nil
@@ -103,11 +125,16 @@ defmodule Flezha.State.InputLog.Effects do
           for {result, seq} <- Enum.with_index(flat(kept)),
               do: Frame.encode_record(seq, header, encode(result))
 
-        :ok = Paths.atomic_install(effects.path, &:file.write(&1, records), :effects_log)
-        _ = :file.close(effects.file)
-        {:ok, file} = :file.open(effects.path, [:raw, :read, :write, :binary])
-        {:ok, _eof} = :file.position(file, :eof)
-        %{effects | file: file, results: kept, seq: length(records)}
+        case Paths.atomic_install(effects.path, &:file.write(&1, records), :effects_log) do
+          :ok ->
+            _ = :file.close(effects.file)
+            {:ok, file} = :file.open(effects.path, [:raw, :read, :write, :binary])
+            {:ok, _eof} = :file.position(file, :eof)
+            %{effects | file: file, results: kept, seq: length(records)}
+
+          {:error, _reason} ->
+            effects
+        end
     end
   end
 

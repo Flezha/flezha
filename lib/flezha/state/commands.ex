@@ -26,6 +26,7 @@ defmodule Flezha.State.Commands do
   alias Flezha.State.Paths
   alias Flezha.State.TaskJournal
   alias Flezha.State.Restore
+  alias Flezha.State.WalWriter
   alias Flezha.State.Watchdog
   alias Flezha.State.Wire
   require Logger
@@ -357,8 +358,11 @@ defmodule Flezha.State.Commands do
       {:failed, :no_snapshot}
     else
       # The Cell holds a retried attempt's changes, which no record can carry
-      # until the item resolves: no snapshot now, and no strike either.
+      # until the item resolves, or the runner's credit window is exhausted,
+      # possibly by Changes writers keep for their pulled baselines: those let
+      # go, so the next pull finds room. No snapshot now, and no strike either.
       {:error, %Flezha.Error{code: "state.cell_busy"}} ->
+        WalWriter.pull_refused(runner_id)
         Watchdog.compaction_deferred(cell_id)
         :deferred
 

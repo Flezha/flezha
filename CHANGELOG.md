@@ -178,6 +178,13 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A controller whose state disk fills no longer loses input it had already
+  acknowledged. An input the disk refuses is refused back to its sender, which
+  sends it again. State changes written since the last disk sync are cut from
+  the file, and the controller takes the cell's current state from its runner
+  again. The input log and the WAL writer keep running instead
+  of restarting in a loop, and take input again once space frees
+  ([durability](docs/public/topics/core/durability.md#what-happens-in-each-situation)).
 - With `FLEZHA_CLUSTER_DISCOVERY=k8s_pod_discovery`, a controller whose
   service account has no `token` or `ca.crt` mounted now refuses to start.
   It used to skip checking the API server's certificate when the CA was

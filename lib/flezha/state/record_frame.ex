@@ -1,7 +1,7 @@
 defmodule Flezha.State.RecordFrame do
   @moduledoc """
   The durable record frame on a device: the walks over a record log on disk and
-  the two byte-range cuts over it.
+  the byte-range cuts over it.
 
   The frame itself, its one decoder and the proof a walk stops or refuses by
   are `Flezha.State.Frame`'s; every walk here reads a device through them.
@@ -292,6 +292,47 @@ defmodule Flezha.State.RecordFrame do
          {:ok, file} <- replace_with_range(path, device, 0, bound) do
       {:ok, file, SeqIndex.cut_above(index, floor, bound)}
     end
+  end
+
+  @doc """
+  Drop a log's tail in place: the cut for a disk that refused a write or a
+  sync, where `cut_above/4`'s copy needs space the disk does not have and a
+  truncation frees it. `device` may be the handle that failed, so the file is
+  reopened at `path` and `locate.(file)` answers `{:ok, bound, found}` from
+  it; the file is truncated at `bound` and answered `{:ok, file, found}` at
+  its new end, and `device` is closed. `cut_in_place/4` locates by seq.
+  """
+  @spec cut_in_place(Path.t(), :file.io_device(), (:file.io_device() ->
+                                                     {:ok, non_neg_integer(), found}
+                                                     | {:error, term()})) ::
+          {:ok, :file.io_device(), found} | {:error, term()}
+        when found: term()
+  def cut_in_place(path, device, locate) do
+    with {:ok, file} <- :file.open(path, [:raw, :read, :write, :binary]) do
+      with {:ok, bound, found} <- locate.(file),
+           {:ok, _} <- :file.position(file, bound),
+           :ok <- :file.truncate(file) do
+        _ = :file.close(device)
+        {:ok, file, found}
+      else
+        refused ->
+          _ = :file.close(file)
+          refused
+      end
+    end
+  end
+
+  @doc """
+  `cut_in_place/3` at the first record with seq >= `floor`, found as
+  `cut_above/4` finds it; `found` is the index after the cut.
+  """
+  @spec cut_in_place(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
+          {:ok, :file.io_device(), SeqIndex.t()} | {:error, term()}
+  def cut_in_place(path, device, index, floor) do
+    cut_in_place(path, device, fn file ->
+      with {:ok, bound} <- position_of(index, file, path, floor),
+           do: {:ok, bound, SeqIndex.cut_above(index, floor, bound)}
+    end)
   end
 
   # Copy the bytes `[from, to)` of `path` into `<path>.rewriting`, fsync it,

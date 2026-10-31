@@ -34,7 +34,12 @@ defmodule Flezha.State.WalWriter.State do
     :backpressured?,
     :shedding?,
     :gap_open?,
+    # A baseline is being pulled because the log lacks changes the runner
+    # applied; `kept` holds the Changes refused as gaps meanwhile, oldest last,
+    # with their byte total, for the baseline to append, and the highest seq
+    # the episode lost, which that baseline must reach.
     :awaiting_baseline?,
+    :kept,
     :oldest_unsnapshotted_at,
     :credit_pending,
     :credit_active?,
@@ -93,7 +98,10 @@ defmodule Flezha.State.WalWriter.State do
     # write or cut with the refusal: the file holds records the controller
     # acknowledged and cannot parse past, and a `:transient` child that raised
     # here would be restarted straight back into it.
-    :refusal
+    :refusal,
+    # Why the disk last refused a write or a sync, until a sync after a write
+    # lands again: one warning per episode, not one per refused resend.
+    :disk_refused
   ]
 
   @type t :: %__MODULE__{
@@ -113,6 +121,7 @@ defmodule Flezha.State.WalWriter.State do
           shedding?: boolean(),
           gap_open?: boolean(),
           awaiting_baseline?: boolean(),
+          kept: {non_neg_integer(), [{tuple(), map()}], integer()},
           oldest_unsnapshotted_at: integer() | nil,
           credit_pending: %{optional({pid(), binary() | nil}) => pos_integer()},
           credit_active?: boolean(),
@@ -134,13 +143,15 @@ defmodule Flezha.State.WalWriter.State do
           sync_waiters: [{GenServer.from(), term()}],
           durable_waiters: [{GenServer.from(), non_neg_integer()}],
           header_index: %{optional(binary()) => non_neg_integer()} | nil,
-          refusal: Frame.refusal() | nil
+          refusal: Frame.refusal() | nil,
+          disk_refused: term()
         }
 
   @type limits :: %{
           high_watermark: pos_integer(),
           low_watermark: pos_integer(),
           hard_watermark: pos_integer(),
+          kept_cap: non_neg_integer(),
           pending_msg_cap: pos_integer(),
           outbox_inflight_max: pos_integer(),
           outbox_resettle_ms: pos_integer()

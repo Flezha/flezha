@@ -63,7 +63,7 @@ on the effectively-once tier writes.
 
 | Module | Role |
 |---|---|
-| `Flezha.State.RecordFrame` | The on-disk record frame every durable log shares, walked on a device: `decode_record/2`, `fold_records/3`, `fold_path/3`, `scan_for_last_valid_seq/1`, and the `cut_below/5` / `cut_above/4` byte-range rewrites. The frame itself, `encode_record/3` and the byte decoder are `Flezha.State.Frame`. Names only `SeqIndex`; holds no handle and no process. |
+| `Flezha.State.RecordFrame` | The on-disk record frame every durable log shares, walked on a device: `decode_record/2`, `fold_records/3`, `fold_path/3`, `scan_for_last_valid_seq/1`, the `cut_below/5` / `cut_above/4` byte-range rewrites, and `cut_in_place/3,4`, the truncation a log whose disk refused a write or a sync cuts its unsynced tail with. The frame itself, `encode_record/3` and the byte decoder are `Flezha.State.Frame`. Names only `SeqIndex`; holds no handle and no process. |
 | `Flezha.State.Paths` | Path resolution, namespace claims, enumeration; no GenServer, I/O limited to `File.ls/1` and `atomic_install/2`. |
 | `Flezha.State.Wire` | The codec for the `cell_state_change` / `cell_effect_record` / `cell_state_snapshot` / `delete_cell_state` / `park_payload` / compensation payload-ids and the postcard `EffectRecordBody`. The `flz.cell` / `flz.seq` / `flz.key` output stamps are `Flezha.State.Outbox`'s. |
 | `Flezha.State.Metrics` | Per-Cell `:counters` (`persisted_changes_total`, `wal_size_bytes`, `snapshot_seq`, `wal_shed_total`, `stale_writer_refused_total`, `fsync_total`, ...) in an ETS table. |
@@ -74,9 +74,9 @@ on the effectively-once tier writes.
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
 | `Flezha.State.Lineage` | A Cell's two small records: the dedup file (`last_persisted_seq`, `outbox_flushed_seq`, realign `epoch`, and `folded_offset`, the highest consumed offset of the records a prefix cut dropped; advanced at fsync cadence, the cursors repaired at boot from the WAL scan) and the lineage file, the home of the epoch and the folded offset (`read/1`, `progress/1`, `dedup/1`, `put/2`, `put_dedup/2`). |
 | `Flezha.State.Outbox` | The delivery-confirmation seam (`dispatch/2`, `token/2,3`, `hold/1`, `settled/1`, `confirm/1`, `park/4`). The owner is always the Cell's writer, for a flow relay Cell and a steps relay Cell alike: a flow relay's entry is committed by its record's fsync, a steps relay's is held until a durable stage marker names its record (`commit_unit: :stage`, read at boot from the class registry). |
-| `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a flow relay on the effectively-once tier, a durable steps relay): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a steps relay's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; and the pure byte ledger (`admit/2`, `drain/2`) behind both source credit and the state-stream window. |
+| `Flezha.State.InputLog` / `CreditLedger` | Durable input for either kind (a flow relay on the effectively-once tier, a durable steps relay): the per-instance ingest journal (`<key>/input.log`), answered once synced, with its `flz.msg_id` index; the min-watermark the log owns over its reporters (Cells, or a steps relay's journal identity; `consumed: %{reporter => offset}` in its state, the ETS table the published view); `tail/1` (floor and last offset, no record read); truncation below `min(watermark, now - hold_window)` once the prefix exceeds the cut threshold; a write or sync the disk refuses cuts the file back below every append not yet answered and refuses those appends, retryably; and the pure byte ledger (`admit/2`, `drain/2`, `refund/2`) behind both source credit and the state-stream window. |
 | `Flezha.State.PersistenceResolver` | Per-class knobs: user map → instance metadata → SDK declaration → global default. |
-| `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
+| `Flezha.State.Commands` / `Recovery` / `Restore` | Control-channel round-trips (`dispatch_restore_init_state/2`, `dispatch_compact_cell/2`, `notify_cell_backpressure/2`); `resync/2` (push `RestoreInitState` or pull `CompactCell`, see "Push or pull"); assembly of the restore payload (latest snapshot + WAL tail + compensation markers). |
 | `Flezha.State.Watchdog` | Sensor: compaction triggers and timeouts, output stalls, disk-quota and RPO alarms. |
 | `Flezha.State.Retention` / `Completion` | Sweeper for time-travel retention, kept finished relays (`completion.record`), held-back deletes (`.deleting`) and input logs. |
 | `Flezha.State.TimeTravel` | Point-in-time query behind `flz state at`. |
@@ -438,7 +438,8 @@ session minted per attach. The SDK answers `CreditWindowAck`; from then on:
 - **Fsync mints credit** — the writer attributes each written frame to the debiting channel
   (`credit_pending`, session-tagged) and reports `{:credit_drained, session, bytes}` on durable
   drain, or immediately for frames that never occupy the buffer (dedup, gap, shed, stale refusal).
-  Bytes the writer lets go unsynced (a realign, a rewind's cut, a stop whose final sync fails) are
+  Bytes the writer lets go unsynced (a realign, a rewind's cut, a stop whose final sync fails, a
+  write or sync the disk refused) are
   reported `{:credit_released, session, bytes}`: the window is freed, no marker is confirmed.
   `CreditLedger.drain/2` returns one batched `CreditGrant` when the outstanding bytes
   fall below the low watermark or a low-watermark's worth has been freed; a stalled fsync mints
@@ -619,12 +620,32 @@ one poll. The mark is written by the sensor, never polled from it.
 **Push or pull.** `Recovery.resync/2` chooses by who holds history (kernel.md has the sequence): a
 controller with a baseline pushes `RestoreInitState`; one with none pulls a snapshot via
 `CompactCell`, and it never ships an empty `RestoreInitState` (`Restore.has_persisted_state?/1`
-treats a zero-byte WAL as no state), which would rebuild a live Cell to `init_state`. On cold
+treats a zero-byte WAL as no state), which would rebuild a live Cell to `init_state`. A writer
+**awaiting a baseline** pulls as well, whatever fact asked for the resync (`seq_gap`,
+`compaction_gave_up`): its WAL lacks changes the live Cell already applied, and a push would rewind
+that Cell past them. A WAL cut back for a refusing disk (`Epoch.drop_unsynced/2`) awaits one, as a
+cold takeover does, and so does a writer booted from a non-empty WAL, which a predecessor may have
+cut; a writer that does not answer counts as one. While it waits, every Change refused as a gap is
+kept in order, its credit undrained, up to `kept_cap`, a sixteenth of the WAL high watermark (the
+default credit window), counted in the window's own wire bytes: past it the older kept Changes are
+released, and the newest too if it alone does not fit. The runner refuses a `CompactCell` with
+`state.cell_busy` once its window is exhausted; that refusal makes every writer awaiting a
+baseline from that runner release what it keeps (`WalWriter.pull_refused/1`), so the pull the
+heal's backoff retries finds room, and the snapshot it brings covers everything the runner
+shipped before it. A stop releases what is kept. The episode
+remembers the highest seq it cut or let go, and only a log that reaches it ends the episode: a
+snapshot below it (the retention sweep's truncation, an older snapshot) changes nothing. When the
+snapshot lands, `Epoch.append_kept/2` drains the kept Changes it covers and appends the ones above
+it, the first being the record the runner re-states at `snapshot_seq + 1` ahead of the snapshot
+frame; a hole, or a disk that refuses again, releases the rest and keeps the episode open, so the
+loop pulls again under its backoff. A sync the disk refused with nothing to cut ends on the next
+contiguous change. On cold
 takeover the first `cell_state_change` on an empty WAL (`last_persisted_seq == -1`) with
 `seq > 0` and no runner-restart realign puts the writer into **awaiting-baseline**: the frame is
-shed (counted in `wal_shed_total`; the SDK is not disconnected), `[:flezha, :state, :baseline_seed]`
-fires once per episode and a `CompactCell` is dispatched; further gap frames shed quietly until
-the snapshot lands, its seq becomes `last_persisted_seq` and the next delta appends contiguously.
+refused and kept (counted in `wal_shed_total`; the SDK is not disconnected), `[:flezha, :state, :baseline_seed]`
+fires once per episode and a `CompactCell` is dispatched; further gap frames are kept quietly
+until the snapshot lands, its seq becomes `last_persisted_seq` and the kept frames above it
+append.
 The gap is DECLARED once per episode (`{:seq_gap, cell_id}`, carrying the runner that emitted
 it) and the convergence loop plans the `resync_runner` that pulls, retrying it on the loop's own
 own `:heal` table while the Cell waits — a pull that failed to dispatch (a torn

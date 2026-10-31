@@ -79,13 +79,13 @@ defmodule Flezha.State.InputLog.MsgIndex do
     end
   end
 
-  @doc "The index once everything below `floor` is truncated."
-  @spec trim(t(), non_neg_integer()) :: t()
-  def trim(index, floor) do
+  @doc "The index once the records at the offsets `gone?` names are truncated."
+  @spec drop(t(), (non_neg_integer() -> boolean())) :: t()
+  def drop(index, gone?) do
     %{
       index
-      | ids: Map.reject(index.ids, fn {_id, offset} -> offset < floor end),
-        deadlines: Map.reject(index.deadlines, fn {offset, _} -> offset < floor end)
+      | ids: Map.reject(index.ids, fn {_id, offset} -> gone?.(offset) end),
+        deadlines: Map.reject(index.deadlines, fn {offset, _} -> gone?.(offset) end)
     }
   end
 

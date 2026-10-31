@@ -22,8 +22,9 @@ defmodule Flezha.Convergence.Heal do
       resume state, the durable Cells restored, the input log's tail
       re-forwarded, then the registry tag and the route published.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
-      relay against the runner it is already bound to, or for ONE Cell
-      against the runner a declared gap named. The rung below
+      relay against the runner it is already bound to, or resync ONE Cell
+      against the runner a declared gap named (`Flezha.State.Recovery.resync/2`
+      picks which way the state goes). The rung below
       `rebind_relay`: no placement decision, no migration, no handover —
       the remedy for a binding that is intact but has stopped agreeing.
     * `start_plugin` / `stop_plugin` — reconcile a relay's running plugin

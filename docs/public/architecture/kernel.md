@@ -254,9 +254,11 @@ explicitly:
 | Situation | What happens |
 | --- | --- |
 | the controller has the WAL, the runner is fresh | the controller **pushes** `RestoreInitState` |
-| the controller has no WAL, the runner has live state (a change arrives that is not sequence 0) | the controller drops the frame, **pulls** a snapshot with `CompactCell`, and appends from there |
+| the controller has no WAL, the runner has live state (a change arrives that is not sequence 0) | the controller holds the frame back, **pulls** a snapshot with `CompactCell`, and appends from there |
+| the controller cut its WAL because the disk refused a write or a sync | the WAL lacks changes the runner already applied, so the controller **pulls** a snapshot too, and appends from there |
 
-The pull is retried until a snapshot lands. A zero-byte WAL counts as no state
+The pull is retried until a snapshot lands, and no resync pushes the WAL meanwhile. The changes
+that arrive before the snapshot are held back and appended after it. A zero-byte WAL counts as no state
 (`Flezha.State.Restore.has_persisted_state?/1`), so the controller never pushes an empty
 restore that would reset a live cell. Deeper detail, with every setting:
 [the state persistence guide](https://github.com/flezha/flezha/blob/main/docs/internal/state_persistence.md).

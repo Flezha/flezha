@@ -1,8 +1,9 @@
 defmodule Flezha.State.Recovery do
   @moduledoc """
   Single recovery primitive for per-Cell persistence: re-run the
-  `RestoreInitState` handshake so a desynced or stalled Cell resumes
-  from a consistent point.
+  `RestoreInitState` handshake, or pull the live Cell's state where the
+  controller's log lacks it, so a desynced or stalled Cell resumes from a
+  consistent point.
 
   Used by the failure edges that are otherwise silent:
 
@@ -25,6 +26,7 @@ defmodule Flezha.State.Recovery do
   alias Flezha.Service.HubManager
   alias Flezha.State.Commands
   alias Flezha.State.Restore
+  alias Flezha.State.{WalWriter, WriterRegistry}
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
   def resync({_rc, _sh, _pk} = cell_id, opts \\ []) do
@@ -116,9 +118,12 @@ defmodule Flezha.State.Recovery do
   # baseline the controller pushes `RestoreInitState`; without one it pulls a
   # full-state snapshot via `CompactCell` — an empty RestoreInitState
   # would rebuild the live Cell to `init_state` and wipe accumulated state.
+  # A writer awaiting a baseline holds a log that lacks changes the live Cell
+  # already applied, so it pulls too: its push would rewind that Cell. A
+  # writer that does not answer may be one, and a pull is always safe.
   defp dispatch_resync(cell_id, runner_id, reason) do
     result =
-      if Restore.has_persisted_state?(cell_id) do
+      if Restore.has_persisted_state?(cell_id) and not awaiting_baseline?(cell_id) do
         Commands.dispatch_restore_init_state(runner_id, cell_id)
       else
         Commands.dispatch_compact_cell(runner_id, cell_id)
@@ -135,6 +140,13 @@ defmodule Flezha.State.Recovery do
         )
 
         other
+    end
+  end
+
+  defp awaiting_baseline?(cell_id) do
+    case WriterRegistry.lookup(cell_id) do
+      {:ok, writer} -> not match?(%{awaiting_baseline?: false}, WalWriter.stall_status(writer))
+      :error -> false
     end
   end
 

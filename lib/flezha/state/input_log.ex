@@ -54,7 +54,9 @@ defmodule Flezha.State.InputLog do
   log still retains is absorbed: `{:duplicate, offset}` names the retained
   record and nothing is written. At zero source credit the call parks (deferred
   reply) until the min-watermark advance mints credit — the intended source
-  back-pressure, hence `:infinity`.
+  back-pressure, hence `:infinity`. When the disk refuses a write or a sync,
+  every append not yet answered is answered `{:error, {:input_log_unavailable,
+  reason}}` and its record cut from the file, so its retry is journaled as new.
 
   The waiting form of `append_async/5`, for a caller with nothing else to do
   meanwhile; the Overwatch's ingest issues the request and carries on.
