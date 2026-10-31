@@ -62,23 +62,239 @@ public final class GatewayRelay implements Relay {
 
 ### Rust
 
-TODO: this page is not yet written for Rust.
+```rust
+// src/gateway.rs: requests in, answers out
+const DEADLINE_MS: u64 = 60_000;
+
+pub struct GatewayRelay;
+
+impl Relay for GatewayRelay {
+    fn factory_id() -> &'static str {
+        "gateway"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        // every request arrives on "http"; kept as a handle to split it
+        let http = c.input::<Request>("http");
+        // route 1: GET .../events gets the session's stream
+        http.filter(|request| !request.sends())
+            .into::<Watch>()
+            .keyed()
+            .output(); // a stream, or 404
+
+        // route 2: POST .../messages is checked against the user's budget
+        let verdicts = http
+            .filter(Request::sends)
+            .map(|request| Event::Sent(request.message()))
+            .key_by(|event| event.user().to_string()) // one cell per user
+            .into::<Budget>();
+
+        // a verdict: the message plus its user's tokens today; used twice
+        // use 1: answer the POST
+        verdicts.into::<Admit>().keyed().output(); // 202, or 429 over the budget
+
+        // use 2: pass an admitted message on to the user's session
+        verdicts
+            .filter(Verdict::admitted)
+            .map(|verdict| verdict.message)
+            .key_by(|message| message.user.clone()) // the user's session
+            // call the "agent" relay; its answer comes back here
+            .call::<Answer>(CallTarget::factory("agent").channel("message"), DEADLINE_MS)
+            .map(Event::used) // the session's answer, as tokens used
+            .key_by(|event| event.user().to_string())
+            .into::<Budget>(); // back into the same budget
+    }
+
+    fn settings() -> RelaySettings {
+        RelaySettings {
+            // each request and answer on disk before it runs
+            run: Run::Flow {
+                exactly: Exactly::effectively_once(),
+            },
+            ..RelaySettings::default()
+        }
+    }
+}
+```
+
+[`src/gateway.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/gateway.rs)
 
 ### Node
 
-TODO: this page is not yet written for Node.
+```javascript
+// gateway_relay.mjs: requests in, answers out
+const DEADLINE_MS = 60_000;
+const user = (value) => value.user;
+
+export default defineRelay({
+  factoryId: 'gateway',
+  flow: { exactly: 'effectively_once' }, // each request and answer on disk before it runs
+  channels: (c) => {
+    // every request arrives on "http"; kept as a handle to split it
+    const http = c.input('http', Request.decode);
+    // route 1: GET .../events gets the session's stream
+    http
+      .filter((request) => !request.sends())
+      .into(Watch)
+      .keyed()
+      .output(); // a stream, or 404
+    // route 2: POST .../messages is checked against the user's budget
+    const verdicts = http
+      .filter((request) => request.sends())
+      .map((request) => request.message())
+      .keyBy(user) // one cell per user
+      .into(Budget);
+    // a verdict: the message plus its user's tokens today; used twice
+    // use 1: answer the POST
+    verdicts.into(Admit).keyed().output(); // 202, or 429 over the budget
+    // use 2: pass an admitted message on to the user's session
+    verdicts
+      .filter(admitted)
+      .map((verdict) => verdict.message)
+      .keyBy(user) // the user's session
+      // call the "agent" relay; its answer comes back here
+      .call({ factory: 'agent', channel: 'message' }, { deadlineMs: DEADLINE_MS })
+      .map(used) // the session's answer, as tokens used
+      .keyBy(user)
+      .into(Budget); // back into the same budget
+  },
+});
+```
+
+[`gateway_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/gateway_relay.mjs)
 
 ### Python
 
-TODO: this page is not yet written for Python.
+```python
+# gateway.py: requests in, answers out
+DEADLINE_MS = 60_000
+
+
+# each request and answer on disk before it runs
+@flezha.relay("gateway", run={"flow": {"exactly": "effectively_once"}})
+def gateway(c: flezha.ChannelBuilder) -> None:
+    user = itemgetter("user")
+    # every request arrives on "http"; kept as a handle to split it
+    http = c.input("http").map(Request.of)
+    # route 1: GET .../events gets the session's stream
+    http.filter(lambda request: not request.sends()).into(
+        Watch
+    ).keyed().output()  # a stream, or 404
+    # route 2: POST .../messages is checked against the user's budget
+    verdicts = (
+        http.filter(Request.sends)
+        .map(sent)
+        .key_by(user)  # one cell per user
+        .into(Budget)
+    )
+    # a verdict: the message plus its user's tokens today; used twice
+    # use 1: answer the POST
+    verdicts.into(Admit).keyed().output()  # 202, or 429 over the budget
+    # use 2: pass an admitted message on to the user's session
+    (
+        verdicts.filter(admitted)
+        .map(itemgetter("message"))
+        .key_by(user)  # the user's session
+        # call the "agent" relay; its answer comes back here
+        .call(factory="agent", channel="message", deadline_ms=DEADLINE_MS)
+        .map(used)  # the session's answer, as tokens used
+        .key_by(user)
+        .into(Budget)  # back into the same budget
+    )
+```
+
+[`gateway.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/gateway.py)
 
 ### Ruby
 
-TODO: this page is not yet written for Ruby.
+```ruby
+# gateway_relay.rb: requests in, answers out
+class GatewayRelay < Flezha::Relay
+  factory_id "gateway"
+  run flow: { exactly: :effectively_once } # each request and answer on disk before it runs
+
+  DEADLINE_MS = 60_000
+
+  channels do |c|
+    user = ->(value) { value[:user] }
+    # every request arrives on "http"; kept as a handle to split it
+    http = c.input("http", decode: Request.method(:decode))
+    # route 1: GET .../events gets the session's stream
+    http.filter { |request| !request.sends? }
+        .into(Watch)
+        .keyed
+        .output # a stream, or 404
+    # route 2: POST .../messages is checked against the user's budget
+    verdicts = http.filter(&:sends?)
+                   .map(&:message)
+                   .key_by(&user) # one cell per user
+                   .into(Budget)
+    # a verdict: the message plus its user's tokens today; used twice
+    # use 1: answer the POST
+    verdicts.into(Admit)
+            .keyed
+            .output # 202, or 429 over the budget
+    # use 2: pass an admitted message on to the user's session
+    verdicts.filter { |verdict| Budget.admitted?(verdict) }
+            .map { |verdict| verdict[:message] }
+            .key_by(&user) # the user's session
+            # call the "agent" relay; its answer comes back here
+            .call(factory: "agent", channel: "message", deadline_ms: DEADLINE_MS)
+            .map { |response| Budget.used(response) } # the session's answer, as tokens used
+            .key_by(&user)
+            .into(Budget) # back into the same budget
+  end
+end
+```
+
+[`gateway_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/gateway_relay.rb)
 
 ### PHP
 
-TODO: this page is not yet written for PHP.
+```php
+// src/GatewayRelay.php: requests in, answers out
+#[Relay(
+    factoryId: 'gateway',
+    run: ['flow' => ['exactly' => 'effectively_once']], // each request and answer on disk before it runs
+)]
+final class GatewayRelay extends \Flezha\Relay
+{
+    private const DEADLINE_MS = 60_000;
+
+    public static function channels(ChannelBuilder $c): void
+    {
+        $user = fn (array $value) => $value['user'];
+        // every request arrives on "http"; kept as a handle to split it
+        $http = $c->input('http', Request::decode(...));
+        // route 1: GET .../events gets the session's stream
+        $http->filter(fn (Request $request) => !$request->sends())
+            ->into(Watch::class)
+            ->keyed()
+            ->output();                              // a stream, or 404
+        // route 2: POST .../messages is checked against the user's budget
+        $verdicts = $http->filter(fn (Request $request) => $request->sends())
+            ->map(fn (Request $request) => $request->message())
+            ->keyBy($user)                           // one cell per user
+            ->into(Budget::class);
+        // a verdict: the message plus its user's tokens today; used twice
+        // use 1: answer the POST
+        $verdicts->into(Admit::class)
+            ->keyed()
+            ->output();                              // 202, or 429 over the budget
+        // use 2: pass an admitted message on to the user's session
+        $verdicts->filter(Budget::admitted(...))
+            ->map(fn (array $verdict) => $verdict['message'])
+            ->keyBy($user)                           // the user's session
+            // call the "agent" relay; its answer comes back here
+            ->call(factory: 'agent', channel: 'message', deadlineMs: self::DEADLINE_MS)
+            ->map(Budget::used(...))                 // the session's answer, as tokens used
+            ->keyBy($user)
+            ->into(Budget::class);                   // back into the same budget
+    }
+}
+```
+
+[`src/GatewayRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/GatewayRelay.php)
 
 ### Elixir
 

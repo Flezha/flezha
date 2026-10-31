@@ -49,23 +49,138 @@ public final class AgentRelay implements Relay {
 
 ### Rust
 
-TODO: this page is not yet written for Rust.
+```rust
+// src/agent.rs: the session: one pass per message
+pub struct AgentRelay;
+
+impl Relay for AgentRelay {
+    fn factory_id() -> &'static str {
+        "agent"
+    }
+
+    fn channels(c: &ChannelBuilder) {
+        c.input::<String>("turn") // entry 1: `flz relay call`
+            .into::<Reply>()
+            .output_named("answer"); // to whoever called, and whoever listens
+        c.input::<Message>("message") // entry 2: the gateway, into the same Reply
+            .map(|message| message.text)
+            .into::<Reply>();
+    }
+
+    fn settings() -> RelaySettings {
+        RelaySettings {
+            run: Run::Steps {
+                each: Each::PerInput,                // one turn per message
+                on_failure: OnFailure::KeepProgress, // a failed turn fails alone
+            },
+            durable: Durable::Local {
+                sleep_after: SleepAfter::After(Duration::from_secs(10)), // an idle session sleeps after 10 s
+                keep_finished: KeepFinished::Nothing,
+            },
+            ..RelaySettings::default()
+        }
+    }
+}
+```
+
+[`src/agent.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/agent.rs)
 
 ### Node
 
-TODO: this page is not yet written for Node.
+```javascript
+// agent_relay.mjs: the session: one pass per message
+export default defineRelay({
+  factoryId: 'agent',
+  // one turn per message; a failed turn fails alone
+  steps: { each: 'per_input', onFailure: 'keep_progress' },
+  durable: { local: { sleepAfter: 10_000 } }, // an idle session sleeps after 10 s
+  channels: (c) => {
+    c.input('turn', { codec: 'text' }) // entry 1: `flz relay call`
+      .into(Reply)
+      .output('answer'); // to whoever called, and whoever listens
+    c.input('message') // entry 2: the gateway, into the same Reply
+      .map((message) => message.text)
+      .into(Reply);
+  },
+});
+```
+
+[`agent_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/agent_relay.mjs)
 
 ### Python
 
-TODO: this page is not yet written for Python.
+```python
+# agent.py: the session: one pass per message
+@flezha.relay(
+    "agent",
+    # one turn per message; a failed turn fails alone
+    run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
+    durable={"local": {"sleep_after": 10_000}},  # an idle session sleeps after 10 s
+)
+def agent(c: flezha.ChannelBuilder) -> None:
+    (
+        c.input("turn", codec="text")  # entry 1: `flz relay call`
+        .into(Reply)
+        .output("answer")  # to whoever called, and whoever listens
+    )
+    (
+        c.input("message")  # entry 2: the gateway, into the same Reply
+        .map(lambda message: message["text"])
+        .into(Reply)
+    )
+```
+
+[`agent.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/agent.py)
 
 ### Ruby
 
-TODO: this page is not yet written for Ruby.
+```ruby
+# agent_relay.rb: the session: one pass per message
+class AgentRelay < Flezha::Relay
+  factory_id "agent"
+  run steps: { each: :per_input, on_failure: :keep_progress } # one turn per message; a failed turn fails alone
+  durable local: { sleep_after: 10_000 } # an idle session sleeps after 10 s
+
+  channels do |c|
+    c.input("turn", codec: :text)                            # entry 1: `flz relay call`
+     .into(Reply)
+     .output("answer")                                       # to whoever called, and whoever listens
+    c.input("message")                                       # entry 2: the gateway, into the same Reply
+     .map { |message| message[:text] }
+     .into(Reply)
+  end
+end
+```
+
+[`agent_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/agent_relay.rb)
 
 ### PHP
 
-TODO: this page is not yet written for PHP.
+```php
+// src/AgentRelay.php: the session: one pass per message
+#[Relay(
+    factoryId: 'agent',
+    run: ['steps' => [
+        'each' => 'per_input',                       // one turn per message
+        'on_failure' => 'keep_progress',             // a failed turn fails alone
+    ]],
+    durable: ['local' => ['sleep_after' => 10_000]], // an idle session sleeps after 10 s
+)]
+final class AgentRelay extends \Flezha\Relay
+{
+    public static function channels(ChannelBuilder $c): void
+    {
+        $c->input('turn', codec: ChannelCodec::Text) // entry 1: `flz relay call`
+            ->into(Reply::class)
+            ->output('answer');                      // to whoever called, and whoever listens
+        $c->input('message')                         // entry 2: the gateway, into the same Reply
+            ->map(fn (array $message) => $message['text'])
+            ->into(Reply::class);
+    }
+}
+```
+
+[`src/AgentRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/AgentRelay.php)
 
 ### Elixir
 
@@ -147,23 +262,33 @@ $ mvn -q package
 
 ### Rust
 
-TODO: this page is not yet written for Rust.
+```sh
+$ cargo build --release --target-dir target
+```
 
 ### Node
 
-TODO: this page is not yet written for Node.
+```sh
+$ npm install
+```
 
 ### Python
 
-TODO: this page is not yet written for Python.
+```sh
+$ python3 -m pip install --target vendor -r requirements.txt
+```
 
 ### Ruby
 
-TODO: this page is not yet written for Ruby.
+```sh
+$ bundle cache
+```
 
 ### PHP
 
-TODO: this page is not yet written for PHP.
+```sh
+$ composer install
+```
 
 ### Elixir
 
@@ -235,7 +360,7 @@ Started bob
 > {: .step}
 
 ```sh
-$ flz relay info anna --namespace agents
+$ flz relay info --namespace agents
 ```
 
 ```output

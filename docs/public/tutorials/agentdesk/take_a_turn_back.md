@@ -58,23 +58,213 @@ public final class Reply implements Tasklet<String, Reply.Conversation, Reply.An
 
 ### Rust
 
-TODO: this page is not yet written for Rust.
+```rust
+// src/reply.rs: answers, and forgets a message on an undo
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Answer {
+    pub text: String,
+    pub tokens: u32,
+}
+
+/// What the session remembers.
+#[derive(Default, Serialize, Deserialize)]
+pub struct Conversation {
+    messages: Vec<String>,
+}
+
+/// How the conversation changes: a message said, or the last one taken back.
+#[derive(Serialize, Deserialize)]
+pub enum Edit {
+    Said(String),
+    Unsaid,
+}
+
+impl Change<Conversation> for Edit {
+    fn apply_to(&self, conversation: &mut Conversation) {
+        match self {
+            Edit::Said(message) => conversation.messages.push(message.clone()),
+            Edit::Unsaid => {
+                conversation.messages.pop();
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Reply;
+
+#[tasklet(name = "reply")]
+impl Tasklet for Reply {
+    type Input = String;
+    type Output = Answer;
+    type State = Conversation;
+    type Change = Edit;
+
+    fn run(&mut self, message: String, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        // Each piece streams out as it is made; then the whole answer.
+        ctx.emit(demo_model::answer(
+            &ctx.state().messages,
+            &message,
+            |part| ctx.part(part),
+        )?)?;
+        ctx.change(Edit::Said(message));
+        Ok(())
+    }
+
+    // The undo, when a turn is taken back: the conversation forgets its message.
+    fn compensate(
+        &mut self,
+        _: Vec<Arc<Answer>>,
+        ctx: &mut Ctx<'_, Self>,
+    ) -> Result<(), TaskletError> {
+        println!(
+            "[undo] forgot \"{}\"",
+            ctx.state().messages.last().map_or("", String::as_str)
+        );
+        ctx.change(Edit::Unsaid);
+        Ok(())
+    }
+}
+```
+
+[`src/reply.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/reply.rs)
 
 ### Node
 
-TODO: this page is not yet written for Node.
+```javascript
+// reply.mjs: answers, and forgets a message on an undo
+export const Reply = defineTasklet({
+  name: 'reply',
+
+  initState: () => ({ messages: [] }), // what the session remembers
+
+  applyChange: (conversation, change) => {
+    if (change.kind === 'said') conversation.messages.push(change.message);
+    else conversation.messages.pop(); // 'unsaid'
+  },
+
+  run: async (message, ctx) => {
+    // Each piece streams out as it is made; then the whole answer.
+    ctx.emit(await answer(ctx.state.messages, message, (part) => ctx.part(part)));
+    ctx.change({ kind: 'said', message });
+  },
+
+  // The undo, when a turn is taken back: the conversation forgets its message.
+  compensate: (_answers, ctx) => {
+    console.log(`[undo] forgot "${ctx.state.messages.at(-1)}"`);
+    ctx.change({ kind: 'unsaid' });
+  },
+});
+```
+
+[`reply.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/reply.mjs)
 
 ### Python
 
-TODO: this page is not yet written for Python.
+```python
+# reply.py: answers, and forgets a message on an undo
+@flezha.state
+@dataclass
+class Conversation:  # what the session remembers
+    messages: list[str] = field(default_factory=list)
+
+
+class Edit(TypedDict):  # a message said, or the last one taken back
+    kind: Literal["said", "unsaid"]
+    message: NotRequired[str]
+
+
+@flezha.tasklet(name="reply")
+class Reply:
+    def run(self, message: str, ctx: flezha.Ctx[Conversation, Answer]) -> None:
+        # Each piece streams out as it is made; then the whole answer.
+        ctx.emit(demo_model.answer(ctx.state.messages, message, ctx.part))
+        ctx.change(Edit(kind="said", message=message))
+
+    def apply_change(self, conversation: Conversation, edit: Edit) -> None:
+        match edit:
+            case {"kind": "said", "message": message}:
+                conversation.messages.append(message)
+            case _:
+                conversation.messages.pop()
+
+    # The undo, when a turn is taken back: the conversation forgets its message.
+    def compensate(self, outputs: list[Answer], ctx: flezha.Ctx[Conversation, Answer]) -> None:
+        print(f'[undo] forgot "{ctx.state.messages[-1]}"', flush=True)
+        ctx.change(Edit(kind="unsaid"))
+```
+
+[`reply.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/reply.py)
 
 ### Ruby
 
-TODO: this page is not yet written for Ruby.
+```ruby
+# reply.rb: answers, and forgets a message on an undo
+class Reply < Flezha::Tasklet
+  tasklet_name "reply"
+
+  def init_state(_session) = { messages: [] } # what the session remembers
+
+  def apply_change(conversation, change)
+    case change
+    in { kind: "said", message: } then conversation[:messages] << message
+    in { kind: "unsaid" } then conversation[:messages].pop
+    end
+  end
+
+  def run(message, ctx)
+    # Each piece streams out as it is made; then the whole answer.
+    ctx.emit(DemoModel.answer(ctx.state[:messages], message) { |part| ctx.part(part) })
+    ctx.change({ kind: "said", message: message })
+  end
+
+  # The undo, when a turn is taken back: the conversation forgets its message.
+  def compensate(_answers, ctx)
+    puts "[undo] forgot \"#{ctx.state[:messages].last}\""
+    ctx.change({ kind: "unsaid" })
+  end
+end
+```
+
+[`reply.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/reply.rb)
 
 ### PHP
 
-TODO: this page is not yet written for PHP.
+```php
+// src/Reply.php: answers, and forgets a message on an undo
+#[Tasklet\Spec(name: 'reply')]
+final class Reply extends Tasklet
+{
+    public function initState(?string $cellKey): mixed
+    {
+        return ['messages' => []];                   // what the session remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        match ($change['kind']) {
+            'said' => $state['messages'][] = $change['message'],
+            'unsaid' => array_pop($state['messages']),
+        };
+    }
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        // Each piece streams out as it is made; then the whole answer.
+        $ctx->emit(DemoModel::answer($ctx->state['messages'], $input, $ctx->part(...)));
+        $ctx->change(['kind' => 'said', 'message' => $input]);
+    }
+
+    // The undo, when a turn is taken back: the conversation forgets its message.
+    public function compensate(array $outputs, Ctx $ctx): void
+    {
+        echo '[undo] forgot "' . end($ctx->state['messages']) . "\"\n";
+        $ctx->change(['kind' => 'unsaid']);
+    }
+}
+```
+
+[`src/Reply.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/Reply.php)
 
 ### Elixir
 

@@ -73,23 +73,304 @@ public final class Budget implements Tasklet<Budget.Event, Budget.Spent, Budget.
 
 ### Rust
 
-TODO: this page is not yet written for Rust.
+```rust
+// src/budget.rs: each user's tokens today, and the verdict
+pub const DAILY_TOKENS: u32 = 40;
+const DAY_MS: u64 = 86_400_000;
+
+/// What reaches a user's cell: a message to admit, or the tokens an answer used.
+#[derive(Clone)]
+pub enum Event {
+    Sent(Message),
+    Used { user: String, tokens: u32 },
+}
+
+impl Event {
+    pub fn user(&self) -> &str {
+        match self {
+            Event::Sent(message) => &message.user,
+            Event::Used { user, .. } => user,
+        }
+    }
+
+    // A failed turn used no tokens.
+    pub fn used(response: Response<Message, Answer>) -> Self {
+        Event::Used {
+            user: response.request.user,
+            tokens: response.result.map_or(0, |answer| answer.tokens),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Verdict {
+    pub message: Message,
+    pub spent: u32,
+}
+
+impl Verdict {
+    pub fn admitted(&self) -> bool {
+        self.spent < DAILY_TOKENS
+    }
+}
+
+/// What each user's cell remembers: the day, counted in days since 1970 in UTC, and its tokens.
+#[derive(Default, Serialize, Deserialize)]
+pub struct Spent {
+    day: u64,
+    tokens: u32,
+}
+
+impl Spent {
+    fn on(&self, today: u64) -> u32 {
+        if today == self.day {
+            self.tokens
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Counted {
+    day: u64,
+    tokens: u32,
+}
+
+impl Change<Spent> for Counted {
+    fn apply_to(&self, spent: &mut Spent) {
+        spent.tokens = spent.on(self.day) + self.tokens;
+        spent.day = self.day;
+    }
+}
+
+#[derive(Default)]
+pub struct Budget;
+
+#[tasklet(name = "budget")]
+impl Tasklet for Budget {
+    type Input = Event;
+    type Output = Verdict;
+    type State = Spent;
+    type Change = Counted;
+
+    fn run(&mut self, event: Event, ctx: &mut Ctx<'_, Self>) -> Result<(), TaskletError> {
+        let today = ctx.now() / DAY_MS;
+        match event {
+            // A message to admit: hand on its verdict.
+            Event::Sent(message) => ctx.emit(Verdict {
+                message,
+                spent: ctx.state().on(today),
+            }),
+            // The tokens an answer used: count them.
+            Event::Used { tokens, .. } => {
+                ctx.change(Counted { day: today, tokens });
+                Ok(())
+            }
+        }
+    }
+}
+```
+
+[`src/budget.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/budget.rs)
 
 ### Node
 
-TODO: this page is not yet written for Node.
+```javascript
+// budget.mjs: each user's tokens today, and the verdict
+export const DAILY_TOKENS = 40;
+
+export const admitted = (verdict) => verdict.spent < DAILY_TOKENS;
+
+// The tokens an answer used; a failed turn used none.
+export const used = (response) => ({
+  user: response.request.user,
+  tokens: response.ok ? response.value.tokens : 0,
+});
+
+const on = (spent, today) => (spent.day === today ? spent.tokens : 0);
+
+export const Budget = defineTasklet({
+  name: 'budget',
+
+  initState: () => ({ day: '', tokens: 0 }), // what each user's cell remembers
+
+  applyChange: (spent, counted) => {
+    spent.tokens = on(spent, counted.day) + counted.tokens;
+    spent.day = counted.day;
+  },
+
+  run: (event, ctx) => {
+    const today = new Date(Number(ctx.now())).toISOString().slice(0, 10);
+    if ('tokens' in event) {
+      // The tokens an answer used: count them.
+      ctx.change({ day: today, tokens: event.tokens });
+    } else {
+      // A message to admit: hand on its verdict.
+      ctx.emit({ message: event, spent: on(ctx.state, today) });
+    }
+  },
+});
+```
+
+[`budget.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/budget.mjs)
 
 ### Python
 
-TODO: this page is not yet written for Python.
+```python
+# budget.py: each user's tokens today, and the verdict
+DAILY_TOKENS = 40
+
+
+class Used(TypedDict):  # the tokens an answer used
+    user: str
+    tokens: int
+
+
+Event = Message | Used  # what reaches a user's cell
+
+
+class Verdict(TypedDict):
+    message: Message
+    spent: int
+
+
+@flezha.state
+@dataclass
+class Spent:  # what each user's cell remembers
+    day: str = ""
+    tokens: int = 0
+
+    def on(self, today: str) -> int:
+        return self.tokens if today == self.day else 0
+
+
+class Counted(TypedDict):  # how an answer's tokens are written down
+    day: str
+    tokens: int
+
+
+def admitted(verdict: Verdict) -> bool:
+    return verdict["spent"] < DAILY_TOKENS
+
+
+def sent(request: Request) -> Event:  # a message to admit
+    return request.message()
+
+
+def used(response: flezha.Response[Message, Answer]) -> Event:  # a failed turn used none
+    tokens = 0 if response.value is None else response.value["tokens"]
+    return Used(user=response.request["user"], tokens=tokens)
+
+
+@flezha.tasklet(name="budget")
+class Budget:
+    def run(self, event: Event, ctx: flezha.Ctx[Spent, Verdict]) -> None:
+        today = time.strftime("%Y-%m-%d", time.gmtime(ctx.now() // 1000))
+        if "tokens" in event:  # the tokens an answer used: count them
+            ctx.change(Counted(day=today, tokens=event["tokens"]))
+        else:  # a message to admit: hand on its verdict
+            ctx.emit(Verdict(message=event, spent=ctx.state.on(today)))
+
+    def apply_change(self, spent: Spent, counted: Counted) -> None:
+        spent.tokens = spent.on(counted["day"]) + counted["tokens"]
+        spent.day = counted["day"]
+```
+
+[`budget.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/budget.py)
 
 ### Ruby
 
-TODO: this page is not yet written for Ruby.
+```ruby
+# budget.rb: each user's tokens today, and the verdict
+class Budget < Flezha::Tasklet
+  tasklet_name "budget"
+
+  DAILY_TOKENS = 40
+
+  def self.admitted?(verdict) = verdict[:spent] < DAILY_TOKENS
+
+  def self.used(response)                                    # a failed turn used none
+    { user: response.request[:user], tokens: response.ok? ? response.value[:tokens] : 0 }
+  end
+
+  def init_state(_user) = { day: "", tokens: 0 }             # what each user's cell remembers
+
+  def apply_change(spent, counted)
+    spent[:tokens] = on(spent, counted[:day]) + counted[:tokens]
+    spent[:day] = counted[:day]
+  end
+
+  def run(event, ctx)
+    today = Time.at(ctx.now / 1000, in: "UTC").strftime("%F")
+    if event.key?(:tokens)                                   # the tokens an answer used: count them
+      ctx.change({ day: today, tokens: event[:tokens] })
+    else                                                     # a message to admit: hand on its verdict
+      ctx.emit({ message: event, spent: on(ctx.state, today) })
+    end
+  end
+
+  private
+
+  def on(spent, today) = spent[:day] == today ? spent[:tokens] : 0
+end
+```
+
+[`budget.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/budget.rb)
 
 ### PHP
 
-TODO: this page is not yet written for PHP.
+```php
+// src/Budget.php: each user's tokens today, and the verdict
+#[Tasklet\Spec(name: 'budget')]
+final class Budget extends Tasklet
+{
+    public const DAILY_TOKENS = 40;
+
+    /** @param array{message: array{user: string, text: string}, spent: int} $verdict */
+    public static function admitted(array $verdict): bool
+    {
+        return $verdict['spent'] < self::DAILY_TOKENS;
+    }
+
+    /** @return array{user: string, tokens: int} */
+    public static function used(Response $response): array    // a failed turn used none
+    {
+        return [
+            'user' => $response->request['user'],
+            'tokens' => $response->ok() ? $response->value['tokens'] : 0,
+        ];
+    }
+
+    public function initState(?string $cellKey): mixed
+    {
+        return ['day' => '', 'tokens' => 0];         // what each user's cell remembers
+    }
+
+    public function applyChange(mixed &$state, mixed $change): void
+    {
+        $state = ['day' => $change['day'], 'tokens' => self::on($state, $change['day']) + $change['tokens']];
+    }
+
+    public function run(mixed $input, Ctx $ctx): void
+    {
+        $today = gmdate('Y-m-d', intdiv($ctx->now(), 1000));
+        if (isset($input['tokens'])) {               // the tokens an answer used: count them
+            $ctx->change(['day' => $today, 'tokens' => $input['tokens']]);
+        } else {                                     // a message to admit: hand on its verdict
+            $ctx->emit(['message' => $input, 'spent' => self::on($ctx->state, $today)]);
+        }
+    }
+
+    /** @param array{day: string, tokens: int} $spent */
+    private static function on(array $spent, string $today): int
+    {
+        return $spent['day'] === $today ? $spent['tokens'] : 0;
+    }
+}
+```
+
+[`src/Budget.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/Budget.php)
 
 ### Elixir
 

@@ -22,23 +22,60 @@ the same output once the turn's step is done, and also answers the caller.
 
 ### Rust
 
-TODO: this page is not yet written for Rust.
+```rust
+// src/agent.rs: reply's output answers the caller and the listeners
+        c.input::<String>("turn") // entry 1: `flz relay call`
+            .into::<Reply>()
+            .output_named("answer"); // to whoever called, and whoever listens
+```
+
+[`src/agent.rs`](https://github.com/flezha/flezha_rust_sdk/blob/main/examples/agentdesk/src/agent.rs)
 
 ### Node
 
-TODO: this page is not yet written for Node.
+```javascript
+// agent_relay.mjs: reply's output answers the caller and the listeners
+    c.input('turn', { codec: 'text' }) // entry 1: `flz relay call`
+      .into(Reply)
+      .output('answer'); // to whoever called, and whoever listens
+```
+
+[`agent_relay.mjs`](https://github.com/flezha/flezha_node_sdk/blob/main/examples/agentdesk/agent_relay.mjs)
 
 ### Python
 
-TODO: this page is not yet written for Python.
+```python
+# agent.py: reply's output answers the caller and the listeners
+    (
+        c.input("turn", codec="text")  # entry 1: `flz relay call`
+        .into(Reply)
+        .output("answer")  # to whoever called, and whoever listens
+    )
+```
+
+[`agent.py`](https://github.com/flezha/flezha_python_sdk/blob/main/examples/agentdesk/agent.py)
 
 ### Ruby
 
-TODO: this page is not yet written for Ruby.
+```ruby
+# agent_relay.rb: reply's output answers the caller and the listeners
+    c.input("turn", codec: :text)                            # entry 1: `flz relay call`
+     .into(Reply)
+     .output("answer")                                       # to whoever called, and whoever listens
+```
+
+[`agent_relay.rb`](https://github.com/flezha/flezha_ruby_sdk/blob/main/examples/agentdesk/agent_relay.rb)
 
 ### PHP
 
-TODO: this page is not yet written for PHP.
+```php
+// src/AgentRelay.php: reply's output answers the caller and the listeners
+        $c->input('turn', codec: ChannelCodec::Text) // entry 1: `flz relay call`
+            ->into(Reply::class)
+            ->output('answer');                      // to whoever called, and whoever listens
+```
+
+[`src/AgentRelay.php`](https://github.com/flezha/flezha_php_sdk/blob/main/examples/agentdesk/src/AgentRelay.php)
 
 ### Elixir
 
