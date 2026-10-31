@@ -5,19 +5,23 @@ What the project publishes about the readiness of its own parts: the maturity re
 labels, what each label promises, where a label must appear, the once-per-process announcement an
 experimental feature makes when it is switched on, and the gate that keeps the record and the tree
 agreeing.
-
 ## Requirements
 ### Requirement: The project SHALL publish one record naming every part that is not settled, and nothing else
 
 The repository SHALL carry one published maturity record, `docs/public/publishing/maturity.md`,
-holding two tables: the experimental entries, and the support tier of each SDK. A feature
-the record does not name is stable. The record is the only declaration of either fact:
-every other surface that states one of them SHALL agree with the record, and no second
-list SHALL exist in code or prose.
+holding two tables: the labelled entries, experimental or preview, and the support tier of
+each SDK. A part the record does not name is stable. The record is the only declaration of
+these facts: every other surface that states one of them SHALL agree with the record, and
+no second list SHALL exist in code or prose.
 
-An experimental entry SHALL carry an id, the feature it names, its status, the date it was
-marked, what the status promises, the surfaces that carry its marker, and the site that
-announces it at runtime. A tier row SHALL carry the SDK, its tier, and the tier's promise.
+An entry SHALL carry an id, the part it names, its status (`experimental` or `preview`),
+the date it was marked, what the status promises, the surfaces that carry its marker, and
+the site that announces it at runtime, or `none` for a preview entry. A tier row SHALL
+carry the SDK, its tier, and the tier's promise.
+
+Until Flezha reaches 1.0, the record SHALL say that the compatibility promise for a stable
+part is that a change to its interface is named in the changelog, not that no change
+happens, in agreement with the README.
 
 The record is published with the repository, so it SHALL cite only what the published tree
 carries, and SHALL NOT cite the defect ledger or any other working document kept out of
@@ -32,6 +36,13 @@ Python, Ruby and PHP SDKs in tier 2.
 - **GIVEN** a feature that appears in no row of the record
 - **WHEN** a reader asks whether it is covered by the compatibility promise
 - **THEN** the answer SHALL be yes, and no other surface SHALL say otherwise
+
+#### Scenario: The record and the README agree before 1.0
+
+- **GIVEN** a release before 1.0
+- **WHEN** the record's compatibility promise and the README's maturity notice are read
+- **THEN** both SHALL say an interface may still change between releases, and the record
+  SHALL say each change is named in the changelog
 
 #### Scenario: The record at introduction
 
@@ -148,8 +159,9 @@ A support tier SHALL NOT be announced at runtime.
 
 ### Requirement: Every tracked surface that documents an experimental feature SHALL carry its marker, and none SHALL call an unlisted feature experimental
 
-The marker SHALL be one fixed form, naming the entry's id and linking to its row in the
-record, so a reader can follow it and a gate can match it to an entry.
+The marker SHALL be one fixed form, naming the entry's status and id and linking to its
+row in the record, `[experimental: <id>]` or `[preview: <id>]`, so a reader can follow it
+and a gate can match it to an entry. A marker's label SHALL equal its entry's status.
 
 Each surface the record lists for an entry SHALL carry that entry's marker. For the QUIC
 transport those surfaces SHALL include at least the configuration reference rows for the
@@ -157,7 +169,9 @@ settings that select or configure it, the README's statement of the available tr
 and the changelog.
 
 Outside the record and this requirement, no tracked prose surface SHALL describe a feature
-as experimental unless the description is a marker for an entry the record lists.
+as experimental unless the description is a marker for an entry the record lists. Prose
+SHALL NOT be refused for using the word preview, which the project also uses for a
+streamed part.
 
 The record SHALL say which surfaces the gate checks and which it does not, so a green gate
 is never read as covering documentation it cannot see.
@@ -175,6 +189,13 @@ is never read as covering documentation it cannot see.
 - **WHEN** the gate runs
 - **THEN** it SHALL fail naming the file and the line
 
+#### Scenario: A marker whose label differs from its entry fails
+
+- **GIVEN** a preview entry whose listed surface carries `[experimental: <id>]`, or an
+  experimental entry whose listed surface carries `[preview: <id>]`
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero naming the entry and the surface
+
 ### Requirement: The record SHALL state how an entry is added, graduated and removed
 
 The record SHALL carry the rule for changing it, so the question is answered once and in
@@ -187,11 +208,16 @@ changelog. Marking a feature experimental after it has been published as stable 
 treated as a compatibility break and SHALL require its own proposal. A binding SHALL move
 from tier 2 to tier 1 only by a change that records the live deployment that exercised it.
 
+A part marked preview SHALL add its entry and markers in the change that marks it. A
+preview part graduating to stable SHALL have its entry and markers removed in a change
+that says so in the changelog. Marking a part preview after it has been published as
+stable SHALL require its own proposal.
+
 #### Scenario: Graduation removes every trace of the label
 
-- **GIVEN** an experimental entry whose feature is being declared stable
+- **GIVEN** an experimental or preview entry whose part is being declared stable
 - **WHEN** the graduating change lands
-- **THEN** the entry, every marker it named and its runtime announcement SHALL be gone, and
+- **THEN** the entry, every marker it named and any runtime announcement SHALL be gone, and
   the changelog SHALL record the graduation
 
 #### Scenario: Demoting a published stable feature needs its own proposal
@@ -203,16 +229,18 @@ from tier 2 to tier 1 only by a change that records the live deployment that exe
 ### Requirement: The maturity record SHALL be gated, and the gate SHALL land green and be shown able to fail
 
 A gate SHALL check, on every pull request, that the record parses, that every entry and
-every tier row carries its required fields, that ids are unique, that every surface an
-entry lists exists and carries the entry's marker, that every announce site an entry
-names exists, that no tier row breaks the tier requirement, and that no tracked prose
-surface calls an unlisted feature experimental.
+every tier row carries its required fields, that ids are unique, that every entry's status
+is `experimental` or `preview`, that every surface an entry lists exists and carries the
+entry's marker with the matching label, that every announce site an experimental entry
+names exists, that a preview entry's announce site is `none`, that no tier row breaks the
+tier requirement, and that no tracked prose surface calls an unlisted feature
+experimental.
 
 The gate SHALL read only surfaces git tracks. It SHALL report how many experimental
-entries and tier rows it read, and each entry's id with the date it was marked, beside its
-verdict, so a green that means "the parser matched nothing" is distinguishable from a green
-that means the record is sound, and so an entry that has been experimental for a long time
-is visible on every run.
+entries, preview entries and tier rows it read, and each entry's id with the date it was
+marked, beside its verdict, so a green that means "the parser matched nothing" is
+distinguishable from a green that means the record is sound, and so an entry that has
+been labelled for a long time is visible on every run.
 
 The gate SHALL be green on the commit that introduces it, and SHALL be demonstrated to
 fail before it is trusted: on an entry missing a required field, on a listed surface that
@@ -223,6 +251,18 @@ calls an unlisted feature experimental. It SHALL pass once each is repaired.
 
 - **WHEN** the gate runs on the commit that introduces the record
 - **THEN** it SHALL exit zero and report one experimental entry and a tier row per SDK
+
+#### Scenario: The gate reports each label
+
+- **WHEN** the gate runs after the preview label is introduced
+- **THEN** it SHALL exit zero and report one experimental entry, no preview entries and
+  eight tier rows
+
+#### Scenario: A preview entry with an announce site fails
+
+- **GIVEN** a preview entry whose announce site is anything other than `none`
+- **WHEN** the gate runs
+- **THEN** it SHALL exit non-zero naming the entry
 
 #### Scenario: A listed surface without its marker fails
 
@@ -242,4 +282,28 @@ calls an unlisted feature experimental. It SHALL pass once each is repaired.
 - **GIVEN** a documentation page that git does not track
 - **WHEN** the gate runs
 - **THEN** it SHALL neither require a marker on that page nor refuse prose on it
+
+### Requirement: Preview SHALL mean the part stays and its surface may still change
+
+A preview entry SHALL promise exactly this: the part it names will stay and SHALL NOT be
+removed for being preview, and its surface may change between releases without a
+compatibility break. Each such change SHALL still be named in the changelog. An entry
+labelled preview MAY name a feature or an SDK.
+
+Preview SHALL NOT gate, refuse, disable or alter the part it names, and SHALL NOT be
+announced at runtime: a preview entry's announce site SHALL be `none`.
+
+At the change that introduces the label, no entry SHALL be preview.
+
+#### Scenario: A preview entry states its promise
+
+- **WHEN** a preview entry is read
+- **THEN** its promise SHALL say the part stays and its surface may change, and its
+  announce site SHALL be `none`
+
+#### Scenario: Nothing is preview at introduction
+
+- **WHEN** the record is read at the change that introduces the preview label
+- **THEN** it SHALL hold one entry, the QUIC transport with status `experimental`, and no
+  SDK's tier row or marker SHALL have changed
 

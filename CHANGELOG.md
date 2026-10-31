@@ -8,6 +8,11 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- The [feature maturity](docs/public/publishing/maturity.md) record gains a
+  preview label, for a part that stays while its surface may still change;
+  nothing carries it yet. The record now also says what the compatibility
+  promise means before 1.0: an interface may still change between releases,
+  and every such change is named here.
 - Each release carries the controller archive for Linux x86_64 and for macOS
   on Apple Silicon and Intel, each built on its own platform and started there,
   with a runner connected, before it is published. Check a download against the

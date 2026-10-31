@@ -16,9 +16,14 @@ compatibility break, announced as one. The relay model, effectively-once deliver
 correction window, the dead-letter queue, cell timers, state persistence and schema
 evolution are all unnamed here, and therefore stable.
 
-## Two labels
+Flezha is pre-1.0 alpha software. Until 1.0, the compatibility promise means that every
+change to a stable interface is named in the changelog, not that no change happens: as the
+README says, interfaces may still change between releases.
 
-The record uses two labels. They answer different questions and are kept apart on purpose.
+## Three labels
+
+The record uses three labels. They answer different questions and are kept apart on
+purpose.
 
 **Experimental** says whether a feature is settled. An experimental feature's surface may
 change drastically, and the feature may be removed. It is outside the compatibility promise,
@@ -27,6 +32,13 @@ never for an SDK. It gates nothing: an experimental feature runs exactly as it w
 record did not list it, and no acknowledgement setting is needed to use it. The process that
 switches it on logs one warning, naming the feature and pointing at its row here, when the
 feature starts; the warning is not repeated per connection, reconnection, stream or frame.
+
+**Preview** says a part will stay but its surface is not yet settled. A preview part is
+never removed for being preview, but its surface may change between releases, and such a
+change is not a compatibility break; the changelog still names it. The label may name a
+feature or an SDK. Like experimental it gates nothing, and unlike experimental nothing
+announces it at runtime: a part that stays does not warn on every start. Nothing is preview
+today.
 
 **Support tier** says who has run an SDK, and nothing about what it can do.
 
@@ -42,14 +54,15 @@ SDK meets it. Today no SDK defers any capability. Nothing announces a tier at ru
 
 ## How this record is read
 
-Each entry below carries the surfaces that must show its label. A page marks an
-experimental feature in one fixed form, naming the entry's id and linking to its row:
+Each entry below carries the surfaces that must show its label. A page marks a labelled
+part in one fixed form, naming the entry's label and id and linking to its row:
 
 ```markdown
 [experimental: quic](#quic)
 ```
 
-and states an SDK's tier the same way, linking to that SDK's row:
+with `preview` in place of `experimental` for a preview entry, and states an SDK's tier the
+same way, linking to that SDK's row:
 
 ```markdown
 [tier 1](#sdk-rust)
@@ -60,18 +73,23 @@ own repository.
 
 `scripts/check-feature-maturity.sh` reads this file on every pull request. It checks that
 both tables parse, that every row carries its fields, that ids are unique, that every
-surface a row lists exists and carries the row's marker, that every announce site a row
-names exists and points here, that no tier row uses the experimental label, and that no
-tracked page calls a feature experimental outside a marker for an entry listed here. It
-prints how many rows it read and each entry's id with the date it was marked, so an entry
-that has sat here for a long time is visible on every run.
+entry's status is `experimental` or `preview`, that every surface a row lists exists and
+carries the row's marker with the row's label, that every announce site an experimental
+entry names exists and points here, that a preview entry's announce site is `none`, that
+no tier row uses the experimental label, and that no tracked page calls a feature
+experimental outside a marker for an entry listed here. It does not judge the word
+preview in prose, which Flezha also uses for a streamed part. It prints how many rows of
+each label it read and each entry's id with the date it was marked, so an entry that has
+sat here for a long time is visible on every run.
 
 The gate reads only files git tracks: this repository's `README.md`, `CHANGELOG.md` and
 `docs/`, and the `README.md` of each SDK's repository under `sdk/`. It judges no page
 outside them. The Ruby and PHP SDKs carry no package README yet, so their tier is stated on
 their pages under `docs/internal/sdk/` and nowhere else.
 
-## Experimental features
+## Experimental and preview entries
+
+A preview entry's `announced-by` reads `none`.
 
 | id | feature | status | marked | promise | surfaces | announced-by |
 |---|---|---|---|---|---|---|
@@ -93,13 +111,15 @@ their pages under `docs/internal/sdk/` and nowhere else.
 ## Changing this record
 
 - **Adding an entry.** A feature introduced as experimental adds its row, its markers and
-  its runtime warning in the change that introduces it.
-- **Graduating an entry.** A feature declared stable has its row, every marker the row
-  names and its runtime warning removed in the change that hardens it, and the changelog
-  says it graduated.
+  its runtime warning in the change that introduces it. A part marked preview adds its row
+  and its markers in the change that marks it.
+- **Graduating an entry.** A part declared stable has its row, every marker the row names
+  and any runtime warning removed in the change that hardens it, and the changelog says it
+  graduated.
 - **Removing a feature.** Removing an experimental feature is not a compatibility break;
   the change that removes it removes its row and its markers too.
-- **Demoting a stable feature.** Marking a feature experimental after it was published as
-  stable is a compatibility break, and needs a proposal of its own.
+- **Demoting a stable part.** Marking a feature experimental after it was published as
+  stable is a compatibility break, and needs a proposal of its own. Marking a published
+  stable part preview needs a proposal of its own too.
 - **Moving an SDK to tier 1.** An SDK moves from tier 2 to tier 1 only in a change that
   records the live deployment that exercised it.
