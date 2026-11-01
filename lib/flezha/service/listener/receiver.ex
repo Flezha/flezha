@@ -1,6 +1,6 @@
 defmodule Flezha.Service.Listener.Receiver do
   @moduledoc """
-  A listener's receiver, on the listener's own node and linked to it: the
+  A listener's receiver, on the listener's own node and watching it: the
   `recv_pid` of its `MonitoredIOForward` plugin. It answers the plugin's
   heartbeat itself, holds the frames the listener has not taken, and hands them
   over one per request (`next/1`), so a listener whose handler blocks bounds
@@ -16,6 +16,9 @@ defmodule Flezha.Service.Listener.Receiver do
   For a tally it keeps each member's latest report and hands on their sum at
   most once per `tally_ms`, so the members of a group, each reporting on its
   own clock, make one event per interval rather than one each.
+
+  When its caller dies without ending the listener, it detaches the plugin
+  itself and goes with it.
 
   When its plugin is released (a move, a restart, a teardown or a disable all
   look alike from here) it asks the registry which it was, once per
@@ -35,9 +38,10 @@ defmodule Flezha.Service.Listener.Receiver do
   alias Flezha.Process.Backlog
   alias Flezha.Process.Watch
   alias Flezha.Service.Listener
+  alias Flezha.Service.PluginManager
 
-  @spec start_link(map()) :: GenServer.on_start()
-  def start_link(args), do: GenServer.start_link(__MODULE__, args)
+  @spec start(map()) :: GenServer.on_start()
+  def start(args), do: GenServer.start(__MODULE__, args)
 
   @doc "Ask for the next event; it arrives as `{:listener_event | :listener_end, receiver, _}`."
   @spec next(pid()) :: :ok
@@ -46,10 +50,8 @@ defmodule Flezha.Service.Listener.Receiver do
     :ok
   end
 
-  @doc "Stop the receiver without taking its caller along."
   @spec stop(pid()) :: :ok
   def stop(receiver) do
-    Process.unlink(receiver)
     GenServer.stop(receiver, :normal)
   catch
     :exit, _gone -> :ok
@@ -57,8 +59,10 @@ defmodule Flezha.Service.Listener.Receiver do
 
   @impl true
   def init(args) do
-    watch =
-      if is_pid(args.watch), do: Watch.watch(Watch.new(), args.watch, :watch), else: Watch.new()
+    # Monitored rather than linked: a caller killed outright never runs the
+    # listener's own detach, so the receiver does it.
+    watch = Watch.watch(Watch.new(), args.caller, :caller)
+    watch = if is_pid(args.watch), do: Watch.watch(watch, args.watch, :watch), else: watch
 
     {:ok,
      Map.merge(args, %{
@@ -109,8 +113,16 @@ defmodule Flezha.Service.Listener.Receiver do
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Watch.down(state.watched, ref) do
-      {:unknown, _} -> {:noreply, state}
-      {_tags, watched} -> {:noreply, finish_now(%{state | watched: watched}, {:ok, :caller_down})}
+      {:unknown, _} ->
+        {:noreply, state}
+
+      {tags, watched} ->
+        if :caller in tags do
+          PluginManager.detach(state.namespace, state.relay_id, state.plugin_id)
+          {:stop, :normal, state}
+        else
+          {:noreply, finish_now(%{state | watched: watched}, {:ok, :caller_down})}
+        end
     end
   end
 

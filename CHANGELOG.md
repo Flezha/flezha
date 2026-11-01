@@ -229,6 +229,8 @@ v0.1.0-alpha.1 pre-release.
   already did; a delete called elsewhere used to succeed while deleting nothing.
 - An HTTP API stream that its HTTP/2 client resets ends its operation at once, detaching what it
   listened to, instead of at the next heartbeat up to 15 seconds later.
+- A listener whose process is killed outright, as a stream's request ends, detaches at once
+  instead of staying attached until its plugin's heartbeat goes unanswered.
 - `flz controller stop` prints its `drain:` lines again, and a namespace whose drain was
   refused (no peers, a partitioned or already draining hub, an error) says so with
   `refused=<reason>`; the `:drain_progress` event carries the same `refused` metadata.

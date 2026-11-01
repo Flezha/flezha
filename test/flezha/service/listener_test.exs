@@ -259,14 +259,15 @@ defmodule Flezha.Service.ListenerTest do
     refute_received {:detached, _, _, _}
   end
 
-  test "the receiver answers the heartbeat, and dies with its caller" do
+  test "the receiver answers the heartbeat, and dies with its caller, detaching" do
     %{pid: pid, receiver: receiver} = listening([])
     send(receiver, {:heartbeat_keepalive, self()})
     assert_receive {:heartbeat_keepalive, :ok}, 2_000
 
     ref = Process.monitor(receiver)
     Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^receiver, :killed}, 2_000
+    assert_receive {:DOWN, ^ref, :process, ^receiver, :normal}, 2_000
+    assert_received {:detached, "ns", "op", _id}
   end
 
   test "the watched process going away ends the listener" do
