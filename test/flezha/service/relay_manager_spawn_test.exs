@@ -23,6 +23,7 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
   alias Flezha.Service.RelayManager.Placement
   alias Flezha.Service.Validator
   alias Flezha.State.Paths
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.FakeStartRegistry
   alias FlezhaTest.Helper.FakeStartRegistry.Instance
 
@@ -53,6 +54,20 @@ defmodule FlezhaTest.Service.RelayManagerSpawnTest do
     assert relay.run == :steps
     assert relay.factory_id == @factory
     assert Keyword.get(relay.opts, :seed_input) == {"p1", %{}}
+  end
+
+  # The Overwatch answers the start's read only once its first bind ends, so
+  # the start waits for that bind, never for an ordinary Overwatch call's bound:
+  # with that bound at 0 the held answer still makes the start succeed.
+  test "a start waits for its first bind, not for an Overwatch call's bound" do
+    on_exit(TestHelpers.override_env(:overwatch_call_timeout_ms, 0))
+    FakeStartRegistry.hold_runner_set("w1")
+
+    start = Task.async(fn -> spawn_or_deliver(@factory, "p1", :deliver) end)
+    assert_receive {:runner_set_asked, from}, 5_000
+    GenServer.reply(from, {:ok, "runner-1"})
+
+    assert {:spawned, "w1"} = Task.await(start)
   end
 
   test "a taken id receives the payload as one more input", %{registry: registry} do

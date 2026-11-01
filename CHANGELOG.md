@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay start on a busy machine no longer fails when its first bind takes longer than 5 s:
+  the start waits as long as the bind's own bounds allow (runner wait, ping, `AddRelay`,
+  stream bind, restore) instead of `:overwatch_call_timeout_ms`.
 - `Relay.api` and `Relay.call_channel` answer for a relay hosted on another controller of the
   cluster, where they answered `relay.not_found`, and `flz relay replay`, `flz state rotate`
   and `flz state delete` act on the controller that holds the Cell's state, as reading it

@@ -57,6 +57,7 @@ setting has one layer: there is no per-class map over a class's own value.
 - `:call_worker_idle_ms`: How long a relay call's delivery worker (one per caller and target) waits with an empty queue before it stops.
 - `:listener_release_check_ms`: How long a listener waits after its plugin was released before it asks the registry whether the relay moved, ended or had the listener disabled, and between asks.
 - `:bind_restore_concurrency`: How many of a class's Cells a bind restores at once.
+- `:overwatch_call_timeout_ms`: How long a call into a relay's Overwatch waits for its answer. A start's wait is not this: it waits for the relay's first bind, as long as that bind's own bounds allow (`:overwatch_runner_wait_ms`, `:overwatch_ping_timeout_ms` for each of its two pings, `:relay_start_call_ms`, `:stream_bind_wait_ms` and `:restore_await_timeout_ms`).
 - `:placement_load_cap_percent`: The fairness cap on runner selection, as a percentage of the fair share.
 - `:stream_channel_max_heap_bytes`: The memory one runner data channel may hold before the runtime kills it; see `FLEZHA_STREAM_CHANNEL_MAX_HEAP_BYTES`.
 - `:placement_load_refresh_ms`: How long the per-runner relay count a placement reads may go without being rebuilt from the hub registry.

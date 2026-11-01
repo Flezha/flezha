@@ -52,9 +52,18 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
       {:ok, %{builder: builder, registry: registry, ingested: [], calls: []}}
     end
 
+    # A held read is answered by the suite that holds it (`hold_runner_set/1`).
     @impl true
-    def handle_call({:registry_runner_set, _announce?}, _from, state),
-      do: {:reply, {:ok, "runner-1"}, state}
+    def handle_call({:registry_runner_set, _announce?}, from, state) do
+      case :persistent_term.get({:fake_held_runner_set, state.builder.id}, nil) do
+        nil ->
+          {:reply, {:ok, "runner-1"}, state}
+
+        holder ->
+          send(holder, {:runner_set_asked, from})
+          {:noreply, state}
+      end
+    end
 
     def handle_call(:get_overwatch_state, _from, state),
       do:
@@ -174,6 +183,19 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
 
     ExUnit.Callbacks.on_exit(fn ->
       :persistent_term.erase({:fake_live_extensions, member_id})
+    end)
+  end
+
+  @doc """
+  Hold `member_id`'s answer to the start's `{:registry_runner_set, _}` read, as
+  a slow first bind does: the instance sends `{:runner_set_asked, from}` to the
+  caller, which answers with `GenServer.reply/2` when it chooses.
+  """
+  def hold_runner_set(member_id) do
+    :persistent_term.put({:fake_held_runner_set, member_id}, self())
+
+    ExUnit.Callbacks.on_exit(fn ->
+      :persistent_term.erase({:fake_held_runner_set, member_id})
     end)
   end
 

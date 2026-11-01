@@ -7,11 +7,11 @@ defmodule Flezha.Relay.Rebind do
 
   alias Flezha.Identificator
   alias Flezha.Payloader
-  alias Flezha.Plugin.Extension.Table
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.Plugins
   alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.Runner.ControlUnit
@@ -248,12 +248,12 @@ defmodule Flezha.Relay.Rebind do
   # The task bound a copy of this state while this process kept answering:
   # what only this process writes (callers, journal replies, timers, a stop
   # noted, held outputs) is taken from it, and the plugin table is merged
-  # (`Table.keep_changed/3`).
+  # (`Plugins.keep_changed/3`).
   defp adopt(%Overwatch{bind_task: %{extensions: base}} = live, %Overwatch{} = bound) do
     %Overwatch{
       bound
       | bind_task: nil,
-        extensions: Table.keep_changed(bound.extensions, base, live.extensions),
+        extensions: Plugins.keep_changed(bound.extensions, base, live.extensions),
         snapshot: live.snapshot,
         cause: live.cause,
         terminal: live.terminal,

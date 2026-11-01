@@ -13,7 +13,8 @@ defmodule Flezha.Relay.Plugins do
 
   Operations that are a bare `Flezha.Plugin.Extension.Table` call are made
   against `Table` directly by the callback that receives them — this module
-  holds only what carries logic of its own.
+  holds only what carries logic of its own, and `keep_changed/3` for the bind
+  task's merge.
   """
 
   alias Flezha.Convergence.Facts
@@ -320,6 +321,10 @@ defmodule Flezha.Relay.Plugins do
         end
     end
   end
+
+  @doc "The table a bind task built, merged with the one the host kept changing (`Table.keep_changed/3`)."
+  @spec keep_changed(Table.t(), Table.t(), Table.t()) :: Table.t()
+  defdelegate keep_changed(bound, base, live), to: Table
 
   @doc "Answer a plugin verb sent to the Overwatch (`Overwatch.plugin_subscribe/4` and siblings)."
   @spec answer(tuple(), Overwatch.t()) :: {:reply, term(), Overwatch.t()}

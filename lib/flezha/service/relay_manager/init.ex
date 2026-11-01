@@ -486,7 +486,7 @@ defmodule Flezha.Service.RelayManager.Init do
     case SafeCall.bounded(
            pid,
            {:registry_runner_set, announce?},
-           Durations.get(:overwatch_call_timeout_ms),
+           bind_budget_ms(),
            on_error: on_exit
          ) do
       {:ok, runner_id} ->
@@ -505,6 +505,18 @@ defmodule Flezha.Service.RelayManager.Init do
       answered ->
         answered
     end
+  end
+
+  # The Overwatch answers the start's read only once its inline first bind
+  # ends, so a slow bind is waited for, never refused: the bound is what that
+  # bind may spend on the runner wait and its last readiness ping, its own ping
+  # and AddRelay, the stream bind and one awaited restore. Not covered: each
+  # further Cell restore or effect-results batch, plugin prepare, the runner
+  # lookups and the ping's fixed call slack.
+  defp bind_budget_ms do
+    Durations.get(:overwatch_runner_wait_ms) + Durations.get(:overwatch_ping_timeout_ms) +
+      Durations.get(:overwatch_ping_timeout_ms) + Durations.get(:relay_start_call_ms) +
+      Durations.get(:stream_bind_wait_ms) + Durations.get(:restore_await_timeout_ms)
   end
 
   defp refuse_start(exist?, namespace, relay, result, start) do
