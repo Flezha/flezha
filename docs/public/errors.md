@@ -277,11 +277,12 @@ SDK raises or returns its one error type carrying them.
 | `http.body_timeout` | invalid | 2 | the client stopped sending the request body for {timeout_ms} ms |  |
 | `http.body_too_large` | invalid | 2 | the request body is larger than the limit of {limit} bytes |  |
 | `http.busy` | unavailable | 7 | plugin '{plugin}' already has {max_waiting} requests waiting for an answer; try again |  |
+| `http.client_cert_required` | invalid | 2 | address '{address}' is not loopback, so the HTTP API needs tls_client_cacertfile to ask every client for a certificate, or require_client_cert set to false | `flz plugin help http_api` |
 | `http.length_required` | invalid | 2 | a request body must carry a content-length: a body sent without one is refused before it is read |  |
 | `http.listen_failed` | unavailable | 7 | the HTTP server of plugin '{plugin}' cannot listen on {address} port {port}: {reason} |  |
 | `http.origin_refused` | denied | 4 | the request's Origin is not one of the HTTP API's allowed_origins | `flz plugin help http_api` |
 | `http.port_reserved` | conflict | 6 | port {port} belongs to this controller's {owner}; the HTTP server needs another port |  |
-| `http.streams_full` | unavailable | 7 | relay '{relay}' already has {max_streams} streams open; try again |  |
+| `http.streams_full` | unavailable | 7 | plugin '{plugin}' already has {max_streams} streams open; try again |  |
 | `http.tls_required` | invalid | 2 | address '{address}' is not loopback, so the HTTP API needs tls_certfile and tls_keyfile, or plain_http set to true | `flz plugin help http_api` |
 
 ### http_push

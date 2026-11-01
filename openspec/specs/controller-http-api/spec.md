@@ -66,8 +66,10 @@ no dispatch table of its own.
 
 ### Requirement: A verb that is not remote SHALL never be reachable over HTTP
 
-An operation whose row declares `remote: false`, or whose binding streams, SHALL NOT be
-listed and SHALL NOT be callable over HTTP, whatever the token's role.
+An operation whose row declares `remote: false` SHALL NOT be listed and SHALL NOT be callable
+over HTTP, whatever the token's role. An operation whose binding streams SHALL NOT be listed as a
+tool and SHALL NOT be callable at `POST /v1/call/<operation>` or through MCP; when it is `remote`,
+it SHALL be reachable only at the stream route.
 
 #### Scenario: An admin token asks to stop the controller
 
@@ -81,6 +83,11 @@ listed and SHALL NOT be callable over HTTP, whatever the token's role.
 - **THEN** no tool for stopping the controller, issuing or revoking a token, binding or
   unbinding a role, deleting a namespace, claiming the admin or any streaming operation
   SHALL be listed
+
+#### Scenario: A stream is not a call
+
+- **WHEN** a token granting `audit.read` calls `POST /v1/call/Observability.tail`
+- **THEN** the call SHALL be refused as an unknown operation, and no stream SHALL start
 
 ### Requirement: The MCP endpoint SHALL speak Streamable HTTP, stateless and tools only
 
@@ -254,4 +261,98 @@ through the door as `Relay.call_channel`.
 - **WHEN** an `app` role token of namespace `desk` lists tools and factory `orders` describes
   `place`
 - **THEN** the list holds the catalogue tools, the knowledge tools and `orders_place`
+
+### Requirement: A remote streaming operation SHALL be served as server-sent events at the stream route
+
+`POST /v1/stream/<operation>` with a JSON argument array as the body SHALL run a `remote`
+streaming operation through the door with the caller context built from the request's token,
+and SHALL write each event the operation emits as one server-sent event as soon as it is
+emitted. The event name SHALL be the event's tag and its data SHALL be the door's JSON encoding of
+the event. When the operation returns, its answer SHALL be written as a final `end` event and the
+response SHALL close. A refusal before the first event SHALL be answered as a plain error response
+with the error-model body. When the client disconnects, the operation SHALL end and anything it
+attached SHALL be detached. Open streams SHALL be capped by `max_streams`, a stream beyond it
+answered `503`. A stream whose unwritten events exceed `max_pending_events` SHALL be ended with an
+`overrun` event carrying the count of events not written.
+
+#### Scenario: A relay's output is pushed as it happens
+
+- **GIVEN** a token granting `relay.listen` in `orders`, and relay `prices` running there
+- **WHEN** the client posts `["orders", "prices", "output"]` to `/v1/stream/Relay.listen` and the
+  relay emits an output
+- **THEN** the client SHALL receive an `output` event carrying that payload while the response
+  stays open
+
+#### Scenario: A refused stream is a plain error
+
+- **WHEN** a `viewer` token posts to `/v1/stream/Logs.tail` and its role does not grant the
+  action
+- **THEN** the response SHALL be the refusal's status with an `authz.*` error body and no event
+
+#### Scenario: A client that leaves ends the stream
+
+- **WHEN** a client streaming `Relay.listen` closes its connection
+- **THEN** the listener attached for it SHALL be detached, and the relay SHALL keep running
+
+#### Scenario: Too many streams
+
+- **GIVEN** `max_streams` streams are open
+- **WHEN** another stream is requested
+- **THEN** it SHALL be answered `503` and no operation SHALL run for it
+
+#### Scenario: A client that falls behind is cut off, not buffered
+
+- **GIVEN** a client that stops reading while its stream keeps emitting
+- **WHEN** the unwritten events exceed `max_pending_events`
+- **THEN** the stream SHALL end with an `overrun` event naming the count, and the controller's
+  memory for it SHALL be released
+
+### Requirement: A listener off loopback SHALL require a client certificate
+
+`http_api` SHALL accept `tls_client_cacertfile`. When it is set, the listener SHALL require every
+client to present a certificate chaining to that authority and SHALL refuse a connection without
+one during the TLS handshake. A TLS listener bound to a non-loopback address without
+`tls_client_cacertfile` SHALL be refused at enable, unless `require_client_cert: false` is set,
+which SHALL log a warning naming the listener on every enable and every boot. A loopback listener
+SHALL need neither, nor SHALL a `plain_http` listener, whose TLS ends at a proxy in front of it.
+
+#### Scenario: A public listener without a client authority is refused
+
+- **WHEN** `http_api` is enabled with `bind=10.0.0.5`, a certificate and key, and no
+  `tls_client_cacertfile`
+- **THEN** the enable SHALL be refused with a code naming the rule, and no port SHALL be bound
+
+#### Scenario: A client without a certificate is refused
+
+- **GIVEN** `http_api` bound to `10.0.0.5` with `tls_client_cacertfile`
+- **WHEN** a client connects without a certificate, or with one from another authority
+- **THEN** the TLS handshake SHALL fail and no request SHALL be read
+
+#### Scenario: A client with a certificate and a token is served
+
+- **GIVEN** the same listener
+- **WHEN** a client with a certificate from that authority calls `POST /v1/call/Relay.list` with a
+  valid token
+- **THEN** the call SHALL be answered as on a loopback listener
+
+#### Scenario: The opt-out is warned
+
+- **WHEN** `http_api` is enabled with `bind=10.0.0.5`, TLS, and `require_client_cert: false`
+- **THEN** the listener SHALL start and a warning naming it SHALL be logged, and again on every
+  boot while it stays enabled
+
+### Requirement: A TLS listener SHALL speak HTTP/2
+
+A TLS `http_api` listener SHALL offer HTTP/2 by ALPN beside HTTP/1.1, so a client MAY run calls
+and several streams over one connection.
+
+#### Scenario: Two streams on one connection
+
+- **WHEN** an HTTP/2 client opens two streams and makes a call over one TLS connection
+- **THEN** all three SHALL be served, each stream receiving its own events
+
+#### Scenario: HTTP/1.1 still works
+
+- **WHEN** an HTTP/1.1 client calls the same listener
+- **THEN** it SHALL be served
 

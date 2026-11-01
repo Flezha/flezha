@@ -290,14 +290,20 @@ names them.
 
 `Flezha.Service.Namespace.whoami/1` SHALL answer, beside the principal, namespace and role,
 `operations`: the names of the operations `Flezha.Service.Admin.catalogue/1` answers for the
-same caller context. The answer SHALL NOT change how any call is judged. `flz auth whoami`
-SHALL print the same text as before.
+same caller context holding a stream open, so the remote streams its role grants are named, and
+`posture`: the controller's enforcement posture (`open`, `bootstrap_pending` or `enforced`). The answer SHALL NOT change how any call is judged.
+`flz auth whoami` SHALL print the same text as before.
 
 #### Scenario: A viewer's operations
 
 - **WHEN** a caller bound as `viewer` calls `whoami/1` while authorization is enforced
 - **THEN** `operations` lists exactly the names `Admin.catalogue/1` answers for that context
 - **AND** it includes `Relay.list` and excludes `Relay.start`
+
+#### Scenario: A networked caller is told its streams
+
+- **WHEN** an `:http` caller whose role grants `relay.listen` calls `whoami/1`
+- **THEN** `operations` SHALL include `Relay.listen` and SHALL NOT include `Controller.stop`
 
 #### Scenario: An unbound caller under the open posture
 
@@ -308,6 +314,11 @@ SHALL print the same text as before.
 
 - **WHEN** an operator runs `flz auth whoami`
 - **THEN** it prints the principal, namespace and role lines and nothing more
+
+#### Scenario: The posture is answered
+
+- **WHEN** a caller calls `whoami/1` while authorization is enforced
+- **THEN** the answer's `posture` SHALL be `enforced`
 
 ### Requirement: A relay class's history retention SHALL be readable
 
@@ -418,31 +429,6 @@ print the same text; with `--json` it SHALL print the whole answer, `options` in
 - **WHEN** a caller holding `plugin_list` lists the providers
 - **THEN** `relay_websocket`, `relay_http_poll` and `relay_postgres_poll` carry `feeds: true` and `relay_stdout` carries `feeds: false`
 
-### Requirement: The console SHALL enter through the door as a networked caller that may hold a stream
-
-A caller whose source is `:ui` SHALL build its context with `Flezha.Service.Admin.context(:ui,
-token)` and call operations through `Flezha.Service.Admin.call/4` or `run/4` with `:given`
-placement. The door SHALL hold it to what a networked caller reaches: an operation whose row is
-`remote: false` SHALL be refused to it as `control.unknown_function`, and its failures SHALL be
-withheld as a networked caller's are; unlike the other networked sources it MAY call a `remote`
-operation that streams, since it holds the stream's process on the controller's distribution as
-`flz` does.
-
-#### Scenario: The console cannot stop the controller
-
-- **WHEN** a `:ui` caller calls `Controller.stop` through the door
-- **THEN** the door SHALL answer `control.unknown_function` and the controller SHALL keep running
-
-#### Scenario: The console may tail a stream
-
-- **WHEN** a `:ui` caller with a role granting `audit.read` calls `AuditLog.tail` through the door with an `:emit` pid
-- **THEN** the stream SHALL run and hand its events to that pid
-
-#### Scenario: A console caller reads a withheld reason
-
-- **WHEN** a `:ui` caller's call fails with an internal code carrying a reason
-- **THEN** the reason SHALL read as naming the controller's log, as it does for an HTTP caller
-
 ### Requirement: The connected controllers SHALL be readable
 
 `Flezha.Service.Controller.controllers/1` and `flz controller list` SHALL list every controller the cluster directory lists. Each row SHALL give its node, its host address, the machine it runs on when `FLEZHA_HOST_NODE` names one, its version, how long it has been up, how many runners are connected to it, and whether it is the controller that answered. A controller that does not answer SHALL still be listed, marked unreachable, with only its node, and SHALL also be named in the answer's `unreachable`. A node connected to the cluster that is not a controller SHALL NOT be listed.
@@ -463,4 +449,33 @@ operation that streams, since it holds the stream's process on the controller's 
 - **GIVEN** two controllers and a console connected to them as a visible node
 - **WHEN** a caller lists the controllers
 - **THEN** only the two controllers are listed
+
+### Requirement: A networked caller SHALL reach a streaming operation only through a surface that holds it open
+
+The door SHALL hold every networked caller (`:sdk`, `:http`, `:mcp`) to what the network
+reaches: an operation whose row is `remote: false` SHALL be refused as
+`control.unknown_function`, and failures SHALL be withheld as networked failures are. A `remote`
+operation that streams SHALL be reachable by a networked caller only when its caller context
+carries an `:emit` holder, which only a surface that keeps the stream open sets.
+
+#### Scenario: A networked caller cannot stop the controller
+
+- **WHEN** an `:http` caller calls `Controller.stop` through the door
+- **THEN** the door SHALL answer `control.unknown_function` and the controller SHALL keep running
+
+#### Scenario: The HTTP stream route may tail
+
+- **WHEN** an `:http` caller whose role grants `audit.read` calls `Observability.tail` through the
+  door with an `:emit` holder
+- **THEN** the stream SHALL run and hand its events to the holder
+
+#### Scenario: A runner cannot open a stream
+
+- **WHEN** an `:sdk` caller asks for `Observability.tail` through an admin request
+- **THEN** the door SHALL answer `control.unknown_function`
+
+#### Scenario: A networked caller reads a withheld reason
+
+- **WHEN** an `:http` caller's call fails with an internal code carrying a reason
+- **THEN** the reason SHALL read as naming the controller's log
 

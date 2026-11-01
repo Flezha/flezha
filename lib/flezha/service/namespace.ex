@@ -16,6 +16,7 @@ defmodule Flezha.Service.Namespace do
 
   use Flezha.AuthZ.Verb
 
+  alias Flezha.AuthZ
   alias Flezha.AuthZ.Bootstrap
   alias Flezha.AuthZ.Config
   alias Flezha.AuthZ.Namespace
@@ -109,14 +110,23 @@ defmodule Flezha.Service.Namespace do
   The identity the caller's credential resolves to.
 
   `operations` names the operations its role grants, as
-  `Flezha.Service.Admin.catalogue/1` answers them for the same context, so a
-  surface can offer only what the caller may use. The namespace is still judged
-  at each call.
+  `Flezha.Service.Admin.catalogue/1` answers them for the same context holding
+  a stream open, so a surface can offer only what the caller may use. The
+  namespace is still judged at each call. `posture` is the controller's
+  enforcement posture (`Flezha.AuthZ.enforcement_posture/0`).
   """
   @spec whoami(caller_context()) :: {:ok, map()} | {:error, term()}
   verb whoami(caller_context), verb: :authz_whoami do
     identity = Map.new([:principal, :namespace, :role], &{&1, Map.get(caller_context, &1)})
-    {:ok, Map.put(identity, :operations, Enum.map(Admin.catalogue(caller_context), & &1.name))}
+    # Listed as a surface holding a stream open sees them, so the remote
+    # streams the role grants are named too.
+    held = Map.put_new(caller_context, :emit, self())
+
+    {:ok,
+     Map.merge(identity, %{
+       operations: Enum.map(Admin.catalogue(held), & &1.name),
+       posture: AuthZ.enforcement_posture()
+     })}
   end
 
   @doc """

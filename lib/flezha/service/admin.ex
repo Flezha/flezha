@@ -24,8 +24,9 @@ defmodule Flezha.Service.Admin do
   slot to write one into. `:given` is a caller whose namespace is an ordinary
   argument, judged by the row's scope. An operation whose row is not `remote`,
   or one that streams, is not reachable by a caller over the network
-  (`Flezha.Service.CallerContext.networked?/1`); the web console alone reaches
-  a `remote` operation that streams.
+  (`Flezha.Service.CallerContext.networked?/1`), unless its context carries an
+  `:emit` holder: a surface that keeps the stream open sets one, and only then
+  does a networked caller reach a `remote` operation that streams.
 
   ## The wire form
 
@@ -89,6 +90,52 @@ defmodule Flezha.Service.Admin do
   @doc "A value as the JSON `call/4` answers it with."
   @spec json(term()) :: String.t()
   def json(value), do: value |> Signal.metadata_json() |> Jason.encode!()
+
+  @doc """
+  One event of a stream operation as the JSON surfaces carry it: its name and
+  its object, the form `flz relay listen --json` prints. A frame's payload is
+  `payload`, or `payload_base64` when it is not UTF-8; a notice's error is its
+  own object, withheld from a networked caller as a failure is; a signal and a
+  log record are their fields. `:attached` and `:idle` carry nothing and are
+  answered as they are.
+  """
+  @spec event(term(), CallerContext.t()) :: {String.t(), map()} | :attached | :idle
+  def event(event, _caller_context) when event in [:attached, :idle], do: event
+
+  def event({kind, %Flezha.Error{} = error, metadata}, caller_context) do
+    {:error, error} = withheld({:error, error}, "a #{kind} event", caller_context)
+
+    {Atom.to_string(kind),
+     kind |> framed(metadata) |> Signal.metadata_json() |> Map.put("error", error)}
+  end
+
+  def event({:tally, totals, read}, _caller_context),
+    do: {"tally", Signal.metadata_json(Map.merge(%{kind: :tally, totals: totals}, read))}
+
+  def event({kind, payload, metadata}, _caller_context) when is_binary(payload) do
+    payload =
+      if String.valid?(payload),
+        do: %{payload: payload},
+        else: %{payload_base64: Base.encode64(payload)}
+
+    {Atom.to_string(kind), Signal.metadata_json(Map.merge(framed(kind, metadata), payload))}
+  end
+
+  def event(%Signal{} = signal, _caller_context) do
+    {"signal",
+     signal
+     |> Map.take([:kind, :source, :name, :node, :at_us, :measurements, :metadata])
+     |> Signal.metadata_json()}
+  end
+
+  def event(%{} = record, _caller_context), do: {"log", Signal.metadata_json(record)}
+
+  @call_kinds [:call, :answered, :timed_out, :refused]
+
+  defp framed(kind, metadata) do
+    framed = %{kind: kind, channel: metadata["channel"], metadata: metadata}
+    if kind in @call_kinds, do: Map.put(framed, :call, metadata["flz.call_id"]), else: framed
+  end
 
   # A published function raises on input it will not take, and `Flezha.AuthZ.Verb`
   # re-raises after writing the act's audit record. Here that failure has to
@@ -154,14 +201,14 @@ defmodule Flezha.Service.Admin do
   end
 
   # An operation that is not `remote` stays off the network. Nor does a
-  # stream reach it: a networked caller gets one reply per request, and a
+  # stream reach it from a surface answering one reply per request: the
   # stream would hold its task, and whatever it attached, for as long as it
-  # runs. The console is the exception for streams: it holds its process
-  # open to render them.
+  # runs. A surface that holds the stream open names its holder as `:emit`.
   defp reachable?(%{remote: true, stream: stream}, _caller_context) when stream != true,
     do: true
 
-  defp reachable?(%{remote: true}, %{source: :ui}), do: true
+  defp reachable?(%{remote: true}, %{emit: emit}) when is_pid(emit) or is_function(emit, 1),
+    do: true
 
   defp reachable?(_entry, caller_context), do: not CallerContext.networked?(caller_context)
 

@@ -25,9 +25,19 @@ v0.1.0-alpha.1 pre-release.
   production cluster, and the clustering, console, configuration and plugin pages describe
   ports, firewalls, WireGuard, certificate rotation, cutting a node off and what plugins can
   reach.
+- The HTTP API serves live streams: `POST /v1/stream/<Name>` holds `Relay.listen`,
+  `Logs.tail` and `Observability.tail` open as server-sent events, capped by `max_streams` and
+  `max_pending_events` ([http_api.md](docs/public/plugins/http_api.md#live-streams)). A TLS
+  listener speaks HTTP/2 beside HTTP/1.1, and `Namespace.whoami` answers the enforcement
+  `posture` and lists the streams a role grants.
 
 ### Changed
 
+- **Breaking:** an `http_api` listener off loopback with TLS asks every client for a
+  certificate. Set `tls_client_cacertfile` to the authority that signs your clients'
+  certificates, or set `require_client_cert` to `false` and accept a warning on every enable
+  and boot; until then the enable is refused with `http.client_cert_required`.
+- `http.streams_full` names the plugin instead of the relay.
 - **Breaking:** file plugins read and write in a folder per namespace,
   `<root>/<namespace>/` (`<prefix>/<namespace>/` under an S3 root), and a plugin reaches
   only its own namespace's. To upgrade, stop the relays with file plugins, move each

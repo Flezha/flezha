@@ -502,6 +502,28 @@ defmodule Flezha.Service.AdminTest do
       end
     end
 
+    # Fails when: the HTTP stream route, which holds its request open, cannot
+    # reach a remote stream, or a caller without a holder can.
+    test "reaches a remote stream only with an :emit holder" do
+      held = Map.merge(http_context(:admin), %{emit: self(), window_ms: 10})
+
+      for {name, args} <- [
+            {"Logs.tail", ~s([{"kind":"audit"}])},
+            {"Observability.tail", ~s(["flezha_relay"])}
+          ] do
+        refute match?(
+                 {:error, %Flezha.Error{code: "control.unknown_function"}},
+                 Admin.run(name, args, held, :given)
+               )
+
+        assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
+                 Admin.run(name, args, http_context(:admin), :given)
+      end
+
+      assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
+               Admin.run("Controller.stop", "[]", held, :given)
+    end
+
     test "is offered only the remote operations its role grants" do
       offered = Admin.catalogue(http_context(:viewer))
 
@@ -552,8 +574,8 @@ defmodule Flezha.Service.AdminTest do
 
     # Fails when: the console loses the streams it renders.
     test "tails the audit log into an :emit pid" do
-      assert Enum.any?(Admin.reachable(as(:ui)), &(&1.name == "Logs.tail"))
       context = Map.merge(as(:ui), %{emit: self(), window_ms: 10})
+      assert Enum.any?(Admin.reachable(context), &(&1.name == "Logs.tail"))
 
       refute match?(
                {:error, %Flezha.Error{code: "control.unknown_function"}},

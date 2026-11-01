@@ -275,18 +275,23 @@ defmodule Flezha.Service.Cli.Relay do
 
   defp frame_format(opts), do: if(Context.format(opts) == "json", do: :json, else: :text)
 
-  defp print({kind, %Flezha.Error{} = error, metadata}, format),
-    do: print_notice(kind, error, metadata, format)
-
-  defp print({:tally, totals, metadata}, format), do: print_tally(totals, metadata, format)
-
-  defp print({kind, payload, metadata}, format), do: print_frame(kind, payload, metadata, format)
   defp print(:idle, _format), do: :ok
+  defp print({:tally, totals, metadata}, format), do: print_tally(totals, metadata, format)
+  defp print(event, :json), do: event |> object() |> Jason.encode!() |> IO.puts()
+
+  defp print({kind, %Flezha.Error{} = error, metadata}, :text),
+    do: print_notice(kind, error, metadata)
+
+  defp print({kind, payload, metadata}, :text), do: print_frame(kind, payload, metadata)
+
+  defp object(event) do
+    {_name, object} = Admin.event(event, %{source: :cli})
+    object
+  end
 
   @stamps [{"flz.cell", "cell"}, {"flz.seq", "seq"}, {"flz.key", "key"}]
-  @call_kinds [:call, :answered, :timed_out, :refused]
 
-  defp print_frame(kind, payload, metadata, :text) do
+  defp print_frame(kind, payload, metadata) do
     stamped =
       case stamps(kind, metadata) do
         [] -> []
@@ -294,19 +299,6 @@ defmodule Flezha.Service.Cli.Relay do
       end
 
     IO.puts(Enum.intersperse([metadata["channel"] || "-", payload | stamped], "\t"))
-  end
-
-  defp print_frame(kind, payload, metadata, :json) do
-    body =
-      if String.valid?(payload),
-        do: %{payload: payload},
-        else: %{payload_base64: Base.encode64(payload)}
-
-    body
-    |> Map.merge(%{kind: kind, channel: metadata["channel"], metadata: metadata})
-    |> with_call(kind, metadata)
-    |> Admin.json()
-    |> IO.puts()
   end
 
   defp print_tally(totals, %{read_at_ms: at, epochs: epochs}, format) do
@@ -325,9 +317,10 @@ defmodule Flezha.Service.Cli.Relay do
   end
 
   defp print_tally(totals, rates, read, :json) do
-    %{kind: :tally, totals: totals, rates: rates}
-    |> Map.merge(read)
-    |> Admin.json()
+    {:tally, totals, read}
+    |> object()
+    |> Map.put("rates", rates)
+    |> Jason.encode!()
     |> IO.puts()
   end
 
@@ -372,28 +365,12 @@ defmodule Flezha.Service.Cli.Relay do
     do:
       "call=#{metadata["flz.call_id"]} error=#{error.code} ms=#{metadata["flz.call_duration_ms"]}"
 
-  defp with_call(body, kind, metadata) when kind in @call_kinds,
-    do: Map.put(body, :call, metadata["flz.call_id"])
-
-  defp with_call(body, _kind, _metadata), do: body
-
-  defp print_notice(kind, error, metadata, :text) do
+  defp print_notice(kind, error, metadata) do
     IO.puts(
       Enum.join(
         [metadata["channel"] || "-", error.message, notice_fields(kind, error, metadata)],
         "\t"
       )
     )
-  end
-
-  defp print_notice(kind, error, metadata, :json) do
-    # The error renders as its own JSON object; the rest by the door's rule.
-    %{kind: kind, channel: metadata["channel"], metadata: metadata}
-    |> with_call(kind, metadata)
-    |> Admin.json()
-    |> Jason.decode!()
-    |> Map.put("error", error)
-    |> Jason.encode!()
-    |> IO.puts()
   end
 end

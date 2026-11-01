@@ -69,17 +69,8 @@ defmodule Flezha.Service.Cli.Observe do
   end
 
   defp print_signal(signal, "json") do
-    %{
-      kind: signal.kind,
-      source: signal.source,
-      name: signal.name,
-      node: signal.node,
-      at_us: signal.at_us,
-      measurements: signal.measurements,
-      metadata: signal.metadata
-    }
-    |> Admin.json()
-    |> IO.puts()
+    {"signal", object} = Admin.event(signal, %{source: :cli})
+    IO.puts(Jason.encode!(object))
   end
 
   defp print_signal(signal, _text) do

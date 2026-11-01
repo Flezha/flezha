@@ -31,6 +31,25 @@ defmodule Flezha.Service.ConsoleAnswersTest do
       end
     end
 
+    # Fails when: a console over HTTP, whose context holds no stream, is not
+    # told the streams it may open at the stream route.
+    test "a networked caller is told the remote streams its role grants" do
+      context = %{bound(:admin, "_system") | source: :http}
+      assert {:ok, %{operations: operations}} = Namespace.whoami(context)
+
+      assert operations ==
+               Enum.map(Admin.catalogue(Map.put(context, :emit, self())), & &1.name)
+
+      assert "Relay.listen" in operations
+      refute "Controller.stop" in operations
+      refute Enum.any?(Admin.catalogue(context), &(&1.name == "Relay.listen"))
+    end
+
+    test "answers the enforcement posture" do
+      assert {:ok, %{posture: :enforced}} = Namespace.whoami(bound(:viewer, "team-orders"))
+      assert AuthZ.enforcement_posture() == :enforced
+    end
+
     test "the lists differ where the roles do" do
       operations = fn role, namespace ->
         {:ok, %{operations: operations}} = Namespace.whoami(bound(role, namespace))
@@ -50,7 +69,14 @@ defmodule Flezha.Service.ConsoleAnswersTest do
     end
 
     test "flz auth whoami prints the identity and nothing more" do
-      identity = %{principal: "carol", namespace: "team-orders", role: :ops, operations: ["x"]}
+      identity = %{
+        principal: "carol",
+        namespace: "team-orders",
+        role: :ops,
+        operations: ["x"],
+        posture: :enforced
+      }
+
       output = capture_io(fn -> Cli.Authz.whoami(identity, [], []) end)
 
       assert output == "principal: carol\nnamespace: team-orders\nrole:      ops\n"
@@ -61,7 +87,10 @@ defmodule Flezha.Service.ConsoleAnswersTest do
     open()
 
     context = %{source: :cli}
-    assert {:ok, %{principal: nil, operations: operations}} = Namespace.whoami(context)
+
+    assert {:ok, %{principal: nil, operations: operations, posture: :open}} =
+             Namespace.whoami(context)
+
     assert operations == Enum.map(Admin.reachable(context), & &1.name)
     assert "Steps.delete" in operations
   end

@@ -48,6 +48,25 @@ $ flz plugin enable api http_api --namespace _system \
 Without one it is refused (`http.tls_required`), because a token sent in the clear can be
 replayed. Set `plain_http` only when TLS ends in front of it, at a proxy on the same host.
 
+Off loopback, a TLS listener also asks every client for a certificate, so a client proves its
+host as well as its principal. Name the authority that signs your clients' certificates:
+
+```sh
+$ flz plugin enable api http_api --namespace _system \
+  --Xbind=0.0.0.0 \
+  --Xtls_certfile=/etc/flezha/tls/cert.pem \
+  --Xtls_keyfile=/etc/flezha/tls/key.pem \
+  --Xtls_client_cacertfile=/etc/flezha/tls/clients-ca.pem
+```
+
+A client without a certificate from that authority is refused during the TLS handshake, which
+then offers TLS 1.3 only. Use an authority of its own for HTTP clients, not the one that signs
+distribution certificates, so a client certificate never passes a distribution handshake. A
+listener off loopback with TLS and no `tls_client_cacertfile` is refused
+(`http.client_cert_required`) unless `require_client_cert` is `false`, which is logged as a
+warning on every enable and every boot. A TLS listener speaks HTTP/2 as well as HTTP/1.1, so a
+client can run calls and several streams over one connection.
+
 ## Options
 
 <!-- provider-options:begin -->
@@ -57,11 +76,15 @@ replayed. Set `plain_http` only when TLS ends in front of it, at a proxy on the 
 | `bind` | string | `"127.0.0.1"` | no | The address it listens on: an IPv4 or IPv6 literal. Any but loopback needs TLS or `plain_http` |
 | `tls_certfile` | string | none | no | The PEM certificate it serves HTTPS with; given with `tls_keyfile` |
 | `tls_keyfile` | string | none | no | The PEM private key of `tls_certfile` |
+| `tls_client_cacertfile` | string | none | no | The PEM authority every client certificate must chain to; with it a client without one is refused at the TLS handshake |
+| `require_client_cert` | bool | `true` | no | Set false to serve TLS off loopback without `tls_client_cacertfile`; warned on every enable and boot |
 | `plain_http` | bool | `false` | no | Serve plain HTTP on an address that is not loopback, where TLS ends in front of it |
 | `allowed_origins` | names | `[]` | no | The browser origins a request may come from; a request naming any other is answered 403 |
 | `deadline_ms` | int | `30000` | no | How long a call waits for the controller's answer, 100 to 600000 |
 | `max_body_bytes` | int | `1048576` | no | The largest request body accepted, up to 16777216; a larger one is answered 413 |
 | `max_waiting` | int | `64` | no | Calls waiting for an answer at once, up to 10000; one more is answered 503 |
+| `max_streams` | int | `64` | no | Event streams open at once, up to 10000; one more is answered 503 |
+| `max_pending_events` | int | `1000` | no | Events a stream may hold unwritten, up to 100000; one more ends it with an `overrun` event |
 | `max_connections` | int | `128` | no | Connections open at once, up to 10000; one more is closed at once |
 <!-- provider-options:end -->
 
@@ -128,6 +151,39 @@ $ curl -s -X POST http://127.0.0.1:8765/v1/call/Relay.list \
 failure answers the error object with the HTTP status of its class: `404` for
 `dlq.not_found`, `403` for `authz.role_insufficient`.
 
+`POST /v1/call/Namespace.whoami` answers the token's principal, namespace and role, the
+`operations` its role grants (the streams below included) and the controller's `posture`:
+`open`, `bootstrap_pending` or `enforced`.
+
+## Live streams
+
+`POST /v1/stream/<Name>` runs an operation that streams, with its arguments as a JSON array, and
+holds the response open as server-sent events, each written as it happens: `Relay.listen`,
+`Logs.tail` and `Observability.tail`, judged by the token's role like any call.
+
+```sh
+$ curl -s -N -X POST http://127.0.0.1:8765/v1/stream/Relay.listen \
+  -H "Authorization: Bearer $FLEZHA_TOKEN" -d '["default", "my_echo", "output"]'
+```
+
+```output
+:
+
+event: output
+data: {"channel":"out","kind":"output","metadata":{"channel":"out"},"payload":"hello"}
+```
+
+Each event is named by its kind (`output`, `input`, `part`, `dead_lettered`, `call`,
+`answered`, `timed_out`, `refused`, `tally`, `signal`, `log`) and its data is the object
+`flz relay listen --json` or `flz observe tail --json` prints. A quiet stream writes a comment
+line every 15 seconds. When the operation ends, `end` carries `{"answer": ...}` or its
+`{"error": ...}`. A refusal before the first event is a plain error response, `403` for
+`authz.role_insufficient`. The stream ends when the client disconnects, which detaches what it
+listened to. At most `max_streams` streams are open (`503`, `http.streams_full`), and a client
+that falls more than `max_pending_events` events behind gets a last `overrun` event with the
+count it missed, then the response closes; reconnect to go on. An operation that does not stream
+is not served here: call it at `/v1/call`.
+
 ## Call a relay's channel
 
 `POST /v1/relays/<id>/<channel>` calls one entry channel of a relay in the token's namespace,
@@ -179,10 +235,10 @@ has the rules for names, schemas and answers.
 ## What is never exposed
 
 Whatever the token: stopping the controller, issuing or revoking tokens, binding or
-unbinding roles, deleting a namespace and claiming the admin are not reachable over HTTP,
-nor is any operation that streams (`flz relay listen`, `flz observe tail`). They are
-not listed, and a call naming one is answered as an unknown operation. Use `flz` on the
-controller's machine for those ([cli.md](../topics/cli/cli.md)).
+unbinding roles, deleting a namespace and claiming the admin are not reachable over HTTP.
+They are not listed, and a call naming one is answered as an unknown operation. Use `flz` on
+the controller's machine for those ([cli.md](../topics/cli/cli.md)). An operation that streams
+is reached only at `/v1/stream`: it is not an MCP tool and not a `/v1/call` operation.
 
 ## Limits and gotchas
 
