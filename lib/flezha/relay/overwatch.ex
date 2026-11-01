@@ -97,10 +97,10 @@ defmodule Flezha.Relay.Overwatch do
     liveness_ref: nil,
     # A bind onto another runner (a rebind, a wake, a restarted runner) runs
     # in a task linked to this process so it never blocks the Overwatch and
-    # never outlives it: `%{pid, then, from, journaled}`, the task, what the
-    # bind carries, the phase it started from and the input log's last offset
-    # then, plus `reforward` once its own re-forward is owed again. `nil` when
-    # no bind is in flight.
+    # never outlives it: `%{pid, then, from, journaled, extensions}`, the task,
+    # what the bind carries, the phase it started from, the input log's last
+    # offset and the plugin table then, plus `reforward` once its own
+    # re-forward is owed again. `nil` when no bind is in flight.
     bind_task: nil,
     # Outputs that arrived while a bind task was binding, newest first, and
     # whether any went unsettled with no plugin up, for the next bind to redrive.

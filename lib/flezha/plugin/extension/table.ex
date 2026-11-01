@@ -30,6 +30,7 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table.Chain
   alias Flezha.Plugin.Extension.Table.Health
+  alias Flezha.Plugin.Extension.Table.Record
   alias Flezha.Plugin.Extension.Table.Entry
   alias Flezha.Plugin.Extension.Table.Subscription
   alias Flezha.Plugin.Extension.Table.Workers
@@ -298,17 +299,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private - the lifecycle record
 
-  @spec entry(t(), binary()) :: Entry.t()
-  defp entry(%__MODULE__{entries: entries}, plugin_id) do
-    case Map.get(entries, plugin_id) do
-      %Entry{} = entry -> entry
-      nil -> %Entry{}
-    end
-  end
-
   # The ONE call that changes a phase, so the lifecycle event has one home.
   defp put_phase(table, plugin_id, phase, reason) do
-    entry = entry(table, plugin_id)
+    entry = Entry.of(table, plugin_id)
     provider = provider_of(table, plugin_id)
 
     %{
@@ -327,16 +320,6 @@ defmodule Flezha.Plugin.Extension.Table do
       %Plugin{provider: provider} -> provider
       nil -> nil
     end
-  end
-
-  defp drop_entry(%__MODULE__{} = table, plugin_id) do
-    Entry.departed(entry(table, plugin_id), plugin_id)
-
-    %{
-      table
-      | entries: Map.delete(table.entries, plugin_id),
-        monitors: Map.reject(table.monitors, fn {_ref, {id, _key}} -> id == plugin_id end)
-    }
   end
 
   @doc "The event every phase transition emits, for handlers to attach to."
@@ -404,7 +387,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc "The processes the table started for `plugin_id`, by key; none while `:prepared`."
   @spec workers(t(), binary()) :: %{term() => pid()}
-  def workers(%__MODULE__{} = table, plugin_id), do: Entry.pids(entry(table, plugin_id))
+  def workers(%__MODULE__{} = table, plugin_id), do: Entry.pids(Entry.of(table, plugin_id))
 
   @doc "Whether `plugin_id` is backed by the shared copy it joined."
   defdelegate joined?(table, plugin_id), to: Workers
@@ -412,7 +395,7 @@ defmodule Flezha.Plugin.Extension.Table do
   @doc "The one process the host tracks as `plugin_id`'s own, if it started one."
   @spec owned_pid(t(), binary()) :: pid() | nil
   def owned_pid(%__MODULE__{} = table, plugin_id),
-    do: Entry.owned_pid(entry(table, plugin_id))
+    do: Entry.owned_pid(Entry.of(table, plugin_id))
 
   @doc """
   A provider's stored opts with the processes the table started injected. See
@@ -420,7 +403,7 @@ defmodule Flezha.Plugin.Extension.Table do
   """
   @spec with_worker_pids(t(), binary(), map()) :: map()
   def with_worker_pids(%__MODULE__{} = table, plugin_id, opts),
-    do: Health.with_worker_pids(entry(table, plugin_id), opts)
+    do: Health.with_worker_pids(Entry.of(table, plugin_id), opts)
 
   @doc """
   The ids of every plugin subscribed on this table, whatever its phase. This is
@@ -539,7 +522,7 @@ defmodule Flezha.Plugin.Extension.Table do
         table =
           %{table | monitors: Map.delete(table.monitors, ref)}
           |> Map.update!(:entries, fn entries ->
-            Map.put(entries, plugin_id, Entry.drop_worker(entry(table, plugin_id), key))
+            Map.put(entries, plugin_id, Entry.drop_worker(Entry.of(table, plugin_id), key))
           end)
 
         case {key, reason} do
@@ -591,7 +574,7 @@ defmodule Flezha.Plugin.Extension.Table do
           %{table | plugins: Map.put(table.plugins, plugin_id, fresh_plugin)}
           |> put_phase(plugin_id, :prepared, :restarted)
 
-        {:ok, resubscribe(table, plugin_id, fresh_plugin)}
+        {:ok, Chain.resubscribe(table, plugin_id, fresh_plugin)}
 
       {:error, reason} ->
         Logger.error(
@@ -618,6 +601,14 @@ defmodule Flezha.Plugin.Extension.Table do
 
     new(table.catalog, shared: table.shared)
   end
+
+  @doc """
+  Merge the table a bind task built from `base` with `live`, the one this host
+  kept changing while the task bound (`Record.keep_changed/4`).
+  """
+  @spec keep_changed(t(), t(), t()) :: t()
+  def keep_changed(%__MODULE__{} = bound, %__MODULE__{} = base, %__MODULE__{} = live),
+    do: Record.keep_changed(bound, base, live, &terminate_provider/3)
 
   @doc "Every subscriber entry registered for the given extension name."
   @spec subscribers(t(), atom()) :: [entry()]
@@ -670,7 +661,7 @@ defmodule Flezha.Plugin.Extension.Table do
         {:ok,
          %{table | plugins: Map.put(table.plugins, plugin_id, plugin)}
          |> put_phase(plugin_id, :prepared, :prepared)
-         |> add_hooks(plugin_id, plugin)}
+         |> Chain.add_hooks(plugin_id, plugin)}
 
       {:error, _reason} = err ->
         err
@@ -728,11 +719,10 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private - unsubscribe
 
-  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{hooks: subs} = plugin, leave) do
+  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, leave) do
     table = release_workers(table, plugin_id, plugin, leave)
-
-    %{remove_hooks(table, plugin_id, subs) | plugins: Map.delete(table.plugins, plugin_id)}
-    |> drop_entry(plugin_id)
+    Entry.departed(Entry.of(table, plugin_id), plugin_id)
+    Record.forget(table, plugin_id, plugin)
   end
 
   # Let the provider release what the table cannot see, then stop every worker
@@ -769,29 +759,5 @@ defmodule Flezha.Plugin.Extension.Table do
       {table, :ok} -> table
       {table, {:error, _}} -> put_phase(table, plugin_id, {:down, reason}, reason)
     end
-  end
-
-  ## Private — restart
-
-  # Re-register the plugin's hooks against its fresh instance: every
-  # entry carries a copy of the provider opts, so a restart that kept the old
-  # entries would dispatch to state the provider does not hold.
-  defp resubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin),
-    do: table |> remove_hooks(plugin_id, plugin.hooks) |> add_hooks(plugin_id, plugin)
-
-  defp add_hooks(table, plugin_id, %Plugin{hooks: hooks} = plugin) do
-    Enum.reduce(hooks, table, fn {name, sub_opts}, acc ->
-      %{kind: kind} = Map.fetch!(acc.catalog, name)
-
-      acc
-      |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
-      |> Chain.refresh(name)
-    end)
-  end
-
-  defp remove_hooks(table, plugin_id, hooks) do
-    Enum.reduce(hooks, table, fn {name, _sub_opts}, acc ->
-      acc |> Subscription.remove_subscription(name, plugin_id) |> Chain.refresh(name)
-    end)
   end
 end

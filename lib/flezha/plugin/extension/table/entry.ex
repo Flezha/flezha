@@ -63,6 +63,15 @@ defmodule Flezha.Plugin.Extension.Table.Entry do
     :ok
   end
 
+  @doc "`plugin_id`'s record on `table`, an empty one when it holds none."
+  @spec of(map(), binary()) :: t()
+  def of(%{entries: entries}, plugin_id) do
+    case Map.get(entries, plugin_id) do
+      %__MODULE__{} = entry -> entry
+      _none -> %__MODULE__{}
+    end
+  end
+
   @doc "Record the worker started under `key`, replacing any earlier one."
   @spec put_worker(t(), term(), pid(), reference()) :: t()
   def put_worker(%__MODULE__{} = entry, key, pid, ref),

@@ -5,7 +5,7 @@ defmodule Flezha.Plugin.Extension.Table.Chain do
   changes, and the bit `Extension.run/3` short-circuits on.
 
   It takes the table as a plain map and never names `Extension.Table`; it reads
-  the subscriber lists through `Extension.Table.Subscription`.
+  and changes the subscriber lists through `Extension.Table.Subscription`.
   """
 
   alias Flezha.Plugin.Extension.Ctx
@@ -15,9 +15,9 @@ defmodule Flezha.Plugin.Extension.Table.Chain do
 
   # A subscription change is complete once the compiled chain and the active
   # bit follow it. `add_subscription/6` and `remove_subscription/3` mutate only
-  # the subscriber lists; the caller refreshes, so the lists never drive the
-  # chain. Only the chain-bearing kinds compile one — `compile_chain/3` has no
-  # clause for `:request` or `:timer`.
+  # the subscriber lists; `add_hooks/3` and `remove_hooks/3` refresh after
+  # them, so the lists never drive the chain. Only the chain-bearing kinds
+  # compile one — `compile_chain/3` has no clause for `:request` or `:timer`.
   @doc """
   Recompile `name`'s chain and set its active bit after a subscriber change.
   """
@@ -34,6 +34,35 @@ defmodule Flezha.Plugin.Extension.Table.Chain do
         table
     end
   end
+
+  @doc "Register `plugin`'s hooks under `plugin_id`, each chain following."
+  @spec add_hooks(map(), binary(), Flezha.Plugin.t()) :: map()
+  def add_hooks(table, plugin_id, %Flezha.Plugin{hooks: hooks} = plugin) do
+    Enum.reduce(hooks, table, fn {name, sub_opts}, acc ->
+      %{kind: kind} = Map.fetch!(acc.catalog, name)
+
+      acc
+      |> Subscription.add_subscription(kind, name, plugin_id, plugin, sub_opts)
+      |> refresh(name)
+    end)
+  end
+
+  @doc "Remove `plugin_id`'s `hooks`, each chain following."
+  @spec remove_hooks(map(), binary(), list()) :: map()
+  def remove_hooks(table, plugin_id, hooks) do
+    Enum.reduce(hooks, table, fn {name, _sub_opts}, acc ->
+      acc |> Subscription.remove_subscription(name, plugin_id) |> refresh(name)
+    end)
+  end
+
+  @doc """
+  Register `plugin`'s hooks under `plugin_id` afresh: every entry carries a copy
+  of the provider opts and a timer hook its timer, so a fresh provider instance
+  or a new host process needs entries of its own.
+  """
+  @spec resubscribe(map(), binary(), Flezha.Plugin.t()) :: map()
+  def resubscribe(table, plugin_id, %Flezha.Plugin{} = plugin),
+    do: table |> remove_hooks(plugin_id, plugin.hooks) |> add_hooks(plugin_id, plugin)
 
   defp subscribed?(table, name) do
     Map.get(table.subs, name, []) != [] or map_size(Map.get(table.request_subs, name, %{})) > 0

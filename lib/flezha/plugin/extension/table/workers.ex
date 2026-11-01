@@ -65,7 +65,7 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
         declared = declared_keys(provider, opts, invoke)
 
         Enum.reduce(
-          Enum.uniq(Entry.keys(entry(table, plugin_id)) ++ declared),
+          Enum.uniq(Entry.keys(Entry.of(table, plugin_id)) ++ declared),
           table,
           &stop(&2, plugin_id, family, &1)
         )
@@ -75,21 +75,7 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
   @doc "Stop the worker under one key and forget it."
   @spec stop(map(), binary(), module(), term()) :: map()
   def stop(table, plugin_id, family, key) do
-    entry = entry(table, plugin_id)
-
-    table =
-      case Entry.worker(entry, key) do
-        nil ->
-          table
-
-        {_pid, ref} ->
-          Health.safe_demonitor(ref)
-
-          table
-          |> put_entry(plugin_id, Entry.drop_worker(entry, key))
-          |> Map.update!(:monitors, &Map.delete(&1, ref))
-      end
-
+    table = untrack(table, plugin_id, key)
     _ = WorkerSup.stop_worker(family, key)
     table
   end
@@ -116,7 +102,7 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
 
   @doc "Whether `plugin_id` on `table` is backed by a shared copy it joined."
   @spec joined?(map(), binary()) :: boolean()
-  def joined?(table, plugin_id), do: Entry.worker(entry(table, plugin_id), :shared) != nil
+  def joined?(table, plugin_id), do: Entry.worker(Entry.of(table, plugin_id), :shared) != nil
 
   @doc """
   Join the shared copy of `plugin` on this controller (or the cluster's one for
@@ -135,26 +121,21 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
   """
   @spec leave(map(), binary(), :now | :idle) :: map()
   def leave(table, plugin_id, how) do
-    entry = entry(table, plugin_id)
-
-    case Entry.worker(entry, :shared) do
+    case Entry.worker(Entry.of(table, plugin_id), :shared) do
       nil ->
         table
 
-      {copy, ref} ->
-        Health.safe_demonitor(ref)
+      {copy, _ref} ->
+        table = untrack(table, plugin_id, :shared)
         table.shared.leave(copy, table.host_pid, how)
-
         table
-        |> put_entry(plugin_id, Entry.drop_worker(entry, :shared))
-        |> Map.update!(:monitors, &Map.delete(&1, ref))
     end
   end
 
   @doc "Record a worker the host started, under a fresh monitor."
   @spec track(map(), binary(), term(), pid()) :: map()
   def track(table, plugin_id, key, pid) do
-    entry = entry(table, plugin_id)
+    entry = Entry.of(table, plugin_id)
 
     case Entry.worker(entry, key) do
       {^pid, _ref} ->
@@ -170,7 +151,37 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
     end
   end
 
+  @doc """
+  Monitor `plugin_id`'s workers from this process: the process that tracked
+  them (a bind task) has ended, and its monitors with it.
+  """
+  @spec rehost(map(), binary()) :: map()
+  def rehost(table, plugin_id) do
+    table
+    |> Entry.of(plugin_id)
+    |> Entry.pids()
+    |> Enum.reduce(table, fn {key, pid}, acc ->
+      acc |> untrack(plugin_id, key) |> track(plugin_id, key, pid)
+    end)
+  end
+
   ## Private
+
+  defp untrack(table, plugin_id, key) do
+    entry = Entry.of(table, plugin_id)
+
+    case Entry.worker(entry, key) do
+      nil ->
+        table
+
+      {_pid, ref} ->
+        Health.safe_demonitor(ref)
+
+        table
+        |> put_entry(plugin_id, Entry.drop_worker(entry, key))
+        |> Map.update!(:monitors, &Map.delete(&1, ref))
+    end
+  end
 
   defp ensure(table, plugin_id, provider, worker, specs) do
     family = WorkerSup.family(provider)
@@ -197,7 +208,7 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
 
   defp drop_undeclared(table, plugin_id, family, declared) do
     table
-    |> entry(plugin_id)
+    |> Entry.of(plugin_id)
     |> Entry.keys()
     |> Enum.reject(&(&1 in declared))
     |> Enum.reduce(table, &stop(&2, plugin_id, family, &1))
@@ -212,13 +223,6 @@ defmodule Flezha.Plugin.Extension.Table.Workers do
 
   defp reusable(%{reusable: {module, fun}}), do: &apply(module, fun, [&1])
   defp reusable(_worker), do: &Process.alive?/1
-
-  defp entry(table, plugin_id) do
-    case Map.get(table.entries, plugin_id) do
-      %Entry{} = entry -> entry
-      _ -> %Entry{}
-    end
-  end
 
   defp put_entry(table, plugin_id, entry),
     do: %{table | entries: Map.put(table.entries, plugin_id, entry)}

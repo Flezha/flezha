@@ -44,9 +44,12 @@ older controller without the field. Only the transitions write it:
 | `:suspended` | `Suspend.evict_runner/2`, from a park (`suspend_at/3` → `enter_suspended/2`), from boot over a sleep record (`Lifecycle.bind_continue/3`), and from a rewind (`rewind_to/2`) |
 
 `halt_reason` is set by `halt/2` and `hold_unbound/2` and cleared by the bind
-(`complete_init/5`). `bind_task` is `%{pid, then, from}` while a task binds: `from` is the phase
-the bind started from, and `Rebind.apply_bind_result/2` does not adopt a bound state when the
-phase changed meanwhile (a halt or a park landed during the bind).
+(`complete_init/5`). `bind_task` is `%{pid, then, from, journaled, extensions}` while a task
+binds: `from` is the phase the bind started from, and `Rebind.apply_bind_result/2` does not adopt
+a bound state when the phase changed meanwhile (a halt or a park landed during the bind). An
+adopted state keeps what the Overwatch wrote while the task bound (callers, journal replies,
+timers, a noted stop, held outputs), and each plugin the Overwatch changed since `extensions`
+keeps its record (`Extension.Table.keep_changed/3`).
 
 The loop reads the phase, it does not derive one: `Flezha.Convergence.Probe` puts
 `Overwatch.phase/1` into its observation and `Flezha.Convergence.Probe.Judge` turns `:suspended`

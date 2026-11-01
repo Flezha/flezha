@@ -838,7 +838,13 @@ defmodule FlezhaTest.Relay.BindReforwardTest do
         effectively_once: true,
         runner_id: "bindfwd_leaving",
         phase: phase,
-        bind_task: %{pid: self(), then: nil, from: phase, journaled: journaled}
+        bind_task: %{
+          pid: self(),
+          then: nil,
+          from: phase,
+          journaled: journaled,
+          extensions: Table.new(%{})
+        }
       ] ++ overrides
     )
   end

@@ -373,7 +373,7 @@ defmodule Flezha.Relay.Lifecycle do
 
     _ = unless kept?, do: Replay.restore_on_bind(state, relay)
 
-    {:ok, Suspend.cancel_wake_timer(%{state | phase: :running})}
+    {:ok, %{state | phase: :running}}
   end
 
   @doc "Whether the instance continues this node's history: it answers the seat stored here."

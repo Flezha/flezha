@@ -15,17 +15,28 @@ defmodule FlezhaTest.Relay.RebindTest do
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.Plugins
   alias Flezha.Relay.Rebind
   alias Flezha.Plugin.Extension.Table
+  alias Flezha.Plugin.Extension.Table.Workers
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.StreamPool
   alias Flezha.Process.Hub
   alias Flezha.Process.Timer
-  alias Flezha.Service.{PluginManager, RelayManager}
+  alias Flezha.Service.{HubManager, PluginManager, RelayManager}
   alias Flezha.State.{Outbox, WriterRegistry}
   alias FlezhaTest.Helper.NodeTestHelper
 
   @namespace "default"
   @factory "store_input"
+
+  # A timer hook and nothing else.
+  defmodule Ticker do
+    use Flezha.Plugin.ProviderBehaviour, options: []
+
+    @impl true
+    def on_interval(_ctx, _opts), do: :ok
+  end
 
   setup do
     test_pid = self()
@@ -166,7 +177,13 @@ defmodule FlezhaTest.Relay.RebindTest do
       running_state()
       | phase: :halted,
         halt_reason: :runner_gone,
-        bind_task: %{pid: self(), then: nil, from: :halted, journaled: nil},
+        bind_task: %{
+          pid: self(),
+          then: nil,
+          from: :halted,
+          journaled: nil,
+          extensions: running_state().extensions
+        },
         held_outputs: [{:io_out_batch, [output]}]
     }
 
@@ -195,17 +212,7 @@ defmodule FlezhaTest.Relay.RebindTest do
     halted = %{running_state() | phase: :halted, halt_reason: :runner_gone}
     on_exit(fn -> ClassRegistry.delete(halted.id) end)
 
-    sink =
-      Plugin.new(
-        id: "sink",
-        provider: Plugin.Provider.BeamMsgForward,
-        opts: %{recv_pid: self()},
-        namespace: @namespace,
-        relay_id: halted.id,
-        hooks: [{:on_output, []}]
-      )
-
-    relay = %{halted.builder | opts: [bindings: [sink]]}
+    relay = %{halted.builder | opts: [bindings: [plugin("sink", :on_output)]]}
 
     {{:error, reason, copy}, _log} =
       ExUnit.CaptureLog.with_log(fn ->
@@ -213,7 +220,8 @@ defmodule FlezhaTest.Relay.RebindTest do
       end)
 
     output = owed_output({"prepared_bind_owed", "t", "k"}, 3)
-    binding = %{halted | bind_task: %{pid: self(), then: nil, from: :halted, journaled: nil}}
+    task = %{pid: self(), then: nil, from: :halted, journaled: nil, extensions: halted.extensions}
+    binding = %{halted | bind_task: task}
 
     {failed, _log} =
       ExUnit.CaptureLog.with_log(fn ->
@@ -225,6 +233,108 @@ defmodule FlezhaTest.Relay.RebindTest do
     refute_received {:"$gen_cast", {:outbox_settled_many, _}}
     assert %{bind_task: nil, owes_outputs: true} = failed
     assert Table.phase(failed.extensions, "sink") == :unknown
+  end
+
+  # fails when: a bind task's result is adopted whole, dropping what the
+  # Overwatch changed while it bound (a plugin enabled meanwhile, a journal
+  # append whose caller waits on the reply); or a worker the task brought up
+  # stays monitored only by the task that ended.
+  test "a bind keeps what the Overwatch changed while it bound" do
+    stub(PluginManager, :resolve, fn _namespace, binding, _entry -> {:ok, binding} end)
+    stub(HubManager, :relay_set_runner, fn _, _, _ -> :ok end)
+    stub(StreamPool, :put_route, fn _, _, _ -> :ok end)
+    stub(StreamPool, :drop_route, fn _, _ -> :ok end)
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
+    state = running_state()
+    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
+    on_exit(fn -> ClassRegistry.delete(state.id) end)
+
+    binding = Rebind.start_bind(state, "runner_b", nil)
+    task = binding.bind_task.pid
+    assert_receive {:bind_task_result, ^task, _unused}, 2_000
+
+    # While it binds, a plugin is enabled and an input-log append is in flight.
+    {:reply, :ok, live} =
+      Plugins.answer({:plugin_subscribe, "sink", plugin("sink", :on_output), :read}, binding)
+
+    request = :gen_server.send_request(spawn_link(&NodeTestHelper.park/0), :append)
+
+    live = %{
+      live
+      | journal_reqids: :gen_server.reqids_add(request, :confirm, live.journal_reqids)
+    }
+
+    # The task brings up a plugin of its own and monitors its worker from itself.
+    worker = spawn_link(&NodeTestHelper.park/0)
+    own = plugin("own", :on_input)
+
+    bound =
+      fn ->
+        {:ok, table} = Table.bulk_subscribe(state.extensions, [{"own", own}])
+        Workers.track(table, "own", :main, worker)
+      end
+      |> Task.async()
+      |> Task.await()
+
+    recovered = %{state | runner_id: "runner_b", channel: :chan_b, extensions: bound}
+
+    adopted = Rebind.bind_task_reported(live, {:bound, recovered})
+
+    assert %{runner_id: "runner_b", bind_task: nil} = adopted
+    assert Table.running?(adopted.extensions, "sink")
+    assert Table.subscribed?(adopted.extensions, "own")
+    assert :gen_server.reqids_size(adopted.journal_reqids) == 1
+
+    Process.unlink(worker)
+    Process.exit(worker, :kill)
+    assert_receive {:DOWN, ref, :process, ^worker, :killed}
+    assert Map.has_key?(adopted.extensions.monitors, ref)
+  end
+
+  # fails when: the task's copy of a plugin the Overwatch also brought up is
+  # dropped without its provider instance torn down, or released through the
+  # worker the Overwatch's copy shares; or a timer hook the task registered
+  # ticks at the task that ended instead of at the Overwatch.
+  test "a bind releases its copy of a plugin the Overwatch took, and arms its timers here" do
+    stub(PluginManager, :resolve, fn _namespace, binding, _entry -> {:ok, binding} end)
+    stub(HubManager, :relay_set_runner, fn _, _, _ -> :ok end)
+    stub(StreamPool, :put_route, fn _, _, _ -> :ok end)
+    stub(StreamPool, :drop_route, fn _, _ -> :ok end)
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
+    state = running_state()
+    :ok = ClassRegistry.put_overwatch(state.id, self(), "runner_a")
+    on_exit(fn -> ClassRegistry.delete(state.id) end)
+
+    binding = Rebind.start_bind(state, "runner_b", nil)
+    task = binding.bind_task.pid
+    assert_receive {:bind_task_result, ^task, _unused}, 2_000
+
+    opts = %{plugin_id: "dup", relay_id: state.id, namespace: @namespace}
+    dup = %{plugin("dup", :on_output) | provider: Plugin.Provider.MonitoredIOForward}
+    dup = %{dup | opts: Map.merge(dup.opts, Map.put(opts, :heartbeat_interval, 600_000))}
+    tick = %{plugin("tick", :on_interval) | provider: Ticker, opts: %{}}
+    tick = %{tick | hooks: [{:on_interval, [interval_ms: 1]}]}
+
+    {:reply, :ok, live} = Plugins.answer({:plugin_subscribe, "dup", dup, :read}, binding)
+    [shared] = Map.values(Table.workers(live.extensions, "dup"))
+
+    bound =
+      fn ->
+        {:ok, table} = Table.bulk_subscribe(state.extensions, [{"dup", dup}, {"tick", tick}])
+        table |> Table.bulk_activate() |> elem(0)
+      end
+      |> Task.async()
+      |> Task.await()
+
+    recovered = %{state | runner_id: "runner_b", channel: :chan_b, extensions: bound}
+    adopted = Rebind.bind_task_reported(live, {:bound, recovered})
+
+    assert_receive {:listener_released, "dup"}
+    assert Table.workers(adopted.extensions, "dup") == %{{@namespace, "dup"} => shared}
+    assert Process.alive?(shared)
+    assert_receive {:extension_timer, :on_interval, "tick"}
+
+    Table.teardown_all(adopted.extensions)
   end
 
   # fails when: a move stops seeding the runner from the final state a
@@ -419,6 +529,18 @@ defmodule FlezhaTest.Relay.RebindTest do
     {:ok, _} = Registry.register(WriterRegistry.name(), cell, nil)
     identity = %{cell: cell, seq: Integer.to_string(seq), epoch: 0, channel: "out"}
     Outbox.stamp("out", Map.merge(identity, %{owner: cell, entry: {:cursor, seq}}))
+  end
+
+  # A plugin forwarding to this process from `hook`.
+  defp plugin(id, hook) do
+    Plugin.new(
+      id: id,
+      provider: Plugin.Provider.BeamMsgForward,
+      opts: %{recv_pid: self()},
+      namespace: @namespace,
+      relay_id: running_state().id,
+      hooks: [{hook, []}]
+    )
   end
 
   defp running_state() do

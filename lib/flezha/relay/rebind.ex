@@ -7,6 +7,7 @@ defmodule Flezha.Relay.Rebind do
 
   alias Flezha.Identificator
   alias Flezha.Payloader
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
@@ -125,8 +126,9 @@ defmodule Flezha.Relay.Rebind do
   takes its bind with it and no second bind outlives it. It reports its
   outcome and decides nothing: a failure is a halt the Overwatch declares.
   `then` is what a wake carries, `from` the phase the bind started from
-  (`apply_bind_result/2`) and `journaled` the input log's last offset then.
-  `reforward` is set when the bind's own re-forward is owed again.
+  (`apply_bind_result/2`), `journaled` the input log's last offset then and
+  `extensions` the plugin table the task copied. `reforward` is set when the
+  bind's own re-forward is owed again.
   """
   @spec start_bind(Overwatch.t(), binary(), :stop | nil) :: Overwatch.t()
   def start_bind(%Overwatch{} = state, runner_id, then) do
@@ -145,7 +147,15 @@ defmodule Flezha.Relay.Rebind do
         send(parent, {:bind_task_result, self(), result})
       end)
 
-    %Overwatch{state | bind_task: %{pid: pid, then: then, from: state.phase, journaled: last}}
+    task = %{
+      pid: pid,
+      then: then,
+      from: state.phase,
+      journaled: last,
+      extensions: state.extensions
+    }
+
+    %Overwatch{state | bind_task: task}
   end
 
   @doc """
@@ -153,11 +163,8 @@ defmodule Flezha.Relay.Rebind do
   that arrived while it bound are delivered after it.
   """
   @spec bind_task_reported(Overwatch.t(), tuple()) :: Overwatch.t()
-  def bind_task_reported(%Overwatch{} = state, result) do
-    # The task reports a copy of this state taken before the outputs it held.
-    %Overwatch{} = adopted = apply_bind_result(state, result)
-    release_outputs(%Overwatch{adopted | held_outputs: state.held_outputs})
-  end
+  def bind_task_reported(%Overwatch{} = state, result),
+    do: state |> apply_bind_result(result) |> release_outputs()
 
   @doc """
   The bind task ended before it reported: its bind failed with `reason`. A
@@ -210,17 +217,8 @@ defmodule Flezha.Relay.Rebind do
 
     if carried(state) == :stop, do: ControlUnit.steps_stop(recovered.runner_id, state.id)
 
-    # The bound runner's state supersedes a snapshot stored before the bind; a
-    # stop noted meanwhile (its cause, who asked, how the run ended) is newer.
-    adopted =
-      %{
-        recovered
-        | bind_task: nil,
-          snapshot: nil,
-          cause: state.cause,
-          terminal: state.terminal,
-          stop_requested_by: state.stop_requested_by
-      }
+    # The bound runner's state supersedes a snapshot stored before the bind.
+    adopted = Suspend.cancel_wake_timer(%Overwatch{adopt(state, recovered) | snapshot: nil})
 
     case state.bind_task do
       %{reforward: true} ->
@@ -240,9 +238,35 @@ defmodule Flezha.Relay.Rebind do
 
   # A failed bind with input journaled meanwhile tries again at once, as any
   # bind that ends with work owed does.
-  def apply_bind_result(_state, {:halt, halted, err}) do
-    %{Lifecycle.halt(halted, err) | bind_task: nil}
+  def apply_bind_result(state, {:halt, halted, err}) do
+    state
+    |> adopt(halted)
+    |> Lifecycle.halt(err)
     |> Suspend.rehydrate_if_pending()
+  end
+
+  # The task bound a copy of this state while this process kept answering:
+  # what only this process writes (callers, journal replies, timers, a stop
+  # noted, held outputs) is taken from it, and the plugin table is merged
+  # (`Table.keep_changed/3`).
+  defp adopt(%Overwatch{bind_task: %{extensions: base}} = live, %Overwatch{} = bound) do
+    %Overwatch{
+      bound
+      | bind_task: nil,
+        extensions: Table.keep_changed(bound.extensions, base, live.extensions),
+        snapshot: live.snapshot,
+        cause: live.cause,
+        terminal: live.terminal,
+        stop_requested_by: live.stop_requested_by,
+        calls: live.calls,
+        journal_reqids: live.journal_reqids,
+        corrections: live.corrections,
+        timers: live.timers,
+        seed: live.seed,
+        handed_over?: live.handed_over?,
+        fed: live.fed,
+        held_outputs: live.held_outputs
+    }
   end
 
   defp carried(%Overwatch{bind_task: %{then: then}}), do: then

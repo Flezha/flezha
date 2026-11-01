@@ -75,7 +75,8 @@ defmodule FlezhaTest.Relay.SuspendTest do
       :ok
     end)
 
-    parked = state(inst, bind_task: %{ref: make_ref(), pid: self()})
+    parked = state(inst)
+    parked = %{parked | bind_task: %{ref: make_ref(), pid: self(), extensions: parked.extensions}}
     recovered = %{parked | runner_id: "ex_woken", phase: :running}
 
     {:noreply, unparked} =
@@ -94,11 +95,8 @@ defmodule FlezhaTest.Relay.SuspendTest do
     stub(Flezha.Service.HubManager, :relay_set_runner, fn _, _, _ -> :ok end)
     stub(Flezha.Runner.StreamPool, :put_route, fn _, _, _ -> :ok end)
 
-    parked =
-      state(inst,
-        snapshot: "stored_before_the_park",
-        bind_task: %{ref: make_ref(), pid: self()}
-      )
+    parked = state(inst, snapshot: "stored_before_the_park")
+    parked = %{parked | bind_task: %{ref: make_ref(), pid: self(), extensions: parked.extensions}}
 
     recovered = %{parked | runner_id: "ex_woken", phase: :running}
 
@@ -552,7 +550,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
     carrying = %{
       asleep
-      | bind_task: %{ref: make_ref(), pid: self(), then: :stop}
+      | bind_task: %{ref: make_ref(), pid: self(), then: :stop, extensions: asleep.extensions}
     }
 
     recovered = %{carrying | runner_id: "ex_2", phase: :running}
