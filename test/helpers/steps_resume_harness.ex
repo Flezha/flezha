@@ -197,9 +197,12 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
     info
   end
 
-  # One input on the relay's first entry channel.
-  def send_input(namespace, relay_id, text),
-    do: :ok = RelayTestHelper.cast_io(relay_id, namespace, text, %{})
+  # One input on the relay's first entry channel, sent until the relay accepts
+  # it: a cast drops an input a flow relay is not yet bound to deliver.
+  def send_input(namespace, relay_id, text) do
+    deadline = System.monotonic_time(:millisecond) + 30_000
+    RelayTestHelper.send_confirmed(relay_id, namespace, text, %{}, deadline)
+  end
 
   # Wait for the run's outcome to carry `status`, or every field of a map
   # (`state_kept`, `result`, ...), and return it.
