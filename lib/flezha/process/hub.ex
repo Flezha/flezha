@@ -14,6 +14,7 @@ defmodule Flezha.Process.Hub do
   alias Flezha.Config.Durations
   alias ProcessHub.Constant.StorageKey
   alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.Storage.Entry
   alias ProcessHub.Strategy.Migration.{ColdSwap, HotSwap}
 
   @type hub_id :: atom()
@@ -39,6 +40,24 @@ defmodule Flezha.Process.Hub do
            do: migration,
            else: (_cold -> :cold)
     end)
+  end
+
+  @doc """
+  The children whose handover state `hub_id` stored on this node and has not
+  delivered yet: the moves this node started that are unfinished. A cold child
+  that missed the state query stored none, so it is not listed. An entry past
+  its TTL is left out unless `include_expired: true`: the storage keeps it,
+  and the hub can still deliver it, until its janitor purges it.
+  """
+  @spec pending_handovers(hub_id(), keyword()) :: [ProcessHub.child_id()]
+  def pending_handovers(hub_id, opts \\ []) do
+    misc = ProcessHub.Hub.get(hub_id).storage.misc
+    since = if Keyword.get(opts, :include_expired, false), do: 0, else: Entry.now_ms()
+
+    for kind <- [:coldswap_state, :hotswap_state],
+        {child_id, expire} <- Storage.match(misc, {{kind, :"$1"}, :_, :"$2"}),
+        expire > since,
+        do: child_id
   end
 
   @doc "True while `hub_id`'s coordinator is registered."

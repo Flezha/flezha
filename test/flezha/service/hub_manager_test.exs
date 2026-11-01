@@ -27,11 +27,15 @@ defmodule Flezha.Service.HubManagerTest do
 
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.Config.Durations
+  alias Flezha.Identificator
   alias Flezha.Relay.Builder
   alias Flezha.Plugin
+  alias Flezha.Process.Hub
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias ProcessHub.Service.Recovery, as: HubRecovery
+  alias ProcessHub.Service.Storage
+  alias ProcessHub.Service.Storage.Entry
   alias ProcessHub.Strategy.Migration.{ColdSwap, HotSwap}
   alias ProcessHub.Storage.RemoteManifest
 
@@ -221,6 +225,23 @@ defmodule Flezha.Service.HubManagerTest do
       :ok = HubManager.stop_hub(namespace)
       {:ok, _} = HubRegistryTestHelper.ensure_hub(namespace)
       assert HubManager.migration(namespace) == :hot
+    end
+
+    # Fails when: an expired handover, which the storage returns until its
+    # janitor purges it, still reads as a move this node has not finished.
+    test "a handover past its TTL is not pending" do
+      namespace = "migr-pending"
+      {:ok, _} = NamespaceStore.create(namespace)
+      on_exit(fn -> HubManager.stop_hub(namespace) end)
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(namespace)
+      hub_id = Identificator.hub(namespace)
+      misc = ProcessHub.Hub.get(hub_id).storage.misc
+
+      Storage.insert(misc, {:coldswap_state, "cold"}, :state, ttl: 60_000)
+      Storage.insert(misc, {:hotswap_state, "hot"}, {:state, self()}, ttl: 60_000)
+      Storage.insert(misc, {:coldswap_state, "gone"}, :state, expire_at: Entry.now_ms() - 1)
+
+      assert Enum.sort(Hub.pending_handovers(hub_id)) == ["cold", "hot"]
     end
 
     test "a namespace without a running hub reads cold" do

@@ -393,7 +393,32 @@ defmodule FlezhaTest.RunnerLossHandover do
            ),
            "the loop never committed three iterations on the peer"
 
-    signal_runner(os_pid, "-KILL")
+    # Held here, the move's start never asks the peer for the stored state, so
+    # the peer keeps an undelivered move after its Overwatch stopped.
+    hub_id = Flezha.Identificator.hub(@temp_namespace)
+    worker_queue = ProcessHub.Hub.get(hub_id).procs.worker_queue
+    :sys.suspend(worker_queue)
+
+    try do
+      signal_runner(os_pid, "-KILL")
+
+      assert NodeTestHelper.wait_until(
+               fn ->
+                 :erpc.call(peer, ProcessHub, :process_list, [hub_id, :local])
+                 |> List.keymember?(op, 0)
+                 |> Kernel.not()
+               end,
+               20_000
+             ),
+             "the loop never stopped on the peer"
+
+      :ok = :erpc.call(peer, HubManager, :stop_hub_if_vacant, [@temp_namespace])
+
+      assert :erpc.call(peer, HubManager, :hub_alive?, [@temp_namespace]),
+             "the peer left the hub before its move was delivered"
+    after
+      :sys.resume(worker_queue)
+    end
 
     assert NodeTestHelper.wait_until(fn -> bound_runner(op) == local_runner end, 30_000),
            "the loop never moved to this controller"

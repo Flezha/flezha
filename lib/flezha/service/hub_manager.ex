@@ -208,7 +208,10 @@ defmodule Flezha.Service.HubManager do
 
   It keeps it while it runs a relay here, and while a recovery has not settled:
   a hub does not load its durable rows into the live registry until its first
-  reconcile, so every live read answers "empty" until then.
+  reconcile, so every live read answers "empty" until then. It also keeps it
+  while a move it started is undelivered, for at most the handover state's TTL:
+  the start request carrying where the state lives is lost with a hub left
+  between a cold swap's stop and that request.
 
   What the hub was declared to hold, or a plugin home it runs here, keeps it
   unless another member holds the hub instead: another live member runs a
@@ -221,6 +224,7 @@ defmodule Flezha.Service.HubManager do
   @spec holds_anything?(binary()) :: boolean()
   def holds_anything?(namespace) do
     Rows.local_relays?(namespace) or unsettled?(namespace) or
+      Rows.with_live_hub(namespace, false, &(Hub.pending_handovers(&1) != [])) or
       ((Rows.declares_anything?(namespace) or Rows.local_children(namespace, :all) != []) and
          not other_holder?(namespace))
   end

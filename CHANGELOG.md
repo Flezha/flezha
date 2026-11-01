@@ -178,6 +178,14 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A graceful stop no longer waits out its whole drain budget for a relay that
+  ended on the stopping controller instead of moving, and its `migrated` count
+  names only the relays that moved
+  ([durability](docs/public/topics/core/durability.md)).
+- A controller no longer leaves a namespace while a relay it is moving by cold
+  swap has not reached its new controller, which then started the relay empty
+  instead of from the state it left with.
+
 - An effectively-once relay no longer counts an input twice when its sender
   never saw the answer and sends it again after the input was processed, as
   happens across a network cut. The input log keeps a record carrying a

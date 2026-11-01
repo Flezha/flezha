@@ -151,6 +151,38 @@ defmodule FlezhaTest.Handover do
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
+  # fails when: the drain waits for, or counts as moved, a relay that ended on
+  # the departing node instead of moving.
+  @tag :multi_node
+  @tag :drain_ended_relay
+  @tag timeout: 120_000
+  test "a drain waits for and counts only the relays that move" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_ended_node)
+    moved = start_relay_on_peer(peer_node, "drain_moves")
+    ended = deferring_relay_on(peer_node)
+    hub_id = Identificator.hub(@default_namespace)
+
+    assert NodeTestHelper.wait_until(fn -> local_child(peer_node, hub_id, moved) end, 10_000),
+           "the relay meant to move did not settle on the peer"
+
+    test_pid = self()
+    shutdown = Task.async(fn -> shutdown_peer(peer_node, 60_000, test_pid) end)
+
+    assert_receive :deferred, 10_000
+    {:ok, :stop_initiated} = :erpc.call(peer_node, ProcessHub, :stop_child, [hub_id, ended])
+    assert :ok = Task.await(shutdown, 80_000)
+
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
+                    %{namespace: @default_namespace}},
+                   1_000
+
+    assert m.migrated == 1
+    assert m.elapsed_ms < 30_000, "the drain waited #{m.elapsed_ms} ms for the relay that ended"
+    assert landed_here?(moved)
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
   # fails when: a compaction where the relay moved snapshots a Cell holding no
   # timers, so the restore after it rebuilds none and the session never closes;
   # or the destination's own bind restores nothing, so `idle`, moved and then
@@ -420,9 +452,9 @@ defmodule FlezhaTest.Handover do
 
   # Attach the peer's drain telemetry (forwarded here as messages), then drive
   # its graceful shutdown to completion.
-  defp shutdown_peer(peer_node, timeout_ms) do
+  defp shutdown_peer(peer_node, timeout_ms, listener \\ self()) do
     :erpc.call(peer_node, :telemetry_test, :attach_event_handlers, [
-      self(),
+      listener,
       [[:flezha, :shutdown, :drain_progress]]
     ])
 

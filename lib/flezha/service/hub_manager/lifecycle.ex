@@ -32,6 +32,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   alias ProcessHub.Service.Recovery, as: HubRecovery
 
   alias ProcessHub.Strategy.PartitionTolerance.{Divergence, DynamicQuorum, StaticQuorum}
+  alias ProcessHub.Worker.WorkerQueue
 
   require Logger
 
@@ -272,9 +273,11 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   local child only AFTER the remote start succeeds; a cold swap stops it first,
   and its new process then reads its handover from this node's hub and pulls
   the relay's durable files from this node. So the drain also waits for each
-  child's handover to be delivered and for its new process to have run its
-  arrival. Both waits are read from the children's exits and the hub's
-  deliveries, never polled.
+  child whose handover is still undelivered once the children are gone, and
+  for its new process to have run its arrival; a child that ended without
+  moving is not waited for. Both waits are read from the children's exits and
+  the hub's deliveries, never polled. `migrated` counts the delivered
+  handovers less the ones `forced` counts.
   `:budget_ms` is required and bounds the whole call: the caller always hands
   the drain its slice of the one shutdown budget. `:handover_grace_ms` is
   carved off it so the deadline force pass can land before the caller moves on.
@@ -299,11 +302,16 @@ defmodule Flezha.Service.HubManager.Lifecycle do
         # is drained behind that work rather than refused.
         result = Migration.drain(hub_id, timeout: max(budget - grace, 1_000), when_busy: :wait)
 
-        with {:ok, _} <- result,
-             :ok <- await_local_children_gone(local, namespace, deadline),
-             do: await_arrivals(namespace, Enum.map(local, &elem(&1, 0)), deadline)
+        with {:ok, %{forced: forced} = summary} <- result do
+          moving =
+            case await_local_children_gone(local, namespace, deadline) do
+              :ok -> moving(hub_id, local, deadline)
+              :deadline -> []
+            end
 
-        result
+          delivered = await_arrivals(namespace, moving, 0, deadline)
+          {:ok, %{summary | migrated: max(delivered - forced, 0)}}
+        end
       after
         ProcessHub.cancel_hook_handlers(hub_id, Hook.handover_delivered(), [@drain_delivered])
       end
@@ -312,28 +320,56 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     kind, reason -> {:error, {kind, reason}}
   end
 
+  # The local children still on their way: a handover stored and undelivered,
+  # and a row binding them nowhere here (a move's placeholder or their new
+  # home); a child that ended keeps its binding here or loses its row. Read on
+  # the worker queue, behind the moves that unbind what they stop. The hub
+  # removes a handover and announces its delivery in one coordinator callback,
+  # so once it answers, a delivery the read missed is in this mailbox. A queue
+  # or coordinator busy past the budget leaves the deliveries already received.
+  defp moving(hub_id, local, deadline) do
+    read = fn ->
+      for child_id <- Hub.pending_handovers(hub_id, include_expired: true),
+          List.keymember?(local, child_id, 0),
+          {_cspec, nodes} <- [ProcessHub.child_lookup(hub_id, child_id, include_empty: true)],
+          not List.keymember?(nodes, node(), 0),
+          do: child_id
+    end
+
+    moving =
+      WorkerQueue.run_on(ProcessHub.Hub.get(hub_id).procs.worker_queue, read, left(deadline))
+
+    :sys.get_state(hub_id, left(deadline))
+    moving
+  catch
+    :exit, _busy -> []
+  end
+
   # Each delivery names the children whose handover reached their new process
   # on `target_node`. One call to each new process returns once its arrival,
-  # which pulls the relay's files from this node, has run.
-  defp await_arrivals(_namespace, [], _deadline), do: :ok
+  # which pulls the relay's files from this node, has run. Answers how many
+  # were delivered; once none is waited for, it settles only those received.
+  defp await_arrivals(namespace, waiting, count, deadline) do
+    wait = if waiting == [], do: 0, else: left(deadline)
 
-  defp await_arrivals(namespace, waiting, deadline) do
     receive do
       %{child_ids: delivered, target_node: target} ->
         settle(target, namespace, delivered, deadline)
-        await_arrivals(namespace, waiting -- delivered, deadline)
+        await_arrivals(namespace, waiting -- delivered, count + length(delivered), deadline)
     after
-      max(deadline - System.monotonic_time(:millisecond), 0) -> :deadline
+      wait -> count
     end
   end
 
   # A target that went away or answers late holds the drain no longer.
   defp settle(target, namespace, child_ids, deadline) do
-    left = max(deadline - System.monotonic_time(:millisecond), 1)
+    left = left(deadline)
     :erpc.call(target, __MODULE__, :arrived, [namespace, child_ids, left], left)
   catch
     _kind, _reason -> :ok
   end
+
+  defp left(deadline), do: max(deadline - System.monotonic_time(:millisecond), 1)
 
   @doc false
   # On a drain's target: answers once each of `child_ids`' local processes has
