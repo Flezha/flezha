@@ -388,10 +388,13 @@ defmodule Flezha.Service.ListenerTest do
   end
 
   describe "a released plugin" do
-    # Each check is fired by hand; the release has to arm the next one.
-    defp release(receiver, id) do
-      send(receiver, {:listener_released, id})
+    # Each check is fired by hand; the release has to arm the next one. Each
+    # of `workers` beats once after the release, as one the table has not
+    # stopped yet may.
+    defp release(receiver, id, workers \\ []) do
+      send(receiver, {:listener_released, id, workers})
       assert Map.has_key?(:sys.get_state(receiver).timers, :release_check)
+      for worker <- workers, do: send(receiver, {:heartbeat_keepalive, worker})
       for _ <- 1..2, do: send(receiver, :release_check)
     end
 
@@ -428,8 +431,9 @@ defmodule Flezha.Service.ListenerTest do
       end)
 
       output(receiver, "last")
-      release(receiver, id)
+      release(receiver, id, [self()])
 
+      assert_receive {:heartbeat_keepalive, :ok}, 2_000
       assert_receive {:event, ^pid, {:output, "last", _}}, 2_000
       assert_receive {:outcome, {:ok, :relay_ended}}, 2_000
     end

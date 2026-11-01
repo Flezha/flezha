@@ -329,7 +329,7 @@ defmodule FlezhaTest.Relay.RebindTest do
     recovered = %{state | runner_id: "runner_b", channel: :chan_b, extensions: bound}
     adopted = Rebind.bind_task_reported(live, {:bound, recovered})
 
-    assert_receive {:listener_released, "dup"}
+    assert_receive {:listener_released, "dup", _workers}
     assert Table.workers(adopted.extensions, "dup") == %{{@namespace, "dup"} => shared}
     assert Process.alive?(shared)
     assert_receive {:extension_timer, :on_interval, "tick"}

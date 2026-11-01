@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A listener no longer waits for ever when its relay ends just as the plugin's heartbeat fires:
+  the release names the workers it stops, and their last heartbeat no longer reads as a
+  re-attach.
 - A relay start on a busy machine no longer fails when its first bind takes longer than 5 s:
   the start waits as long as the bind's own bounds allow (runner wait, ping, `AddRelay`,
   stream bind, restore) instead of `:overwatch_call_timeout_ms`.

@@ -27,7 +27,9 @@ defmodule Flezha.Service.Listener.Receiver do
   a restart and the listener goes on; a relay no longer registered ends it
   with `:relay_ended`; a registered relay without the row was disabled by
   someone else, `listener.detached`. Asking twice keeps a member a rescale is
-  restarting from reading as ended.
+  restarting from reading as ended. The release names the workers it stops
+  after it, and a named worker's first heartbeat since does not count: it may
+  be the last one that worker sent.
   """
 
   use GenServer
@@ -72,6 +74,7 @@ defmodule Flezha.Service.Listener.Receiver do
        asked: false,
        ended: false,
        released: false,
+       releasing: [],
        reading: nil,
        tallies: %{},
        tally_handed_at: nil
@@ -81,7 +84,10 @@ defmodule Flezha.Service.Listener.Receiver do
   @impl true
   def handle_info({:heartbeat_keepalive, from}, state) do
     send(from, {:heartbeat_keepalive, :ok})
-    {:noreply, %{state | released: false, reading: nil}}
+
+    if from in state.releasing,
+      do: {:noreply, %{state | releasing: List.delete(state.releasing, from)}},
+      else: {:noreply, %{state | released: false, reading: nil}}
   end
 
   def handle_info({:message_forward, {payload, metadata}}, %{direction: :calls} = state),
@@ -105,8 +111,8 @@ defmodule Flezha.Service.Listener.Receiver do
 
   def handle_info({:next, _caller}, state), do: {:noreply, hand(%{state | asked: true})}
 
-  def handle_info({:listener_released, _plugin_id}, state),
-    do: {:noreply, recheck(%{state | released: true})}
+  def handle_info({:listener_released, _plugin_id, workers}, state),
+    do: {:noreply, recheck(%{state | released: true, releasing: workers ++ state.releasing})}
 
   def handle_info(:release_check, %{released: false} = state), do: {:noreply, state}
   def handle_info(:release_check, state), do: {:noreply, check_release(state)}

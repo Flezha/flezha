@@ -230,7 +230,7 @@ defmodule Flezha.Service.Cli.ListenTest do
           end
 
           :atomics.put(ended, 1, 1)
-          send(receiver, {:listener_released, id})
+          send(receiver, {:listener_released, id, []})
           for _ <- 1..2, do: send(receiver, :release_check)
         end)
 

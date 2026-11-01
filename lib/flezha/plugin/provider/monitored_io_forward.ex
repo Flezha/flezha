@@ -101,11 +101,11 @@ defmodule Flezha.Plugin.Provider.MonitoredIOForward do
     {:ok, ctx}
   end
 
-  # The table calls this on an unsubscribe, a teardown and a restart alike; the
-  # receiver asks the registry which it was.
+  # The table calls this on an unsubscribe, a teardown and a restart alike,
+  # before it stops the workers; the receiver asks the registry which it was.
   @impl true
-  def terminate_provider(%{recv_pid: recv_pid, plugin_id: plugin_id}) do
-    send(recv_pid, {:listener_released, plugin_id})
+  def terminate_provider(%{recv_pid: recv_pid, plugin_id: plugin_id, workers: workers}) do
+    send(recv_pid, {:listener_released, plugin_id, Map.values(workers)})
     :ok
   end
 
