@@ -40,12 +40,16 @@ defmodule FlezhaTest.Service.PluginRecordsTest do
            ] = rows
   end
 
-  # Best of several runs of each, taken in turn, so neither one scheduler
-  # hiccup nor a load change between the two sizes decides the ratio.
-  defp best_us(small, large) do
-    runs = for _ <- 1..5, do: {elem(:timer.tc(small), 0), elem(:timer.tc(large), 0)}
-    {smalls, larges} = Enum.unzip(runs)
-    {Enum.min(smalls), Enum.min(larges)}
+  # Reductions count the work the listing does, in a fresh process so each size
+  # starts from an empty heap; unlike a wall clock they do not move with load.
+  defp reductions(listing) do
+    Task.async(fn ->
+      {:reductions, before} = Process.info(self(), :reductions)
+      listing.()
+      {:reductions, done} = Process.info(self(), :reductions)
+      done - before
+    end)
+    |> Task.await()
   end
 
   # `n` plugins, each bound to and running on its own relay.
@@ -57,9 +61,10 @@ defmodule FlezhaTest.Service.PluginRecordsTest do
   end
 
   test "listing grows linearly with plugins bound one per relay" do
-    {small, large} = best_us(listing(500), listing(2_000))
+    small = reductions(listing(500))
+    large = reductions(listing(2_000))
 
-    assert large / max(small, 1) < 8,
-           "500 plugins listed in #{small} µs, 2,000 in #{large} µs"
+    assert large / small < 8,
+           "500 plugins listed in #{small} reductions, 2,000 in #{large}"
   end
 end
