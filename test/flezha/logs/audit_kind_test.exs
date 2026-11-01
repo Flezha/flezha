@@ -6,7 +6,7 @@ defmodule Flezha.Logs.AuditKindTest do
   # on teardown; capture so a green run stays quiet (logs still print on failure).
   @moduletag :capture_log
 
-  alias Flezha.Logs.{Codec, Index, Kind, Kinds, Reader, Retention, Rotation, Sink, Writer}
+  alias Flezha.Logs.{Codec, Index, Kinds, Reader, Retention, Rotation, Sink, Writer}
   alias Flezha.Observability.{Bus, Signal}
   alias Flezha.Observability.TestSinks
   alias Flezha.Service.Cli
@@ -18,7 +18,7 @@ defmodule Flezha.Logs.AuditKindTest do
   @pubsub Flezha.Observability.PubSub
 
   setup %{tmp: base_dir} do
-    on_exit(&stop_audit_supervisor/0)
+    on_exit(fn -> Flezha.Observability.Registry.unregister_sink(:audit_log) end)
     {:ok, dir: base_dir}
   end
 
@@ -837,45 +837,22 @@ defmodule Flezha.Logs.AuditKindTest do
   end
 
   # The audit kind is off in the test config, so `Flezha.Logs.Supervisor`
-  # started no subtree for it: the test starts the one it would.
+  # started no subtree for it: the test starts the one it would. ExUnit owns
+  # the tree, so it is stopped in order before `on_exit` runs.
   defp start_audit_supervisor() do
-    stop_audit_supervisor()
-
     _ = Flezha.Observability.Registry.register_source(Flezha.Logs.Sink.__source__())
 
     kind = kind()
     children = [{Writer, kind}, {Rotation, kind}, {Retention, kind}, Sink]
 
-    {:ok, sup} = Elixir.Supervisor.start_link(children, strategy: :one_for_one)
-    Process.put({__MODULE__, :sup}, sup)
+    sup =
+      start_supervised!(%{
+        id: :audit_sup,
+        start: {Elixir.Supervisor, :start_link, [children, [strategy: :one_for_one]]},
+        type: :supervisor
+      })
+
     {:ok, sup}
-  end
-
-  defp stop_audit_supervisor() do
-    # Stop the supervisor itself, not the children by name: stopping a permanent
-    # child under a live :one_for_one supervisor just makes it restart, and the
-    # lingering supervisor's later teardown logs "shut down abnormally (exit)
-    # normal". Supervisor.stop terminates the tree in order with :shutdown.
-    case Process.delete({__MODULE__, :sup}) do
-      pid when is_pid(pid) ->
-        if Process.alive?(pid), do: Elixir.Supervisor.stop(pid, :normal, 2_000)
-
-      _ ->
-        :ok
-    end
-
-    # Free any orphaned children left by a crashed prior run.
-    names = [Sink | Enum.map([:retention, :rotation, :writer], &Kind.name(kind(), &1))]
-
-    for name <- names, pid = GenServer.whereis(name), is_pid(pid) do
-      try do
-        GenServer.stop(pid, :shutdown, 1_000)
-      catch
-        _, _ -> :ok
-      end
-    end
-
-    _ = Flezha.Observability.Registry.unregister_sink(:audit_log)
   end
 
   defp field_order(line) do
