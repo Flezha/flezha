@@ -52,6 +52,21 @@ defmodule Flezha.Service.RelayApi do
   """
   @spec factory_of(String.t(), String.t(), String.t() | nil) :: {:ok, map()} | {:error, term()}
   def factory_of(namespace, relay_id, factory_id \\ nil) do
+    # Read where the namespace's rows are, as `graph_of/2` reads; with no hub
+    # anywhere, here, where only `factory_id` can answer.
+    case HubManager.on_hub_node(
+           namespace,
+           {__MODULE__, :factory_here},
+           [namespace, relay_id, factory_id],
+           :no_hub
+         ) do
+      {:error, :no_hub} -> factory_here(namespace, relay_id, factory_id)
+      answer -> answer
+    end
+  end
+
+  @doc false
+  def factory_here(namespace, relay_id, factory_id) do
     with {:ok, relay, host} <- declared(namespace, relay_id, factory_id) do
       case RelayManager.factory_row(namespace, relay.factory_id, host) do
         none when not is_map(none) ->

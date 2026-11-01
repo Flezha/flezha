@@ -314,12 +314,11 @@ defmodule Flezha.Service.Steps do
   @spec rotate(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
   verb rotate(cell, caller_context),
     verb: :state_rotate,
-    row: &persisted_cell_row/1,
+    row: &cell_path_row/1,
     as: located,
     args: [cell: @cell] do
-    with {:ok, runner_id} <- Recovery.resolve_runner(located.cell_id),
-         {:ok, verdict} <- Commands.dispatch_compact_cell(runner_id, located.cell_id, await: true),
-         do: {:ok, Map.put(rotated(verdict), :cell, cell)}
+    {relay_class, _tasklet, _key} = located.cell_id
+    on_state(relay_class, :local_rotate, [cell])
   end
 
   # The verdict as the verb answers it; the bare dispatch without a control
@@ -343,8 +342,8 @@ defmodule Flezha.Service.Steps do
     row: &cell_path_row/1,
     as: located,
     args: [cell: @cell] do
-    {:ok, _} = Flezha.State.Supervisor.delete_cell(located.cell_id)
-    {:ok, %{cell: cell}}
+    {relay_class, _tasklet, _key} = located.cell_id
+    on_state(relay_class, :local_delete, [located.cell_id, cell])
   end
 
   @doc """
@@ -367,8 +366,9 @@ defmodule Flezha.Service.Steps do
 
   # ---------- Local halves ----------
 
-  # Each read above answers from the controller holding the instance's state;
-  # these are the halves that controller runs, called by name.
+  # Each read above, and each mutation of a Cell's state, answers from the
+  # controller holding the instance's state; these are the halves that
+  # controller runs, called by name.
 
   defp on_state(instance_id, function, args),
     do: RelayManager.on_state_node(instance_id, __MODULE__, function, args)
@@ -409,6 +409,20 @@ defmodule Flezha.Service.Steps do
   @doc false
   def local_last_offset(instance_id) do
     with {:ok, _floor, last} <- InputLog.tail(instance_id), do: {:ok, last}
+  end
+
+  @doc false
+  def local_rotate(cell) do
+    with {:ok, %{cell_id: cell_id}} <- persisted_cell(cell),
+         {:ok, runner_id} <- Recovery.resolve_runner(cell_id),
+         {:ok, verdict} <- Commands.dispatch_compact_cell(runner_id, cell_id, await: true),
+         do: {:ok, Map.put(rotated(verdict), :cell, cell)}
+  end
+
+  @doc false
+  def local_delete(cell_id, cell) do
+    {:ok, _} = Flezha.State.Supervisor.delete_cell(cell_id)
+    {:ok, %{cell: cell}}
   end
 
   @doc false
@@ -551,8 +565,6 @@ defmodule Flezha.Service.Steps do
   def invalid_number(option, written),
     do:
       {:error, Flezha.Error.new("usage.invalid_number", option: option, value: inspect(written))}
-
-  defp persisted_cell_row([path | _]), do: persisted_cell(path)
 
   # The path split, with no on-disk check, so deleting a Cell that left nothing
   # behind still succeeds.
