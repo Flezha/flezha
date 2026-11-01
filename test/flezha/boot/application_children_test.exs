@@ -12,6 +12,9 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
   # Pins `:flezha` application env for the duration of a test.
   use FlezhaTest.Case, fixtures: [:env], async: false
 
+  alias Flezha.Plugin.Provider.WorkerSup
+  alias Flezha.Plugin.Providers
+
   @pinned [
     transports: [:uds],
     authn_authz: [application_managed: true],
@@ -39,17 +42,20 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Flezha.AuthZ.Supervisor,
     Flezha.Service.Calls,
     Flezha.Observability.HookSink,
-    # One worker family per provider that declares a worker, from the provider
-    # table, in its order.
+    # One worker family per provider row, in the provider table's order.
     Flezha.Plugin.Provider.HookWebhook.WorkerSup,
     Flezha.Plugin.Provider.MonitoredIOForward.WorkerSup,
+    Flezha.Plugin.Provider.BeamMsgForward.WorkerSup,
     Flezha.Plugin.Provider.File.Source.WorkerSup,
     Flezha.Plugin.Provider.File.Sink.WorkerSup,
     Flezha.Plugin.Provider.RelayForward.WorkerSup,
     Flezha.Plugin.Provider.HttpPoll.WorkerSup,
     Flezha.Plugin.Provider.HttpPush.WorkerSup,
+    Flezha.Plugin.Provider.Filter.WorkerSup,
+    Flezha.Plugin.Provider.MessageForward.WorkerSup,
     Flezha.Plugin.Provider.Postgres.WorkerSup,
     Flezha.Plugin.Provider.PostgresPoll.WorkerSup,
+    Flezha.Plugin.Provider.StdOut.WorkerSup,
     Flezha.Plugin.Provider.Websocket.WorkerSup,
     # The running copies of shareable plugins, one per plugin on this controller.
     Flezha.Plugin.Shared.WorkerSup,
@@ -86,6 +92,16 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
   test "the hub starter is absent when auto-restore is off" do
     Application.put_env(:flezha, :auto_restore_enabled, false)
     refute Flezha.Service.HubManager.Starter in ids()
+  end
+
+  # fails when: a provider whose code did not load at boot is left without a
+  # worker family, so a later bind on that node finds no registry.
+  test "a provider row whose module does not load still gets its worker family" do
+    unloadable = Module.concat(__MODULE__, NeverLoaded)
+    :ok = Providers.add("never_loaded", unloadable)
+    on_exit(&Providers.reset_installed/0)
+
+    assert WorkerSup.family(unloadable) in Providers.worker_families()
   end
 
   test "the testnet child is prepended, never appended" do
