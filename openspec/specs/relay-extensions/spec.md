@@ -1574,3 +1574,21 @@ sink and poll source SHALL stay in the core.
 - **WHEN** a package module aliases `Flezha.Plugin.Provider.PostgresPoll.Query`
 - **THEN** the package-surface test SHALL fail naming the package file and the module
 
+### Requirement: A pid-typed provider option SHALL accept only a pid
+
+A provider option declared with type `pid` SHALL accept only a process identifier given in the
+controller's own VM. A string, an atom or any other value, including the name of a registered
+process, SHALL be refused naming the option, so no caller can direct a plugin's messages to a
+process of the controller by name.
+
+#### Scenario: A registered name is refused
+
+- **WHEN** `relay_beam_msg` is enabled with `recv_pid: "Elixir.Flezha.AuthZ.TokenStore"`
+- **THEN** the enable SHALL be refused naming `recv_pid`, and no message SHALL be sent to that
+  process
+
+#### Scenario: A pid is accepted
+
+- **WHEN** code in the controller's VM enables `relay_beam_msg` with `recv_pid` set to its own pid
+- **THEN** the enable SHALL succeed, and each record SHALL reach that pid
+

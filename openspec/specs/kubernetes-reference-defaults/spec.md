@@ -131,3 +131,39 @@ package from a URL the cluster can reach.
 - **WHEN** `kubectl exec` runs `flz plugin install` of any archive
 - **THEN** it SHALL be refused with `plugin.list_declared`
 
+### Requirement: The reference manifests SHALL limit who reaches the distribution ports
+
+The reference manifests SHALL include a NetworkPolicy for the controller pods that admits traffic
+to the EPMD port and the distribution port only from pods labelled as Flezha controllers or as the
+console, and admits traffic to the health port from any source. The DaemonSet SHALL set
+`FLEZHA_DIST_PORT` and declare that port and the EPMD port on the controller container.
+
+#### Scenario: The manifest declares the policy and the port
+
+- **WHEN** the reference manifests are read
+- **THEN** a NetworkPolicy SHALL select the controller pods and allow ports 4369 and the
+  `FLEZHA_DIST_PORT` value only from the controller and console labels, and the DaemonSet SHALL set
+  `FLEZHA_DIST_PORT` and declare it as a container port
+
+#### Scenario: An unrelated pod is blocked on a cluster that enforces policies
+
+- **GIVEN** the reference manifests applied to a throwaway k3s cluster with policy enforcement
+- **WHEN** a pod without the controller or console label connects to a controller's port 4369 or
+  its distribution port
+- **THEN** the connection SHALL fail, while the controllers still form a cluster and the health
+  probes still pass
+
+### Requirement: The reference init container SHALL NOT widen file modes
+
+The init container that prepares the controller's host paths SHALL set ownership and SHALL NOT
+make any file or directory under them readable by other users. It SHALL NOT change the mode of
+files the controller has already written.
+
+#### Scenario: Keys stay private across a restart
+
+- **GIVEN** a controller pod has written key files with mode `0600` under its certificate host
+  path
+- **WHEN** the pod restarts and the init container runs again
+- **THEN** the key files SHALL still have mode `0600`, and no directory the init container touched
+  SHALL be readable by other users
+

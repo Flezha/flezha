@@ -44,6 +44,7 @@ data:
   FLEZHA_AUTHZ_DIR: "/var/lib/flezha/auth"
   FLEZHA_SCHEDULE_DIR: "/var/lib/flezha/schedules"
   FLEZHA_AUDIT_DIR: "/var/lib/flezha/audit"
+  FLEZHA_RELAY_HISTORY_DIR: "/var/lib/flezha/relay_history"
   # Plugin packages live on the volume too: every boot expands them under
   # this root, which the read-only root filesystem cannot hold.
   FLEZHA_PLUGIN_ROOT: "/var/lib/flezha/plugins"

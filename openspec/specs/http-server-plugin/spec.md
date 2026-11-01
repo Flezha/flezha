@@ -418,3 +418,20 @@ provider's declaration. A test in the plugin repository SHALL fail when the two 
 - **WHEN** an option is added to the provider's declaration and the page is not updated
 - **THEN** the plugin repository's test suite SHALL fail naming the page and printing the table to put there
 
+### Requirement: The HTTP server SHALL NOT bind a port the controller's own HTTP surfaces use
+
+An `http_server` enable SHALL be refused, naming the port and its owner, when its `port` is the
+port of an enabled `http_api` binding on that controller or the configured `FLEZHA_HEALTHZ_PORT`.
+
+#### Scenario: The HTTP API's port is refused
+
+- **GIVEN** `http_api` is enabled in `_system` on port 8765
+- **WHEN** a namespace enables `http_server` with `port: 8765`
+- **THEN** the enable SHALL be refused naming port 8765 and `http_api`
+
+#### Scenario: The health port is refused
+
+- **GIVEN** `FLEZHA_HEALTHZ_PORT` is 9569
+- **WHEN** a namespace enables `http_server` with `port: 9569`
+- **THEN** the enable SHALL be refused naming port 9569 and `FLEZHA_HEALTHZ_PORT`
+

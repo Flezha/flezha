@@ -201,3 +201,147 @@ authentication SHALL require an explicit opt-out that logs a warning on every bo
 - **THEN** the disable requires an explicit setting and a warning is emitted on each
   boot for as long as it remains disabled
 
+### Requirement: An unprotected distribution link SHALL be warned on every boot
+
+A controller SHALL log one warning on every boot when its node host is not a loopback address
+(`127.0.0.0/8`, `::1`) or `localhost` and its distribution is not TLS, saying that traffic between
+controllers is neither encrypted nor authenticated beyond the cookie, and naming
+`FLEZHA_DIST_TLS_OPTFILE`. When distribution is TLS, the controller SHALL read the options file at
+boot and SHALL log one warning on every boot for each of these that holds:
+
+- the server section does not set `{verify, verify_peer}`, so peers are admitted without a
+  certificate check;
+- neither section sets `versions`, so only TLS 1.2 is offered;
+- a section's `cacertfile` is the same file as the runner transport's trust anchor
+  (`FLEZHA_QUIC_CLIENT_CA` or `FLEZHA_CA_CERT_PATH`).
+
+An options file that cannot be read SHALL be warned naming its path. None of these conditions
+SHALL stop the boot or refuse distribution. A loopback node with plain distribution SHALL NOT be
+warned.
+
+#### Scenario: Plain distribution off loopback is warned
+
+- **WHEN** a controller boots as `flezha@10.0.0.5` without `FLEZHA_DIST_TLS_OPTFILE`
+- **THEN** one warning naming `FLEZHA_DIST_TLS_OPTFILE` SHALL be logged, and the node SHALL start
+  and accept distribution as before
+
+#### Scenario: A loopback node is not warned
+
+- **WHEN** a controller boots as `flezha@127.0.0.1` without `FLEZHA_DIST_TLS_OPTFILE`
+- **THEN** no distribution warning SHALL be logged
+
+#### Scenario: A TLS file that does not check peers is warned
+
+- **WHEN** a controller boots with an options file whose server section has a certificate and
+  key but no `{verify, verify_peer}`
+- **THEN** one warning saying peers are admitted without a certificate check SHALL be logged
+
+#### Scenario: A TLS file without versions is warned
+
+- **WHEN** a controller boots with an options file that sets no `versions`
+- **THEN** one warning saying only TLS 1.2 is offered SHALL be logged
+
+#### Scenario: Reusing the runner trust anchor is warned
+
+- **WHEN** a controller boots with an options file whose `cacertfile` is the file
+  `FLEZHA_QUIC_CLIENT_CA` names
+- **THEN** one warning saying distribution trusts the runner authority SHALL be logged
+
+#### Scenario: The shipped example file is not warned
+
+- **WHEN** a controller boots with the shipped example options file and certificates made by the
+  shipped script
+- **THEN** no distribution warning SHALL be logged
+
+### Requirement: The repository SHALL ship a tested mutual-TLS setup for distribution
+
+The repository SHALL ship an example distribution options file that sets, for both sections, a
+node certificate, its key, a CA file, `{verify, verify_peer}` and `{versions, ['tlsv1.3']}`, and
+for the server section `{fail_if_no_peer_cert, true}`. It SHALL ship a script that creates a
+distribution certificate authority and node certificates carrying both the `serverAuth` and
+`clientAuth` extended key usages and the given DNS names and IP addresses in the subject
+alternative name, writing every private key readable by its owner only. A multi-node test SHALL
+start controllers' distribution with the example file and certificates from the script and SHALL
+prove each scenario below.
+
+#### Scenario: A valid peer joins
+
+- **WHEN** two nodes use the example file with certificates from one distribution authority and
+  share the cookie
+- **THEN** they SHALL connect, and a remote call between them SHALL succeed
+
+#### Scenario: A peer from an unknown authority is refused
+
+- **WHEN** a node presents a certificate from a different authority
+- **THEN** the connection SHALL be refused during the TLS handshake
+
+#### Scenario: A peer without a certificate is refused
+
+- **WHEN** a node connects without a certificate
+- **THEN** the connection SHALL be refused during the TLS handshake
+
+#### Scenario: A certificate without the client usage is refused
+
+- **WHEN** a node connects presenting a certificate from the distribution authority that carries
+  only the `serverAuth` usage
+- **THEN** the connection SHALL be refused
+
+#### Scenario: A server certificate for another host is refused
+
+- **WHEN** a node dials `flezha@a.example` and the answering node presents a certificate that
+  does not name `a.example`
+- **THEN** the dialling node SHALL refuse the connection
+
+#### Scenario: A wrong cookie is refused over TLS
+
+- **WHEN** a node with a valid certificate connects with a different cookie
+- **THEN** the connection SHALL be refused after the TLS handshake
+
+#### Scenario: A TLS 1.2 only peer is refused
+
+- **WHEN** a node offering only TLS 1.2 connects to a node using the example file
+- **THEN** the connection SHALL be refused
+
+#### Scenario: A node cut off by rotating the authority is refused
+
+- **GIVEN** three nodes connected under authority A
+- **WHEN** two of them are restarted with a new authority B, new certificates and a new cookie,
+  and the third keeps its certificate from A
+- **THEN** the third SHALL NOT be able to connect to either of the other two
+
+### Requirement: The distribution port SHALL be pinnable for controller starts
+
+`FLEZHA_DIST_PORT`, when set to a port number, SHALL make a command that starts a controller node
+listen for distribution on exactly that port, over plain TCP or TLS. It SHALL NOT apply to the
+virtual machines behind `flzvm rpc`, `flzvm remote` or the CLI's local verbs. A value that is not
+a port number SHALL stop the start naming the variable. Unset, the port SHALL be chosen as
+before.
+
+#### Scenario: A pinned port is used
+
+- **WHEN** a controller starts with `FLEZHA_DIST_PORT=9100`
+- **THEN** EPMD SHALL list the node at port 9100
+
+#### Scenario: A remote shell does not take the pinned port
+
+- **WHEN** `flzvm remote` runs on the same machine as a controller started with
+  `FLEZHA_DIST_PORT=9100`
+- **THEN** the remote shell SHALL reach the controller, and its own virtual machine SHALL NOT be
+  given that port
+
+#### Scenario: An invalid port is refused
+
+- **WHEN** a controller starts with `FLEZHA_DIST_PORT=ninety`
+- **THEN** the start SHALL fail with a message naming `FLEZHA_DIST_PORT`
+
+### Requirement: Generated runner-transport keys SHALL be owner-only from creation
+
+When the controller generates the runner transport's key files, each key file SHALL be readable
+and writable by its owner only before any key material is written to it.
+
+#### Scenario: A key is never readable by others
+
+- **WHEN** the controller generates the runner transport certificate set
+- **THEN** each key file SHALL have mode `0600` at the moment its first byte is written, and
+  afterwards
+

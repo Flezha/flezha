@@ -609,3 +609,47 @@ package it builds loads in that image.
 - **THEN** it SHALL be changed in one `ARG` line, and both the release stage and the
   `plugin-builder` stage SHALL build from the new tag
 
+### Requirement: The image SHALL be built on a runtime with no open advisory for a shipped application
+
+The controller image SHALL be built on an Erlang/OTP patch release for which no published
+Erlang/OTP security advisory with an available fix affects an application the release ships.
+The toolchain image and `.github/toolchains.json` SHALL name the same OTP and Elixir versions as
+the controller image. The publishing-readiness document SHALL describe the advisory check to run
+before a release: `mix hex.audit` for the controller and each plugin, `cargo audit`, a query of
+every lock file in the repository and its SDK submodules against the OSV database, and the
+Erlang/OTP advisories for the image's OTP version.
+
+#### Scenario: The shipped applications are at patched versions
+
+- **WHEN** the controller image is built and its `lib/` directory is listed
+- **THEN** it SHALL contain `ssl-11.6.0.7` or later, `public_key-1.20.3.6` or later,
+  `asn1-5.4.3.1` or later, `inets-9.6.2.4` or later, `stdlib-7.3.0.2` or later and
+  `erts-16.4.0.6` or later
+
+#### Scenario: The toolchain pins agree
+
+- **WHEN** `scripts/check-ci-toolchain.sh` runs
+- **THEN** it SHALL pass with the controller image, the toolchain image and
+  `.github/toolchains.json` naming Elixir 1.20.5 on OTP 28
+
+### Requirement: The image SHALL NOT ship a cookie file
+
+The controller image SHALL NOT contain `releases/COOKIE`, as the release archive already does not.
+
+#### Scenario: No cookie file in the image
+
+- **WHEN** the controller image is built
+- **THEN** `/flezha/releases/COOKIE` SHALL NOT exist in it, and a controller started from it with
+  `RELEASE_COOKIE` set SHALL cluster as before
+
+### Requirement: Build-time downloads SHALL be pinned
+
+Every tool the image build downloads outside a package manager SHALL be fetched at a named
+version and checked against a recorded SHA-256 digest before use; a mismatch SHALL fail the
+build.
+
+#### Scenario: A tampered rebar3 fails the build
+
+- **WHEN** the image build fetches `rebar3` and its digest differs from the recorded one
+- **THEN** the build SHALL fail at that step
+

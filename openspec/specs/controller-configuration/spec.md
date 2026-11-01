@@ -271,3 +271,16 @@ included.
 - **WHEN** `flz relay list` and the retention sweeper each judge whether it is retained
 - **THEN** both SHALL read the same window
 
+### Requirement: The `/healthz` listener SHALL bound its open connections
+
+The health listener SHALL serve at most a fixed number of connections at once. A connection
+beyond that number SHALL be answered `503` and closed without being served, and the listener
+SHALL keep serving within the bound.
+
+#### Scenario: Connections beyond the bound are answered 503
+
+- **GIVEN** the health listener holds as many open connections as its bound allows
+- **WHEN** one more client connects and sends a request
+- **THEN** that client SHALL receive `503`, and a client connecting after one of the open
+  connections closes SHALL receive the health verdict
+

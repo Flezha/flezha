@@ -5,8 +5,9 @@
 #   1. The controllers form a cluster on the pinned distribution port and the
 #      health probes pass, while a pod without the controller or console label
 #      cannot reach EPMD or the distribution port, and a console-labelled one can.
-#   2. Key files the controller wrote stay 0600, and the host directories the
-#      init container prepares stay closed to other users, across a pod restart.
+#   2. A key file the controller's user wrote stays 0600, and the host
+#      directories the init container prepares stay closed to other users,
+#      across a pod restart.
 #   3. With the cert-manager recipe in deploy/dist-tls/kubernetes/, the two
 #      controller pods join over mutual TLS; a pod holding a certificate of the
 #      distribution authority and the cookie connects, and one holding a
@@ -111,9 +112,9 @@ reaches app=console "$IP" 4369 || fail "a console-labelled pod could not reach E
 reaches app=console "$IP" 9100 || fail "a console-labelled pod could not reach the distribution port"
 
 note "scenario 2: keys stay 0600 and directories stay closed across a pod restart"
+# The node container `$1` names: the host paths a pod there mounts.
 check_modes() {
-  local node keys dirs
-  node="$(node_of "$1")"
+  local node=$1 keys dirs
   keys="$(docker exec "$node" sh -c 'stat -c "%a %n" /opt/flezha-certs/*.key')"
   dirs="$(docker exec "$node" stat -c '%a %n' /opt/flezha-certs /opt/flezha-data /opt/flezha-recovery \
     /opt/flezha-sockets /opt/flezha-logs)"
@@ -124,10 +125,15 @@ check_modes() {
     fail "a host directory is readable by other users on $node"
   fi
 }
-check_modes "${PODS[0]}"
+# The manifests run the socket transport, which generates no keys, so the
+# controller's own user writes one the way the generator would.
+kc -n flezha exec "${PODS[0]}" -c flezha -- \
+  sh -c 'umask 077 && echo key >/flezha/storage/app/certs/probe.key'
+NODE="$(node_of "${PODS[0]}")"
+check_modes "$NODE"
 kc -n flezha delete pod "${PODS[0]}" --wait=true >/dev/null
 await_pods
-check_modes "${PODS[0]}"
+check_modes "$NODE"
 
 note "scenario 3: the cert-manager recipe puts the controllers on mutual TLS"
 kc apply -f "$CERT_MANAGER" >/dev/null
@@ -176,6 +182,9 @@ spec:
       image: flezha/flezha:0.1.0
       imagePullPolicy: IfNotPresent
       env:
+        # The eval VM writes a cookie file of its own before the real one is set.
+        - name: HOME
+          value: /tmp
         - name: RELEASE_COOKIE
           value: "${COOKIE}"
         - name: FLEZHA_DIST_TLS_OPTFILE
@@ -184,13 +193,19 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.podIP
-      command:
-        - /flezha/bin/flzvm
-        - eval
-        - |
-          {:ok, _} = Node.start(:"${name}@#{System.fetch_env!("POD_IP")}", :longnames)
-          Node.set_cookie(String.to_atom(System.fetch_env!("RELEASE_COOKIE")))
-          IO.puts("connected=#{Node.connect(:"${target}")}")
+        - name: DIAL
+          value: |
+            if node() == :nonode@nohost,
+              do: {:ok, _} = :net_kernel.start([:"${name}@#{System.fetch_env!("POD_IP")}", :longnames])
+            Node.set_cookie(String.to_atom(System.fetch_env!("RELEASE_COOKIE")))
+            # A new pod may be dropped until the network policy has learned its address.
+            connected =
+              Enum.any?(1..15, fn _ ->
+                Node.connect(:"${target}") == true or (Process.sleep(2_000) && false)
+              end)
+            IO.puts("connected=#{connected}")
+      # A node registers with an EPMD of its own pod before it dials.
+      command: ["sh", "-c", '/flezha/erts-*/bin/epmd -daemon && exec /flezha/bin/flzvm eval "\$DIAL"']
       volumeMounts:
         - name: certs
           mountPath: /etc/flezha/dist
@@ -205,7 +220,8 @@ spec:
         name: ${name}-conf
 EOF
   kc -n flezha wait --for=jsonpath='{.status.phase}'=Succeeded "pod/${name}" --timeout=180s >/dev/null ||
-    fail "the ${name} pod did not finish"
+    { kc -n flezha logs "$name" || true; fail "the ${name} pod did not finish"; }
+  kc -n flezha logs "$name" >&2
   kc -n flezha logs "$name" | grep '^connected='
 }
 

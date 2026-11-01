@@ -80,3 +80,22 @@ Every verb in a runner credential's lifecycle SHALL bind a row of the user-verb 
 - **THEN** the raw value SHALL be returned exactly once and SHALL NOT be
   retrievable afterwards
 
+### Requirement: A runner's namespace SHALL be proven whenever enforcement is configured
+
+The namespace a connecting runner claims SHALL be proven by its certificate or its credential
+whenever authorization is configured on, including while the bootstrap is not yet claimed. Only
+under the open posture (authorization configured off) SHALL the claimed namespace be taken as
+given.
+
+#### Scenario: Before the claim, an unproven namespace is refused
+
+- **GIVEN** authorization is configured on and the bootstrap is not claimed
+- **WHEN** a runner connects claiming namespace `b` with a credential for namespace `a`
+- **THEN** the connection SHALL be refused, and no session SHALL exist in `b`
+
+#### Scenario: The open posture takes the claim
+
+- **GIVEN** authorization is configured off
+- **WHEN** a runner connects claiming namespace `b` with no credential
+- **THEN** it SHALL be admitted to `b`
+

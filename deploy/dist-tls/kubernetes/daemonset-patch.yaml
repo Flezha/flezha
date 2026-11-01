@@ -37,6 +37,8 @@ spec:
             - -addext
             - subjectAltName=IP:$(POD_IP)
             - -addext
+            - keyUsage=critical,digitalSignature
+            - -addext
             - extendedKeyUsage=serverAuth,clientAuth
             - -out
             - /dist/node.csr

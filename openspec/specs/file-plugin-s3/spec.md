@@ -5,38 +5,46 @@ How the file plugins work under an `s3://<bucket>/<prefix>` root: every path con
 ## Requirements
 ### Requirement: An S3 root SHALL confine every file plugin path to one bucket prefix
 
-The controller SHALL accept `FLEZHA_FILE_PLUGIN_ROOT` in the form `s3://<bucket>/<prefix>`. A
-plugin's `path` SHALL then name a key under that prefix: a relative path SHALL be joined to the
-prefix with its `.` and `..` segments removed lexically, an `s3://` path SHALL be taken as
+The controller SHALL accept `FLEZHA_FILE_PLUGIN_ROOT` in the form `s3://<bucket>/<prefix>`. Each
+namespace SHALL have its own prefix, `<prefix>/<namespace>`, and a plugin's `path` SHALL then
+name a key under the prefix of the namespace it is enabled in: a relative path SHALL be joined to
+that prefix with its `.` and `..` segments removed lexically, an `s3://` path SHALL be taken as
 written, and a path starting with `/` SHALL be refused naming the root. The resulting key SHALL
-lie under the prefix, compared segment by segment, or the enable SHALL be refused naming the
-root. The resolved `s3://` URL SHALL replace `path` in the plugin's options. The bucket SHALL
-NOT be created.
+lie under the namespace prefix, compared segment by segment, or the enable SHALL be refused naming
+it. The resolved `s3://` URL SHALL replace `path` in the plugin's options. The bucket SHALL NOT be
+created.
 
 #### Scenario: A relative path becomes a key under the prefix
 
 - **GIVEN** the root is `s3://events/flezha`
-- **WHEN** a plugin is enabled with `path: "out/echo"`
+- **WHEN** a plugin is enabled in namespace `orders` with `path: "out/echo"`
 - **THEN** the enable SHALL succeed and the plugin's resolved path SHALL be
-  `s3://events/flezha/out/echo`
+  `s3://events/flezha/orders/out/echo`
 
 #### Scenario: A path that climbs out is refused
 
 - **GIVEN** the root is `s3://events/flezha`
-- **WHEN** a plugin is enabled with `path: "../other/echo"`
-- **THEN** the enable SHALL be refused naming `s3://events/flezha`
+- **WHEN** a plugin is enabled in namespace `orders` with `path: "../other/echo"`
+- **THEN** the enable SHALL be refused naming `s3://events/flezha/orders`
 
 #### Scenario: Another bucket is refused
 
 - **GIVEN** the root is `s3://events/flezha`
 - **WHEN** a plugin is enabled with `path: "s3://audit/flezha/echo"`
-- **THEN** the enable SHALL be refused naming `s3://events/flezha`
+- **THEN** the enable SHALL be refused naming the namespace prefix under `s3://events/flezha`
 
 #### Scenario: A filesystem path is refused
 
 - **GIVEN** the root is `s3://events/flezha`
 - **WHEN** a plugin is enabled with `path: "/etc/passwd"`
 - **THEN** the enable SHALL be refused naming `s3://events/flezha`
+
+#### Scenario: Another namespace's prefix is refused
+
+- **GIVEN** the root is `s3://events/flezha`
+- **WHEN** a plugin is enabled in namespace `payments` with
+  `path: "s3://events/flezha/orders/out/echo"`
+- **THEN** the enable SHALL be refused naming `s3://events/flezha/payments`
 
 ### Requirement: An S3 root SHALL use its own connection settings and SHALL NOT reach durable state
 

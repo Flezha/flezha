@@ -222,7 +222,8 @@ spec:
               # `FLEZHA_PROCESS_HUB_REGISTRY_ROOT=/var/lib/flezha/process_hub`
               # (ProcessHub's persistent registry),
               # `FLEZHA_STATE_DIR=/var/lib/flezha/state` (per-Cell WAL and
-              # snapshot files), `FLEZHA_DLQ_DIR=/var/lib/flezha/dlq` and
+              # snapshot files), `FLEZHA_DLQ_DIR=/var/lib/flezha/dlq`,
+              # `FLEZHA_RELAY_HISTORY_DIR=/var/lib/flezha/relay_history` and
               # `FLEZHA_PLUGIN_ROOT=/var/lib/flezha/plugins` (installed plugin
               # packages and their expansion at boot).
               # Losing this volume reverts controllers to empty recovery on

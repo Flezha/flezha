@@ -209,6 +209,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- The reference Kubernetes manifests boot again: the ConfigMap now puts the relay history
+  (`FLEZHA_RELAY_HISTORY_DIR`) on the state volume, where the read-only root filesystem no
+  longer stops the controller at its first boot.
 - A relay start or schedule whose plugin spec only binds a plugin already enabled, naming no
   provider, no longer fails with `internal.uncatalogued`; its one option, `channel`, is read.
 - A graceful stop no longer waits out its whole drain budget for a relay that

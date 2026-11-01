@@ -976,3 +976,44 @@ same on every surface.
 - **WHEN** a runner sets `max_relays` to `"ten"`
 - **THEN** the refusal SHALL be `usage.invalid_number` with `option` `max_relays`
 
+### Requirement: A relay start that names a plugin provider SHALL also be judged as `plugin.enable`
+
+A relay start whose plugin specs name a provider enables that plugin. Such a start SHALL be
+authorized for `plugin.enable` in the start's namespace, as well as for `relay.start`, before any
+plugin is enabled. A refusal SHALL enable nothing and start no relay. A plugin spec that only
+binds an already enabled plugin (no provider) SHALL need `relay.start` alone.
+
+#### Scenario: A spawner cannot enable a plugin through a start
+
+- **GIVEN** `runner@team-orders` holds `spawner` and no other role on `team-orders`
+- **WHEN** it starts a relay whose plugin spec names the provider `relay_http_poll`
+- **THEN** the start SHALL be refused with `authz.role_insufficient` naming `plugin.enable`, no
+  plugin SHALL be enabled and no relay SHALL start
+
+#### Scenario: A spawner binds an enabled plugin
+
+- **GIVEN** `runner@team-orders` holds `spawner`, and plugin `feed` is enabled in `team-orders`
+- **WHEN** it starts a relay whose plugin spec names `feed` without a provider
+- **THEN** the start SHALL succeed
+
+#### Scenario: An app holder enables through a start
+
+- **GIVEN** an identity holding `app` on `team-orders`
+- **WHEN** it starts a relay whose plugin spec names a provider
+- **THEN** the plugin SHALL be enabled and the relay SHALL start
+
+### Requirement: A runner principal SHALL be bound only in its own namespace
+
+Binding a role to a principal of the form `runner@<ns>` SHALL be refused, naming both
+namespaces, unless the target namespace is `<ns>`. Principals of other forms are unaffected.
+
+#### Scenario: Binding another namespace's runner is refused
+
+- **WHEN** the admin of namespace `n` binds `runner@m` to `app` in `n`
+- **THEN** the bind SHALL be refused naming `n` and `m`, and nothing SHALL be written
+
+#### Scenario: Binding the namespace's own runner succeeds
+
+- **WHEN** the admin of namespace `m` binds `runner@m` to `spawner` in `m`
+- **THEN** the bind SHALL succeed
+

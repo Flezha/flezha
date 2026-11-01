@@ -5,7 +5,7 @@
 #   k3s_up <name> [agents]    a server and <agents> agent nodes; exports KUBECONFIG
 #   k3s_import <image> [tag]  loads a local image into every node, tagged <tag> too
 #   k3s_down                  removes the nodes, their network and the kubeconfig
-#   k3s_dump                  prints the controller pods and their recent logs
+#   k3s_dump                  prints the controller pods and every container's recent logs
 #   kc ...                    kubectl against the cluster
 #
 # The kubeconfig is a temp file of its own, never the default one. k3s's own
@@ -61,8 +61,8 @@ k3s_import() {
 
 k3s_dump() {
   kc -n flezha get pods -o wide || true
-  kc -n flezha logs -l app=flezha -c flezha --tail=40 --previous 2>/dev/null ||
-    kc -n flezha logs -l app=flezha -c flezha --tail=40 || true
+  kc -n flezha logs -l app=flezha --all-containers --prefix --tail=40 --previous 2>/dev/null ||
+    kc -n flezha logs -l app=flezha --all-containers --prefix --tail=40 || true
 }
 
 k3s_down() {
