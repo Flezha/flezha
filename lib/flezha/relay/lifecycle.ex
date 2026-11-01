@@ -266,7 +266,7 @@ defmodule Flezha.Relay.Lifecycle do
          # resolve them BEFORE plugin activation so source adapters pick the
          # tier ingest mode (blocking call) from the env.
          declarations = declarations(add_relay_raw, state.namespace, relay.factory_id),
-         kept? = kept?(last, runner_id, add_relay_raw),
+         kept? = kept?(relay, declarations),
          :ok <- refuse_remote_without_backend(declarations, relay.factory_id),
          state =
            %{
@@ -376,14 +376,10 @@ defmodule Flezha.Relay.Lifecycle do
     {:ok, Suspend.cancel_wake_timer(%{state | phase: :running})}
   end
 
-  @doc """
-  Whether a bind finds Cells ahead of every record, so nothing is restored: the
-  runner kept the instance, and the relay was running there when bound again. A
-  move elsewhere tells a runner nothing, so what it kept through one may lag.
-  """
-  @spec kept?(Overwatch.t(), binary(), binary() | nil) :: boolean()
-  def kept?(%Overwatch{phase: :running, runner_id: id}, id, raw), do: ClassRegistry.kept?(raw)
-  def kept?(%Overwatch{}, _runner_id, _raw), do: false
+  @doc "Whether the instance continues this node's history: it answers the seat stored here."
+  @spec kept?(map(), map()) :: boolean()
+  def kept?(%{opts: opts}, %{seat: answered}),
+    do: match?({current, _next} when current != "" and current == answered, opts[:seat])
 
   # An instance not kept is re-seated, so its writers name the runner first; a
   # refused restore halts the relay rather than folding new inputs onto empty state.
@@ -391,11 +387,11 @@ defmodule Flezha.Relay.Lifecycle do
     with false <- kept?,
          :ok <- Replay.reseat_writers(state),
          true <- Replay.awaited_restore?(state),
-         {:error, reason} <- Replay.restore_cells_awaited(state) do
-      {:error, {:restore_refused, reason}, state}
+         {:ok, state} <- Replay.restore_cells_awaited(state) do
+      {:ok, state}
     else
       skipped when is_boolean(skipped) -> {:ok, state}
-      {:ok, state} -> {:ok, state}
+      {:error, reason} -> {:error, {:restore_refused, reason}, state}
     end
   end
 
@@ -450,8 +446,9 @@ defmodule Flezha.Relay.Lifecycle do
   # Stamp everything a resuming bind carries onto the relay's opts so
   # `control_unit` can set the `AddRelay` fields: the Cell restores to wait
   # for, the task-journal the run resumes from, the inputs the re-forward owes
-  # it, the kept effect results it ships and when its run window ends. A class
-  # without a journal or an input log reads `nil` and `0`.
+  # it, the kept effect results it ships, when its run window ends, and the seat
+  # it keeps or takes (`kept?/2`). A class without a journal or an input log
+  # reads `nil` and `0`.
   defp with_resume_state(relay, relay_class, namespace) do
     opts =
       relay.opts
@@ -460,6 +457,7 @@ defmodule Flezha.Relay.Lifecycle do
       |> Keyword.put(:inbox_tail_count, Replay.owed_count(relay_class))
       |> Keyword.put(:effect_results, Commands.effect_results(relay_class))
       |> Keyword.put(:max_duration_ends_at, RelayManager.window_end(namespace, relay.id))
+      |> Keyword.put(:seat, {Replay.seat(relay_class), Base.encode64(:rand.bytes(9))})
 
     %{relay | opts: opts}
   end

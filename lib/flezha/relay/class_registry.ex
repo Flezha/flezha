@@ -13,11 +13,8 @@ defmodule Flezha.Relay.ClassRegistry do
 
   Every read resolves in three steps: the in-memory ETS table (written at bind,
   evicted at teardown), a durable per-class sidecar under `Paths.class_dir/1`
-  so a process-less sweep still resolves it, then the default.
-
-  Invariant: a sidecar is written only for a value other than its default, so
-  a class that declares nothing keeps its on-disk layout unchanged and every
-  `Paths` scanner ignores it.
+  so a process-less sweep still resolves it, then the default. Invariant: a
+  declaration's sidecar is written only for a value other than its default.
   """
 
   alias Flezha.State.Paths
@@ -115,7 +112,8 @@ defmodule Flezha.Relay.ClassRegistry do
           compensable_tasks: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil,
           compact_after_bytes: pos_integer() | nil,
-          persistent: boolean()
+          persistent: boolean(),
+          seat: binary() | nil
         }
 
   @typedoc "How a steps class repeats; a flow class declares none."
@@ -161,16 +159,10 @@ defmodule Flezha.Relay.ClassRegistry do
       compensable_tasks: parse_ops(Map.get(metadata, "compensable_tasks")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_ms")),
       compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
-      persistent: durable != :memory
+      persistent: durable != :memory,
+      seat: Map.get(metadata, "seat")
     }
   end
-
-  @doc """
-  Whether an `AddRelayResponse` says the runner already ran the instance and
-  kept it, live Cells and all, rather than starting it.
-  """
-  @spec kept?(binary() | nil) :: boolean()
-  def kept?(raw_data), do: Map.get(decode_metadata(raw_data), "kept") == "true"
 
   defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do
     case RunnerCommands.AddRelayResponse.decode(raw_data) do
@@ -320,6 +312,12 @@ defmodule Flezha.Relay.ClassRegistry do
       owner when owner in [namespace, "_system"] -> put_record(relay_class, where, record, nil)
       owner -> {:error, {:namespace_conflict, relay_class, owner}}
     end
+  end
+
+  @doc "Store `relay_class`'s seat durably, `\"\"` clearing it; a memory class keeps none."
+  @spec put_seat(binary(), binary()) :: :ok | {:error, term()}
+  def put_seat(class, seat) do
+    if persistent?(class), do: put_record(class, {:seat, "seat"}, {seat, seat}, nil), else: :ok
   end
 
   @typedoc """
@@ -772,7 +770,8 @@ defmodule Flezha.Relay.ClassRegistry do
 
   defp install_sidecar(relay_class, filename, content) do
     path = sidecar_path(relay_class, filename)
-    Paths.atomic_install(path, &:file.write(&1, content), :class_kind)
+    durable = if filename == "seat", do: :seat, else: :class_kind
+    Paths.atomic_install(path, &:file.write(&1, content), durable)
   end
 
   defp read_sidecar(relay_class) do

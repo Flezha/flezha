@@ -218,6 +218,12 @@ pub struct AddRelay {
     /// whole window.
     #[prost(uint64, optional, tag = "14")]
     pub max_duration_remaining_ms: ::core::option::Option<u64>,
+    /// A live instance holding `seat_current` (non-empty) keeps it, any other
+    /// takes `seat_next`; the answer's `seat` metadata names the one held before.
+    #[prost(string, tag = "15")]
+    pub seat_current: ::prost::alloc::string::String,
+    #[prost(string, tag = "16")]
+    pub seat_next: ::prost::alloc::string::String,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddRelay.
 /// Carries the relay class's settings and SDK-side declarations (relay

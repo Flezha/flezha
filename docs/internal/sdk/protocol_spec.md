@@ -653,14 +653,16 @@ bind), `task_journal` (steps crash-resume state, §11), the partition identity
 (below), `inbox_tail_count` (the input-log records the bind re-forwards) and
 `effect_result_count` (the effect results shipped as `EffectResults` after the
 bind) and `max_duration_remaining_ms` (what is left of the run's window, which
-the controller counts from the run's first bind on its own clock). Fields 4 and
+the controller counts from the run's first bind on its own clock), and the seat
+token pair `seat_current` / `seat_next`. Fields 4 and
 12 are reserved: the runner runs a class as the class declares, and every
 controller parks a failed turn sent as `IterCommit.dead_letter`.
 
 | Field | Value |
 |-------|-------|
 | Behaviour | Create an instance of `factory_id` under `relay_id`. A flow class: a flow relay whose non-empty `init_values` JSON is applied as initial state in the tasklet-keyed shape of "Relay state JSON shape" above. A steps class: a steps instance, whose run is a pass sheet its events advance, its non-empty `init_values` applied as initial state in the same shape, its input the messages that arrive on its entry channels; a durable instance holds its first tasklet until `resume_cell_count` restores and `effect_result_count` effect results have landed. For either run, while any of its `inbox_tail_count` owed input-log records has not arrived its idle deadline is 60 s instead of its class's `sleep_after`; a class with `max_duration_ms` arms its stop `max_duration_remaining_ms` out, or its whole window when the field is absent, and a 0 is due at once |
-| Idempotency | A duplicate `relay_id` (a reconnect re-issue, a rebind onto the same runner) is answered `success` without re-registering, its metadata carrying `kept` |
+| Idempotency | A duplicate `relay_id` (a reconnect re-issue, a rebind onto the same runner) is answered `success` without re-registering |
+| Seat | An instance holding a non-empty `seat_current` keeps it; any other, a new one included, takes `seat_next`. The answer's `seat` names the seat it held before, so the controller restores nothing exactly when that equals `seat_current` |
 | Reply | `raw_data` = `AddRelayResponse { map<string,string> metadata }` — empty when the class declares nothing |
 | Errors | factory not found; JSON parse / deserialization failure; `PartitionsWithoutPerInputLoop: ...`; `PartitionsWithoutKeyedTasklet: ...` |
 
@@ -684,7 +686,7 @@ announcements:
 | `ack` | `"checkpoint"` | the class acknowledges input only at checkpoints |
 | `compact_after_bytes` | bytes | the smallest per-tasklet compaction trigger, when it differs from the default |
 | `compensable_tasks` | list | steps relay tree positions whose tasklet declares `compensate` |
-| `kept` | `"true"` | the runner already ran the instance and kept it, live Cells and all; the controller restores none of them on this bind (sent only when true) |
+| `seat` | token | the seat the instance held before this bind (absent for none) |
 
 #### Partition identity
 

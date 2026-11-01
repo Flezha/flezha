@@ -75,6 +75,7 @@ defmodule Flezha.State.Durable do
     {:lineage, "lib/flezha/state/lineage.ex", :whole, :inline_dir, ".tmp", false, false},
     {:completion, "lib/flezha/state/completion.ex", :whole, :inline, ".tmp", false, true},
     {:class_kind, "lib/flezha/relay/class_registry.ex", :whole, :inline, ".tmp", false, true},
+    {:seat, "lib/flezha/relay/class_registry.ex", :whole, :inline_dir, ".tmp", false, true},
     {:dlq_entries, "lib/flezha/dlq/store.ex", :whole, :inline, ".tmp", false, true},
     {:log_index, "lib/flezha/logs/index.ex", :whole, :inline, ".tmp", false, true},
     {:tier_object, "lib/flezha/state/durability_tier/backend/local_path.ex", :whole, :inline,

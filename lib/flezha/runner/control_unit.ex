@@ -333,6 +333,8 @@ defmodule Flezha.Runner.ControlUnit do
           ""
       end
 
+    {seat_current, seat_next} = Keyword.get(relay.opts, :seat, {"", ""})
+
     command = %RunnerCommands.AddRelay{
       relay_id: relay.id,
       factory_id: relay.factory_id,
@@ -345,7 +347,9 @@ defmodule Flezha.Runner.ControlUnit do
       inbox_tail_count: Keyword.get(relay.opts, :inbox_tail_count, 0),
       effect_result_count: length(Keyword.get(relay.opts, :effect_results, [])),
       task_journal: Keyword.get(relay.opts, :task_journal),
-      max_duration_remaining_ms: window_left(Keyword.get(relay.opts, :max_duration_ends_at))
+      max_duration_remaining_ms: window_left(Keyword.get(relay.opts, :max_duration_ends_at)),
+      seat_current: seat_current,
+      seat_next: seat_next
     }
 
     command = with_partition_identity(command, relay.opts)

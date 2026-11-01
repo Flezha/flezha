@@ -26,17 +26,19 @@ impl CommandAction for AddRelay {
         // every instance ProcessHub still has tagged to this runner's profile
         // after a restart. An instance already in the local registry keeps
         // its per-Cell state, and a duplicate never initializes twice.
-        let kept = runner.has_relay(&instance_id);
-        if !kept {
+        if !runner.has_relay(&instance_id) {
             match &class {
                 Some(topology) => self.start(runner, topology, &factory_id, &instance_id, errors),
                 None => errors.push(class_not_registered(&factory_id)),
             }
         }
+        let seat = runner
+            .get_relay(&instance_id)
+            .map(|instance| instance.take_seat(&self.seat_current, &self.seat_next));
 
         Reply {
             payload_id: "start_relay",
-            bytes: metadata_response(class.as_deref(), kept),
+            bytes: metadata_response(class.as_deref(), &seat.unwrap_or_default()),
         }
     }
 }
@@ -155,14 +157,14 @@ fn partition_refusal(
     }
 }
 
-/// The class's metadata as `AddRelayResponse` bytes, plus `kept` for an
-/// instance already running here; empty bytes for a class never registered.
-fn metadata_response(class: Option<&RelayTopology>, kept: bool) -> Vec<u8> {
+/// The class's metadata as `AddRelayResponse` bytes, plus the `seat` the
+/// instance held before this bind; empty bytes for a class never registered.
+fn metadata_response(class: Option<&RelayTopology>, seat: &str) -> Vec<u8> {
     match class {
         Some(topology) => {
             let mut metadata = class_metadata(topology);
-            if kept {
-                metadata.insert("kept".to_string(), "true".to_string());
+            if !seat.is_empty() {
+                metadata.insert("seat".to_string(), seat.to_string());
             }
             AddRelayResponse { metadata }.encode_to_vec()
         }
@@ -272,7 +274,7 @@ mod metadata_tests {
     }
 
     fn metadata_of(id: &str) -> std::collections::BTreeMap<String, String> {
-        let encoded = metadata_response(crate::relay::registry::get_class(id).as_deref(), false);
+        let encoded = metadata_response(crate::relay::registry::get_class(id).as_deref(), "");
         AddRelayResponse::decode(encoded.as_slice())
             .expect("response decodes")
             .metadata
@@ -404,21 +406,54 @@ mod metadata_tests {
         );
         assert!(metadata_response(
             crate::relay::registry::get_class("meta_never_registered").as_deref(),
-            true
+            "seat"
         )
         .is_empty());
     }
 
-    // fails when: a bind onto a runner that kept the instance is not told so,
-    // and the controller re-seats the live Cells from records that lag them.
+    // fails when: a bind is not answered the seat its instance held before, so
+    // the controller keeps a stale instance or restores over a live one.
     #[test]
-    fn only_a_kept_instance_answers_kept() {
-        let id = format!("meta_kept_{}", std::process::id());
+    fn a_bind_answers_the_seat_its_instance_held_before() {
+        use crate::command::CommandAction;
+        let _env = crate::runner::env_test_guard();
+        let id = format!("meta_seat_{}", std::process::id());
         register_steps(&id, r#""local""#);
-        let class = crate::relay::registry::get_class(&id);
-        let kept = |kept| AddRelayResponse::decode(&metadata_response(class.as_deref(), kept)[..]);
-        assert_eq!(kept(true).unwrap().metadata["kept"], "true");
-        assert!(!kept(false).unwrap().metadata.contains_key("kept"));
+        let mut node = crate::runner::RunnerNode::new("ns".into());
+        let mut bind = |current: &str, next: &str| {
+            let command = super::AddRelay {
+                relay_id: format!("{id}_inst"),
+                factory_id: id.clone(),
+                seat_current: current.into(),
+                seat_next: next.into(),
+                ..Default::default()
+            };
+            let reply = command.handle(&mut node, "", &mut Vec::new());
+            AddRelayResponse::decode(&reply.bytes[..])
+                .unwrap()
+                .metadata
+                .remove("seat")
+        };
+
+        assert_eq!(bind("", "a"), None, "a fresh instance held no seat");
+        assert_eq!(
+            bind("a", "b"),
+            Some("a".into()),
+            "the seat it holds is kept"
+        );
+        assert_eq!(bind("a", "c"), Some("a".into()), "and kept again");
+        assert_eq!(
+            bind("x", "d"),
+            Some("a".into()),
+            "a seat it does not hold is replaced"
+        );
+        assert_eq!(
+            bind("", "e"),
+            Some("d".into()),
+            "no seat named is never kept"
+        );
+        assert_eq!(bind("e", "f"), Some("e".into()));
+        assert!(node.stop_relay(&format!("{id}_inst")));
     }
 }
 
@@ -475,7 +510,7 @@ mod partition_tests {
         register(&id, false, "");
 
         let encoded =
-            super::metadata_response(crate::relay::registry::get_class(&id).as_deref(), false);
+            super::metadata_response(crate::relay::registry::get_class(&id).as_deref(), "");
         let decoded = AddRelayResponse::decode(encoded.as_slice()).expect("decodes");
         assert_eq!(
             decoded.metadata.get("keyed").map(String::as_str),
@@ -490,7 +525,7 @@ mod partition_tests {
 
         assert!(partition_refusal(&partitioned(&id, 3), &class_of(&id), &id).is_none());
         let encoded =
-            super::metadata_response(crate::relay::registry::get_class(&id).as_deref(), false);
+            super::metadata_response(crate::relay::registry::get_class(&id).as_deref(), "");
         let decoded = AddRelayResponse::decode(encoded.as_slice()).expect("decodes");
         assert!(
             !decoded.metadata.contains_key("keyed"),

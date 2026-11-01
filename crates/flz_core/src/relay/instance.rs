@@ -11,6 +11,7 @@ use crate::cell::CellSlot;
 use crate::channel::{BuildCellArgs, TaskletId};
 use crate::dynamic::DynamicCellRegistry;
 use crate::relay::topology::{CellMode, RelayTopology};
+use crate::util::LockRecover;
 
 /// Frozen by the cross-language `StableId` spec.
 pub const FNV128_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
@@ -126,9 +127,22 @@ pub struct RelayInstance {
     /// Set once the stop marker the controller sends behind its last input
     /// is read: nothing it delivered is still on the wire.
     pub(crate) stop_marker: AtomicBool,
+    /// The seat token of the bind that last seated this instance (`AddRelay`).
+    seat: Mutex<String>,
 }
 
 impl RelayInstance {
+    /// Take a bind's seat: keep `current` when this instance holds it, else
+    /// adopt `next`; answer the seat held before.
+    pub(crate) fn take_seat(&self, current: &str, next: &str) -> String {
+        let mut seat = self.seat.lock_recover();
+        let previous = seat.clone();
+        if current.is_empty() || previous != current {
+            *seat = next.to_string();
+        }
+        previous
+    }
+
     /// Whether a retry ladder still holds a payload of this instance.
     pub fn ladders_running(&self) -> bool {
         self.ladders.load(Ordering::Acquire) > 0
@@ -150,8 +164,7 @@ impl RelayInstance {
         let keeps_state = config_override.unwrap_or(topology.durable.keeps());
         let prefix = (topology.steps.is_none() && keeps_state)
             .then(|| crate::prefix::PrefixLedger::new(Arc::clone(&instance_id)));
-        // An instance whose input is journaled reports its prefix even when no
-        // Cell of it keeps a record, or its log's floor never moves.
+        // Reported even with no recording Cell, or the input log's floor never moves.
         if let Some(prefix) = prefix
             .as_ref()
             .filter(|_| topology.effectively_once || topology.sleep_after().is_some())
@@ -208,6 +221,7 @@ impl RelayInstance {
                 prefix,
                 end: Default::default(),
                 stop_marker: AtomicBool::new(false),
+                seat: Mutex::new(String::new()),
             }
         })
     }

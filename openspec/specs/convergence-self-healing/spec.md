@@ -274,7 +274,7 @@ The fabric arm of that guarantee needs a NIF driver to judge, and **the scope MU
 
 An output stall SHALL reach the loop as a declared fact: the Watchdog telemetry handler declares `{:output_stall, relay_id}`, the loop holds it as any fact (a re-declaration refreshes it, a new key ticks at once), the Diff carries it, and `Planner.plan/3` plans `rebind_relay` on every eligible attempt while the stall persists, with `args: %{reason: :output_stall}` on the `{:output_stall, relay_id}` key of the one backoff table, so a persistently stalled relay follows the `:heal` row's cooldown and never a per-tick storm. A binding SHALL NOT be re-seated in place: its live Cells may be ahead of every durable record. No op SHALL be injected after the plan is produced. The stall's timestamp stays readable for healthz reporting.
 
-No bind SHALL clear an output stall: a rebind that cannot unwedge the instance keeps its backoff, and the stall ages out on its grace or clears on evidence. A rebind of a running relay onto the runner it is running on SHALL restore none of its Cells when the runner's `AddRelay` answer says `kept`: its live Cells are ahead of every durable record, and re-seating them from those records would lose and double acknowledged inputs still in flight. Any other bind SHALL restore even when the answer says `kept`, since a move elsewhere tells the runner nothing and the instance it kept may lag what another runner took since. The bind re-forwards the undelivered input tail as any bind does.
+No bind SHALL clear an output stall: a rebind that cannot unwedge the instance keeps its backoff, and the stall ages out on its grace or clears on evidence. A rebind onto a runner whose instance answers this node's seat SHALL restore none of its Cells (`runner-identity-and-session`): its live Cells are ahead of every durable record, and re-seating them from those records would lose and double acknowledged inputs still in flight. Any other bind SHALL restore, since a move elsewhere tells the runner nothing and the instance it kept may lag what another runner took since. The bind re-forwards the undelivered input tail as any bind does.
 
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the relay's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy relay, which an output-stalled relay is not.
 
@@ -288,12 +288,12 @@ No bind SHALL clear an output stall: a rebind that cannot unwedge the instance k
 #### Scenario: a rebind onto the runner that kept the relay restores nothing
 
 - **GIVEN** a relay under input whose output stall names its own runner, the only one that can run it
-- **WHEN** `rebind_relay` binds it onto that runner again and the runner answers `AddRelay` with `kept`
+- **WHEN** `rebind_relay` binds it onto that runner again and the runner answers `AddRelay` with the seat stored here
 - **THEN** no Cell SHALL be restored, each acknowledged input SHALL count once, and the stall SHALL age out under its backoff rather than clear on the bind
 
 #### Scenario: A runner that kept a relay through a move elsewhere is restored over
 - **GIVEN** a relay moved from runner A, which kept its instance, to runner B, which took further input
-- **WHEN** the relay is bound onto A again and A answers `AddRelay` with `kept`
+- **WHEN** the relay is bound onto A again and A answers `AddRelay` with the seat it held before the move
 - **THEN** its Cells SHALL be restored from the durable records before the tail is re-forwarded
 
 #### Scenario: repeated stalls are backoff-throttled

@@ -112,19 +112,24 @@ defmodule Flezha.Relay.Replay do
   Walk the on-disk Cell state for this relay and send `RestoreInitState`
   to the SDK for each Cell that has a non-empty payload, awaiting every answer
   before the bind goes on, when the durable restore seeds it (`carrier/1`).
+  Once nothing was refused, the bind's seat is stored, so a refused one restores again.
   """
-  @spec restore_on_bind(Overwatch.t(), map()) :: :ok
+  @spec restore_on_bind(Overwatch.t(), map()) :: :ok | {:error, term()}
   def restore_on_bind(%Overwatch{} = state, relay) do
     # An awaited restore already ran, before the tail was re-forwarded. This
     # one is awaited too, in the bind: run off-process, its `RestoreInitState`
     # could reach the runner after a hand-over the Overwatch absorbs next and
     # an input after that, resetting the runner's state to the WAL's.
-    if :durable in carrier(state) and not awaited_restore?(state) do
-      relay_class = Keyword.get(relay.opts, :relay_class, state.id)
-      replay_persisted_cells(relay_class, state.runner_id, owner_pid(state))
-    end
+    restored =
+      if :durable in carrier(state) and not awaited_restore?(state) do
+        relay_class = Keyword.get(relay.opts, :relay_class, state.id)
+        replay_persisted_cells(relay_class, state.runner_id, owner_pid(state))
+      else
+        :ok
+      end
 
-    :ok
+    with :ok <- restored,
+         do: ClassRegistry.put_seat(Overwatch.relay_class(state), elem(relay.opts[:seat], 1))
   end
 
   @doc """
@@ -202,12 +207,8 @@ defmodule Flezha.Relay.Replay do
 
     # The verdict travels to the Overwatch as a message, the one thing that can
     # stop the relay.
-    case refusals do
-      [] -> :ok
-      [{:error, reason} | _] -> send(overwatch, {:restore_refused, reason})
-    end
-
-    :ok
+    with [{:error, reason} | _] <- refusals, do: send(overwatch, {:restore_refused, reason})
+    List.first(refusals, :ok)
   end
 
   # Starting the writer replays its WAL scan: it arms the outbox re-drive of
@@ -239,16 +240,23 @@ defmodule Flezha.Relay.Replay do
 
   def seed_steps_outboxes(%Overwatch{}), do: :ok
 
+  @doc "The seat this node stored for `relay_class`'s instance; `\"\"` for none."
+  @spec seat(binary()) :: binary()
+  def seat(relay_class), do: ClassRegistry.declaration(relay_class, :seat, "seat", & &1) || ""
+
   @doc """
   Name the bound runner the owner of this relay's running Cell writers: a bind
-  re-seats its Cells, by a restore or a hand-over (`WalWriter.reseat/2`).
+  re-seats its Cells, by a restore or a hand-over (`WalWriter.reseat/2`), after
+  clearing the stored seat durably, so no stale instance matches a half-done bind.
   """
-  @spec reseat_writers(Overwatch.t()) :: :ok
+  @spec reseat_writers(Overwatch.t()) :: :ok | {:error, term()}
   def reseat_writers(%Overwatch{} = state) do
-    for writer <- Flezha.State.Supervisor.live_writers(Overwatch.relay_class(state)),
-        do: WalWriter.reseat(writer, state.runner_id)
+    with :ok <- ClassRegistry.put_seat(Overwatch.relay_class(state), "") do
+      for writer <- Flezha.State.Supervisor.live_writers(Overwatch.relay_class(state)),
+          do: WalWriter.reseat(writer, state.runner_id)
 
-    :ok
+      :ok
+    end
   end
 
   @doc """

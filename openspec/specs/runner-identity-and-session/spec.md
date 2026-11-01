@@ -411,3 +411,38 @@ logged and dropped, never answered.
 - **WHEN** a runner receives a control frame whose `oneof` is `response`
 - **THEN** the runner SHALL drop it with a notice and keep its session
 
+
+### Requirement: A bind SHALL keep a live instance only when it answers this node's seat
+
+A bind SHALL treat a live runner instance as continuing this controller's copy
+of a relay's state only if the bind that last seated it was this node's, its
+restore landed, and none of this node's copy was replaced since. The controller SHALL record that fact as a
+per-class seat token kept durably beside the class's other records, and every
+`AddRelay` SHALL carry `seat_current`, the stored seat (empty for none), and
+`seat_next`, a fresh one. A runner instance that holds a non-empty `seat_current`
+SHALL keep it; any other SHALL take `seat_next`. Either way the answer's `seat`
+metadata SHALL name the seat the instance held before. The bind SHALL restore
+nothing exactly when that answer equals a non-empty `seat_current`, and SHALL
+write nothing then. Any other bind SHALL clear the stored seat durably before it
+restores (a clear that does not land fails the bind), and SHALL store
+`seat_next` only once its restore landed. Landing a Cell, input log or effect
+log from elsewhere SHALL clear the stored seat before the files land. A class
+that persists nothing SHALL keep no seat. No runner, phase or seq comparison
+SHALL stand in for the seat.
+
+#### Scenario: A restarted controller keeps the live instance it seated
+
+- **GIVEN** a relay whose last bind on this node restored and stored its seat
+- **WHEN** the controller restarts while the runner keeps the instance, and binds the relay again
+- **THEN** the runner SHALL answer the stored seat, no Cell SHALL be restored and no seat SHALL be written
+
+#### Scenario: A stale instance or a landed copy is restored over
+
+- **GIVEN** a runner instance seated by an earlier bind, after which the relay was seated elsewhere or a copy of its state landed here
+- **WHEN** the relay is bound onto that runner again
+- **THEN** its answer SHALL not equal the stored seat, its Cells SHALL be restored, and the new seat SHALL be stored once the restore landed
+
+#### Scenario: A bind that stops before its restore lands keeps nothing
+
+- **WHEN** a restoring bind's restore is refused, or the controller stops before it lands
+- **THEN** the stored seat SHALL stay cleared, and the next bind SHALL restore

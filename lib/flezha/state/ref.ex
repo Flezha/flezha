@@ -71,6 +71,12 @@ defmodule Flezha.State.Ref do
       def epoch(_ref), do: 0
       def markers(_ref), do: %{intent: false, done: false}
       def lineage(_ref), do: nil
+      # A landed copy replaces this node's, so no live instance continues it.
+      def land({kind, _} = ref, _arrival, fetch) when kind in [:cell, :input_log, :effects_log] do
+        relay_class = Flezha.State.Ref.state_key(ref)
+        with :ok <- Flezha.Relay.ClassRegistry.put_seat(relay_class, ""), do: fetch.()
+      end
+
       def land(_ref, _arrival, fetch), do: fetch.()
       def seed_floor(_ref), do: :ok
 

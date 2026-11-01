@@ -10,7 +10,7 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
 
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Relay.Lifecycle
-  alias Flezha.Relay.Overwatch
+  alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.State.Paths
 
@@ -20,26 +20,43 @@ defmodule FlezhaTest.Relay.ClassRegistryTest do
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
   end
 
-  # fails when: the controller misses that the runner kept a live instance and
-  # restores its Cells from records that lag them.
-  test "an AddRelay answer says whether the runner kept the instance" do
-    assert ClassRegistry.kept?(add_relay_answer(%{"kept" => "true", "durable" => "local"}))
-    refute ClassRegistry.kept?(add_relay_answer(%{"durable" => "local"}))
-    refute ClassRegistry.kept?("")
+  # fails when: a bind trusts an instance that answers no seat or another seat
+  # than this node stored, and keeps a stale copy's Cells instead of restoring.
+  test "an instance is kept only when it answers the seat stored here" do
+    answer =
+      &ClassRegistry.decode_declarations(add_relay_answer(&1), %{
+        run: nil,
+        each: nil,
+        on_failure: nil
+      })
+
+    bind = &%{opts: [seat: {&1, "next"}]}
+
+    assert Lifecycle.kept?(bind.("s1"), answer.(%{"seat" => "s1", "durable" => "local"}))
+    refute Lifecycle.kept?(bind.("s1"), answer.(%{"seat" => "s0"}))
+    refute Lifecycle.kept?(bind.("s1"), answer.(%{}))
+    refute Lifecycle.kept?(bind.(""), answer.(%{}))
+    refute Lifecycle.kept?(bind.(""), answer.(%{"seat" => ""}))
   end
 
-  # fails when: a bind back onto a runner that kept a stale instance through a
-  # move elsewhere skips the restore, and the inputs the other runner took since
-  # are lost from its Cells.
-  test "a kept instance is trusted only when the running relay is bound again where it ran" do
-    kept = add_relay_answer(%{"kept" => "true"})
-    running_on = &%Overwatch{phase: :running, runner_id: &1}
+  # fails when: a cleared seat is not durable, or a landing of another copy
+  # leaves the seat, so a restarted controller keeps an instance that never took
+  # the copy now on disk; or a class that persists nothing gains a class dir.
+  test "a seat survives eviction, a landing clears it, a memory class keeps none",
+       %{class: class} do
+    assert Replay.seat(class) == ""
+    :ok = ClassRegistry.put_seat(class, "s1")
+    :ets.delete(:flezha_relay_class_registry, {class, :seat})
+    assert Replay.seat(class) == "s1"
 
-    assert Lifecycle.kept?(running_on.("runner_a"), "runner_a", kept)
-    refute Lifecycle.kept?(running_on.("runner_b"), "runner_a", kept)
-    refute Lifecycle.kept?(running_on.(nil), "runner_a", kept)
-    refute Lifecycle.kept?(%Overwatch{phase: :halted, runner_id: "runner_a"}, "runner_a", kept)
-    refute Lifecycle.kept?(running_on.("runner_a"), "runner_a", add_relay_answer(%{}))
+    assert :ok = Flezha.State.Ref.land({:input_log, class}, :pulled, fn -> :ok end)
+    :ets.delete(:flezha_relay_class_registry, {class, :seat})
+    assert Replay.seat(class) == ""
+
+    memory = class <> "_memory"
+    :ets.insert(:flezha_relay_class_registry, {{memory, :persistence_off}, true})
+    :ok = ClassRegistry.put_seat(memory, "s1")
+    refute File.exists?(Paths.class_dir(memory))
   end
 
   test "an unknown class defaults to :flow", %{class: class} do

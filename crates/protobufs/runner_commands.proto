@@ -150,6 +150,10 @@ message AddRelay {
     // spent. Absent before the first bind, or for a class with no window: the
     // whole window.
     optional uint64 max_duration_remaining_ms = 14;
+    // A live instance holding `seat_current` (non-empty) keeps it, any other
+    // takes `seat_next`; the answer's `seat` metadata names the one held before.
+    string seat_current = 15;
+    string seat_next = 16;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddRelay.

@@ -30,7 +30,7 @@ defmodule FlezhaTest.Relay.ReplayAdoptionTest do
       namespace: "adoption-test",
       factory_id: "candles",
       runner_id: "runner-1",
-      builder: %Builder{id: relay_id, factory_id: "candles", run: :flow}
+      builder: %Builder{id: relay_id, factory_id: "candles", run: :flow, opts: [seat: {"", "s"}]}
     }
   end
 
@@ -255,13 +255,46 @@ defmodule FlezhaTest.Relay.RestoreRefusalTest do
       namespace: "_system",
       factory_id: "f",
       runner_id: "runner_1",
-      builder: %Builder{id: class, factory_id: "f", run: :flow}
+      builder: %Builder{id: class, factory_id: "f", run: :flow, opts: [seat: {"", "next"}]}
     }
 
     assert :ok = Replay.restore_on_bind(state, state.builder)
 
     # Already answered when the bind goes on, not on its way.
     assert_received {:restored, ^id}
+  end
+
+  # fails when: a restoring bind stores the seat it gave before its restore
+  # landed, or a refused restore leaves a seat, so the next bind keeps an
+  # instance that never took this node's copy.
+  test "a restoring bind stores its seat once the restore landed, a refused one none" do
+    {class, _, _} = id = cell("seat")
+    TestHelpers.write_wal(id, 0..1)
+    on_exit(fn -> Flezha.State.Supervisor.delete_cell(id) end)
+
+    state = %Overwatch{
+      id: class,
+      namespace: "_system",
+      factory_id: "f",
+      runner_id: "runner_1",
+      builder: %Builder{id: class, factory_id: "f", run: :flow, opts: [seat: {"old", "new"}]}
+    }
+
+    :ok = Flezha.Relay.ClassRegistry.put_seat(class, "old")
+    assert :ok = Replay.reseat_writers(state)
+    assert Replay.seat(class) == ""
+
+    stub(Flezha.State.Commands, :await_restore_init_state, fn _r, _e ->
+      {:error, sdk_refusal()}
+    end)
+
+    {refused, _log} = with_log(fn -> Replay.restore_on_bind(state, state.builder) end)
+    assert {:error, _} = refused
+    assert Replay.seat(class) == ""
+
+    stub(Flezha.State.Commands, :await_restore_init_state, fn _r, _e -> {:ok, <<>>} end)
+    assert :ok = Replay.restore_on_bind(state, state.builder)
+    assert Replay.seat(class) == "new"
   end
 
   # fails when: a bind carried by a hand-over, which restores nothing, leaves its

@@ -222,6 +222,11 @@ v0.1.0-alpha.1 pre-release.
 - A runner that no bind gave a cell can no longer replace the cell's saved
   history with its own: its writes are refused, and the `flezha_state`
   `wal_realign` event is gone.
+- A controller that restarts while its runners keep running no longer restores
+  saved state over a relay instance that had moved on, nor keeps one that was
+  stale. Each bind gives the instance a seat token, and only an instance still
+  holding the token this controller stored after its last restore is kept. The
+  `AddRelay` answer's `kept` metadata is replaced by `seat`.
 - A replayed slice that closed while its Cell was between rounds is no longer
   left buffered: the Cell delivers it instead of waiting for input that may
   never come. It affected every SDK built on the shared core.

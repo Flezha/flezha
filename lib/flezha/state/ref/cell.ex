@@ -25,7 +25,8 @@ defmodule Flezha.State.Ref.Cell do
   def has_local_state?({:cell, cell_id}), do: Restore.has_persisted_state?(cell_id)
 
   # The small files no record implies land after the data (`Lineage.land/3`).
-  def land({:cell, cell_id}, arrival, fetch), do: Lineage.land(cell_id, arrival, fetch)
+  def land({:cell, cell_id} = ref, arrival, fetch),
+    do: super(ref, arrival, fn -> Lineage.land(cell_id, arrival, fetch) end)
 
   # The input log's floor for a Cell, and a task journal's consumed input, or the
   # bind would re-deliver every retained input the instance had consumed.
