@@ -101,7 +101,6 @@ defmodule Mix.Tasks.Bench.Steps do
     boot_t0 = Run.now_ns()
     Mix.Task.run("app.start")
     Report.apply_log_level()
-    Fleet.preload_code()
     Process.put(:bench_runtime, runtime)
 
     Run.print_header(cfg)

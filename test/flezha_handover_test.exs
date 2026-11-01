@@ -315,6 +315,8 @@ defmodule FlezhaTest.Handover do
   # record its confirming source sent around the move.
   @tag :multi_node
   @tag :cold_drain_effectively_once
+  # The peer's boot budget (45 s) and the drain plus finalise (30 s + 15 s) exceed 60 s.
+  @tag timeout: 120_000
   test "an effectively-once relay fed throughout a cold move applies every record once" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cold_once_node)
     relay_id = RelayFixture.start_on(peer_node, "cold_once", "tier_store")

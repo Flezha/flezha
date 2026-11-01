@@ -193,15 +193,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     index = System.unique_integer([:positive])
     {peer_pid, node_name} = start_bare_peer(name, index, Keyword.get(opts, :args, []))
 
-    # Adjust the environment for the peer node.
-    :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])
-
-    # The peer runs on the host's configuration for each of these.
-    for app <- [:flezha, :logger], do: copy_env(node_name, app)
-
     # Its log goes through this node's logger instead of its own console, so
     # a test captures what it provokes on the peer as it does here.
-    :erpc.call(node_name, Application, :put_env, [:logger, :default_handler, false])
     # An event whose group leader is remote already goes to that node's logger.
     handler = %{
       config: %{origin: node()},
@@ -210,46 +203,48 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
 
     :ok = :erpc.call(node_name, :logger, :add_handler, [:origin, __MODULE__.PeerLog, handler])
 
-    # Disable the testnet for the peer node.
-    :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])
-
-    # A peer BEAM is a second controller on this host, so it gets its own of
-    # every resource one instance owns exclusively: two controllers over one
-    # cell WAL tree are two unsynchronised writers, and `<hub registry
-    # root>/<hub_id>` is not keyed by node either, so one root is one
-    # `registry.dets`. A caller may hand it this node's value instead — a
-    # cross-controller state transfer needs the peer to hold this node's files,
-    # and a co-location scenario drives the misconfiguration deliberately.
-    for {key, value} <- peer_resources(index, opts) do
-      :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
-    end
-
-    # Its own relay history too: a nested key, so it is written into the
-    # group rather than as a top-level one.
+    # Its own relay history, set inside the host's `:relay_history` group.
     dir = Environment.per_run(Config.get(:run_token), index).relay_history_dir
     ExUnit.Callbacks.on_exit(fn -> File.rm_rf(dir) end)
     history = Keyword.put(Application.get_env(:flezha, :relay_history, []), :dir, dir)
-    :erpc.call(node_name, Application, :put_env, [:flezha, :relay_history, history])
 
-    # Peer nodes only need UDS transport (avoids QUIC port conflicts).
-    :erpc.call(node_name, Application, :put_env, [:flezha, :transports, [:uds]])
+    # The peer runs on the host's configuration, set in one call: each call to
+    # a peer still booting costs a round trip a busy host makes slow.
+    flezha_env =
+      Application.get_all_env(:flezha)
+      |> Keyword.merge(
+        env: :test,
+        testnet_enabled: false,
+        relay_history: history,
+        # Peer nodes only need UDS transport (avoids QUIC port conflicts).
+        transports: [:uds],
+        # The peer must not re-run the host's boot hooks. `:post_hooks` blocks
+        # `Application.start/2` until both `:external_processes` runners have
+        # connected, which is what makes a busy machine miss the boot budget;
+        # the runners themselves stay, because the peer only joins the
+        # `default` hub cluster once one connects, and callers already wait
+        # for that.
+        pre_hooks: [],
+        post_hooks: []
+      )
+      # A peer BEAM is a second controller on this host, so it gets its own of
+      # every resource one instance owns exclusively: two controllers over one
+      # cell WAL tree are two unsynchronised writers, and `<hub registry
+      # root>/<hub_id>` is not keyed by node either, so one root is one
+      # `registry.dets`. A caller may hand it this node's value instead — a
+      # cross-controller state transfer needs the peer to hold this node's
+      # files, and a co-location scenario drives the misconfiguration
+      # deliberately.
+      |> Keyword.merge(peer_resources(index, opts))
+      # Extra `:flezha` env for this peer, applied before its boot: the way a
+      # caller gives the peer a controller role the suite's own config turns
+      # off, such as the convergence Loop every real controller runs.
+      |> Keyword.merge(Keyword.get(opts, :app_env, []))
 
-    # The peer copies the host's whole `:flezha` env, but it must not re-run
-    # the host's boot hooks. `:post_hooks` blocks `Application.start/2` until
-    # both `:external_processes` runners have connected, which is what makes a
-    # busy machine miss the boot budget; the runners themselves stay, because
-    # the peer only joins the `default` hub cluster once one connects, and
-    # callers already wait for that.
-    for key <- [:pre_hooks, :post_hooks] do
-      :erpc.call(node_name, Application, :put_env, [:flezha, key, []])
-    end
+    logger_env = Keyword.put(Application.get_all_env(:logger), :default_handler, false)
 
-    # Extra `:flezha` env for this peer, applied before its boot: the way a
-    # caller gives the peer a controller role the suite's own config turns off,
-    # such as the convergence Loop every real controller runs.
-    for {key, value} <- Keyword.get(opts, :app_env, []) do
-      :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
-    end
+    :ok =
+      :erpc.call(node_name, Application, :put_all_env, [[flezha: flezha_env, logger: logger_env]])
 
     # Namespace records the peer holds before its hubs start, so each hub takes
     # the migration strategy its record names: `migrations: [{"default", :hot}]`.
@@ -288,12 +283,6 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     with {:error, {:namespace_exists, _}} <- NamespaceStore.create(namespace), do: :ok
     {:ok, %{migration: ^migration}} = NamespaceStore.set_migration(namespace, migration)
     :ok
-  end
-
-  defp copy_env(node_name, app) do
-    Enum.each(Application.get_all_env(app), fn {key, value} ->
-      :erpc.call(node_name, Application, :put_env, [app, key, value])
-    end)
   end
 
   # A peer's resources come from the same derivation the run's own do

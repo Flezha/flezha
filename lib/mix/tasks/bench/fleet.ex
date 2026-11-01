@@ -234,22 +234,6 @@ defmodule Mix.Tasks.Bench.Fleet do
   @spec runtime() :: atom()
   def runtime(), do: Process.get(:bench_runtime, :rust)
 
-  @doc """
-  Load every module of the controller and the libraries its start path runs
-  through. A release boots with its code loaded; under `mix` the VM loads
-  lazily, so without this the first relay of a run pays tens of
-  milliseconds of code loading that no deployed controller pays.
-  """
-  def preload_code do
-    modules =
-      for app <- [:flezha, :process_hub],
-          module <- Application.spec(app, :modules) || [],
-          do: module
-
-    :code.ensure_modules_loaded(modules)
-    :ok
-  end
-
   @doc "Stop every relay in `namespace`, disconnect its runners, drop the namespace."
   def cleanup(namespace) do
     IO.puts("Cleaning up test environment...")

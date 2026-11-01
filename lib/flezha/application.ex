@@ -52,6 +52,8 @@ defmodule Flezha.Application do
     # what makes that a refusal rather than corruption.
     _ = StateRootLock.claim!()
 
+    _ = preload_code()
+
     _ = StatePathMigrator.migrate()
 
     # Every hub is built with this strategy later, off the boot path; built
@@ -199,6 +201,19 @@ defmodule Flezha.Application do
         if home == "", do: System.delete_env("HOME"), else: System.put_env("HOME", home)
         Enum.each(~w(RELEASE_USER_HOME RELEASE_COOKIE), &System.delete_env/1)
     end
+  end
+
+  # The boot walks every module of the application (shutdown steps, declared
+  # observability sources, stores, providers), and loaded lazily each one waits
+  # alone for every scheduler to take its code, which a host short of CPU turns
+  # into most of the boot. One batch prepares them in parallel and commits them
+  # together. A release boots with its code loaded, so there it finds nothing.
+  defp preload_code() do
+    :code.ensure_modules_loaded(
+      for app <- [:flezha, :process_hub],
+          module <- Application.spec(app, :modules) || [],
+          do: module
+    )
   end
 
   defp testnet?(), do: Config.get(:testnet_enabled) and Code.ensure_loaded?(Flezha.Testnet)

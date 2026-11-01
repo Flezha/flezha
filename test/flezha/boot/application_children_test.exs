@@ -92,4 +92,16 @@ defmodule Flezha.Boot.ApplicationChildrenTest do
     Application.put_env(:flezha, :testnet_enabled, true)
     assert hd(ids()) == Flezha.Testnet
   end
+
+  # fails when: the boot leaves the application's or its hub library's code to
+  # load one module at a time on first use.
+  test "a started controller has its own and its hub library's code loaded" do
+    lazy =
+      for app <- [:flezha, :process_hub],
+          module <- Application.spec(app, :modules),
+          !:code.is_loaded(module),
+          do: module
+
+    assert lazy == []
+  end
 end
