@@ -244,8 +244,11 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       on_exit(NodeTestHelper.override_log_level(:warning))
       stub_local_relays()
 
+      # `migrated` counts the delivered handovers less the forced ones: three
+      # delivered, two of them forced.
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
-        {:ok, %{migrated: 1, forced: 2}}
+        send(self(), %{child_ids: ["op-1", "op-2", "op-3"], target_node: node()})
+        {:ok, %{migrated: 3, forced: 2}}
       end)
 
       events = attach_telemetry()

@@ -463,7 +463,10 @@ defmodule FlezhaTest.Plugin.SharedTest do
   # relay an earlier test is still stopping is not this drain's to wait for.
   defp drain_with_children_moved do
     set_mimic_global_until_exit()
-    stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:ok, %{migrated: 1}} end)
+
+    stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+      {:ok, %{migrated: 1, forced: 0}}
+    end)
 
     stub(ProcessHub, :process_list, fn
       _hub, :local -> []

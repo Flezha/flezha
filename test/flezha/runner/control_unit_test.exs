@@ -462,7 +462,8 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
                compensable_tasks: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil,
-               persistent: true
+               persistent: true,
+               seat: nil
              }
     end
   end
@@ -482,7 +483,8 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
              compensable_tasks: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil,
-             persistent: true
+             persistent: true,
+             seat: nil
            }
   end
 

@@ -276,8 +276,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   child whose handover is still undelivered once the children are gone, and
   for its new process to have run its arrival; a child that ended without
   moving is not waited for. Both waits are read from the children's exits and
-  the hub's deliveries, never polled. `migrated` counts the delivered
-  handovers less the ones `forced` counts.
+  the hub's deliveries, never polled. `migrated` counts the relays among the
+  delivered handovers less the ones `forced` counts.
   `:budget_ms` is required and bounds the whole call: the caller always hands
   the drain its slice of the one shutdown budget. `:handover_grace_ms` is
   carved off it so the deadline force pass can land before the caller moves on.
@@ -348,14 +348,16 @@ defmodule Flezha.Service.HubManager.Lifecycle do
   # Each delivery names the children whose handover reached their new process
   # on `target_node`. One call to each new process returns once its arrival,
   # which pulls the relay's files from this node, has run. Answers how many
-  # were delivered; once none is waited for, it settles only those received.
+  # relays were delivered, plugin homes left out; once none is waited for, it
+  # settles only those received.
   defp await_arrivals(namespace, waiting, count, deadline) do
     wait = if waiting == [], do: 0, else: left(deadline)
 
     receive do
       %{child_ids: delivered, target_node: target} ->
         settle(target, namespace, delivered, deadline)
-        await_arrivals(namespace, waiting -- delivered, count + length(delivered), deadline)
+        relays = Enum.count(delivered, &is_binary/1)
+        await_arrivals(namespace, waiting -- delivered, count + relays, deadline)
     after
       wait -> count
     end
