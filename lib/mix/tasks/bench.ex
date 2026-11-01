@@ -498,18 +498,6 @@ defmodule Mix.Tasks.Bench do
               hooks: [{:on_output, []}]
             }
           )
-
-          PluginManager.enable_plugin(
-            relay_id <> "_stdout_plugin",
-            %Flezha.Plugin{
-              id: relay_id <> "_stdout_plugin",
-              namespace: namespace,
-              relay_id: relay_id,
-              provider: Flezha.Plugin.Provider.StdOut,
-              opts: %{},
-              hooks: []
-            }
-          )
         end)
       end)
 
