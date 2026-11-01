@@ -674,9 +674,17 @@ defmodule Flezha.Service.Relay do
       path: [type: :string, doc: "The Cell, as `<relay>/<tasklet>/<cell_key>`."],
       from: [type: :string, doc: "A WAL seq, or an ISO 8601 time."]
     ] do
-    {relay_class, _tasklet, _key} = cell_id = located.cell_id
+    {relay_class, _tasklet, _key} = located.cell_id
 
     with {:ok, at} <- Steps.target(from, "from"),
+         do: RelayManager.on_state_node(relay_class, __MODULE__, :local_replay, [path, at])
+  end
+
+  # On the controller holding the Cell's state, where its history is.
+  @doc false
+  def local_replay(path, at) do
+    with {:ok, %{cell_id: {relay_class, _tasklet, _key} = cell_id}} <-
+           Steps.persisted_cell(path),
          :ok <- replayable(relay_class, path),
          {:ok, overwatch} <- overwatch(relay_class),
          {:ok, %{terminal_seq: seq}} <- TimeTravel.query(cell_id, at) do
@@ -687,7 +695,7 @@ defmodule Flezha.Service.Relay do
 
   # ---------- Helpers ----------
 
-  defp replay_row([_namespace, path | _]), do: Steps.persisted_cell(path)
+  defp replay_row([_namespace, path | _]), do: Steps.cell_path(path)
 
   defp replayable(relay_class, path) do
     if ClassRegistry.journals?(relay_class), do: {:error, {:steps_cell, path}}, else: :ok

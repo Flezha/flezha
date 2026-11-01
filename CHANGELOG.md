@@ -224,9 +224,9 @@ v0.1.0-alpha.1 pre-release.
 ### Fixed
 
 - `Relay.api` and `Relay.call_channel` answer for a relay hosted on another controller of the
-  cluster, where they answered `relay.not_found`, and `flz state rotate` and `flz state delete`
-  act on the controller that holds the Cell's state, as reading it already did; a delete called
-  elsewhere used to succeed while deleting nothing.
+  cluster, where they answered `relay.not_found`, and `flz relay replay`, `flz state rotate`
+  and `flz state delete` act on the controller that holds the Cell's state, as reading it
+  already did; a delete called elsewhere used to succeed while deleting nothing.
 - An HTTP API stream that its HTTP/2 client resets ends its operation at once, detaching what it
   listened to, instead of at the next heartbeat up to 15 seconds later.
 - `flz controller stop` prints its `drain:` lines again, and a namespace whose drain was

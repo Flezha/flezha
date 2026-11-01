@@ -568,7 +568,12 @@ defmodule Flezha.Service.Steps do
 
   # The path split, with no on-disk check, so deleting a Cell that left nothing
   # behind still succeeds.
-  defp cell_path_row([path | _]) do
+  defp cell_path_row([path | _]), do: cell_path(path)
+
+  @doc false
+  # A Cell path's namespace and id, read from the path alone: the controller
+  # holding its state checks the disk.
+  def cell_path(path) do
     with {:ok, {class, _, _} = cell_id} <- split_cell(path),
          do: {:ok, %{namespace: RelayManager.namespace_of_class(class), cell_id: cell_id}}
   end
