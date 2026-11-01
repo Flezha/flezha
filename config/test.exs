@@ -14,6 +14,10 @@ config :flezha,
     fn ->
       boot = self()
 
+      # A loader restarted after a failed boot finds the old handler attached:
+      # the post hook that detaches it never finished.
+      :telemetry.detach(:flezha_test_boot_runners)
+
       :ok =
         :telemetry.attach(
           :flezha_test_boot_runners,
