@@ -23,7 +23,7 @@ and health, then telemetry and limits.
 <!-- provider-options:begin file_source -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | none | yes | The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix |
+| `path` | string | none | yes | The file to read: relative to the namespace's folder under FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under the namespace's prefix |
 | `start_at` | enum | `"beginning"` | no | Where a reader with no committed offset starts: byte 0, or the size of the file when it is first opened |
 | `poll_interval_ms` | int | `1000` | no | Milliseconds between looks for new bytes |
 | `max_line_bytes` | int | `1048576` | no | Longest line accepted; a longer one stops the reader at the offset it starts at |
@@ -41,7 +41,7 @@ and health, then telemetry and limits.
 <!-- provider-options:begin file_sink -->
 | Option | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `path` | string | none | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under |
+| `path` | string | none | yes | The file to append to, or under `commit: rename` the directory parts are committed into: relative to the namespace's folder under FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under, inside the namespace's prefix |
 | `commit` | enum | `"append"` | no | The file layout. `append` grows one file in place, and a batch synced just before a crash is appended again after it; `rename` commits immutable parts into a directory, and writes a record the outbox guarantees once. Under an s3:// root only `rename` |
 | `roll_after_ms` | int | `10000` | no | Under `rename`, the longest a part stays open, and so the longest a guaranteed record waits for its confirmation |
 | `roll_bytes` | int | `67108864` | no | Under `rename`, the size at which a part is committed before `roll_after_ms`. Under an s3:// root the open part is held in memory, and at most 5368709120 |
@@ -68,10 +68,14 @@ $ flz plugin enable writer relay_file_output --relay_id=op1 --hook=on_output \
 ## The root folder
 
 A plugin that can read or write any path the controller can reach would hand whoever
-enables plugins the controller's certificates, its state and its tokens. So a file
-plugin may touch one folder and nothing outside it: `storage/app/files` by default,
-beside the controller's other data, created by the first file plugin enable. To use
-another, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the controller starts:
+enables plugins the controller's certificates, its state and its tokens. So file
+plugins may touch one folder and nothing outside it: `storage/app/files` by default,
+beside the controller's other data, created by the first file plugin enable. Inside it,
+each [namespace](../topics/core/namespaces.md) has a folder of its own,
+`<root>/<namespace>`, and a plugin reads and writes only in the folder of the namespace
+it is enabled in: a plugin in `orders` sees `storage/app/files/orders/` and nothing of
+`payments`. To use another root, name it with `FLEZHA_FILE_PLUGIN_ROOT` when the
+controller starts:
 
 ```bash
 FLEZHA_FILE_PLUGIN_ROOT=/srv/flezha/files flz controller start
@@ -83,22 +87,45 @@ FLEZHA_FILE_PLUGIN_ROOT=/srv/flezha/files flz controller start
 - **A folder you name must exist.** It is read at boot and never created, because a
   missing one may be a share that is not mounted. Until it exists, every file plugin
   enable is refused naming it.
-- **Every path resolves inside it.** A relative `path` names a file under the root; an
-  absolute one is taken as written. The path is then resolved one component at a time
-  with every symbolic link followed, and the result must lie inside the resolved root,
-  or the enable is refused naming the root. `../certs/controller.key`, `/etc/passwd`
-  and a link `out -> /etc` all fail the same way. A link that lands inside the root is
-  allowed, judged by where it lands.
+- **A namespace's folder is made for it.** The first enable in a namespace makes
+  `<root>/<namespace>`, readable by the controller's user only, once the root exists.
+- **Every path resolves inside the namespace's folder.** A relative `path` names a file
+  under it; an absolute one is taken as written. The path is then resolved one component
+  at a time with every symbolic link followed, and the result must lie inside the
+  resolved folder, or the enable is refused naming the folder. `../certs/controller.key`,
+  `/etc/passwd`, `../payments/trades.jsonl` and a link `out -> /etc` all fail the same way.
+  A link that lands inside the folder is allowed, judged by where it lands.
 - **The parent must exist.** The file itself need not, but its directory must; a
   missing one is refused naming it. A missing directory outside the root is not named.
 - **One spelling.** The resolved absolute path replaces `path` in the plugin's options,
   so every log line, telemetry event and health verdict names the same path.
+- **A path stored outside the folder is refused.** A plugin restored with an absolute path
+  that lies under the root but outside its namespace's folder, as one enabled before
+  namespaces had folders may be, is refused with `plugin.file_path_outside_namespace`,
+  naming the stored path and where the same file now belongs. Nothing is opened for it.
 - **Contents are never logged.** A log line, event or verdict carries the path, an
   offset or a count, never the bytes of a line.
 
 The check runs when the plugin is prepared, before any worker exists, so a refusal
 reaches the user who typed the path rather than surfacing later as an unhealthy
 plugin.
+
+### Moving files from an earlier release
+
+Before namespaces had folders, every plugin read and wrote directly under the root. To
+upgrade, stop the relays that have file plugins, move each namespace's files from `<root>/`
+into `<root>/<namespace>/` (on S3, copy the keys under `<prefix>/<namespace>/`), then start
+them again:
+
+```sh
+$ mkdir -p storage/app/files/default
+$ mv storage/app/files/echo-in.txt storage/app/files/echo-out.txt storage/app/files/default/
+```
+
+A plugin enabled with a relative `path` needs nothing more, and a file source keeps its read
+position: the committed offset belongs to the relay's binding, not to the path. A plugin
+enabled with an absolute path is refused when it is restored, naming the new place; disable
+it and enable it again with a relative path, and the relay's read position is kept too.
 
 ### A local path, on a cluster
 
@@ -115,8 +142,8 @@ Both providers print their path and their current verdict beneath the plugin in
 ```text
   Plugins:
     - reader: Flezha.Plugin.Provider.File.Source
-        health: {:unhealthy, {:file_missing, "/srv/flezha/files/events.ndjson"}}
-        path: /srv/flezha/files/events.ndjson
+        health: {:unhealthy, {:file_missing, "/srv/flezha/files/orders/events.ndjson"}}
+        path: /srv/flezha/files/orders/events.ndjson
 ```
 
 ### An S3 bucket instead of a folder
@@ -134,12 +161,14 @@ flz controller start
 ```
 
 Every file plugin on the controller then reads and writes objects under `flezha/` in the
-bucket `events`, and nothing in a plugin's options says so.
+bucket `events`, each namespace under its own prefix, `flezha/<namespace>/`, and nothing in
+a plugin's options says so.
 
-- **A path is a key under the prefix.** A relative `path` is joined to the prefix, an
-  `s3://` path is taken as written, and either has its `.` and `..` segments removed
-  without a request being made. The key must lie under the prefix in the root's bucket, so
-  `../other`, `s3://audit/flezha/echo` and `/etc/passwd` are refused naming the root. The
+- **A path is a key under the namespace's prefix.** A relative `path` is joined to the
+  prefix, an `s3://` path is taken as written, and either has its `.` and `..` segments
+  removed without a request being made. The key must lie under the namespace's prefix in
+  the root's bucket, so `../other`, `s3://audit/flezha/echo`, another namespace's
+  `s3://events/flezha/payments/echo` and `/etc/passwd` are refused naming that prefix. The
   resolved `s3://` URL replaces `path`. The bucket is never created.
 - **Four settings of its own.** `FLEZHA_FILE_PLUGIN_S3_ENDPOINT`,
   `FLEZHA_FILE_PLUGIN_S3_REGION` (default `us-east-1`), `FLEZHA_FILE_PLUGIN_S3_ACCESS_KEY_ID`

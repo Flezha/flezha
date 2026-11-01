@@ -438,6 +438,13 @@ in the source.
   ping interval reaches its threshold as the next pong falls due; a configured
   one is raised to twice the interval and the applied value is logged.
 
+Like the HTTP plugins, the plugin dials whatever address `uri` names, loopback, private networks and
+cloud metadata services such as `169.254.169.254` included: there is no address rule.
+Enabling it takes `plugin.enable`, which the `app` role holds, so on a controller several
+tenants share, anyone with `app` in a namespace can have the controller's machine make
+requests for them. Grant `app` only to callers you would let do that, or block those
+addresses at the host's firewall.
+
 ## See also
 
 - [`http_poll.md`](http_poll.md): the other `HttpFetch` consumer

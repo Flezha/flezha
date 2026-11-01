@@ -150,6 +150,13 @@ names every provider reports; the plugin sends through the worker the HTTP push 
 One URL per plugin, one request per event: no batching, no request signing. Enable a second
 plugin for a second receiver.
 
+Like the HTTP plugins, the plugin dials whatever address `url` names, loopback, private networks and
+cloud metadata services such as `169.254.169.254` included: there is no address rule.
+Enabling it takes `plugin.enable`, which the `app` role holds, so on a controller several
+tenants share, anyone with `app` in a namespace can have the controller's machine make
+requests for them. Grant `app` only to callers you would let do that, or block those
+addresses at the host's firewall.
+
 ## See also
 
 - [`hooks.md`](../topics/plugins/hooks.md): hooks and controller plugins

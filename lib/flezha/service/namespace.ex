@@ -21,6 +21,7 @@ defmodule Flezha.Service.Namespace do
   alias Flezha.AuthZ.Namespace
   alias Flezha.AuthZ.NamespaceStore
   alias Flezha.AuthZ.Policy
+  alias Flezha.AuthZ.Principal
   alias Flezha.AuthZ.QuotaCounters
   alias Flezha.AuthZ.Role
   alias Flezha.AuthZ.RoleStore
@@ -247,6 +248,7 @@ defmodule Flezha.Service.Namespace do
     verb: :role_bind,
     args: [principal: @principal, role: [type: :string, doc: "The role."], namespace: @name] do
     with {:ok, role} <- parse_role(role),
+         :ok <- refuse_foreign_runner(principal, namespace),
          :ok <- RoleStore.bind(principal, namespace, role, bound_by: actor(caller_context)) do
       {:ok,
        %{
@@ -255,6 +257,15 @@ defmodule Flezha.Service.Namespace do
          namespace: namespace,
          binding: bound_identity(principal)
        }}
+    end
+  end
+
+  # A runner principal is the identity a runner connection proves for its
+  # namespace, so a binding of it in any other namespace could only block it.
+  defp refuse_foreign_runner(principal, namespace) do
+    case Principal.runner_namespace(principal) do
+      {:ok, own} when own != namespace -> {:error, {:runner_principal_foreign, own, namespace}}
+      _own_or_none -> :ok
     end
   end
 

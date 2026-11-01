@@ -61,24 +61,49 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   `start_peer_node/2` is this plus a controller. `index` ends the node name;
   minted once per peer, it is what `start_peer_node/2` scopes resources by.
   `extra_args` are further emulator arguments, one list item each.
+
+  With `connection: :standard_io` in `opts` the peer is driven over its
+  standard I/O instead of distribution, through `:peer.call/4`, so it may run a
+  distribution this node cannot join: TLS, or another `cookie:`. `host:` names
+  the host part of its node name.
   """
-  def start_bare_peer(name, index \\ System.unique_integer([:positive]), extra_args \\ []) do
-    args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
+  def start_bare_peer(
+        name,
+        index \\ System.unique_integer([:positive]),
+        extra_args \\ [],
+        opts \\ []
+      ) do
+    # Over standard I/O the peer loads code from disk and takes the cookie it is
+    # given, each argument its own list item.
+    args =
+      if opts[:connection],
+        do: [~c"-setcookie", Atom.to_charlist(Keyword.get(opts, :cookie, :erlang.get_cookie()))],
+        else: [~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""]
 
-    {:ok, peer_pid, node_name} =
-      :peer.start_link(%{
-        host: ~c"127.0.0.1",
-        name: peer_name(name, index),
-        args: [args | extra_args]
-      })
+    start =
+      Map.merge(
+        %{
+          host: String.to_charlist(Keyword.get(opts, :host, "127.0.0.1")),
+          name: peer_name(name, index),
+          args: args ++ extra_args
+        },
+        Map.new(Keyword.take(opts, [:connection]))
+      )
 
-    :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
+    {:ok, peer_pid, node_name} = :peer.start_link(start)
+
+    call =
+      if opts[:connection],
+        do: &:peer.call(peer_pid, &1, &2, &3),
+        else: &:erpc.call(node_name, &1, &2, &3)
+
+    call.(:code, :add_paths, [:code.get_path()])
 
     # The peer's console holds to this node's level. The Logger application
     # restores the level it found when it stops, so without this the reports of
     # a failed boot rolling back its applications print on the run's output.
     level = :logger.get_primary_config().level
-    :ok = :erpc.call(node_name, :logger, :set_primary_config, [:level, level])
+    :ok = call.(:logger, :set_primary_config, [:level, level])
 
     # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
     # already checks liveness, so an explicit stop makes this a no-op.

@@ -15,11 +15,13 @@ controller.
 ## What it needs
 
 - **A controller to reach.** The console is an Erlang node that connects to one controller
-  node and calls the controller's published API through it. It never runs code of its own on
-  the controller.
+  node and calls the controller's published API through it.
 - **The controller's cookie.** Erlang distribution admits a node that knows the cookie, so
   the console takes the same `RELEASE_COOKIE` as the controllers. Treat it as a secret: a node
   with the cookie can do anything on the controller.
+- **A place inside the cluster's trust boundary.** Holding the cookie, the console's node is
+  trusted like a controller: whoever controls the machine it runs on controls the cluster,
+  whatever its token says. Run it where you would run a controller.
 - **A token.** The console acts as the principal its token names. An `admin` token in the
   `_system` namespace lets it list every namespace; a narrower one shows less. A signed-in
   user can also store a token of their own under **Settings**, and then the audit log names
@@ -54,9 +56,11 @@ The controller's node name is `flezha@` and its `FLEZHA_NODE_HOST`, `127.0.0.1` 
 Epmd (port 4369) and the controller's distribution port must be reachable from the console.
 
 By default the link is plain TCP, guarded by the cookie alone. To encrypt it and have both
-ends check certificates, give the controller `FLEZHA_DIST_TLS_OPTFILE` and the console
-`ELIXIR_ERL_OPTIONS="-proto_dist inet_tls -ssl_dist_optfile <file>"`, with certificates from
-one CA.
+ends check certificates, run the controllers over
+[mutual TLS](../topics/core/authorization.md#distribution-with-mutual-tls) and give the console
+a certificate of its own from the same distribution authority
+(`deploy/dist-tls/make-certs.sh node <dir> console --dns <its host>`), with the same options
+file: `ELIXIR_ERL_OPTIONS="-proto_dist inet_tls -ssl_dist_optfile <file>"`.
 
 ## Settings
 
@@ -88,5 +92,6 @@ characters.
 ## What it leaves to flz
 
 Issuing and revoking tokens, binding roles, deleting a namespace, claiming the bootstrap and
-stopping the controller are not reachable through the console: the controller keeps them
-off the network, and `flz` does them.
+stopping the controller are not offered by the console's pages, whatever its token; `flz`
+does them. This is what the console offers, not a limit on what its node could do: holding
+the cookie, it is inside the cluster's trust boundary.

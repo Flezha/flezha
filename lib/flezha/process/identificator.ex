@@ -249,19 +249,6 @@ defmodule Flezha.Identificator do
     gen_via(runner_id, "scs_" <> Integer.to_string(count_nr))
   end
 
-  def string_to_pid(pname) when is_binary(pname) do
-    pname = String.to_existing_atom(pname)
-
-    case Process.whereis(pname) do
-      nil -> {:error, {:process_not_found, pname}}
-      pid -> {:ok, pid}
-    end
-  catch
-    # `String.to_existing_atom/1` RAISES for a name no atom matches, so a
-    # one-argument `catch` (throws only) let the documented refusal be skipped.
-    _kind, _reason -> {:error, :invalid_pid_format}
-  end
-
   defp gen_via(prefix, suffix) do
     {:via, Registry, {__MODULE__, gen_id(prefix, suffix)}}
   end

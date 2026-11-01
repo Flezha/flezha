@@ -2,8 +2,9 @@ defmodule Flezha.Boot.Loader do
   @moduledoc """
   The controller's boot sequence, in one process: pre-hooks, the prerequisites
   each enabled transport needs (the UDS socket directory, the QUIC certificates),
-  post-hooks, then the boot report: where the durable state lives, whether that
-  directory is empty, and how a runner attaches.
+  post-hooks, then the warnings about an unprotected distribution link and the
+  boot report: where the durable state lives, whether that directory is empty,
+  and how a runner attaches.
 
   Readiness is not answered here. `Flezha.Boot.Readiness` folds it from a
   precondition table evaluated on every read, so a probe is never queued behind
@@ -55,6 +56,7 @@ defmodule Flezha.Boot.Loader do
   @impl true
   def handle_continue(:boot, state) do
     run_post_hooks()
+    _ = warn_unprotected_distribution()
     Enum.each(boot_report(), &Logger.info/1)
 
     {:noreply, state}
@@ -101,6 +103,109 @@ defmodule Flezha.Boot.Loader do
   defp cold_start_line() do
     if Paths.relay_classes() == [] do
       "[flezha] that directory holds no durable state: this controller is starting cold"
+    end
+  end
+
+  @doc false
+  # A connected node is trusted with everything, so a distribution link another
+  # machine can reach in plain TCP, or over TLS that does not check its peer,
+  # is warned on every boot for as long as it stays that way. Nothing is
+  # refused. Answers the warnings it logged.
+  @spec warn_unprotected_distribution(map()) :: [String.t()]
+  def warn_unprotected_distribution(facts \\ distribution_facts()) do
+    warnings = distribution_warnings(facts)
+    Enum.each(warnings, &Logger.warning("[flezha] " <> &1))
+    warnings
+  end
+
+  defp distribution_facts() do
+    %{
+      node: node(),
+      tls?:
+        match?(
+          {:ok, [[proto | _] | _]} when proto in [~c"inet_tls", ~c"inet6_tls"],
+          :init.get_argument(:proto_dist)
+        ),
+      optfile:
+        case :init.get_argument(:ssl_dist_optfile) do
+          {:ok, [[path | _] | _]} -> List.to_string(path)
+          _ -> nil
+        end,
+      runner_anchors: [Config.get(:quic_client_ca_path), Config.get(:ca_cert_path)]
+    }
+  end
+
+  defp distribution_warnings(%{node: :nonode@nohost}), do: []
+
+  defp distribution_warnings(%{tls?: false, node: node}) do
+    if loopback?(node),
+      do: [],
+      else: [
+        "distribution on #{node} is plain TCP: traffic between controllers is neither " <>
+          "encrypted nor authenticated beyond the cookie. Set FLEZHA_DIST_TLS_OPTFILE to " <>
+          "run it over mutual TLS (deploy/dist-tls/)."
+      ]
+  end
+
+  defp distribution_warnings(%{optfile: path} = facts) do
+    case :file.consult(path) do
+      {:ok, [sections]} when is_list(sections) -> tls_warnings(path, sections, facts)
+      _unreadable -> ["the distribution TLS options file #{path} cannot be read"]
+    end
+  end
+
+  defp tls_warnings(path, sections, %{runner_anchors: anchors}) do
+    server = section(sections, :server)
+    client = section(sections, :client)
+
+    [
+      if(server[:verify] != :verify_peer,
+        do:
+          "#{path} does not set {verify, verify_peer} for the server: peers are admitted " <>
+            "without a certificate check"
+      ),
+      if(server[:versions] == nil and client[:versions] == nil,
+        do: "#{path} sets no versions: only TLS 1.2 is offered; set {versions, ['tlsv1.3']}"
+      ),
+      if(Enum.any?([server[:cacertfile], client[:cacertfile]], &same_file?(&1, anchors)),
+        do:
+          "#{path} trusts the runner authority (FLEZHA_QUIC_CLIENT_CA or FLEZHA_CA_CERT_PATH): " <>
+            "a runner's certificate passes the distribution TLS check"
+      )
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp section(sections, side) do
+    case List.keyfind(sections, side, 0) do
+      {^side, opts} when is_list(opts) -> opts
+      _ -> []
+    end
+  end
+
+  defp same_file?(nil, _anchors), do: false
+
+  defp same_file?(file, anchors) do
+    file = to_string(file)
+    Enum.any?(anchors, &(is_binary(&1) and identity(&1) == identity(file)))
+  end
+
+  # A file by its inode, so two spellings of one path agree; by its path when it
+  # cannot be read.
+  defp identity(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{major_device: device, inode: inode}} -> {device, inode}
+      {:error, _} -> Path.expand(path)
+    end
+  end
+
+  defp loopback?(node) do
+    host = node |> Atom.to_string() |> String.split("@") |> List.last()
+
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> true
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+      _ -> host == "localhost"
     end
   end
 

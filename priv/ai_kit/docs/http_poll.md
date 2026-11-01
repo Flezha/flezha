@@ -235,6 +235,12 @@ plugin's health verdict, not on a failure-rate metric.
   poll rather than dropping to an unverified connection.
 - **Requests share the default `:httpc` profile** with the rest of the controller;
   per-request options are explicit and nothing global is mutated, but pooling is shared.
+- **It reaches any address.** the plugin dials whatever address `url` names, loopback, private networks and
+  cloud metadata services such as `169.254.169.254` included: there is no address rule.
+  Enabling it takes `plugin.enable`, which the `app` role holds, so on a controller several
+  tenants share, anyone with `app` in a namespace can have the controller's machine make
+  requests for them. Grant `app` only to callers you would let do that, or block those
+  addresses at the host's firewall.
 
 ## See also
 

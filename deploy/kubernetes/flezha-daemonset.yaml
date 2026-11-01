@@ -54,7 +54,9 @@ spec:
       initContainers:
         # Runs as root ONLY because the volumes below are hostPath, which
         # ignores fsGroup — the mounted dirs would otherwise be root-owned and
-        # the non-root controller would hit EACCES on first write. Swapping the
+        # the non-root controller would hit EACCES on first write. It sets
+        # ownership and closes the top directories to other users; it never
+        # widens a mode, so keys the controller wrote stay 0600. Swapping the
         # volumes for an fsGroup-honoring type (CSI / local PersistentVolume)
         # removes this container entirely and makes the pod admissible under the
         # `restricted` Pod Security Standard. See README "Security profile".
@@ -66,7 +68,7 @@ spec:
             - |
               mkdir -p /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha && \
               chown -R 1000:1000 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha && \
-              chmod -R 755 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha
+              chmod 700 /flezha/sockets /flezha/data /flezha/certs /var/log/flezha /var/lib/flezha
           securityContext:
             runAsNonRoot: false
             runAsUser: 0
@@ -105,6 +107,11 @@ spec:
           ports:
             - name: epmd
               containerPort: 4369
+              protocol: TCP
+            # The distribution port, pinned by FLEZHA_DIST_PORT below so
+            # flezha-networkpolicy.yaml can name it.
+            - name: dist
+              containerPort: 9100
               protocol: TCP
             - name: quic
               containerPort: 4433
@@ -185,6 +192,8 @@ spec:
               value: "app=flezha"
             - name: FLEZHA_SOCKET_FILES_PATH
               value: "/flezha/sockets"
+            - name: FLEZHA_DIST_PORT
+              value: "9100"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

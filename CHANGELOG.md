@@ -6,8 +6,39 @@ Nothing has been published yet. The first entry is written when 0.1.0 is
 released; until then, this section names what changes for a user of the
 v0.1.0-alpha.1 pre-release.
 
+### Added
+
+- Distribution over mutual TLS, tested: `deploy/dist-tls/dist_tls.conf` is an options file
+  that checks peers on both sides and offers TLS 1.3, and `deploy/dist-tls/make-certs.sh`
+  makes a distribution authority and node certificates
+  ([distribution with mutual TLS](docs/public/topics/core/authorization.md#distribution-with-mutual-tls)).
+- The controller warns on every boot when distribution off loopback is plain TCP, and, over
+  TLS, when its options file cannot be read, does not check peers, offers only TLS 1.2, or
+  trusts the runner transport's authority. Nothing is refused.
+- `FLEZHA_DIST_PORT` pins the distribution port of a started controller, so a firewall can
+  name it; `flzvm rpc` and `remote` do not take it, and unset nothing changes.
+- The Kubernetes manifests pin the distribution port to 9100 and ship
+  `flezha-networkpolicy.yaml`, which admits EPMD and that port only from controller and
+  console pods. `deploy/dist-tls/kubernetes/` is a cert-manager recipe that gives each
+  controller pod its own certificate naming its IP.
+- `.github/SECURITY.md` describes the security model and a checklist for hardening a
+  production cluster, and the clustering, console, configuration and plugin pages describe
+  ports, firewalls, WireGuard, certificate rotation, cutting a node off and what plugins can
+  reach.
+
 ### Changed
 
+- **Breaking:** file plugins read and write in a folder per namespace,
+  `<root>/<namespace>/` (`<prefix>/<namespace>/` under an S3 root), and a plugin reaches
+  only its own namespace's. To upgrade, stop the relays with file plugins, move each
+  namespace's files one folder down, and start them again. A plugin enabled with a relative
+  path needs nothing more, and a file source keeps its read position across the move, and
+  across a disable and enable of the plugin. A plugin restored with an absolute path outside
+  its namespace's folder is refused with `plugin.file_path_outside_namespace`, naming where
+  the file now belongs ([file plugins](docs/public/plugins/file.md#moving-files-from-an-earlier-release)).
+- A runner connecting to a controller whose authorization is on but not yet bootstrapped
+  must prove its namespace with a credential or certificate, as after the claim; before, the
+  namespace it named was taken as given.
 - The [feature maturity](docs/public/publishing/maturity.md) record gains a
   preview label, for a part that stays while its surface may still change;
   nothing carries it yet. The record now also says what the compatibility
@@ -178,6 +209,8 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay start or schedule whose plugin spec only binds a plugin already enabled, naming no
+  provider, no longer fails with `internal.uncatalogued`; its one option, `channel`, is read.
 - A graceful stop no longer waits out its whole drain budget for a relay that
   ended on the stopping controller instead of moving, and its `migrated` count
   names only the relays that moved
@@ -328,3 +361,22 @@ v0.1.0-alpha.1 pre-release.
   hosted by another. The disable now waits until every controller of the
   namespace has dropped the plugin's record before it tells the relays, so a
   convergence tick on a slower controller cannot bring the binding up again.
+
+### Security
+
+- The controller image is built on Erlang/OTP 28.5.0.8 and Elixir 1.20.5, which fix
+  published advisories in `ssl` (one critical), `public_key`, `erts`, `asn1`, `inets` and
+  `stdlib`. The build fetches `rebar3` 3.28.0 by version and checks its SHA-256, and the image
+  no longer ships the unused `releases/COOKIE`.
+- The Java SDK uses Jackson 2.18.11 and AssertJ 3.27.7, clearing their advisories.
+- A `spawner` can no longer enable a plugin by naming its provider in a relay start: the
+  start is judged as `plugin.enable` too, and refused with nothing enabled or started.
+- A pid-typed plugin option accepts only a pid, never a process name, so no caller can direct
+  a plugin's messages at a process of the controller.
+- A namespace admin can bind `runner@<ns>` only in `<ns>` (`authz.runner_principal_foreign`).
+- The HTTP server plugin refuses the port of the controller's HTTP API and its health port
+  (`http.port_reserved`).
+- `/healthz` serves at most 64 connections at once and answers one more `503`.
+- Generated runner-transport keys are owner-only before a key byte is written.
+- The Kubernetes init container no longer opens the certificate and state host paths to
+  other users: it sets ownership and closes the top directories (`0700`).

@@ -86,7 +86,9 @@ The package loads at boot. Once it is loaded, the plugin can also be declared at
 ```
 
 A port that cannot be bound fails the activation with `http.listen_failed`, naming the
-address, the port and the reason. `flz relay info gateway` shows, under the plugin, the
+address, the port and the reason. The ports the controller's own HTTP surfaces use are
+refused before that, with `http.port_reserved` naming the port and its owner: the port of an
+`http_api` plugin enabled on the controller, and `FLEZHA_HEALTHZ_PORT` (9569 by default). `flz relay info gateway` shows, under the plugin, the
 address it listens on, the requests waiting for an answer, the streams open and the
 requests a cap refused since the server started.
 

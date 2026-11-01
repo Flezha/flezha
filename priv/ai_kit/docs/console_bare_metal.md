@@ -71,7 +71,9 @@ $ sudo -u postgres psql -c "CREATE ROLE console LOGIN PASSWORD 'console-db-passw
 
 ## The controller's cookie and the console's token
 
-The console joins the controller's node under the controller's cookie. A controller started
+The console joins the controller's node under the controller's cookie, which puts it inside
+the cluster's trust boundary: run it on a machine you trust as much as the controller's. A
+controller started
 without `RELEASE_COOKIE` minted one at its first start and keeps it in
 `storage/app/state/cookie` in its release folder.
 

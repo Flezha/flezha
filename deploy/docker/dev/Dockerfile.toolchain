@@ -4,7 +4,7 @@
 # a developer a ready-to-go shell with everything installed. The
 # compose file bind-mounts the host source over /flezha, so source
 # edits show up live inside the container.
-FROM hexpm/elixir:1.20.2-erlang-28.5.0.5-debian-bookworm-20260713-slim
+FROM hexpm/elixir:1.20.5-erlang-28.5.0.8-debian-bookworm-20261027-slim
 
 WORKDIR /flezha
 

@@ -63,6 +63,19 @@ def check(_rel, line):
     return []
 
 
+# The images build with the toolchain CI tests with: both Dockerfiles name one
+# `hexpm/elixir` tag, and its Elixir version and OTP major match the manifest.
+import json
+manifest = json.load(open(".github/toolchains.json"))
+IMAGE_TAG = re.compile(r"hexpm/elixir:([0-9.]+)-erlang-([0-9]+)\.")
+for dockerfile in ("deploy/docker/prod/Dockerfile.controller",
+                   "deploy/docker/dev/Dockerfile.toolchain"):
+    pins = set(IMAGE_TAG.findall(open(dockerfile).read()))
+    if pins != {(manifest["elixir"], manifest["otp"])}:
+        print(f"{dockerfile} names Elixir/OTP {sorted(pins)}, .github/toolchains.json "
+              f"names {manifest['elixir']}/{manifest['otp']}")
+        sys.exit(1)
+
 sys.exit(gate_support.walk(
     check=check,
     source="disk",

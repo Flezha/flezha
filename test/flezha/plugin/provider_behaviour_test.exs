@@ -455,14 +455,21 @@ defmodule Flezha.Plugin.ProviderBehaviourTest do
                Filter.build(%{"regex_pattern" => "x", "inverted" => %{}})
     end
 
-    test "a named process still resolves" do
+    test "a pid is accepted" do
+      assert {:ok, %BeamMsgForward{recv_pid: pid}} = BeamMsgForward.build(%{"recv_pid" => self()})
+      assert pid == self()
+    end
+
+    test "a registered name is refused, and its process is sent nothing" do
       name = :"pb_test_#{System.unique_integer([:positive])}"
       Process.register(self(), name)
 
-      assert {:ok, %BeamMsgForward{recv_pid: pid}} =
-               BeamMsgForward.build(%{"recv_pid" => Atom.to_string(name)})
+      for value <- [Atom.to_string(name), name] do
+        assert {:error, {:invalid_option_value, :recv_pid, ^value}} =
+                 BeamMsgForward.build(%{"recv_pid" => value})
+      end
 
-      assert pid == self()
+      refute_received _
     end
   end
 

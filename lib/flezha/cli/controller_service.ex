@@ -9,7 +9,8 @@ defmodule Flezha.Service.Controller do
   `local_recovery_snapshot/1` and `local_controller/0` are the exceptions and
   are not on the published surface: they are the local halves of
   `cluster_status/2`'s and `controllers/1`'s cluster reads, which every peer
-  calls by name. `stop_progress/4` is the telemetry handler a stop attaches.
+  calls by name. `reserved_ports/0` is a plugin package's: what a plugin that
+  listens must leave to the controller. `stop_progress/4` is the telemetry handler a stop attaches.
 
   `stop/2` reports its progress as it goes, to the `:emit` the caller's context
   carries (a function, or a pid that receives `{:flezha_emit, event}`), from
@@ -35,7 +36,9 @@ defmodule Flezha.Service.Controller do
   alias Flezha.Identificator
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Runner.FleetManager
+  alias Flezha.Plugin
   alias Flezha.Plugin.Provider.File.Storage
+  alias Flezha.Plugin.ProviderBehaviour.Options
   alias Flezha.Process.Poll
   alias Flezha.Service.CallerContext
   alias Flezha.Service.Controller.MemTop
@@ -380,6 +383,30 @@ defmodule Flezha.Service.Controller do
       {:ok, state} -> state
       {:error, :unknown_hub} -> :unknown
     end
+  end
+
+  @doc """
+  The TCP ports this controller's own surfaces hold, each with its owner: the
+  health endpoint's, `FLEZHA_HEALTHZ_PORT`, and the `port` option of each
+  plugin enabled in `_system`, named by its provider, such as `http_api`.
+  """
+  @spec reserved_ports() :: [{pos_integer(), String.t()}]
+  def reserved_ports() do
+    system = Namespace.system_name()
+
+    entries =
+      case HubManager.on_hub_node(system, {HubManager, :plugin_entries}, [system], :none) do
+        entries when is_list(entries) -> entries
+        {:error, _no_hub} -> []
+      end
+
+    plugin_ports =
+      for %Plugin{provider: provider, opts: opts} <- entries,
+          {:ok, %{port: port}} <- [Options.normalise_opts(provider, opts || %{})],
+          is_integer(port),
+          do: {port, provider.__provider__().name}
+
+    [{Config.get(:healthz_port), Config.env_name(:healthz_port)} | plugin_ports]
   end
 
   @doc false

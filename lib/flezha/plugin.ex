@@ -148,11 +148,16 @@ defmodule Flezha.Plugin do
   atom. Only a key the provider names becomes an atom, so a caller cannot
   create atoms, and any other key reaches the provider's refusal as written.
   """
-  @spec option_keys(module(), map()) :: map()
+  @spec option_keys(module() | nil, map()) :: map()
   def option_keys(provider, opts) do
-    names = Map.new(Options.known_names(provider), &{Atom.to_string(&1), &1})
+    names = Map.new(option_names(provider), &{Atom.to_string(&1), &1})
     Map.new(opts, fn {key, value} -> {Map.get(names, key, key), value} end)
   end
+
+  # A spec that only binds an enabled plugin names no provider; the one option
+  # it may carry is the binding's channel.
+  defp option_names(nil), do: [:channel]
+  defp option_names(provider), do: Options.known_names(provider)
 
   defp read_hooks(fields) do
     case Keyword.fetch(fields, :hooks) do

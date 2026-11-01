@@ -33,6 +33,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Session
   alias Flezha.Service.Admin
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.PluginManager
   alias Flezha.Service.RelayManager
   alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.ControlFrameTestHelper, as: ControlFrame
@@ -237,6 +239,64 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnAuthzTest do
     request_spawn(ctx)
 
     assert {"ref-spawn", %{outcome: "", error: %{class: "denied"}}} = await_response()
+  end
+
+  describe "a start whose plugin spec names a provider is also a plugin enable" do
+    setup do
+      test_pid = self()
+
+      # The plugin's hub, for a start the check lets through: the enable is
+      # declared and the bind checked as the hub node would.
+      stub(HubManager, :on_hub_node, fn
+        @ns, {PluginManager, :declare_entry}, [entry], _none ->
+          send(test_pid, {:declared, entry.id})
+          {:ok, :enabled}
+
+        @ns, {PluginManager, :checked_start_binding}, [binding, _factory], _none ->
+          {:ok, %{binding | provider: Flezha.Plugin.Provider.StdOut}}
+      end)
+
+      :ok
+    end
+
+    test "a spawner is refused naming plugin.enable, and nothing is enabled or started", ctx do
+      :ok = RoleStore.bind(@principal, @ns, :spawner)
+      since = System.monotonic_time(:microsecond)
+
+      assert {:error, %Flezha.Error{code: "authz.role_insufficient"}} =
+               start_with(ctx, %{name: "feed", provider: "relay_stdout", hooks: ["on_output"]})
+
+      assert [denial] = AuthTestHelper.platform_authz_events(:authorization_denied, since)
+      assert denial.metadata.action == :"plugin.enable"
+      refute_received {:declared, _}
+      assert FakeStartRegistry.started() == []
+    end
+
+    test "a spawner binds a plugin already enabled", ctx do
+      :ok = RoleStore.bind(@principal, @ns, :spawner)
+
+      spec = %{name: "feed", hooks: ["on_output"], opts: %{channel: "in"}}
+
+      assert {:ok, _} = start_with(ctx, spec)
+      assert [%{opts: opts}] = FakeStartRegistry.started()
+      assert [%{id: "feed"}] = opts[:bindings]
+    end
+
+    test "an app holder enables the plugin and the relay starts", ctx do
+      :ok = RoleStore.bind(@principal, @ns, :app)
+
+      assert {:ok, _} =
+               start_with(ctx, %{name: "feed", provider: "relay_stdout", hooks: ["on_output"]})
+
+      assert_received {:declared, "feed"}
+      assert [%{opts: opts}] = FakeStartRegistry.started()
+      assert [%{id: "feed"}] = opts[:bindings]
+    end
+  end
+
+  defp start_with(ctx, plugin_spec) do
+    relay = %{factory_id: @factory, id: ctx.instance_id, plugins: [plugin_spec]}
+    door("Relay.start", Jason.encode!([relay]))
   end
 
   defp run_instance(%{registry: registry, instance_id: instance_id}) do

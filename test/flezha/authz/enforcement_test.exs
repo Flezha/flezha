@@ -12,7 +12,7 @@ defmodule Flezha.AuthZ.EnforcementTest do
   import ExUnit.CaptureIO
 
   alias Flezha.AuthZ
-  alias Flezha.AuthZ.{AuthState, Config, RoleStore, Scope, TokenStore}
+  alias Flezha.AuthZ.{AuthState, Config, RoleStore, RunnerProof, Scope, TokenStore}
   alias Flezha.Observability.{RingBufferSink, TestSinks}
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{Admin, Cli}
@@ -66,6 +66,29 @@ defmodule Flezha.AuthZ.EnforcementTest do
       try do
         assert AuthZ.enforcement_posture() == :open
         assert :ok = AuthZ.authorize(%{source: :cli}, :"state.delete", Scope.build("_system"))
+      after
+        Application.put_env(:flezha, :authn_authz, prev)
+      end
+    end
+
+    test "before the claim, a runner's claimed namespace is proven, and an unproven one refused" do
+      assert AuthZ.enforcement_posture() == :bootstrap_pending
+      {secret, _hash} = AuthTestHelper.issue_runner_credential("team-a")
+      frame = %{"namespace" => "team-b", "namespace_secret" => secret}
+
+      assert {:error, {:namespace_not_entitled, "team-b", "team-a"}} =
+               FleetManager.connect_handler(make_ref(), "team-b", frame, :uds)
+
+      assert FleetManager.active_runners("team-b") == []
+    end
+
+    test "the open posture admits a runner to the namespace it claims" do
+      prev = Application.get_env(:flezha, :authn_authz, [])
+      Application.put_env(:flezha, :authn_authz, Keyword.put(prev, :enabled, false))
+
+      try do
+        assert {:ok, %{namespace: "team-b", credential: nil}} =
+                 RunnerProof.prove(nil, "team-b", %{}, :uds)
       after
         Application.put_env(:flezha, :authn_authz, prev)
       end

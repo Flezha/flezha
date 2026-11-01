@@ -1,7 +1,8 @@
 # Kubernetes Resource Files
 
 These files can be used as a reference for deploying the Flezha controller to a Kubernetes cluster.
-They create a namespace, role, service account, role binding, and a daemonset.
+They create a namespace, role, service account, role binding, a daemonset, and the
+NetworkPolicy that limits who reaches the controllers' distribution ports.
 
 
 ## Before you apply: the cookie Secret
@@ -73,6 +74,7 @@ See `deploy/docker/prod/README.md` for details.
 
 ## Deploy
 - Apply the daemonset for the flezha controllers: `kubectl apply -f deploy/kubernetes/flezha-daemonset.yaml`
+- Apply the NetworkPolicy: `kubectl apply -f deploy/kubernetes/flezha-networkpolicy.yaml`
 - Apply the deployments for X(runners) services: `kubectl apply -f deploy/kubernetes/service-template.yaml`
 
 ## Resources
@@ -124,6 +126,22 @@ only once the boot sequence has completed, every namespace hub has left the reco
 state machine, and the durable registry has been reloaded; otherwise `503` with a body
 naming the preconditions still unmet. Pointing the readiness probe back at `/healthz`
 would mark a controller Ready before it has created a hub or restored anything.
+
+## Cluster network and mutual TLS
+
+The controllers form one Erlang cluster, and a node connected to it can run any code on the
+others, so who reaches the distribution ports matters. The DaemonSet pins the distribution
+port with `FLEZHA_DIST_PORT=9100` and declares it beside EPMD's 4369.
+`flezha-networkpolicy.yaml` admits those two ports only from pods labelled `app: flezha`
+(the controllers) and `app: console`, the health port 9569 from anywhere, and QUIC 4433/UDP
+for runners; any other port of the controller pods is closed to other pods. It takes effect
+only on a network plugin that enforces NetworkPolicy, and tooling that reaches the
+controllers over distribution needs one of the two labels.
+
+To run distribution over mutual TLS, apply the cert-manager recipe in
+[`../dist-tls/kubernetes/`](../dist-tls/kubernetes/README.md): each pod gets its own
+certificate from a distribution authority when it starts. `test/scripts/dist_hardening_k3s.sh`
+checks the policy, the init container's file modes and the recipe on a throwaway cluster.
 
 ## Security profile
 

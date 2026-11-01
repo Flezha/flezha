@@ -1,0 +1,112 @@
+# Distribution over mutual TLS for flezha-daemonset.yaml, applied with
+#   kubectl -n flezha patch daemonset flezha-daemonset --patch-file daemonset-patch.yaml
+#
+# Each start, before the controller runs, the pod makes a key that never
+# leaves it and a request naming its own IP (the host part of its node name),
+# and cert-manager's `flezha-dist-ca` Issuer signs it. The three files land in
+# a memory volume at /etc/flezha/dist, where deploy/dist-tls/dist_tls.conf
+# (the ConfigMap `flezha-dist-tls`) reads them. A restarted pod gets a new
+# certificate; nothing is stored.
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: dist-key
+          image: alpine/openssl:3.3.2
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          args:
+            - req
+            - -new
+            - -newkey
+            - ec
+            - -pkeyopt
+            - ec_paramgen_curve:P-256
+            - -noenc
+            - -keyout
+            - /dist/node.key
+            - -subj
+            - /CN=$(POD_NAME)
+            - -addext
+            - subjectAltName=IP:$(POD_IP)
+            - -addext
+            - extendedKeyUsage=serverAuth,clientAuth
+            - -out
+            - /dist/node.csr
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: dist-certs
+              mountPath: /dist
+        - name: dist-cert
+          image: alpine/k8s:1.34.13
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: HOME
+              value: /tmp
+          command:
+            - sh
+            - -ec
+            - |
+              name="${POD_NAME}-dist"
+              kubectl -n "$POD_NAMESPACE" delete certificaterequest "$name" --ignore-not-found >/dev/null
+              kubectl create -f - >/dev/null <<EOF
+              apiVersion: cert-manager.io/v1
+              kind: CertificateRequest
+              metadata:
+                name: $name
+                namespace: $POD_NAMESPACE
+              spec:
+                issuerRef:
+                  name: flezha-dist-ca
+                  kind: Issuer
+                usages: [digital signature, server auth, client auth]
+                request: $(base64 -w0 /dist/node.csr)
+              EOF
+              kubectl -n "$POD_NAMESPACE" wait certificaterequest "$name" --for=condition=Ready --timeout=120s >/dev/null
+              kubectl -n "$POD_NAMESPACE" get certificaterequest "$name" -o jsonpath='{.status.certificate}' | base64 -d >/dist/node.pem
+              kubectl -n "$POD_NAMESPACE" get certificaterequest "$name" -o jsonpath='{.status.ca}' | base64 -d >/dist/ca.pem
+              rm /dist/node.csr
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: dist-certs
+              mountPath: /dist
+      containers:
+        - name: flezha
+          env:
+            - name: FLEZHA_DIST_TLS_OPTFILE
+              value: /etc/flezha/dist-conf/dist_tls.conf
+          volumeMounts:
+            - name: dist-certs
+              mountPath: /etc/flezha/dist
+              readOnly: true
+            - name: dist-conf
+              mountPath: /etc/flezha/dist-conf
+              readOnly: true
+      volumes:
+        - name: dist-certs
+          emptyDir:
+            medium: Memory
+        - name: dist-conf
+          configMap:
+            name: flezha-dist-tls

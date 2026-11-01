@@ -68,11 +68,11 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
       Provider.StdOut => {:none, %{}},
       Provider.Filter => {:none, %{regex_pattern: ".*"}},
       Provider.MessageForward => {:none, %{key: "drill"}},
-      Provider.BeamMsgForward => {:test_process, %{recv_pid: ctx.sink_name}},
+      Provider.BeamMsgForward => {:test_process, %{recv_pid: ctx.sink}},
       Provider.MonitoredIOForward =>
         {:test_process,
          %{
-           recv_pid: ctx.sink_name,
+           recv_pid: ctx.sink,
            relay_id: ctx.relay_id,
            namespace: ctx.namespace,
            heartbeat_interval: 60_000
@@ -120,11 +120,8 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     namespace = "provider-drill-#{System.unique_integer([:positive])}"
     {_runner_port, _runner_id} = boot_runner(namespace, unique_id_path("provider_drill"), [])
 
-    # The two message forwards deliver to a named process: the CLI carries every
-    # option as text, and a registered name is the spelling a pid takes there.
-    sink_name = :"provider_drill_sink_#{System.unique_integer([:positive])}"
+    # The two message forwards deliver to a process of this VM, given as a pid.
     sink = spawn_link(fn -> Process.sleep(:infinity) end)
-    Process.register(sink, sink_name)
 
     relay_id = start_relay(namespace, "drill_op")
     # The forward's destination: a second relay in the same namespace, which
@@ -133,10 +130,11 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
     on_exit(fn -> stop_namespace(namespace) end)
 
-    # The two file plugins resolve their paths inside one root folder, and the
-    # source reads a file that is already there.
+    # The two file plugins resolve their paths inside the namespace's folder
+    # under one root, and the source reads a file that is already there.
     file_root = claim_tmp_dir("provider_drill_files")
-    File.write!(Path.join(file_root, "drill_source.ndjson"), "")
+    File.mkdir_p!(Path.join(file_root, namespace))
+    File.write!(Path.join([file_root, namespace, "drill_source.ndjson"]), "")
     previous_root = Application.fetch_env(:flezha, :file_plugin_root)
     Application.put_env(:flezha, :file_plugin_root, file_root)
 
@@ -153,7 +151,7 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
     %{
       namespace: namespace,
-      sink_name: sink_name,
+      sink: sink,
       relay_id: relay_id,
       target_id: target_id,
       origin_url: "http://127.0.0.1:1/drill",
@@ -318,6 +316,16 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
              ExUnit.CaptureIO.with_io(fn -> disable(plugin_id, ctx) end)
   end
 
+  # A pid option has no text spelling, so a row that delivers to this test's
+  # process is enabled in process, as an embedding host does.
+  defp enable(plugin_id, fields, :test_process, published) do
+    published = published ++ [namespace: fields["namespace"], relay_id: fields["relay_id"]]
+    with {:ok, _} <- PluginManager.enable(plugin_id, published, %{source: :internal}), do: :ok
+  end
+
+  defp enable(plugin_id, fields, _fixture, _published),
+    do: Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), [])
+
   defp start_relay(namespace, label, factory_id \\ "do_nothing") do
     id = "#{label}_#{System.unique_integer([:positive])}"
 
@@ -337,11 +345,13 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
     plugin_id = "drill-#{id}-#{System.unique_integer([:positive])}"
     extension = hd(provider.__provider__().extensions)
 
+    opts = with_plugin_id(opts, provider, plugin_id)
+
     # The CLI's fields: the options as text, the extensions it takes, the scope.
     fields =
       %{
         "provider" => id,
-        "opts" => opts |> with_plugin_id(provider, plugin_id) |> cli_opts(),
+        "opts" => cli_opts(opts),
         "hooks" => [
           %{"name" => Atom.to_string(extension), "opts" => subscription_opts(extension)}
         ],
@@ -351,7 +361,9 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
 
     # The verb prints and answers `:ok`; a refusal exits `{:shutdown, 1}`, which is
     # what makes an unasserted return safe to ignore here.
-    assert :ok = Cli.call("PluginManager.enable", Jason.encode!([plugin_id, fields]), []),
+    published = [provider: provider, opts: opts, hooks: [{extension, []}]]
+
+    assert :ok = enable(plugin_id, fields, fixture, published),
            "provider `#{id}` refused a real enable"
 
     table = host_table(ctx, provider, plugin_id)
@@ -567,7 +579,6 @@ defmodule FlezhaTest.System.ProviderLifecycleDrillTest do
   defp stringify(value) when is_binary(value), do: value
   defp stringify(value) when is_integer(value) or is_boolean(value), do: to_string(value)
   defp stringify(value) when is_atom(value), do: Atom.to_string(value)
-  defp stringify(value) when is_pid(value), do: inspect(value)
   defp stringify(value), do: value
 
   defp collect_phase_events do

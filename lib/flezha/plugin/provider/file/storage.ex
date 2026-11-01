@@ -17,6 +17,14 @@ defmodule Flezha.Plugin.Provider.File.Storage do
   @type stat :: %{type: atom(), size: non_neg_integer(), identity: term()}
 
   @doc """
+  The folder, or key prefix, of `namespace` under the configured `root`: each
+  namespace reads and writes only under its own. Refuses a root that cannot
+  hold it, naming the root.
+  """
+  @callback namespace_root(root :: binary(), namespace :: binary()) ::
+              {:ok, binary()} | {:error, term()}
+
+  @doc """
   Resolve a plugin's `path` inside `root` into the one target every log line and
   verdict names, or refuse it naming what stopped it.
   """

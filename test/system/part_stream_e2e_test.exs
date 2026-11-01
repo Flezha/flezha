@@ -61,7 +61,7 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
 
       test "a plugin's listener sees the parts, and a file sink the output alone",
            %{namespace: ns} do
-        path = sink_path("part_sink")
+        path = sink_path("part_sink", ns)
         id = start!(ns, unquote(factory), unquote(kind), [file_sink("part_sink", path)])
         test = self()
 

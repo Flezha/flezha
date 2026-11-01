@@ -3,6 +3,7 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
 
   @daemonset_path Path.expand("../../../deploy/kubernetes/flezha-daemonset.yaml", __DIR__)
   @configmap_path Path.expand("../../../deploy/kubernetes/flezha-configmap.yaml", __DIR__)
+  @policy_path Path.expand("../../../deploy/kubernetes/flezha-networkpolicy.yaml", __DIR__)
 
   # Hand-rolled string assertions deliberately — adding YamlElixir to the
   # production dep tree just for these manifest sanity checks isn't worth it.
@@ -57,6 +58,62 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
       assert probe.("livenessProbe") == "/healthz"
       assert probe.("startupProbe") == "/healthz"
     end
+
+    # A key the controller wrote 0600 must survive the init container's next
+    # run: ownership is set, and a mode is only ever closed, on the top dirs.
+    test "the init container sets ownership and widens no mode", %{contents: contents} do
+      assert contents =~ "chown -R 1000:1000"
+      modes = Regex.scan(~r/chmod\s+(-\S+|[0-7]{3,4})\b/, contents, capture: :all_but_first)
+      assert modes != [] and Enum.all?(modes, &(&1 == ["700"])), inspect(modes)
+    end
+
+    test "pins FLEZHA_DIST_PORT and declares it beside EPMD", %{contents: contents} do
+      port = dist_port(contents)
+      assert contents =~ ~r/-\s+name:\s+dist\s*\n\s+containerPort:\s+#{port}\b/
+      assert contents =~ ~r/-\s+name:\s+epmd\s*\n\s+containerPort:\s+4369\b/
+    end
+  end
+
+  describe "flezha-networkpolicy.yaml" do
+    setup do
+      policy = File.read!(@policy_path)
+      [_head, ingress] = String.split(policy, ~r/^  ingress:\n/m)
+      rules = ingress |> String.split(~r/^    - /m, trim: true)
+      %{policy: policy, rules: rules, dist_port: dist_port(File.read!(@daemonset_path))}
+    end
+
+    test "selects the controller pods", %{policy: policy} do
+      assert policy =~ ~r/podSelector:\s*\n\s+matchLabels:\s*\n\s+app: flezha\n\s+policyTypes/
+    end
+
+    test "admits EPMD and the distribution port from controllers and the console alone",
+         %{rules: rules, dist_port: dist_port} do
+      for port <- [4369, dist_port] do
+        assert [rule] = Enum.filter(rules, &(port in ports(&1))), "port #{port}"
+
+        assert Regex.scan(~r/app: (\S+)/, rule, capture: :all_but_first) == [
+                 ["flezha"],
+                 ["console"]
+               ]
+      end
+    end
+
+    test "admits the health port from anywhere", %{rules: rules} do
+      assert [rule] = Enum.filter(rules, &(9569 in ports(&1)))
+      refute rule =~ "from:"
+    end
+
+    defp ports(rule),
+      do:
+        for(
+          [p] <- Regex.scan(~r/port: (\d+)/, rule, capture: :all_but_first),
+          do: String.to_integer(p)
+        )
+  end
+
+  defp dist_port(daemonset) do
+    [_, port] = Regex.run(~r/-\s+name:\s+FLEZHA_DIST_PORT\s*\n\s+value:\s+"(\d+)"/, daemonset)
+    String.to_integer(port)
   end
 
   describe "flezha-configmap.yaml" do

@@ -44,7 +44,7 @@ Delivered to 'my_echo'.
 ```
 
 ```sh
-$ cat storage/app/files/echo-out.txt
+$ cat storage/app/files/default/echo-out.txt
 ```
 
 ```output

@@ -108,15 +108,16 @@ Read that as four things: `writer` is the plugin's name in the namespace,
 
 File plugins may touch one folder and nothing outside it: `storage/app/files` inside the
 directory the controller was started from by default (`/flezha/storage/app/files`, inside the
-data volume, under Docker), created the first time a file plugin is enabled.
+data volume, under Docker), created the first time a file plugin is enabled, and in it only
+the folder of their namespace, here `storage/app/files/default`.
 `flz controller status | grep file_plugin_root` prints it, the boot prints the same path,
 and `flz relay info` shows each file plugin's full path. A relative `path` is taken
-under that folder. [`file.md`](../../plugins/file.md#the-root-folder) has the rules and
+under the namespace's folder. [`file.md`](../../plugins/file.md#the-root-folder) has the rules and
 `FLEZHA_FILE_PLUGIN_ROOT`, and the warning that on several controllers each has its own
 folder unless they share one or use an S3 bucket.
 
 The output plugin creates `echo-out.txt` when the plugin is enabled, readable only by the user the
-controller runs as. Its folder has to exist: the default `storage/app/files` is made for you,
+controller runs as. Its folder has to exist: the default `storage/app/files/default` is made for you,
 a subfolder such as `out/` in `--Xpath=out/echo-out.txt` is not. The output plugin never looks at
 the extension. It writes in small batches, so a line lands a moment after the send:
 
@@ -129,7 +130,7 @@ Delivered to 'my_echo'.
 ```
 
 ```sh
-$ cat storage/app/files/echo-out.txt
+$ cat storage/app/files/default/echo-out.txt
 ```
 
 ```output
@@ -155,11 +156,11 @@ second, remembers the byte offset of the last line the relay took, and resumes t
 after a plugin restart, a move to another runner, or a controller restart.
 
 ```sh
-$ echo "from a file" >> storage/app/files/echo-in.txt
+$ echo "from a file" >> storage/app/files/default/echo-in.txt
 ```
 
 ```sh
-$ cat storage/app/files/echo-out.txt
+$ cat storage/app/files/default/echo-out.txt
 ```
 
 ```output

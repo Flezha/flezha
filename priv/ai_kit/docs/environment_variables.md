@@ -65,7 +65,8 @@ Notes on the area's variables:
 - `FLEZHA_NODE_HOST`: The host half of `RELEASE_NODE` (`rel/env.sh.eex`); also sets `:node_host_name`, the host half the test harness names its node with.
 - `FLEZHA_HOST_NODE`: The machine the controller runs on, which `flz controller list` shows beside each controller. The Kubernetes manifest sets it from the pod's node name. Default: unset, and no machine is named.
 - `RELEASE_COOKIE`: Read by `rel/env.sh.eex`: set → `RELEASE_DISTRIBUTION=name`; unset → a node start (`start`, `start_iex`, `daemon`, `daemon_iex`) mints 32 random bytes into `FLEZHA_COOKIE_FILE` (default `<state root>/cookie`, `0600`), reuses it on later boots, and only where neither is possible → `none` (no clustering, and `flzvm remote` cannot connect). Every other command, `flzvm remote` and the `flzvm eval` behind `flz`'s local verbs included, only reads the file. `flz` itself needs no cookie: it reaches the controller over its control socket. A cluster still provisions one value on every node. No command line carries it: each VM that joins distribution reads it from `.erlang.cookie` under the release's `tmp/home/<node name>/` (`RELEASE_TMP`), which the release writes `0600`. Default: minted per node.
-- `FLEZHA_DIST_TLS_OPTFILE`: Read by `rel/env.sh.eex`: path of an `inet_tls_dist` option file, adds `-proto_dist inet_tls -ssl_dist_optfile`.
+- `FLEZHA_DIST_TLS_OPTFILE`: Read by `rel/env.sh.eex`: path of an `inet_tls_dist` option file, adds `-proto_dist inet_tls -ssl_dist_optfile` to every release command. `deploy/dist-tls/dist_tls.conf` is a tested file for mutual TLS, and `deploy/dist-tls/make-certs.sh` makes its certificates ([distribution with mutual TLS](../topics/core/authorization.md#distribution-with-mutual-tls)). At boot the controller warns, on every boot, when the file cannot be read, does not set `{verify, verify_peer}` for the server, sets no `versions`, or trusts the runner transport's authority; unset on a node off loopback, it warns that distribution is plain TCP. Default: unset (plain TCP).
+- `FLEZHA_DIST_PORT`: Read by `rel/env.sh.eex`: the one TCP port a started controller listens for distribution on, over plain TCP or TLS, so a firewall can name it; adds `-kernel inet_dist_listen_min` and `inet_dist_listen_max`. Only the commands that start a node take it (`start`, `start_iex`, `daemon`, `daemon_iex`), never `flzvm rpc`, `flzvm remote` or `eval`. A value that is not a port from 1 to 65535 stops the start, naming the variable. Default: unset, and the VM picks a port. EPMD (4369) and the distribution port listen on every interface unless `ERL_EPMD_ADDRESS` and `-kernel inet_dist_use_interface` restrict them ([securing the cluster](../topics/deploying/clustering.md#securing-the-cluster)).
 - `FLEZHA_INITIAL_NODES`: Comma list of node names.
 - `FLEZHA_K8S_CLUSTER_DOMAIN`: Default: the raw value of `FLEZHA_K8S_CLUSTER_NAME`, else `""`.
 - `FLEZHA_K8S_HOST_IDENTIFIER`: `ip`, `hostname` or `dns`.
@@ -129,7 +130,7 @@ Notes on the area's variables:
 - `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`: The orchestrator grace period is the `orchestrator_grace_ms` row — this + 15 s — and a test reads it back from the DaemonSet and both compose files.
 - `FLEZHA_USE_CONVERGENCE_HEALTH`: True only for `true`/`1`.
 - `FLEZHA_FABRIC_503_POLLS`: Consecutive classifier polls reporting `driver_loop_frozen` / `nif_queue_backing_up` before `/healthz` answers 503; `0` disables the fabric 503.
-- `FLEZHA_HEALTHZ_ENABLED`: True only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`halted`, `dead_runner`, `relays_unbound`, `plugin_unhealthy`, `plugin_lagging`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_relays`.
+- `FLEZHA_HEALTHZ_ENABLED`: True only for `true`/`1`. The endpoint folds the convergence loop's verdict records: `degraded` names every reason it folded (`halted`, `dead_runner`, `relays_unbound`, `plugin_unhealthy`, `plugin_lagging`, `output_stalled`, `intent_mismatch`, `sensor_stale`, `data_plane_wedged`, joined with `+`), and the body carries `unknown_relays`. The listener serves at most 64 connections at once; one more is answered `503` without being read.
 - `FLEZHA_DATA_PLANE_LIVENESS`: `false` drops the driver poll and the stall classifier, the counters stay.
 - `FLEZHA_TESTNET_WS_PORT`: The port `Flezha.Testnet` binds; the prod image entrypoint starts the daemon only when it is set explicitly. Default: `4500` (`:test` derives the port from the run).
 
@@ -341,6 +342,7 @@ Read by the build, the image or the shell wrappers rather than the controller.
 | `FLEZHA_CONSOLE_PATH` | path | unset |
 | `FLEZHA_CONTAINER_USER` | string | unset |
 | `FLEZHA_COOKIE_FILE` | path | unset |
+| `FLEZHA_DIST_PORT` | int | unset |
 | `FLEZHA_DIST_TLS_OPTFILE` | path | unset |
 | `FLEZHA_GIT_MIRROR` | path | unset |
 | `FLEZHA_IMAGE` | string | unset |

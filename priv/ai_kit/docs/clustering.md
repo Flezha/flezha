@@ -265,6 +265,53 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
 {"text":"Message 8: you said \"Are you still there?\". I am a demo model.","tokens":13}
 ```
 
+## Securing the cluster
+
+A controller that joins the cluster can run any code on the others, so the network between
+controllers carries the cluster's whole trust. [The node cookie](../core/authorization.md#the-node-cookie)
+explains the model; this is what to set up around it.
+
+**Ports.** Controllers meet on two TCP ports: 4369, where EPMD tells a node which port
+another one listens on, and that distribution port. The distribution port is random unless
+`FLEZHA_DIST_PORT` pins it, and only a pinned port can be named in a firewall rule:
+
+```sh
+$ FLEZHA_DIST_PORT=9100 ./bin/flz controller start
+```
+
+`FLEZHA_DIST_PORT` applies to the commands that start a controller, not to `flzvm rpc` or
+`flzvm remote`, which run VMs of their own on the same machine.
+
+**Firewall by address.** Allow 4369 and the distribution port only from the other
+controllers' and the console's IP addresses, written as addresses, since a rule by host name
+is resolved once and goes stale. An address allowlist narrows who can try; it does not
+authenticate anyone, because an address can be borrowed on a shared network. EPMD and the
+distribution port listen on every interface unless told otherwise.
+
+**A private network, optionally.** Running the controllers over WireGuard encrypts and
+authenticates their traffic beneath distribution. Bind both listeners to the WireGuard
+address so they are not reachable elsewhere:
+
+```sh
+$ export ERL_EPMD_ADDRESS=10.0.0.1
+$ export ERL_FLAGS="-kernel inet_dist_use_interface {10,0,0,1}"
+```
+
+WireGuard is a layer under distribution, not a replacement for its own checks.
+
+**Mutual TLS.** Run distribution over mutual TLS with an authority used for nothing else,
+as [Distribution with mutual TLS](../core/authorization.md#distribution-with-mutual-tls)
+describes, with the options file and certificate script in `deploy/dist-tls/`. The
+controller warns on every boot while distribution off loopback is plain TCP, or its TLS
+file leaves a gap.
+
+**Kubernetes.** The reference manifests pin `FLEZHA_DIST_PORT` to 9100 and ship
+`flezha-networkpolicy.yaml`, which admits EPMD and the distribution port only from pods
+labelled `app: flezha` (the controllers) or `app: console`, the health port from anywhere,
+and QUIC for runners. A NetworkPolicy works only on a network plugin that enforces it.
+`deploy/dist-tls/kubernetes/` adds mutual TLS: cert-manager keeps the distribution
+authority, and each pod gets a certificate naming its IP when it starts.
+
 ## Limits and gotchas
 
 - **A plugin's port moves with its relay.** The HTTP port is served by whichever controller
@@ -277,6 +324,8 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
   kills the controller in the middle of the hand-over.
 - **Bringing a stopped controller back into a running cluster** is not covered by this page.
 - **One cookie for all.** A controller with a different cookie, or a minted one, does not join.
+- **Plain distribution is readable on the network.** Off loopback, use mutual TLS or a
+  private network ([Securing the cluster](#securing-the-cluster)).
 
 ## See also
 

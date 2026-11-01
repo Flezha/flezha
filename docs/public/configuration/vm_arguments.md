@@ -58,6 +58,23 @@ it. So `ELIXIR_ERL_OPTIONS` still adds a flag the file does not set, which is
 how `rel/env.sh.eex` adds TLS distribution, and it can never override one the
 file does set. **Use `ERL_FLAGS`.**
 
+## Flags the launcher adds
+
+`rel/env.sh.eex` adds distribution flags through `ELIXIR_ERL_OPTIONS`, from environment
+variables, so neither args file carries them:
+
+- `-proto_dist inet_tls -ssl_dist_optfile <file>`, for every release command, when
+  `FLEZHA_DIST_TLS_OPTFILE` names an options file: distribution runs over TLS.
+- `-kernel inet_dist_listen_min <port> -kernel inet_dist_listen_max <port>`, for the
+  commands that start a node only, when `FLEZHA_DIST_PORT` is set: distribution listens on
+  that one port. `rpc` and `remote` do not take it, since their VM runs beside the node.
+
+Two flags restrict where distribution can be reached, and are yours to set. EPMD listens on
+the address in `ERL_EPMD_ADDRESS`, and `-kernel inet_dist_use_interface {10,0,0,1}` binds the
+distribution port to one address; set it with `ERL_FLAGS`. Without them both listen on every
+interface. [Securing the cluster](../topics/deploying/clustering.md#securing-the-cluster)
+puts them together.
+
 ## Setting them
 
 | Deployment | Route |

@@ -1,8 +1,8 @@
 defmodule Flezha.Plugin.Provider.FileRootTest do
   @moduledoc """
-  The one folder a file plugin may name: every path resolves inside
-  `FLEZHA_FILE_PLUGIN_ROOT` with symlinks followed, or the enable is refused
-  naming what stopped it.
+  The one folder a file plugin may name: every path resolves inside its
+  namespace's own folder under `FLEZHA_FILE_PLUGIN_ROOT` with symlinks
+  followed, or the enable is refused naming what stopped it.
   """
 
   # async: false: writes Application env.
@@ -24,17 +24,20 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     %{root: root, outside: tmp}
   end
 
-  test "an unset root is the default folder, created by the first enable" do
+  test "an unset root is the default folder, created with the namespace's by the first enable" do
     Application.delete_env(:flezha, :file_plugin_root)
     default = Path.expand(Config.default(:file_plugin_root))
+    namespace = "root-test-#{System.unique_integer([:positive])}"
     existed? = File.dir?(default)
+
     # rmdir, never rm_rf: a checkout's default folder may hold someone's files.
-    on_exit(fn -> if not existed?, do: File.rmdir(default) end)
+    on_exit(fn ->
+      File.rmdir(Path.join(default, namespace))
+      if not existed?, do: File.rmdir(default)
+    end)
 
-    assert {:ok, %{path: path}} =
-             ProviderPrepare.prepare(FilePlugin.Sink, %{path: "events.ndjson"})
-
-    assert path == Path.join(default, "events.ndjson")
+    assert {:ok, %{path: path}} = prepare_in(namespace, %{path: "events.ndjson"})
+    assert path == Path.join([default, namespace, "events.ndjson"])
   end
 
   test "a configured root that does not exist is refused, and not created", %{outside: outside} do
@@ -116,22 +119,107 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
              Local.resolve("a/events.ndjson", root)
   end
 
+  describe "each namespace's own folder" do
+    test "a relative path lands in the namespace's folder, made readable by its owner only",
+         %{root: root} do
+      assert {:ok, %{path: path}} = prepare_in("orders", %{path: "events.ndjson"})
+      assert path == Path.join([root, "orders", "events.ndjson"])
+      assert %File.Stat{mode: mode} = File.stat!(Path.join(root, "orders"))
+      assert Bitwise.band(mode, 0o777) == 0o700
+    end
+
+    test "a folder that exists keeps its mode", %{root: root} do
+      File.mkdir_p!(Path.join(root, "orders"))
+      File.chmod!(Path.join(root, "orders"), 0o750)
+
+      assert {:ok, _opts} = prepare_in("orders", %{path: "events.ndjson"})
+      assert Bitwise.band(File.stat!(Path.join(root, "orders")).mode, 0o777) == 0o750
+    end
+
+    test "a path that climbs out, or is absolute outside the root, is refused naming the folder",
+         %{root: root, outside: outside} do
+      folder = Path.join(root, "orders")
+      File.write!(Path.join(outside, "controller.key"), "")
+
+      for path <- ["../../controller.key", "../certs/controller.key", "/etc/passwd"] do
+        assert {:error, {:file_path_outside_root, ^path, ^folder}} =
+                 prepare_in("orders", %{path: path}),
+               path
+      end
+    end
+
+    test "a symlink out of the folder is refused, one inside it is followed", %{root: root} do
+      folder = Path.join(root, "orders")
+      File.mkdir_p!(Path.join(folder, "2026-09"))
+      File.ln_s!("/etc", Path.join(folder, "out"))
+      File.ln_s!(Path.join(folder, "2026-09"), Path.join(folder, "current"))
+
+      assert {:error, {:file_path_outside_root, "out/hosts", ^folder}} =
+               prepare_in("orders", %{path: "out/hosts"})
+
+      assert {:ok, %{path: path}} = prepare_in("orders", %{path: "current/events.ndjson"})
+      assert path == Path.join(folder, "2026-09/events.ndjson")
+    end
+
+    test "a missing parent is refused naming the missing directory", %{root: root} do
+      missing = Path.join([root, "orders", "nope"])
+
+      assert {:error, {:file_directory_missing, "nope/events.ndjson", ^missing}} =
+               prepare_in("orders", %{path: "nope/events.ndjson"})
+    end
+
+    test "another namespace's folder is refused naming this namespace's", %{root: root} do
+      File.mkdir_p!(Path.join(root, "orders/in"))
+      folder = Path.join(root, "payments")
+      absolute = Path.join(root, "orders/in/trades.jsonl")
+
+      assert {:error, {:file_path_outside_root, "../orders/in/trades.jsonl", ^folder}} =
+               prepare_in("payments", %{path: "../orders/in/trades.jsonl"})
+
+      assert {:error, {:file_path_outside_namespace, ^absolute, ^folder, _moved}} =
+               prepare_in("payments", %{path: absolute})
+    end
+
+    test "a symlink into another namespace's folder is refused", %{root: root} do
+      File.mkdir_p!(Path.join(root, "orders"))
+      File.mkdir_p!(Path.join(root, "payments"))
+      File.ln_s!(Path.join(root, "orders"), Path.join(root, "payments/peek"))
+      folder = Path.join(root, "payments")
+
+      assert {:error, {:file_path_outside_root, "peek/events.ndjson", ^folder}} =
+               prepare_in("payments", %{path: "peek/events.ndjson"})
+    end
+
+    test "a path stored under the shared folder is refused naming where it is now",
+         %{root: root} do
+      stored = Path.join(root, "out.ndjson")
+      folder = Path.join(root, "orders")
+      moved = Path.join(folder, "out.ndjson")
+
+      assert {:error, {:file_path_outside_namespace, ^stored, ^folder, ^moved}} =
+               prepare_in("orders", %{path: stored})
+
+      refute File.exists?(stored)
+      refute File.exists?(moved)
+    end
+  end
+
   # Nothing here reaches a network: a root is resolved without a request.
   describe "an S3 root" do
     setup do
       Minio.file_plugin_root("s3://events/flezha")
     end
 
-    test "a relative path becomes a key under the prefix, and resolves to itself again" do
-      assert {:ok, %{path: "s3://events/flezha/out"}} = prepare_in_bucket(%{path: "out"})
+    test "a relative path becomes a key under the namespace's prefix, and resolves to itself again" do
+      assert {:ok, %{path: "s3://events/flezha/orders/out"}} = prepare_in_bucket(%{path: "out"})
 
-      assert {:ok, %{path: "s3://events/flezha/out/echo"} = opts} =
+      assert {:ok, %{path: "s3://events/flezha/orders/out/echo"} = opts} =
                prepare_in_bucket(%{path: "./out//echo"})
 
-      assert {:ok, %{path: "s3://events/flezha/out/echo"}} = prepare_in_bucket(opts)
+      assert {:ok, %{path: "s3://events/flezha/orders/out/echo"}} = prepare_in_bucket(opts)
     end
 
-    test "a path that climbs out, another bucket and a filesystem path are refused naming the root" do
+    test "a path that climbs out, another bucket and a filesystem path are refused naming the namespace's prefix" do
       for path <- [
             "../other/echo",
             "out/../../other",
@@ -140,10 +228,23 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
             "s3://events/flezhax/echo",
             "/etc/passwd"
           ] do
-        assert {:error, {:file_path_outside_root, ^path, "s3://events/flezha"}} =
+        assert {:error, {:file_path_outside_root, ^path, "s3://events/flezha/orders"}} =
                  prepare_in_bucket(%{path: path}),
                inspect(path)
       end
+    end
+
+    test "another namespace's prefix is refused naming this namespace's" do
+      path = "s3://events/flezha/orders/out/echo"
+
+      assert {:error,
+              {:file_path_outside_namespace, ^path, "s3://events/flezha/payments",
+               "s3://events/flezha/payments/orders/out/echo"}} =
+               ProviderPrepare.prepare(FilePlugin.Sink, %{
+                 path: path,
+                 commit: "rename",
+                 source_namespace: "payments"
+               })
     end
 
     # The folder walk refuses `s3://events/flezha` as a folder that does not
@@ -194,20 +295,22 @@ defmodule Flezha.Plugin.Provider.FileRootTest do
     end
   end
 
-  defp prepare_in_bucket(opts),
-    do: ProviderPrepare.prepare(FilePlugin.Sink, Map.merge(%{commit: "rename"}, opts))
+  defp prepare_in_bucket(opts), do: prepare_in("orders", Map.merge(%{commit: "rename"}, opts))
+
+  defp prepare_in(namespace, opts),
+    do: ProviderPrepare.prepare(FilePlugin.Sink, Map.put(opts, :source_namespace, namespace))
 
   # A plugin is prepared again from the options it already holds on a plugin
   # restart, so the resolved path must resolve to itself.
   test "the resolved path replaces the one written, and resolves to itself again",
        %{root: root} do
-    File.mkdir_p!(Path.join(root, "2026-09"))
-    File.ln_s!("2026-09", Path.join(root, "current"))
+    File.mkdir_p!(Path.join(root, "orders/2026-09"))
+    File.ln_s!("2026-09", Path.join(root, "orders/current"))
 
-    assert {:ok, opts} = ProviderPrepare.prepare(FilePlugin.Sink, %{path: "current/out.ndjson"})
-    assert opts.path == Path.join(root, "2026-09/out.ndjson")
+    assert {:ok, opts} = prepare_in("orders", %{path: "current/out.ndjson"})
+    assert opts.path == Path.join(root, "orders/2026-09/out.ndjson")
 
-    assert {:ok, again} = ProviderPrepare.prepare(FilePlugin.Sink, %{path: opts.path})
+    assert {:ok, again} = prepare_in("orders", %{path: opts.path})
     assert again.path == opts.path
   end
 end

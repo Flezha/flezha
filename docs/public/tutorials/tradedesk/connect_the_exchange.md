@@ -86,7 +86,7 @@ Plugin signals bound to trade_watcher.
 From the directory the controller was started in:
 
 ```sh
-$ head -4 storage/app/files/signals.txt
+$ head -4 storage/app/files/trading/signals.txt
 ```
 
 ```output

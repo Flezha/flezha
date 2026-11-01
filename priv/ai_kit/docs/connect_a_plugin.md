@@ -21,7 +21,8 @@ flowchart LR
 
 File plugins read and write only inside one folder, `storage/app/files` under the
 directory the controller was started from (`/flezha/storage/app/files` in the
-Docker volume). Run the commands below from the directory the controller was
+Docker volume), and in it only in their namespace's folder: `storage/app/files/default`
+here. Run the commands below from the directory the controller was
 started in.
 
 ## Write the output to a file
@@ -69,7 +70,7 @@ Delivered to 'my_echo'.
 ```
 
 ```sh
-$ cat storage/app/files/echo-out.txt
+$ cat storage/app/files/default/echo-out.txt
 ```
 
 ```output
@@ -104,11 +105,11 @@ itself. `--Xchannel_in` names the entry channel each line arrives on.
 > {: .step}
 
 ```sh
-$ echo "from a file" >> storage/app/files/echo-in.txt
+$ echo "from a file" >> storage/app/files/default/echo-in.txt
 ```
 
 ```sh
-$ cat storage/app/files/echo-out.txt
+$ cat storage/app/files/default/echo-out.txt
 ```
 
 ```output

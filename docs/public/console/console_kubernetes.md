@@ -270,7 +270,11 @@ spec:
   `flezha@<address>` for one of them, the one it already holds first.
 - **`RELEASE_NODE: flezha_console@$(POD_IP)`** names the console after its own pod address, as the
   controllers are named after theirs. The controllers' `RELEASE_COOKIE` comes from
-  `flezha-secrets`.
+  `flezha-secrets`, which puts the console inside the cluster's trust boundary.
+- **`app: console`** is the label `flezha-networkpolicy.yaml` admits to the controllers'
+  EPMD and distribution ports. Where the controllers run the mutual-TLS recipe of
+  `deploy/dist-tls/kubernetes/`, give the console pod its two init containers and volume too,
+  so it gets its own certificate from the distribution authority.
 - **`console-db`** is a small Postgres for the console's accounts, on a volume of its own. To
   use a database you already run, drop it and point `DATABASE_URL` there.
 - **`PHX_HOST`, `PHX_URL_SCHEME`, `PHX_URL_PORT`** are the address browsers use. They are set

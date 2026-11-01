@@ -344,17 +344,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def parse_bool(value, field), do: refuse_value(field, value)
 
   @doc """
-  A process, as a pid or as the registered name a CLI or a stored spec carries
-  it as. Anything else is refused: a value that is neither is nothing a provider
-  can resolve to a destination.
+  A process of this VM, as a pid. Anything else is refused, a registered name
+  included, so no caller can direct a plugin's messages at a controller process.
   """
   @spec parse_pid(term(), atom() | binary()) :: {:ok, pid()} | {:error, term()}
   def parse_pid(value, _field) when is_pid(value), do: {:ok, value}
-
-  def parse_pid(value, field) when is_binary(value) do
-    with {:error, _} <- Flezha.Identificator.string_to_pid(value), do: refuse_value(field, value)
-  end
-
   def parse_pid(value, field), do: refuse_value(field, value)
 
   @doc """

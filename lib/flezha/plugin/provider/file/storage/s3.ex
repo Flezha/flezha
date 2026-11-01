@@ -36,6 +36,13 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
 
   # ---------- the root ----------
 
+  @doc "`<prefix>/<namespace>` under the root, once the root itself is one a request can use."
+  @impl true
+  def namespace_root(root, namespace) do
+    with {:ok, _bucket, _prefix} <- checked_root(root),
+         do: {:ok, String.trim_trailing(root, "/") <> "/" <> namespace}
+  end
+
   @doc """
   Resolve `path` to an object under the `s3://<bucket>/<prefix>` root without
   reading anything: a relative path is joined to the prefix and an `s3://` path
@@ -47,9 +54,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
   """
   @impl true
   def resolve(path, root) do
-    with :ok <- require_settings(root),
-         {:ok, bucket, prefix} <- parse_root(root),
-         :ok <- refuse_durable_overlap(root, bucket, prefix),
+    with {:ok, bucket, prefix} <- checked_root(root),
          {:ok, ^bucket, key} <- parse(object_url(path, root)),
          true <- length(key) > length(prefix) and List.starts_with?(key, prefix) do
       {:ok, url(bucket, key)}
@@ -76,6 +81,13 @@ defmodule Flezha.Plugin.Provider.File.Storage.S3 do
 
   @impl true
   def shown(root), do: root
+
+  defp checked_root(root) do
+    with :ok <- require_settings(root),
+         {:ok, bucket, prefix} <- parse_root(root),
+         :ok <- refuse_durable_overlap(root, bucket, prefix),
+         do: {:ok, bucket, prefix}
+  end
 
   defp parse_root(root) do
     with :error <- parse(root), do: {:error, {:file_root_invalid, root}}

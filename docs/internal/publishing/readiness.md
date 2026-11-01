@@ -88,6 +88,31 @@ carry.
 | R3 | owed | — | Community files exist: a code of conduct, issue and pull-request templates, and a contribution path. | The files are present and reachable from the readme. | maintainer | |
 | R4 | owed | — | No test in the default paths reaches a live third-party endpoint, because every fork of a public repository inherits it. | The default test paths run with no outbound third-party call. | maintainer | |
 
+## Dependency advisories
+
+Before every release, run these four checks. Each must find no published advisory that has a
+fix available for a version the release ships or builds with.
+
+1. Hex packages, in the repository root and in each plugin project:
+   `for d in . plugins/*/; do (cd "$d" && mix hex.audit); done`
+2. Rust crates, for every Cargo lock file in the repository and its SDK submodules:
+   `git ls-files --recurse-submodules '*Cargo.lock' | xargs -n1 cargo audit -f`
+3. Every lock file and Maven project in the repository and its SDK submodules, against the OSV
+   database: `osv-scanner scan source -r .`
+4. Erlang/OTP, for the OTP version the controller image names (`ELIXIR_IMAGE` in
+   `deploy/docker/prod/Dockerfile.controller`):
+   `gh api --paginate 'repos/erlang/otp/security-advisories?per_page=100' --jq '.[] | [.ghsa_id, .severity, ([.vulnerabilities[] | .package.name + " " + .vulnerable_version_range + " fixed " + (.patched_versions // "-")] | join("; "))] | @tsv'`
+   Every advisory whose range covers that OTP line, or an application the release ships, must
+   name a patched version at or below the pin.
+
+A hit with a fix is resolved before the release: raise the pin (the lock file, the
+`ELIXIR_IMAGE` tag together with `deploy/docker/dev/Dockerfile.toolchain` and
+`.github/toolchains.json`, or the SDK's manifest), run the suites, and name the advisory in the
+changelog's Security section. A hit with no fix yet is written into that section with the reason
+it does not reach a deployment or the mitigation that applies.
+
+Last run clean on 2026-11-01, for OTP 28.5.0.8 and Elixir 1.20.5.
+
 ## Decisions the owner owes
 
 Six entries are choices rather than tasks, and one entry group is a choice about method.

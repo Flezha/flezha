@@ -30,7 +30,10 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
   setup %{tmp: root} do
     Application.put_env(:flezha, :file_plugin_root, root)
-    %{root: root, out: Path.join(root, "out.ndjson")}
+    # The default namespace's folder, where the plugins these tests prepare write.
+    folder = Path.join(root, "default")
+    File.mkdir_p!(folder)
+    %{root: folder, out: Path.join(folder, "out.ndjson")}
   end
 
   describe "one line per record" do
@@ -314,7 +317,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
 
     test "append, given or taken as the default, is refused naming commit" do
       for extra <- [%{path: "out"}, %{path: "out", commit: "append"}] do
-        assert {:error, {:file_commit_unsupported, "s3://events/flezha/out", "append"}} =
+        assert {:error, {:file_commit_unsupported, "s3://events/flezha/default/out", "append"}} =
                  prepare_sink(extra)
       end
     end
@@ -323,7 +326,7 @@ defmodule Flezha.Plugin.Provider.FileSinkTest do
       assert {:error, {:option_above_maximum, :roll_bytes, 6_442_450_944, _max}} =
                prepare_sink(rename(%{roll_bytes: 6 * 1024 ** 3}))
 
-      assert {:ok, %{path: "s3://events/flezha/out"}} =
+      assert {:ok, %{path: "s3://events/flezha/default/out"}} =
                prepare_sink(rename(%{roll_bytes: 5 * 1024 ** 3}))
     end
   end

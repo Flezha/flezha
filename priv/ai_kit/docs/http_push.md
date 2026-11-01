@@ -167,10 +167,13 @@ no worker was running for (`reason: :not_running`).
 ## Security
 
 No log line, telemetry event or process status holds the URL's path or query or a header
-value; the host stands for the endpoint. TLS is verified against the system CA store. The
-plugin sends to whatever host `url` names, private and loopback addresses included: like
-the HTTP poll plugin it has no address rule, so who may enable plugins decides where data
-may go.
+value; the host stands for the endpoint. TLS is verified against the system CA store. Like
+the HTTP poll plugin, the plugin dials whatever address `url` names, loopback, private networks and
+cloud metadata services such as `169.254.169.254` included: there is no address rule.
+Enabling it takes `plugin.enable`, which the `app` role holds, so on a controller several
+tenants share, anyone with `app` in a namespace can have the controller's machine make
+requests for them. Grant `app` only to callers you would let do that, or block those
+addresses at the host's firewall.
 
 ## Limits
 

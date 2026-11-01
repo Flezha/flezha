@@ -189,11 +189,32 @@ defmodule Flezha.Transport.TransportAuthTest do
         "sh",
         [
           "-c",
-          ". #{env_sh()}; echo \"dist=$RELEASE_DISTRIBUTION cookie=$RELEASE_COOKIE home=$HOME\""
+          ". #{env_sh()}; echo \"dist=$RELEASE_DISTRIBUTION cookie=$RELEASE_COOKIE home=$HOME\"; " <>
+            "echo \"erl_options=$ELIXIR_ERL_OPTIONS\""
         ],
         env: Enum.to_list(Map.merge(clean, Map.new(env))),
         stderr_to_stdout: true
       )
+    end
+
+    test "a pinned distribution port is given to a started node, and to no other VM" do
+      env = [{"RELEASE_COOKIE", "provisioned-secret"}, {"FLEZHA_DIST_PORT", "9100"}]
+      flags = "-kernel inet_dist_listen_min 9100 -kernel inet_dist_listen_max 9100"
+
+      for command <- ["start", "daemon", "rpc", "remote", "eval"] do
+        {out, 0} = sourced(command, env)
+        assert out =~ flags == command in ["start", "daemon"], command
+      end
+    end
+
+    test "a distribution port that is not a port number stops a start, naming the variable" do
+      for value <- ["ninety", "0", "080", "65536", "123456789012345678901"] do
+        {out, status} =
+          sourced("start", [{"RELEASE_COOKIE", "provisioned-secret"}, {"FLEZHA_DIST_PORT", value}])
+
+        assert status != 0, value
+        assert out =~ "FLEZHA_DIST_PORT=#{value} is not a port number"
+      end
     end
 
     test "a start that cannot mint a cookie refuses to start distribution" do
@@ -310,6 +331,98 @@ defmodule Flezha.Transport.TransportAuthTest do
     end
   end
 
+  describe "distribution warnings" do
+    defp warned(facts) do
+      facts =
+        Map.merge(%{tls?: true, optfile: nil, runner_anchors: [runner_ca()]}, facts)
+
+      test = self()
+
+      log =
+        AuthTestHelper.capture_log_at(:warning, fn ->
+          send(test, {:warnings, Loader.warn_unprotected_distribution(facts)})
+        end)
+
+      assert_received {:warnings, warnings}
+      Enum.each(warnings, &assert(log =~ &1))
+      if warnings == [], do: assert(log == "")
+      warnings
+    end
+
+    defp runner_ca() do
+      path = Path.join(tmp_base(), "runner_ca.pem")
+      File.write!(path, "")
+      path
+    end
+
+    defp optfile(server, client) do
+      path = Path.join(tmp_base(), "dist_#{System.unique_integer([:positive])}.conf")
+      File.write!(path, :io_lib.format("~p.~n", [[{:server, server}, {:client, client}]]))
+      path
+    end
+
+    @leaf [certfile: ~c"/d/node.pem", keyfile: ~c"/d/node.key", cacertfile: ~c"/d/ca.pem"]
+
+    test "plain distribution off loopback is warned once, naming the TLS variable" do
+      assert [warning] = warned(%{node: :"flezha@10.0.0.5", tls?: false})
+      assert warning =~ "FLEZHA_DIST_TLS_OPTFILE"
+    end
+
+    test "a loopback node, or one without distribution, is not warned" do
+      for node <- [:"flezha@127.0.0.1", :"flezha@::1", :flezha@localhost, :nonode@nohost] do
+        assert warned(%{node: node, tls?: false}) == [], inspect(node)
+      end
+    end
+
+    test "a TLS file that does not check peers is warned" do
+      path = optfile(@leaf ++ [versions: [:"tlsv1.3"]], @leaf ++ [verify: :verify_peer])
+      assert [warning] = warned(%{node: :"flezha@10.0.0.5", optfile: path})
+      assert warning =~ "without a certificate check"
+    end
+
+    test "a TLS file without versions is warned" do
+      path = optfile(@leaf ++ [verify: :verify_peer], @leaf ++ [verify: :verify_peer])
+      assert [warning] = warned(%{node: :"flezha@10.0.0.5", optfile: path})
+      assert warning =~ "only TLS 1.2 is offered"
+    end
+
+    test "a TLS file trusting the runner authority is warned once" do
+      anchor = String.to_charlist(runner_ca())
+
+      side =
+        Keyword.put(@leaf, :cacertfile, anchor) ++ [verify: :verify_peer, versions: [:"tlsv1.3"]]
+
+      assert [warning] = warned(%{node: :"flezha@10.0.0.5", optfile: optfile(side, side)})
+      assert warning =~ "runner authority"
+    end
+
+    test "an options file that cannot be read is warned naming it" do
+      path = Path.join(tmp_base(), "absent.conf")
+      assert [warning] = warned(%{node: :"flezha@10.0.0.5", optfile: path})
+      assert warning =~ path
+    end
+
+    test "the shipped example with certificates from the shipped script is not warned" do
+      dir = Path.join(tmp_base(), "dist")
+      script = Path.expand("deploy/dist-tls/make-certs.sh")
+      {_, 0} = System.cmd(script, ["ca", dir], stderr_to_stdout: true)
+      {_, 0} = System.cmd(script, ["node", dir, "a", "--ip", "10.0.0.5"], stderr_to_stdout: true)
+
+      path = Path.join(tmp_base(), "dist_tls.conf")
+
+      File.write!(
+        path,
+        String.replace(
+          File.read!("deploy/dist-tls/dist_tls.conf"),
+          "/etc/flezha/dist",
+          "#{dir}/a"
+        )
+      )
+
+      assert warned(%{node: :"flezha@10.0.0.5", optfile: path}) == []
+    end
+  end
+
   describe "cert generator" do
     test "generates a client identity beside the server pair, keys owner-only" do
       cert_dir = Path.join(tmp_base(), "certs")
@@ -341,6 +454,23 @@ defmodule Flezha.Transport.TransportAuthTest do
           {k, v} -> Application.put_env(:flezha, k, v)
         end)
       end
+    end
+
+    test "a key file is owner-only before its first byte is written" do
+      path = Path.join(tmp_base(), "probe.key")
+      File.write!(path, "")
+      File.chmod!(path, 0o644)
+      test = self()
+
+      :ok =
+        CertGenerator.write_private!(path, fn fd ->
+          send(test, {:mode_at_write, mode_bits(path), File.stat!(path).size})
+          :file.write(fd, "key")
+        end)
+
+      assert_received {:mode_at_write, 0o600, 0}
+      assert mode_bits(path) == 0o600
+      assert File.read!(path) == "key"
     end
 
     defp cert_eku(pem_path) do

@@ -60,7 +60,8 @@ defmodule FlezhaTest.Helper.Minio do
 
   @doc """
   A file plugin root under a prefix of its own in `bucket`, with its settings
-  set, and client options for that prefix: the server's bucket under
+  set, and client options for the `default` namespace's prefix under it, where
+  the plugins these tests prepare read and write: the server's bucket under
   `S3_INTEGRATION=1`, emptied when the test ends, else a `FakeS3` one. The
   caller declares the `:env` and `:system_env` fixtures.
   """
@@ -68,12 +69,13 @@ defmodule FlezhaTest.Helper.Minio do
   def plugin_bucket!(bucket) do
     prefix = "files-#{System.unique_integer([:positive])}"
     root = "s3://#{bucket}/#{prefix}"
+    keys = "#{prefix}/default"
     file_plugin_root(root)
     System.put_env(@secret_env, secret())
 
     s3 =
       if integration?() do
-        opts = opts!(bucket, prefix)
+        opts = opts!(bucket, keys)
 
         on_exit(fn ->
           System.put_env(@secret_env, secret())
@@ -82,7 +84,7 @@ defmodule FlezhaTest.Helper.Minio do
 
         opts
       else
-        FakeS3.start!([bucket: bucket, prefix: prefix] ++ settings())
+        FakeS3.start!([bucket: bucket, prefix: keys] ++ settings())
       end
 
     %{root: root, s3: s3}

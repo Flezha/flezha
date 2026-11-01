@@ -3,7 +3,12 @@
 # The Elixir/OTP toolchain the release is built with, and so the one a plugin
 # package for this image must be built with: read by `elixir-build` and
 # `plugin-builder` alike.
-ARG ELIXIR_IMAGE=hexpm/elixir:1.20.2-erlang-28.5.0.5-debian-bookworm-20260713-slim
+ARG ELIXIR_IMAGE=hexpm/elixir:1.20.5-erlang-28.5.0.8-debian-bookworm-20261027-slim
+
+# rebar3 is fetched at a named release and checked against its published digest
+# before use, by both stages that compile Erlang dependencies.
+ARG REBAR3_VERSION=3.28.0
+ARG REBAR3_SHA256=5a28b1cca082d3b023ec0f5df9d9f9d52557036c6f2a21c1ffa11b93a984dd42
 
 # Stage 1 — Rust builder. Builds flz_nif.so and the flz CLI binary with
 # --release. No protoc: the prost output is committed under
@@ -57,12 +62,15 @@ COPY mix.exs mix.lock ./
 COPY sdk/elixir/mix.exs ./sdk/elixir/
 COPY sdk/elixir/test_app/mix.exs ./sdk/elixir/test_app/
 
+ARG REBAR3_VERSION
+ARG REBAR3_SHA256
 RUN --mount=type=cache,target=/root/.hex \
     (mix local.hex --force || mix archive.install github hexpm/hex branch latest --force) \
-    && (mix local.rebar --force \
-        || (curl -fsSL -o /usr/local/bin/rebar3 https://github.com/erlang/rebar3/releases/latest/download/rebar3 \
-            && chmod +x /usr/local/bin/rebar3 \
-            && mix local.rebar rebar3 /usr/local/bin/rebar3 --force)) \
+    && curl -fsSL -o /usr/local/bin/rebar3 \
+        "https://github.com/erlang/rebar3/releases/download/${REBAR3_VERSION}/rebar3" \
+    && echo "${REBAR3_SHA256}  /usr/local/bin/rebar3" | sha256sum -c - \
+    && chmod +x /usr/local/bin/rebar3 \
+    && mix local.rebar rebar3 /usr/local/bin/rebar3 --force \
     && mix deps.get --only prod
 
 # RUSTLER_SKIP_COMPILATION makes rustler pick up the .so dropped into
@@ -109,11 +117,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
+ARG REBAR3_VERSION
+ARG REBAR3_SHA256
 RUN (mix local.hex --force || mix archive.install github hexpm/hex branch latest --force) \
-    && (mix local.rebar --force \
-        || (curl -fsSL -o /usr/local/bin/rebar3 https://github.com/erlang/rebar3/releases/latest/download/rebar3 \
-            && chmod +x /usr/local/bin/rebar3 \
-            && mix local.rebar rebar3 /usr/local/bin/rebar3 --force))
+    && curl -fsSL -o /usr/local/bin/rebar3 \
+        "https://github.com/erlang/rebar3/releases/download/${REBAR3_VERSION}/rebar3" \
+    && echo "${REBAR3_SHA256}  /usr/local/bin/rebar3" | sha256sum -c - \
+    && chmod +x /usr/local/bin/rebar3 \
+    && mix local.rebar rebar3 /usr/local/bin/rebar3 --force
 
 ENV MIX_ENV=prod \
     LANG=C.UTF-8 \
@@ -147,6 +158,10 @@ RUN addgroup --system --gid 1000 flezha \
     && adduser --system --uid 1000 --ingroup flezha flezha
 
 COPY --from=elixir-build /app/_build/prod/rel/flezha /flezha/
+
+# `mix release` writes one fixed cookie that every pull of the image would share;
+# the launcher never reads it where distribution is on, so it is not shipped.
+RUN rm -f /flezha/releases/COOKIE
 
 # Graceful-restart entrypoint. See the controller-packaging spec
 # ("Prod image entrypoint SHALL provide graceful-restart lifecycle")

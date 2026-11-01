@@ -76,13 +76,28 @@ defmodule Flezha.Transport.CertGenerator do
     # Write files
     File.write!(ca_cert_path, pem_encode_cert(ca_cert))
     File.write!(server_cert_path, pem_encode_cert(server_cert))
-    File.write!(server_key_path, pem_encode_key(server_key))
+    write_private!(server_key_path, &:file.write(&1, pem_encode_key(server_key)))
     File.write!(client_cert_path, pem_encode_cert(client_cert))
-    File.write!(client_key_path, pem_encode_key(client_key))
-    Enum.each([server_key_path, client_key_path], &File.chmod!(&1, 0o600))
+    write_private!(client_key_path, &:file.write(&1, pem_encode_key(client_key)))
 
     Logger.info("QUIC certificates generated at #{cert_dir}/")
     :ok
+  end
+
+  @doc false
+  # A key file is made owner-only while it is still empty, so no key byte is
+  # ever readable by others. Erlang's open takes no creation mode, so the mode
+  # is set on the path just opened, before `write` gets the descriptor.
+  @spec write_private!(Path.t(), (:file.io_device() -> :ok | {:error, term()})) :: :ok
+  def write_private!(path, write) do
+    {:ok, fd} = :file.open(path, [:write, :raw, :binary])
+
+    try do
+      :ok = :file.change_mode(path, 0o600)
+      :ok = write.(fd)
+    after
+      :file.close(fd)
+    end
   end
 
   defp create_self_signed_cert(key, cn, opts) do

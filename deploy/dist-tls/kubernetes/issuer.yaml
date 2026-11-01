@@ -1,0 +1,63 @@
+# The distribution authority for the controller pods, kept by cert-manager: a
+# self-signed root in the Secret `flezha-dist-ca`, and the Issuer that signs
+# each pod's certificate with it. It signs nothing else, so membership of the
+# cluster is exactly what it signs.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: flezha-dist-root
+  namespace: flezha
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: flezha-dist-ca
+  namespace: flezha
+spec:
+  isCA: true
+  commonName: Flezha distribution CA
+  secretName: flezha-dist-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: flezha-dist-root
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: flezha-dist-ca
+  namespace: flezha
+spec:
+  ca:
+    secretName: flezha-dist-ca
+---
+# What the pod's init container may do: ask for its certificate, and read the
+# answer. Nothing else in cert-manager, and nothing outside the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flezha-dist-cert
+  namespace: flezha
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificaterequests"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flezha-dist-cert
+  namespace: flezha
+subjects:
+  - kind: ServiceAccount
+    name: flezha-reader
+    namespace: flezha
+roleRef:
+  kind: Role
+  name: flezha-dist-cert
+  apiGroup: rbac.authorization.k8s.io

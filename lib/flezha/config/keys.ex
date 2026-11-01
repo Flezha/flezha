@@ -510,9 +510,9 @@ defmodule Flezha.Config.Keys do
     {:plugin_list, :term, nil, key: {:plugins, :list}, env: "FLEZHA_PLUGINS", blank: :value},
 
     # ---- file plugins ---------------------------------------------------------
-    # The one folder or bucket prefix a file plugin may read from or write to.
-    # The default is a folder of its own beside the controller's data, never a
-    # parent of it, so no plugin path reaches the state, certificates or tokens.
+    # The one folder or bucket prefix file plugins use, with a folder per namespace in
+    # it. The default is beside the controller's data, never a parent of it, so no
+    # plugin path reaches the state, certificates or tokens.
     {:file_plugin_root, :path, "storage/app/files",
      key: true, env: "FLEZHA_FILE_PLUGIN_ROOT", surface: {:status, :file_plugin_root}},
     # An `s3://<bucket>/<prefix>` root is reached with these and never with the
@@ -632,8 +632,8 @@ defmodule Flezha.Config.Keys do
     {:restore_wait_timeout_s, :int, 60, runtimes: [:shell], env: "FLEZHA_RESTORE_WAIT_TIMEOUT_S"},
     {:shutdown_token_file, :path, nil, runtimes: [:shell], env: "FLEZHA_SHUTDOWN_TOKEN_FILE"},
     {:dist_tls_optfile, :path, nil, runtimes: [:shell], env: "FLEZHA_DIST_TLS_OPTFILE"},
-    # Where a release keeps the cookie it minted; unset is `cookie` under the
-    # state directory.
+    {:dist_port, :int, nil, runtimes: [:shell], env: "FLEZHA_DIST_PORT"},
+    # Where a release keeps the cookie it minted; unset, `cookie` under the state dir.
     {:cookie_file, :path, nil, runtimes: [:shell], env: "FLEZHA_COOKIE_FILE"},
     {:namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_NAMESPACE"},
     {:demo_namespace, :string, nil, runtimes: [:harness], env: "FLEZHA_DEMO_NAMESPACE"},

@@ -110,8 +110,8 @@ defmodule FlezhaTest.System.KnobDrillTest do
   end
 
   # The same two halves: status names the folder, and a file plugin's path lands
-  # in that directory. Compared by inode, because the plugin follows links and a
-  # temporary directory may sit behind one.
+  # in its namespace's folder under it. Compared by inode, because the plugin
+  # follows links and a temporary directory may sit behind one.
   defp status_reports_file_plugin_root(root) do
     resolved = Path.expand(root)
 
@@ -120,10 +120,15 @@ defmodule FlezhaTest.System.KnobDrillTest do
         :ok = Cli.call("Controller.status", "[]", [])
       end)
 
-    {:ok, %{path: path}} = FilePlugin.prepare(%{path: "x.ndjson", plugin_id: "knob_drill"})
+    {:ok, %{path: path}} =
+      FilePlugin.prepare(%{
+        path: "x.ndjson",
+        plugin_id: "knob_drill",
+        source_namespace: "default"
+      })
 
     printed =~ "file_plugin_root:" and printed =~ resolved and
-      File.stat!(Path.dirname(path)).inode == File.stat!(resolved).inode
+      File.stat!(path |> Path.dirname() |> Path.dirname()).inode == File.stat!(resolved).inode
   end
 
   defp socket_dir_is(dir), do: Support.socket_dir() == Path.expand(dir)

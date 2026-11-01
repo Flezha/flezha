@@ -21,6 +21,7 @@ defmodule Flezha.Healthz.ServerTest do
   use FlezhaTest.Case, fixtures: [:env], async: false
 
   import FlezhaTest.Helper.ConvergenceFixtures, only: [verdicts: 1]
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Boot.Readiness
   alias Flezha.Convergence.Snapshot
@@ -114,6 +115,24 @@ defmodule Flezha.Healthz.ServerTest do
     decoded = Jason.decode!(body)
     assert decoded["status"] == "recovering"
     assert decoded["recovery_state"] == "timeout"
+  end
+
+  test "connections past the bound are answered 503, and a freed one is served again",
+       %{port: port} do
+    publish_tick([])
+
+    held =
+      for _ <- 1..64 do
+        {:ok, sock} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 1_000)
+        sock
+      end
+
+    on_exit(fn -> Enum.each(held, &:gen_tcp.close/1) end)
+
+    assert {503, _headers, "busy\n"} = get(port, "/healthz")
+
+    :gen_tcp.close(hd(held))
+    assert wait_until(fn -> elem(get(port, "/healthz"), 0) == 200 end, 5_000)
   end
 
   test "GET / returns pong", %{port: port} do

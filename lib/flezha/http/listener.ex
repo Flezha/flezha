@@ -10,7 +10,8 @@ defmodule Flezha.Http.Listener do
   a named GenServer with `start_link/1` and `listen_port/0`; it writes only
   `route(socket, path)` for the `GET` paths it serves, answering `:not_found`
   for any other. A `GET` it does not route answers 404, another method 405 and
-  an unreadable request 400.
+  an unreadable request 400. At most 64 connections are served at once; one
+  more is answered 503 without being read.
   """
 
   alias Flezha.Config
@@ -18,6 +19,10 @@ defmodule Flezha.Http.Listener do
   alias Flezha.SDK.SafeCall
 
   @max_request_line_bytes 8_192
+
+  # Connections served at once. The listener may face any network, and each
+  # connection holds a process until its request line arrives or times out.
+  @max_connections 64
 
   @type route :: (:gen_tcp.socket(), binary() -> :not_found | term())
 
@@ -102,25 +107,49 @@ defmodule Flezha.Http.Listener do
   end
 
   # Accepts connections until the listen socket closes or `parent` dies; each
-  # connection is served in its own process.
-  defp accept_loop(parent, listen_socket, route) do
+  # connection is served in its own process, `live` of them at once.
+  defp accept_loop(parent, listen_socket, route, live \\ 0) do
     case :gen_tcp.accept(listen_socket, 1_000) do
       {:ok, socket} ->
-        spawn(fn ->
-          try do
-            serve(socket, route)
-          catch
-            _, _ -> :gen_tcp.close(socket)
-          end
-        end)
+        live = reaped(live)
 
-        accept_loop(parent, listen_socket, route)
+        if live >= @max_connections do
+          refuse_busy(socket)
+          accept_loop(parent, listen_socket, route, live)
+        else
+          spawn_monitor(fn ->
+            try do
+              serve(socket, route)
+            catch
+              _, _ -> :gen_tcp.close(socket)
+            end
+          end)
+
+          accept_loop(parent, listen_socket, route, live + 1)
+        end
 
       {:error, :timeout} ->
-        if Process.alive?(parent), do: accept_loop(parent, listen_socket, route), else: :ok
+        live = reaped(live)
+        if Process.alive?(parent), do: accept_loop(parent, listen_socket, route, live), else: :ok
 
       {:error, _} ->
         :ok
+    end
+  end
+
+  # What the client already sent is read first, briefly: closing over unread
+  # bytes resets the connection, which can lose the answer before it is read.
+  defp refuse_busy(socket) do
+    _ = :gen_tcp.recv(socket, 0, 50)
+    _ = send_response(socket, 503, "text/plain", "busy\n")
+    :gen_tcp.close(socket)
+  end
+
+  defp reaped(live) do
+    receive do
+      {:DOWN, _ref, :process, _pid, _reason} -> reaped(live - 1)
+    after
+      0 -> live
     end
   end
 

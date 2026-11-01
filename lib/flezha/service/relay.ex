@@ -318,15 +318,26 @@ defmodule Flezha.Service.Relay do
     namespace = Namespace.or_default(namespace)
     {extra, fields} = start_fields(relay)
 
+    plugins = plugins_json(extra[:plugins])
+
     with {:ok, spec} <- Builder.build(fields),
          {:ok, seed} <- Builder.seed_input(extra[:text], extra[:channel]),
-         {:ok, partitions} <- partitions(extra[:partitions]) do
+         {:ok, partitions} <- partitions(extra[:partitions]),
+         :ok <- authorize_enables(namespace, plugins, caller_context) do
       spec = if seed, do: %{spec | opts: Keyword.put(spec.opts, :seed_input, seed)}, else: spec
-      plugins = plugins_json(extra[:plugins])
 
       if partitions >= 2,
         do: start_group(namespace, spec, partitions, plugins, caller_context),
         else: start_one(namespace, spec, plugins, RelayHistory.origin("operator", caller_context))
+    end
+  end
+
+  # A plugin spec naming a provider enables it, so the start needs `plugin.enable` too.
+  defp authorize_enables(namespace, plugins, caller_context) do
+    with {:ok, decoded} <- SpecDecoder.decode(plugins, namespace, "") do
+      if Enum.any?(decoded, & &1.provider),
+        do: AuthZ.authorize(caller_context, :"plugin.enable", Scope.build(namespace)),
+        else: :ok
     end
   end
 

@@ -29,7 +29,8 @@ defmodule Flezha.AuthZ.RunnerProof do
   Nothing is proven while enforcement is off. The posture is the one gate:
   under `:open` the frame's namespace is taken as it always was, so a
   deployment that has not turned authorization on is not asked for a credential
-  it was never issued.
+  it was never issued. Configured on, the namespace is proven before the
+  bootstrap is claimed too.
 
   It is the first check of `Flezha.Runner.Admission`: the connect it hands on
   carries the proven namespace and credential in place of the claimed ones.
@@ -83,7 +84,7 @@ defmodule Flezha.AuthZ.RunnerProof do
   end
 
   defp resolve(handle, claimed, init_payload, transport) do
-    if AuthZ.enabled?() do
+    if AuthZ.enforcement_posture() != :open do
       with {:ok, proof} <- proven_namespace(handle, init_payload, transport),
            do: agree(claimed, proof)
     else

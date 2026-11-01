@@ -550,23 +550,43 @@ defmodule Flezha.Service.Cli.AuthzRenderTest do
 
     test "a bind in another namespace is refused naming the one it holds", %{admin: admin} do
       capture_io(fn ->
-        Cli.call("Namespace.bind_role", Jason.encode!(["runner@render-ns", "app", "render-ns"]),
-          token: admin
-        )
+        Cli.call("Namespace.bind_role", Jason.encode!(["erin", "app", "render-ns"]), token: admin)
       end)
+
+      out = cli_refusal("Namespace.bind_role", ["erin", "viewer", "_system"], [token: admin], 6)
+
+      assert out =~ "render-ns"
+      assert {:ok, %{roles: [:app], namespace: "render-ns"}} = RoleStore.lookup("erin")
+    end
+
+    test "a namespace admin cannot bind another namespace's runner, and nothing is written" do
+      {:ok, ns_admin, _} = TokenStore.issue("render-ns-admin", "render-ns", :admin, 3_600)
 
       out =
         cli_refusal(
           "Namespace.bind_role",
-          ["runner@render-ns", "viewer", "_system"],
-          [token: admin],
-          6
+          ["runner@other-ns", "app", "render-ns"],
+          [token: ns_admin],
+          4
         )
 
-      assert out =~ "render-ns"
+      assert out =~ "other-ns" and out =~ "render-ns"
+      assert RoleStore.lookup("runner@other-ns") == :error
+    end
 
-      assert {:ok, %{roles: [:app], namespace: "render-ns"}} =
-               RoleStore.lookup("runner@render-ns")
+    test "a namespace admin binds its own namespace's runner" do
+      {:ok, ns_admin, _} = TokenStore.issue("render-ns-admin", "render-ns", :admin, 3_600)
+
+      out =
+        capture_io(fn ->
+          Cli.call(
+            "Namespace.bind_role",
+            Jason.encode!(["runner@render-ns", "spawner", "render-ns"]),
+            token: ns_admin
+          )
+        end)
+
+      assert out =~ "bound runner@render-ns as spawner@render-ns"
     end
 
     test "unbind takes one role, the last role, or every role", %{admin: admin} do

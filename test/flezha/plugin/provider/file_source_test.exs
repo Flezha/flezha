@@ -42,7 +42,10 @@ defmodule Flezha.Plugin.Provider.FileSourceTest do
 
   setup %{tmp: root} do
     Application.put_env(:flezha, :file_plugin_root, root)
-    %{events: Path.join(root, "events.ndjson")}
+    # The default namespace's folder, where the plugins these tests prepare read.
+    folder = Path.join(root, "default")
+    File.mkdir_p!(folder)
+    %{events: Path.join(folder, "events.ndjson")}
   end
 
   describe "the provider id" do

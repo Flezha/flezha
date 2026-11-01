@@ -25,6 +25,27 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
   # ---------- the root ----------
 
   @doc """
+  `<root>/<namespace>`, made readable by this user only when the root exists
+  and the folder does not. Only the default root is made: a configured one
+  that is missing may be a share that is not mounted, and writing beside it
+  would go unnoticed.
+  """
+  @impl true
+  def namespace_root(root, namespace) do
+    if root == Config.default(:file_plugin_root), do: File.mkdir_p(root)
+    root = Path.expand(root)
+    folder = Path.join(root, namespace)
+
+    with {:ok, _real_root} <- real_root(root) do
+      case make_private_dir(folder) do
+        :ok -> {:ok, folder}
+        {:error, {:file_directory_unmakeable, _, :eexist}} -> {:ok, folder}
+        refused -> refused
+      end
+    end
+  end
+
+  @doc """
   Resolve `path` inside the folder `root`: expanded against the root, so a
   relative path names a file under it and an absolute path is taken as written,
   then walked component by component with every symbolic link followed.
@@ -35,10 +56,6 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
   """
   @impl true
   def resolve(path, root) do
-    # Only the default folder is created. A configured one that is missing may be
-    # a share that is not mounted, and writing beside it would go unnoticed.
-    if root == Config.default(:file_plugin_root), do: File.mkdir_p(root)
-
     root = Path.expand(root)
     target = Path.expand(path, root)
 
@@ -63,12 +80,7 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
         {:error, {:file_path_not_directory, dir}}
 
       {:error, :enoent} ->
-        with :ok <- File.mkdir(dir), :ok <- File.chmod(dir, 0o700) do
-          {:ok, opts}
-        else
-          {:error, reason} ->
-            {:error, {:file_directory_unmakeable, dir, reason}}
-        end
+        with :ok <- make_private_dir(dir), do: {:ok, opts}
 
       {:error, reason} ->
         {:error, {:file_path_unreadable, dir, reason}}
@@ -79,6 +91,15 @@ defmodule Flezha.Plugin.Provider.File.Storage.Local do
 
   @impl true
   def shown(root), do: Path.expand(root)
+
+  # A directory this storage makes is readable by the controller's user only.
+  defp make_private_dir(dir) do
+    with :ok <- File.mkdir(dir), :ok <- File.chmod(dir, 0o700) do
+      :ok
+    else
+      {:error, reason} -> {:error, {:file_directory_unmakeable, dir, reason}}
+    end
+  end
 
   defp real_root(root) do
     case walk(root) do

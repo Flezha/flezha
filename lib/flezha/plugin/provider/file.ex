@@ -5,9 +5,10 @@ defmodule Flezha.Plugin.Provider.File do
   (`relay_file_output`) writes one line per record.
 
   What both directions share lives here: the preparation that resolves a
-  plugin's `path` inside `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://`
-  bucket prefix, whose rules are its storage's (`File.Storage`). The contract,
-  the options and the limits are `docs/public/plugins/file.md`.
+  plugin's `path` inside its namespace's own folder under
+  `FLEZHA_FILE_PLUGIN_ROOT`, a folder or an `s3://` bucket prefix, whose rules
+  are its storage's (`File.Storage`). The contract, the options and the limits
+  are `docs/public/plugins/file.md`.
   """
 
   alias Flezha.Plugin.Provider.File.Storage
@@ -19,7 +20,7 @@ defmodule Flezha.Plugin.Provider.File do
   """
   @spec prepare(map()) :: {:ok, map()} | {:error, term()}
   def prepare(opts) do
-    with {:ok, path} <- Storage.Config.resolve_path(opts.path) do
+    with {:ok, path} <- Storage.Config.resolve_path(opts.path, opts.source_namespace) do
       {:ok,
        Map.merge(opts, %{path: path, plugin_id: opts.plugin_id || opts[:source_plugin_id] || path})}
     end
@@ -64,7 +65,7 @@ defmodule Flezha.Plugin.Provider.File do
             type: :string,
             required: true,
             doc:
-              "The file to read: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under its prefix"
+              "The file to read: relative to the namespace's folder under FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, an object under the namespace's prefix"
           ],
           start_at: [
             type: :enum,
@@ -172,7 +173,7 @@ defmodule Flezha.Plugin.Provider.File do
             type: :string,
             required: true,
             doc:
-              "The file to append to, or under `commit: rename` the directory parts are committed into: relative to FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under"
+              "The file to append to, or under `commit: rename` the directory parts are committed into: relative to the namespace's folder under FLEZHA_FILE_PLUGIN_ROOT, or absolute inside it. Under an s3:// root, the key prefix parts are committed under, inside the namespace's prefix"
           ],
           commit: [
             type: :enum,

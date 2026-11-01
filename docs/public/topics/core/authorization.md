@@ -19,7 +19,7 @@ The controller is in one of three postures:
 | Posture | When | Effect |
 | --- | --- | --- |
 | open | `FLEZHA_AUTHZ_ENABLED=false`, or the dev and test configuration | every call is allowed; a warning is logged on every boot |
-| bootstrap pending | enforcement on, no admin claimed yet | administration verbs are refused, naming `flz auth bootstrap`; relays and runner connections carry on |
+| bootstrap pending | enforcement on, no admin claimed yet | administration verbs are refused, naming `flz auth bootstrap`; relays carry on, and runners that prove their namespace connect |
 | enforced | the admin was claimed (a durable flag) | every call is checked against the caller's roles |
 
 A release enforces by default; dev and test builds do not. An upgrade that was
@@ -215,8 +215,11 @@ reaches across namespaces.
 | `stopper` | `runner`, plus stopping relays in its own namespace |
 
 `spawner` and `stopper` combine: a namespace bound to both starts, sends to
-and stops its own work, and still enables no plugin. `app` holds everything
-either grants.
+and stops its own work, and still enables no plugin. A relay start whose plugin
+spec names a provider enables that plugin, so it is judged as `plugin.enable`
+too, and a `spawner` starting one is refused (`authz.role_insufficient`) with
+nothing enabled or started; a spec that binds a plugin already enabled needs
+`relay.start` alone. `app` holds everything either grants.
 
 ```sh
 $ flz role bind alice ops team-orders
@@ -235,6 +238,9 @@ $ flz role unbind runner@team-orders stopper   # removes one role
 $ flz role unbind alice                        # removes every role
 ```
 
+- `runner@<ns>` is the identity a runner connection proves for `<ns>`, so it
+  can be bound only in `<ns>`: a bind of it in another namespace is refused
+  (`authz.runner_principal_foreign`), naming both, and writes nothing.
 - A bind naming a namespace other than the one the principal already holds
   roles in is refused, naming that namespace. Moving an identity is an unbind,
   judged in the namespace it leaves, then a bind in the new one.
@@ -391,6 +397,13 @@ created:
 ## The node cookie
 
 Controllers talk to each other over Erlang distribution, which a cookie gates.
+Distribution has no permissions of its own: a node that connects can run any
+code on every node of the cluster, read its state and its keys. So who may
+connect is the whole question, and the answer is the cookie, plus a certificate
+when distribution runs over mutual TLS ([Distribution with mutual TLS](#distribution-with-mutual-tls)).
+Roles, tokens and namespaces govern callers that come in through `flz`, the HTTP
+API and runner connections, not a connected node.
+
 `flz` needs no cookie: it reaches a controller over its control socket. The release ships none and does not fall back to a
 constant. A node started without `RELEASE_COOKIE` mints one: 32 random bytes,
 written `0600` to `${FLEZHA_STATE_DIR}/cookie` (`FLEZHA_COOKIE_FILE` moves it),
@@ -425,10 +438,70 @@ file, and the next boot mints a new one; nothing breaks, since the release
 commands read the same file, but a deployment that sets the cookie cannot meet
 this.
 
-For controllers that cross a trust boundary, point `FLEZHA_DIST_TLS_OPTFILE`
-at an `inet_tls_dist` option file (server and client certificate and CA; see
-OTP's `ssl_dist` documentation): the release then starts with
-`-proto_dist inet_tls`. The cookie is still required.
+**A crash dump holds the cookie in clear text.** The VM writes
+`erl_crash.dump` in the directory it was started from, readable by the
+controller's group. Keep that directory private, set `ERL_CRASH_DUMP` to a
+private path, and treat a dump as a secret.
+
+## Distribution with mutual TLS
+
+Plain distribution checks the cookie once, in the handshake; after that, the
+traffic between controllers can be read and altered by anyone on the network
+path. Over mutual TLS each node presents a certificate and checks the other's,
+and the cookie is still checked. Point `FLEZHA_DIST_TLS_OPTFILE` at an options
+file and the release starts with `-proto_dist inet_tls` for every command, the
+controller and `flzvm` alike.
+
+`deploy/dist-tls/` holds a tested setup. `dist_tls.conf` is the options file,
+reading `/etc/flezha/dist/node.pem`, `node.key` and `ca.pem`; `make-certs.sh`
+makes the authority and one folder of those three files per node:
+
+```sh
+$ deploy/dist-tls/make-certs.sh ca ./dist-ca
+$ deploy/dist-tls/make-certs.sh node ./dist-ca node1 --ip 10.0.0.5 --dns node1.internal
+```
+
+Copy `dist-ca/node1/` to `/etc/flezha/dist/` on that machine. The names you give
+must include the host part of the node's name (`flezha@10.0.0.5`): a node that
+dials another checks it. Keep `dist-ca/ca.key` off the controllers, since whoever
+holds it can make a member of the cluster. Every key is written readable by its
+owner only.
+
+What each option does on OTP 28:
+
+| Option | Effect |
+| --- | --- |
+| `{verify, verify_peer}` in `server` | the answering node checks the dialling node's certificate. OTP's server default is `verify_none`, which encrypts the link and admits any peer that knows the cookie |
+| `{fail_if_no_peer_cert, true}` | a peer with no certificate is refused; implied by `verify_peer` on OTP 28, written out so the file does not rely on it |
+| `cacertfile` | the authority a peer's certificate must chain to |
+| `{verify, verify_peer}` in `client` | the dialling node checks the answering node's certificate and that it names the host it dialled (OTP's client default, written out) |
+| `{versions, ['tlsv1.3']}` | TLS 1.3. With no `versions`, distribution offers TLS 1.2 only |
+
+A certificate must carry both the `serverAuth` and `clientAuth` extended key
+usages, since every node both dials and answers. The controller reads the
+options file at boot and logs a warning on every boot when the server side does
+not set `verify_peer`, when no `versions` is set, or when its `cacertfile` is the
+runner transport's trust anchor (`FLEZHA_QUIC_CLIENT_CA` or
+`FLEZHA_CA_CERT_PATH`). A node that is not on loopback and runs plain
+distribution is warned too. None of these stops the boot.
+
+**Use an authority for distribution only.** Any certificate it signs, together
+with the cookie, joins the cluster: with the runner transport's authority, a
+runner's `clientAuth` certificate would pass. **A certificate does not bind a
+node name**: a peer with any certificate of the authority may claim any node
+name, so the authority alone decides membership.
+
+**Rotation reaches new connections only.** OTP caches certificate files and
+looks for changes every 120 seconds, and a live link keeps the certificate it
+was opened with until it reconnects. Replace the files on every node, then
+restart each one, or wait for the links to cycle.
+
+**To cut a node off**, make a new authority and a new cookie, give them to every
+node that stays, and restart those nodes; the removed node can then reach none
+of them. A node that was trusted could already have changed the others, so
+rebuild what it could reach rather than only revoking it. On Kubernetes,
+`deploy/dist-tls/kubernetes/` issues each pod its own certificate through
+cert-manager ([Securing the cluster](../deploying/clustering.md#securing-the-cluster)).
 
 ## Transport security
 
@@ -543,11 +616,11 @@ again with the older `flz`; one holding a single role behaves as before.
   at a file holding an `admin@_system` token, or every stop skips the drain.
 - **A partition accepts writes on both sides.** They merge on reconnect by
   the controllers' clocks, so keep them in sync (NTP).
-- **The web console reaches what the HTTP API reaches, and the streams.** Whatever
-  its token, it cannot stop the controller, issue or revoke tokens, bind or
-  unbind roles, delete a namespace or claim the admin: run those with `flz`.
-  It may hold a stream open, such as the audit tail, and an internal failure
-  reaches it as a code, its reason in the controller's log.
+- **The web console is inside the cluster's trust boundary.** It joins as a
+  hidden Erlang node holding the cookie, so whoever controls its machine
+  controls the cluster, whatever its token. Its token decides only what its own
+  pages offer: they cannot stop the controller, issue or revoke tokens, bind or
+  unbind roles, delete a namespace or claim the admin.
 
 ## See also
 

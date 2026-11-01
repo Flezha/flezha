@@ -1,0 +1,44 @@
+# Who may reach the controller pods. A connected Erlang node is trusted with
+# everything, so EPMD (4369) and the distribution port (FLEZHA_DIST_PORT in
+# flezha-daemonset.yaml) admit only the controllers themselves and the console.
+# The health port answers the kubelet and any monitor, and QUIC answers runners
+# from anywhere. A port not listed here is closed to every pod once this policy
+# applies: add a rule for one you open (the HTTP API on a pod address, say).
+#
+# A NetworkPolicy takes effect only on a network plugin that enforces it
+# (Calico, Cilium, k3s's default flannel with its policy controller); on one
+# that does not, it is accepted and does nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flezha-controller
+  namespace: flezha
+  labels:
+    app.kubernetes.io/name: flezha
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: flezha
+spec:
+  podSelector:
+    matchLabels:
+      app: flezha
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: flezha
+        - podSelector:
+            matchLabels:
+              app: console
+      ports:
+        - protocol: TCP
+          port: 4369
+        - protocol: TCP
+          port: 9100
+    - ports:
+        - protocol: TCP
+          port: 9569
+    - ports:
+        - protocol: UDP
+          port: 4433

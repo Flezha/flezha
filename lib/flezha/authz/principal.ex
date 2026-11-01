@@ -20,4 +20,12 @@ defmodule Flezha.AuthZ.Principal do
   @spec valid?(t()) :: boolean()
   def valid?(p) when is_binary(p) and byte_size(p) > 0, do: true
   def valid?(_), do: false
+
+  @doc """
+  The namespace a runner principal, `runner@<namespace>`, belongs to, or
+  `:error` for any other principal.
+  """
+  @spec runner_namespace(t()) :: {:ok, binary()} | :error
+  def runner_namespace("runner@" <> namespace), do: {:ok, namespace}
+  def runner_namespace(_principal), do: :error
 end

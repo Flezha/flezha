@@ -78,24 +78,23 @@ defmodule FlezhaTest.Helper.ListenerHarness do
 
   @doc """
   A path for `file_sink/2` that no other run has written: a file in a directory
-  claimed under the file plugin root, removed when the test exits. The sink
-  appends, so a name a previous run left behind would carry its lines.
+  claimed in `namespace`'s folder under the file plugin root, removed when the
+  test exits. The sink appends, so a name a previous run left behind would
+  carry its lines.
   """
-  @spec sink_path(String.t()) :: String.t()
-  def sink_path(prefix) do
-    root = Path.expand(Config.get(:file_plugin_root))
-    File.mkdir_p!(root)
-    dir = NodeTestHelper.claim_tmp_dir(prefix, root)
+  @spec sink_path(String.t(), String.t()) :: String.t()
+  def sink_path(prefix, namespace) do
+    folder = Path.join(Path.expand(Config.get(:file_plugin_root)), namespace)
+    File.mkdir_p!(folder)
+    dir = NodeTestHelper.claim_tmp_dir(prefix, folder)
     on_exit(fn -> File.rm_rf(dir) end)
-    dir |> Path.relative_to(root) |> Path.join("sink.ndjson")
+    Path.join(dir, "sink.ndjson")
   end
 
   @doc "The lines the file sink at `path` has written, `[]` before its first."
   @spec sink_lines(String.t()) :: [String.t()]
   def sink_lines(path) do
-    {:ok, %{path: resolved}} = Flezha.Plugin.Provider.File.prepare(%{path: path, plugin_id: "x"})
-
-    case File.read(resolved) do
+    case File.read(path) do
       {:ok, text} -> String.split(text, "\n", trim: true)
       {:error, _} -> []
     end

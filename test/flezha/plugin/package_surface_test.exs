@@ -35,6 +35,7 @@ defmodule Flezha.Plugin.PackageSurfaceTest do
              Flezha.Service,
              Flezha.Service.Admin,
              Flezha.Service.CallerContext,
+             Flezha.Service.Controller,
              Flezha.Service.Listener,
              Flezha.Service.RelayApi,
              Flezha.State.Outbox

@@ -94,7 +94,8 @@ volumes:
   which a Compose service name lacks. Each service gets an alias with one, and the node names
   use it.
 - **`ERL_FLAGS: -hidden`** connects the console to the controller without joining its
-  mesh, so the controller never places work on it.
+  mesh, so the controller never places work on it. It still holds the cookie, which puts it
+  inside the cluster's trust boundary ([The console](console.md#what-it-needs)).
 - **`127.0.0.1:4000`** keeps the console on this machine. To serve it to others, put it
   behind a proxy with TLS and set `PHX_HOST`, `PHX_URL_SCHEME` and `PHX_URL_PORT` to the
   address browsers use.

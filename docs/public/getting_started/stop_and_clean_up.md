@@ -159,7 +159,7 @@ Then clear it, and remove the two files the file plugins used:
 
 ```sh
 $ ./bin/flz reset --yes
-$ rm storage/app/files/echo-in.txt storage/app/files/echo-out.txt
+$ rm storage/app/files/default/echo-in.txt storage/app/files/default/echo-out.txt
 ```
 
 By default `flz reset` clears each relay's saved state and the registry of

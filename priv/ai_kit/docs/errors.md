@@ -140,6 +140,7 @@ SDK raises or returns its one error type carrying them.
 | `authz.registry_unavailable` | unavailable | 7 | the token registry is not open yet; try again |  |
 | `authz.role_insufficient` | denied | 4 | the caller's role does not allow this | `flz auth whoami` |
 | `authz.role_not_issuable` | invalid | 2 | '{role}' is a role a runner's principal is bound to, so no token is issued for it; issue that principal a runner token and bind '{role}' to it | `flz role bind <principal> {role} <namespace>` |
+| `authz.runner_principal_foreign` | denied | 4 | 'runner@{runner_namespace}' is the runner identity of namespace '{runner_namespace}' and is bound only there, not in '{namespace}' |  |
 | `authz.runner_token_expiry` | invalid | 2 | a runner credential cannot expire | `flz token issue <principal> <namespace> runner --ttl never` |
 | `authz.runner_token_system` | invalid | 2 | a runner credential cannot be issued in the _system namespace |  |
 | `authz.token_ambiguous` | invalid | 2 | the id '{token}' matches more than one token; give more of it | `flz token list` |
@@ -279,6 +280,7 @@ SDK raises or returns its one error type carrying them.
 | `http.length_required` | invalid | 2 | a request body must carry a content-length: a body sent without one is refused before it is read |  |
 | `http.listen_failed` | unavailable | 7 | the HTTP server of plugin '{plugin}' cannot listen on {address} port {port}: {reason} |  |
 | `http.origin_refused` | denied | 4 | the request's Origin is not one of the HTTP API's allowed_origins | `flz plugin help http_api` |
+| `http.port_reserved` | conflict | 6 | port {port} belongs to this controller's {owner}; the HTTP server needs another port |  |
 | `http.streams_full` | unavailable | 7 | relay '{relay}' already has {max_streams} streams open; try again |  |
 | `http.tls_required` | invalid | 2 | address '{address}' is not loopback, so the HTTP API needs tls_certfile and tls_keyfile, or plain_http set to true | `flz plugin help http_api` |
 
@@ -386,6 +388,7 @@ SDK raises or returns its one error type carrying them.
 | `plugin.file_directory_missing` | not_found | 5 | file plugin path '{path}': the directory '{directory}' does not exist |  |
 | `plugin.file_directory_unmakeable` | unavailable | 7 | the directory '{path}' that commit rename writes into cannot be made |  |
 | `plugin.file_path_not_directory` | invalid | 2 | file plugin path '{path}' is not a directory, and commit rename writes its parts into one |  |
+| `plugin.file_path_outside_namespace` | invalid | 2 | file plugin path '{path}' is outside this namespace's folder '{folder}'; each namespace's files now live in its own folder, where this one is '{moved}' | `move the file there and enable the plugin again with a path relative to the namespace's folder` |
 | `plugin.file_path_outside_root` | invalid | 2 | file plugin path '{path}' resolves outside the root '{root}' |  |
 | `plugin.file_path_too_many_links` | invalid | 2 | file plugin path '{path}' crosses more than {max} symbolic links |  |
 | `plugin.file_path_unreadable` | unavailable | 7 | file plugin path '{path}' cannot be read |  |
