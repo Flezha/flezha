@@ -457,7 +457,11 @@ defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
     assert wait(fn -> Helper.declared(hub_id) == [child_id] end)
 
     :ok = on(peer, :stop_hub, [hub_id])
-    assert wait(fn -> Helper.group_nodes(hub_id, "report") == [] end)
+
+    # A peer still listed here means its hub's leave never arrived.
+    assert wait(fn -> Helper.group_nodes(hub_id, "report") == [] end),
+           "the stopped peer still serves `report`; hub nodes here: " <>
+             inspect(Helper.hub_nodes(hub_id))
 
     assert wait(fn ->
              match?({_, []}, ProcessRegistry.lookup(hub_id, child_id, include_empty: true))
