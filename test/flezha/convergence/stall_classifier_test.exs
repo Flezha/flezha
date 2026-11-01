@@ -279,6 +279,15 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert {:runner_pool_wedged, _ctx} = StallClassifier.classify(curr, prev)
   end
 
+  # A relay's stop sends a marker the runner reads and never dispatches, so a
+  # fleet of stops after the last input looked exactly like a wedged pool.
+  test "runner_pool_wedged does NOT fire when every frame sent was a control marker" do
+    {prev, curr} =
+      fed_runner([hb_dispatches: 9_000], hb_dispatches: 9_000, control_markers: 100)
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
   test "runner_pool_wedged does NOT fire while dispatches advance" do
     {prev, curr} = fed_runner([hb_dispatches: 9_000], hb_dispatches: 9_500)
 

@@ -525,11 +525,14 @@ defmodule Flezha.Convergence.StallClassifier do
           nil
 
         prev ->
-          if cur.send_frame_calls > prev.send_frame_calls and cur.hb_count > prev.hb_count,
+          if fed(cur) > fed(prev) and cur.hb_count > prev.hb_count,
             do: fun.(runner_id, cur, prev)
       end
     end)
   end
+
+  # Work sent to the runner: a control marker is read but never dispatched.
+  defp fed(row), do: row.send_frame_calls - row.control_markers
 
   defp find_stream(current, previous, fun) do
     prev_index = index_by(previous.drivers, fn d -> d.transport end)

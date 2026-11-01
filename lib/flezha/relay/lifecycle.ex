@@ -32,6 +32,7 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
@@ -754,8 +755,10 @@ defmodule Flezha.Relay.Lifecycle do
   # input log to re-forward what it has not applied, the stop rides behind the
   # last input. A runner that is gone or does not answer has nothing to wait for.
   defp control_unit_step({state, _reason}, budget) do
-    stop = {"", %{"flz.control" => "stop"}}
-    behind? = Replay.floor_reporter(state) == nil and Overwatch.deliver(state, stop) == :ok
+    behind? =
+      Replay.floor_reporter(state) == nil and
+        StreamChannel.control(state.channel, state.id, "stop") == :ok
+
     _answer = ControlUnit.stop_relay(state.runner_id, state.id, div(budget, 2), drain: behind?)
     :ok
   end

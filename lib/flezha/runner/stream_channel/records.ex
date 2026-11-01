@@ -232,17 +232,23 @@ defmodule Flezha.Runner.StreamChannel.Records do
     end
   end
 
-  # No record here means a hub hand-over's old copy still speaking, a steps
-  # Cell after its relay ended, or a lost ownership table, so the namespace the
-  # relay's state belongs to on this node is what is judged. A control
-  # request's relay id passed no `Wire.decode_cell_id/1`, so it is held to the
-  # same path rule before it names a directory.
+  # No record here means a relay whose stop is waiting for its runner's last
+  # frames (this channel still routes it), a hub hand-over's old copy still
+  # speaking, a steps Cell after its relay ended, or a lost ownership table, so
+  # past the route the namespace the relay's state belongs to on this node is
+  # what is judged. A control request's relay id passed no
+  # `Wire.decode_cell_id/1`, so it is held to the same path rule before it
+  # names a directory.
   defp unrecorded(state, relay_class, kind) do
-    namespace = if Wire.path_segment?(relay_class), do: Paths.namespace_of_class(relay_class)
+    if Map.has_key?(Map.get(state, :relay_mapping, %{}), relay_class) do
+      :unrecorded
+    else
+      namespace = if Wire.path_segment?(relay_class), do: Paths.namespace_of_class(relay_class)
 
-    if namespace == state.namespace,
-      do: :unrecorded,
-      else: refuse(state, relay_class, namespace, kind)
+      if namespace == state.namespace,
+        do: :unrecorded,
+        else: refuse(state, relay_class, namespace, kind)
+    end
   end
 
   defp refuse(state, relay_class, owner, kind) do

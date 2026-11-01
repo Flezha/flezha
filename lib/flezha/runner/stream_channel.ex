@@ -95,6 +95,21 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
+  @doc """
+  Send the in-band control `marker` (`flz.control`) on `channel`'s stream
+  through `io_in/3`, behind the frames it covers, counted as a control marker
+  as well as a send.
+  """
+  @spec control(GenServer.name() | nil, binary(), binary()) ::
+          :ok | {:error, :no_stream | :send_buffer_full}
+  def control(channel, relay_id, marker) do
+    with {stream_ref, liveness_ref} when stream_ref != nil <-
+           :persistent_term.get({__MODULE__, channel}, nil),
+         do: LivenessCounters.bump_channel(liveness_ref, :control_markers)
+
+    io_in(channel, relay_id, {"", %{"flz.control" => marker}})
+  end
+
   # The runner's self-report, mirrored whole. The key list is DERIVED from the
   # liveness layout — every row that declares a `heartbeat:` — so a key with no
   # slot is unconstructible rather than caught by a compile-time check, and the

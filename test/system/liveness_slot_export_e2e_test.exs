@@ -82,6 +82,7 @@ defmodule FlezhaTest.System.LivenessSlotExportE2ETest do
     hb_restore_discarded_inputs: "sdk/rust/tests/ack_checkpoint.rs",
     stale_writer_refused: "test/flezha/state/wal_owner_fence_test.exs",
     send_gate_held: "test/flezha/runner/stream_channel_gate_test.exs",
+    control_markers: "test/flezha_handover_test.exs",
     foreign_frame_refused: "test/system/runner_ownership_e2e_test.exs"
   }
 

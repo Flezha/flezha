@@ -726,6 +726,26 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     assert_received {:relay_drained, ^rc}
   end
 
+  # fails when: a stopping relay with no durable state, whose ownership record
+  # its stop already removed, has its runner's final marker refused as another
+  # namespace's, so the stop waits out its whole budget and the runner is told
+  # to remove a relay it already removed.
+  test "a stopping relay's final marker is admitted on the channel that still routes it" do
+    rc = "stopping_#{System.unique_integer([:positive])}"
+
+    state = %{
+      runner_id: "r1",
+      identity: "runner-a",
+      namespace: "bench",
+      liveness_ref: nil,
+      relay_mapping: %{rc => [self()]}
+    }
+
+    header = WireEncoders.encode_header(1, 1, 1, 0, <<>>)
+    frame = WireEncoders.encode_frame(Wire.encode_cell_id(rc, "", ""), 0, header, <<1>>)
+    assert {:ok, ^rc, :final, 1} = StreamChannel.Records.processed_prefix(state, frame)
+  end
+
   test "a frame that does not decode is reported once per session and kind" do
     session = "undecodable_#{System.unique_integer([:positive])}"
     state = %{runner_id: session, identity: session}

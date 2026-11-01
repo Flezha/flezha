@@ -108,6 +108,9 @@ defmodule Flezha.Transport.LivenessCounters do
       ],
       [name: :io_in_received, kind: :count, surface: [{:metric, :channel_io_in_received}]],
       [name: :send_frame_calls, kind: :count, surface: [{:metric, :channel_send_frame_calls}]],
+      # The share of `send_frame_calls` that were in-band control markers: the
+      # runner reads one but never dispatches it, so it is no work the runner was fed.
+      [name: :control_markers, kind: :count, surface: [{:verdict, :runner_pool_wedged}]],
       [name: :nil_drops, kind: :count, surface: [{:metric, :channel_nil_drops}]],
       [name: :flz_data_received, kind: :count, surface: [{:metric, :channel_flz_data_received}]],
       [
