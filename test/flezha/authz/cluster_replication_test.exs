@@ -13,6 +13,9 @@ defmodule Flezha.AuthZ.ClusterReplicationTest do
   alias FlezhaTest.Helper.NodeTestHelper
 
   @moduletag :multi_node
+  # Up to three peer boots of 45 s each and their 30 s joins: the default 60 s
+  # would cut a slow boot off before its own bound names it.
+  @moduletag timeout: 300_000
 
   setup do
     {a, a_dir} = start_controller(:authz_a)
