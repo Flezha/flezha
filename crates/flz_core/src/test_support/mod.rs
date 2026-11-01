@@ -80,6 +80,22 @@ pub(crate) fn saturate<P: Send + 'static>(mailbox: &Mailbox<P>, item: P) {
     assert!(mailbox.is_full());
 }
 
+/// Shared by tests that take only their own activations off the global poll
+/// core, held alone by a host that answers every one it hands out: that host
+/// would answer the others' too.
+#[cfg(test)]
+static GLOBAL_CORE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+#[cfg(test)]
+pub(crate) fn sharing_global_core() -> std::sync::RwLockReadGuard<'static, ()> {
+    GLOBAL_CORE.read().unwrap_or_else(|p| p.into_inner())
+}
+
+#[cfg(test)]
+pub(crate) fn serving_global_core() -> std::sync::RwLockWriteGuard<'static, ()> {
+    GLOBAL_CORE.write().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Answers every activation the poll core hands out while it lives with
 /// `respond`, which also sees the apply-state commands it recorded.
 #[cfg(test)]
@@ -87,6 +103,7 @@ pub(crate) struct FakeHost {
     stop: Arc<std::sync::atomic::AtomicBool>,
     applied: Arc<std::sync::Mutex<Vec<String>>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    _serving: std::sync::RwLockWriteGuard<'static, ()>,
 }
 
 #[cfg(test)]
@@ -100,6 +117,7 @@ impl FakeHost {
             + 'static,
     ) -> Self {
         use std::sync::atomic::Ordering;
+        let serving = serving_global_core();
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let applied = Arc::new(std::sync::Mutex::new(Vec::new()));
         let thread = {
@@ -123,6 +141,7 @@ impl FakeHost {
             stop,
             applied,
             thread: Some(thread),
+            _serving: serving,
         }
     }
 

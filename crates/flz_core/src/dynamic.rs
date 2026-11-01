@@ -456,6 +456,7 @@ pub(crate) mod tests {
     /// sweep is done.
     #[test]
     fn a_cell_routed_during_its_leave_stays_named_by_its_key() {
+        let _core = crate::test_support::sharing_global_core();
         let (instance, registry) = registry("kb501_route_in_leave");
         let routed: Arc<Mutex<Option<Arc<CellSlot>>>> = Arc::default();
         let (routing, taken) = (Arc::clone(&registry), Arc::clone(&routed));
@@ -482,6 +483,7 @@ pub(crate) mod tests {
     /// it a second leave until the host lets go.
     #[test]
     fn a_leave_the_host_still_holds_pins_its_cell() {
+        let _core = crate::test_support::sharing_global_core();
         let (instance, registry) = registry("kb501_held_leave");
         let relay = instance.instance_id.to_string();
         let slot = Arc::downgrade(&registry.get_or_create("a").expect("minted"));

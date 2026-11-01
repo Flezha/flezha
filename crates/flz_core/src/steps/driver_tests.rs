@@ -833,6 +833,7 @@ struct OwnTimerHost {
 
 impl OwnTimerHost {
     fn serve_until(&mut self, done: impl Fn(&Self) -> bool) {
+        let _serving = crate::test_support::serving_global_core();
         let core = crate::poll_core::global();
         while !done(self) {
             let Polled::Activation(act) = core.poll(Duration::from_secs(5)) else {
