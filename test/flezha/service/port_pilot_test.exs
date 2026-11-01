@@ -14,7 +14,7 @@ defmodule Flezha.Service.PortPilotTest do
     on_exit(NodeTestHelper.override_log_level(:info))
   end
 
-  # Every entry a pilot over `command` logged until it handled `last_line`.
+  # Every entry a pilot over `command` logged until it logged `last_line`.
   # The child prints its lines and then waits on its standard input, which the
   # pilot's exit closes.
   defp pilot_logging(command, last_line) do
@@ -22,11 +22,17 @@ defmodule Flezha.Service.PortPilotTest do
 
     {_, entries} =
       NodeTestHelper.with_log_entries(fn ->
-        {:ok, pilot} = GenServer.start(PortPilot, nil)
-        restore.()
-        :erlang.trace(pilot, true, [:receive])
-        assert_receive {:trace, ^pilot, :receive, {_port, {:data, {:eol, ^last_line}}}}, 30_000
-        _handled = :sys.get_state(pilot)
+        pilot =
+          NodeTestHelper.await_logged(
+            ~r/#{Regex.escape(last_line)}$/,
+            fn ->
+              {:ok, pilot} = GenServer.start(PortPilot, nil)
+              restore.()
+              pilot
+            end,
+            30_000
+          )
+
         GenServer.stop(pilot)
       end)
 
