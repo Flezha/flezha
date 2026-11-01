@@ -2,6 +2,7 @@ rustler::atoms! {
     ok,
     error,
     send_buffer_full,
+    closed,
     driver_gone,
 
     // Messages sent to Elixir processes

@@ -6,8 +6,8 @@ defmodule Flezha.Transport.DriverParityTest do
   What it proves: the `SendFrame` arm reaches the peer and the peer's frames
   reach their owner; the driver self-report carries what the driver did; a
   stream activated once hands its owner one frame; the `CloseStream` arm
-  releases the stream; and a peer that goes away is reported with a word from
-  the one declared set.
+  releases the stream; a peer that goes away is reported with a word from
+  the one declared set; and a released stream refuses a frame.
 
   The tree has no QUIC client of its own, so the same cases over QUIC, against a
   real `quinn_proto` peer, are the Rust conformance table's in
@@ -222,6 +222,8 @@ defmodule Flezha.Transport.DriverParityTest do
 
       assert await_stream_row(server, server_id, &is_nil/1) == :gone,
              "a closed stream must leave the self-report"
+
+      assert Native.send_frame(server_handle, "late", "frame", %{}) == {:error, :closed}
     end
 
     test "a peer that dies is reported with a declared word", _ctx do
@@ -249,6 +251,10 @@ defmodule Flezha.Transport.DriverParityTest do
              "closed with #{inspect(reason)}, which the driver declares nowhere"
 
       assert reason == "connection_closed"
+
+      # fails when: a frame written on a stream the wire closed is answered
+      # `:ok` and dropped by the driver, so its sender believes it went.
+      assert Native.send_frame(server_handle, "late", "frame", %{}) == {:error, :closed}
     end
   end
 

@@ -81,8 +81,9 @@ defmodule Flezha.Runner.StreamChannel do
           end
         end
 
-        # A stream closed under the held sender, or a driver thread that is
-        # gone: the frame IS lost, and is counted as an unbound stream's is.
+        # A stream the driver released (before or under the held sender), or a
+        # driver thread that is gone: the frame IS lost, and is counted as an
+        # unbound stream's is.
         case Gate.send_held(channel, write) do
           :ok -> :ok
           {:error, :send_buffer_full} = full -> full

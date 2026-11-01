@@ -535,16 +535,19 @@ impl<T: Transport> DriverLoop<T> {
     }
 
     /// Tell the owner why its stream ended, then let the wire release it.
+    /// Released before the owner is told, so a frame its owner writes after
+    /// the notice is refused rather than taken and dropped.
     fn report_and_release(&mut self, id: u64, reason: CloseReason) {
-        if let Some(state) = self.streams.get(&id) {
-            let owner = *state.owner.lock().unwrap();
+        let owner = self.streams.get(&id).map(|s| *s.owner.lock().unwrap());
+        self.release(id, Ended::ByWire);
+        if let Some(owner) = owner {
             send_closed_msg(owner, id, &reason);
         }
-        self.release(id, Ended::ByWire);
     }
 
     fn release(&mut self, id: u64, ended: Ended) {
         if let Some(mut state) = self.streams.remove(&id) {
+            state.gate.close();
             self.transport.release(&mut state, ended);
         }
     }

@@ -238,9 +238,14 @@ defmodule Flezha.Runner.ControlChannel do
   @impl true
   def handle_call({:send_control, bin}, _from, state) do
     case write_control(state, bin) do
-      :unbound -> {:reply, {:error, :no_connection_available}, state}
-      {:error, :send_buffer_full} = full -> {:reply, full, %{state | send_gate_raised?: true}}
-      result -> {:reply, result, state}
+      gone when gone in [:unbound, {:error, :closed}] ->
+        {:reply, {:error, :no_connection_available}, state}
+
+      {:error, :send_buffer_full} = full ->
+        {:reply, full, %{state | send_gate_raised?: true}}
+
+      result ->
+        {:reply, result, state}
     end
   end
 

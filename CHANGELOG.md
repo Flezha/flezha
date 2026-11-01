@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- An input or control frame written on a runner stream whose socket has just closed is now
+  refused instead of answered as sent and dropped by the transport, so a confirming sender
+  sends it again (or a durable relay re-forwards it on the next bind) rather than losing it.
 - The convergence probe no longer logs a warning each time a relay's state read times out while
   the relay is still binding, as during a large start; the read is still recorded as unknown
   and in the `safe_call` event.

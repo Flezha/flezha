@@ -21,9 +21,17 @@ fn send_frame<'a>(
     // so a sender reading only what the driver has buffered is refused after
     // it has queued the whole burst — and the ceiling then turns those frames
     // away behind an answer that said they were sent.
+    //
+    // A stream the driver has released refuses here too, with its own word:
+    // the driver would drop a frame for a stream it no longer holds.
     let reserved = message.len();
     if !stream.gate.reserve(reserved) {
-        return Ok((atoms::error(), atoms::send_buffer_full()).encode(env));
+        let reason = if stream.gate.is_closed() {
+            atoms::closed()
+        } else {
+            atoms::send_buffer_full()
+        };
+        return Ok((atoms::error(), reason).encode(env));
     }
 
     let queued = stream.cmd_tx.send(ServerCommand::SendFrame {

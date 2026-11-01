@@ -93,6 +93,9 @@ pub enum GateChange {
 #[derive(Debug)]
 pub struct SendGate {
     raised: AtomicBool,
+    /// Set once the driver has let the stream go. It is read only after a
+    /// refusal, so it costs the sender nothing while the gate is down.
+    closed: AtomicBool,
     refused: AtomicU64,
     /// Bytes senders have queued that the driver has not yet taken. Written
     /// by both sides — `+` on the sending thread, `-` on the driver's — and
@@ -122,6 +125,7 @@ impl SendGate {
     pub fn with_watermarks(cap: usize, high_water: usize, low_water: usize) -> SendGate {
         SendGate {
             raised: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
             refused: AtomicU64::new(0),
             inflight: AtomicUsize::new(0),
             buffered: AtomicUsize::new(0),
@@ -143,6 +147,21 @@ impl SendGate {
     /// into the NIF per frame.
     pub fn is_raised(&self) -> bool {
         self.raised.load(Ordering::Relaxed)
+    }
+
+    /// The driver has released the stream: every later [`SendGate::reserve`]
+    /// is refused, and [`SendGate::is_closed`] tells that refusal from a full
+    /// buffer. Nothing lowers a raised gate once its driver forgot the stream,
+    /// so the refusal is final.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Relaxed);
+        self.raise();
+    }
+
+    /// Whether a refusal from [`SendGate::reserve`] is the stream being gone
+    /// rather than its buffer being full.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
     }
 
     /// What the gate weighs: the driver's last reading plus what senders have
@@ -408,6 +427,18 @@ mod tests {
 
         gate.release(900);
         assert_eq!(gate.observe(0), Some(GateChange::Lowered));
+    }
+
+    #[test]
+    fn a_closed_gate_refuses_every_frame_and_says_why() {
+        let gate = SendGate::with_watermarks(1000, 800, 500);
+        assert!(gate.reserve(10));
+        assert!(!gate.is_closed());
+
+        gate.close();
+
+        assert!(!gate.reserve(10), "a released stream takes nothing");
+        assert!(gate.is_closed());
     }
 
     #[test]
