@@ -38,6 +38,10 @@ v0.1.0-alpha.1 pre-release.
   certificates, or set `require_client_cert` to `false` and accept a warning on every enable
   and boot; until then the enable is refused with `http.client_cert_required`.
 - `http.streams_full` names the plugin instead of the relay.
+- **Breaking:** the HTTP API, MCP and `flz --json` answer a tuple as an array, a struct as the
+  object of its fields, and bytes that are not UTF-8 as `{"base64": ...}`, where they used to
+  write Elixir text such as `"{:ok, 1}"` or `"%Flezha.Plugin{...}"`. Stream events write
+  their fields the same way ([http_api.md](docs/public/plugins/http_api.md#plain-json)).
 - **Breaking:** file plugins read and write in a folder per namespace,
   `<root>/<namespace>/` (`<prefix>/<namespace>/` under an S3 root), and a plugin reaches
   only its own namespace's. To upgrade, stop the relays with file plugins, move each

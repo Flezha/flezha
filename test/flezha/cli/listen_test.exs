@@ -158,7 +158,7 @@ defmodule Flezha.Service.Cli.ListenTest do
                  "kind" => "output",
                  "channel" => nil,
                  "payload_base64" => "/wA=",
-                 "metadata" => %{"flz.key" => "<<255>>"}
+                 "metadata" => %{"flz.key" => %{"base64" => Base.encode64(<<255>>)}}
                }
              ]
     end

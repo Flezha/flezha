@@ -87,9 +87,36 @@ defmodule Flezha.Service.Admin do
     with {:ok, value} <- run(name, args, caller_context, placement), do: {:ok, json(value)}
   end
 
-  @doc "A value as the JSON `call/4` answers it with."
+  @doc """
+  A value as the JSON `call/4` answers it with, nothing a caller reads left as
+  inspected text: a tuple is an array, a `MapSet` the array of its members, a
+  struct with a JSON encoding of its own (an error, a date) that encoding, any
+  other struct the object of its fields, and a binary that is not UTF-8
+  `{"base64": ...}`. A pid, a reference, a port and a function mean nothing off
+  this node and are inspected, as `Flezha.Observability.Signal.metadata_json/1`
+  renders them.
+  """
   @spec json(term()) :: String.t()
-  def json(value), do: value |> Signal.metadata_json() |> Jason.encode!()
+  def json(value), do: value |> wire() |> Jason.encode!()
+
+  defp wire(term) when is_binary(term) do
+    if String.valid?(term), do: term, else: %{"base64" => Base.encode64(term)}
+  end
+
+  defp wire(term) when is_tuple(term), do: term |> Tuple.to_list() |> wire()
+  defp wire(term) when is_list(term), do: Enum.map(term, &wire/1)
+
+  defp wire(%MapSet{} = term), do: term |> MapSet.to_list() |> wire()
+
+  defp wire(%_{} = term) do
+    if Jason.Encoder.impl_for(term) == Jason.Encoder.Any,
+      do: term |> Map.from_struct() |> wire(),
+      else: term
+  end
+
+  defp wire(%{} = term), do: Map.new(term, fn {k, v} -> {Signal.metadata_text(k), wire(v)} end)
+
+  defp wire(term), do: Signal.metadata_json(term)
 
   @doc """
   One event of a stream operation as the JSON surfaces carry it: its name and
@@ -105,12 +132,11 @@ defmodule Flezha.Service.Admin do
   def event({kind, %Flezha.Error{} = error, metadata}, caller_context) do
     {:error, error} = withheld({:error, error}, "a #{kind} event", caller_context)
 
-    {Atom.to_string(kind),
-     kind |> framed(metadata) |> Signal.metadata_json() |> Map.put("error", error)}
+    {Atom.to_string(kind), kind |> framed(metadata) |> wire() |> Map.put("error", error)}
   end
 
   def event({:tally, totals, read}, _caller_context),
-    do: {"tally", Signal.metadata_json(Map.merge(%{kind: :tally, totals: totals}, read))}
+    do: {"tally", wire(Map.merge(%{kind: :tally, totals: totals}, read))}
 
   def event({kind, payload, metadata}, _caller_context) when is_binary(payload) do
     payload =
@@ -118,17 +144,17 @@ defmodule Flezha.Service.Admin do
         do: %{payload: payload},
         else: %{payload_base64: Base.encode64(payload)}
 
-    {Atom.to_string(kind), Signal.metadata_json(Map.merge(framed(kind, metadata), payload))}
+    {Atom.to_string(kind), wire(Map.merge(framed(kind, metadata), payload))}
   end
 
   def event(%Signal{} = signal, _caller_context) do
     {"signal",
      signal
      |> Map.take([:kind, :source, :name, :node, :at_us, :measurements, :metadata])
-     |> Signal.metadata_json()}
+     |> wire()}
   end
 
-  def event(%{} = record, _caller_context), do: {"log", Signal.metadata_json(record)}
+  def event(%{} = record, _caller_context), do: {"log", wire(record)}
 
   @call_kinds [:call, :answered, :timed_out, :refused]
 

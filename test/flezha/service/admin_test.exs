@@ -584,6 +584,52 @@ defmodule Flezha.Service.AdminTest do
     end
   end
 
+  describe "the JSON an answer is written as" do
+    # Fails when: a remote caller reads a tuple or a struct as inspected text.
+    test "a tuple is an array and a struct the object of its fields" do
+      plugin = %Flezha.Plugin{id: "ws", provider: Flezha.Plugin.Provider.Websocket}
+
+      assert [
+               "ok",
+               [["relay", [["ws", %{"id" => "ws", "hooks" => [], "single" => false} = fields]]]],
+               %{"at" => [1, 2]}
+             ] = Jason.decode!(Admin.json({:ok, [{"relay", [{"ws", plugin}]}], %{at: {1, 2}}}))
+
+      assert fields["provider"] == "Elixir.Flezha.Plugin.Provider.Websocket"
+      refute Map.has_key?(fields, "__struct__")
+    end
+
+    # Fails when: bytes, a set, a date or an embedded error reach a caller as inspected text.
+    test "bytes, a set, a date and an error each keep a form a caller can read" do
+      error = Flezha.Error.new("relay.not_found", relay: "r1")
+
+      assert Jason.decode!(
+               Admin.json(%{
+                 bytes: <<255, 0, 254>>,
+                 set: MapSet.new([:a]),
+                 at: ~U[2026-11-01 12:00:00Z],
+                 error: error
+               })
+             ) == %{
+               "bytes" => %{"base64" => Base.encode64(<<255, 0, 254>>)},
+               "set" => ["a"],
+               "at" => "2026-11-01T12:00:00Z",
+               "error" => Jason.decode!(Jason.encode!(error))
+             }
+    end
+
+    # Fails when: a pid, which means nothing off this node, is not text.
+    test "a pid is text" do
+      assert Admin.json(self()) == Jason.encode!(inspect(self()))
+    end
+
+    # Fails when: a stream event's metadata loses a tuple to inspected text.
+    test "an event's elements are written in the same form" do
+      assert {"output", %{"metadata" => %{"route" => ["a", 1]}, "payload" => "hi"}} =
+               Admin.event({:output, "hi", %{"route" => {:a, 1}}}, as(:http))
+    end
+  end
+
   defp denied?(answer),
     do: match?({:error, %Flezha.Error{code: "authz.role_insufficient"}}, answer)
 end

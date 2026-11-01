@@ -151,6 +151,11 @@ $ curl -s -X POST http://127.0.0.1:8765/v1/call/Relay.list \
 failure answers the error object with the HTTP status of its class: `404` for
 `dlq.not_found`, `403` for `authz.role_insufficient`.
 
+An answer is the operation's value as JSON, with nothing left as Elixir text: a tuple is an
+array, a struct the object of its fields (an error and a date keep their own form), and bytes
+that are not UTF-8 `{"base64": ...}`. Only a pid, a reference or a function, which mean nothing
+off the controller, are their text. Stream events write their fields the same way.
+
 `POST /v1/call/Namespace.whoami` answers the token's principal, namespace and role, the
 `operations` its role grants (the streams below included) and the controller's `posture`:
 `open`, `bootstrap_pending` or `enforced`.
