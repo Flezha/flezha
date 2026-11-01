@@ -407,9 +407,10 @@ defmodule FlezhaTest.Plugin.ControllerPluginTest do
       :sys.replace_state(pid, &%{&1 | halt_reason: reason, phase: :halted})
       for _ <- 1..3, do: Loop.tick_now()
 
-      expected = "plugin.prepare_failed"
-      assert_receive {:hook, %{hook: :on_relay_failed, relay: ^op, error: ^expected}, _}
+      # Each tick judges and emits before it returns, so the marker follows the hook.
       settled()
+      expected = "plugin.prepare_failed"
+      assert_received {:hook, %{hook: :on_relay_failed, relay: ^op, error: ^expected}, _}
       refute_received {:hook, %{hook: :on_relay_failed}, _}
     end
 

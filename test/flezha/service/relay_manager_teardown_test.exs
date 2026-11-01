@@ -111,10 +111,13 @@ defmodule FlezhaTest.Service.RelayManagerTeardownTest do
     File.mkdir_p!(Paths.class_dir(instance))
     File.write!(Path.join(Paths.class_dir(instance), "t"), "")
 
-    {:ok, writer} = Supervisor.find_or_start(cell_id)
-    ref = Process.monitor(writer)
+    # Linked at spawn, so a stop before any later watch is still heard.
+    Process.flag(:trap_exit, true)
+    {:ok, writer} = WalWriter.start_link(cell_id)
 
-    assert_receive {:DOWN, ^ref, :process, ^writer, :normal}
+    # The writer stops inside its boot continue, which runs before any call.
+    catch_exit(:sys.get_state(writer))
+    assert_receive {:EXIT, ^writer, :normal}
     File.rm_rf!(Paths.class_dir(instance))
   end
 
