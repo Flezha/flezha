@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- `flz controller stop` prints its `drain:` lines again, and a namespace whose drain was
+  refused (no peers, a partitioned or already draining hub, an error) says so with
+  `refused=<reason>`; the `:drain_progress` event carries the same `refused` metadata.
 - Stopping a relay whose runner has just disconnected no longer waits out the control call
   timeout (6 s per relay): the controller refuses the stop frame at once instead of queueing
   it on the closed control stream.

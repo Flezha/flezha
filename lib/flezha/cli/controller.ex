@@ -80,10 +80,12 @@ defmodule Flezha.Service.Cli.Controller do
     do:
       "[shutdown] phase=#{metadata.phase} completed duration_ms=#{measurements[:duration_ms] || 0}"
 
-  defp progress_line([:flezha, :shutdown, :drain_progress], measurements, _metadata),
-    do:
-      "drain: migrated=#{measurements.migrated} remaining=#{measurements.remaining} " <>
-        "elapsed_ms=#{measurements.elapsed_ms}"
+  defp progress_line([:flezha, :shutdown, :drain_progress], measurements, metadata) do
+    refused = if reason = metadata[:refused], do: " refused=#{inspect(reason)}", else: ""
+
+    "drain: migrated=#{measurements.migrated} remaining=#{measurements.remaining_hubs} " <>
+      "elapsed_ms=#{measurements.elapsed_ms}" <> refused
+  end
 
   defp progress_line([:flezha, :shutdown, :timeout], _measurements, metadata),
     do: "[shutdown] timeout phase=#{metadata.phase} still_local=#{length(metadata.still_local)}"

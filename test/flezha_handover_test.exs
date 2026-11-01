@@ -48,11 +48,7 @@ defmodule FlezhaTest.Handover do
 
     assert :ok = shutdown_peer(peer_node, 30_000)
 
-    # One :drain_progress per hub — match the namespace the relay is in, or
-    # a peer namespace with nothing to move answers for it with migrated: 0.
-    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
-                    %{namespace: @default_namespace}},
-                   10_000
+    m = drain_progress(10_000)
 
     assert m.migrated >= 1
     assert m.forced == 0
@@ -129,12 +125,8 @@ defmodule FlezhaTest.Handover do
     # consent and the whole forced-handover grace after it.
     assert :ok = shutdown_peer(peer_node, 4_000)
 
+    m = drain_progress(5_000)
     assert_receive :deferred, 5_000
-
-    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
-                    %{namespace: @default_namespace}},
-                   5_000
-
     assert m.forced >= 1
 
     # Forced onto this node through the best-effort handover: state carried,
@@ -172,9 +164,7 @@ defmodule FlezhaTest.Handover do
     {:ok, :stop_initiated} = :erpc.call(peer_node, ProcessHub, :stop_child, [hub_id, ended])
     assert :ok = Task.await(shutdown, 80_000)
 
-    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
-                    %{namespace: @default_namespace}},
-                   1_000
+    m = drain_progress(1_000)
 
     assert m.migrated == 1
     assert m.elapsed_ms < 30_000, "the drain waited #{m.elapsed_ms} ms for the relay that ended"
@@ -241,9 +231,7 @@ defmodule FlezhaTest.Handover do
 
     assert :ok = shutdown_peer(peer_node, 30_000)
 
-    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
-                    %{namespace: @default_namespace}},
-                   10_000
+    m = drain_progress(10_000)
 
     assert m.migrated >= 1
     assert_receive {:arriving, ^relay_id, source_alive?, open_writers}, 10_000
@@ -301,13 +289,17 @@ defmodule FlezhaTest.Handover do
     relay_id = RelayFixture.start_on(peer_node, "cold_memory", "persistence_off_counter")
     for n <- ["3", "4"], do: confirm(relay_id, n)
 
+    # A taken input is on its way to the runner, and the move carries the
+    # state the runner holds when asked, so the inputs are applied first.
+    assert NodeTestHelper.wait_until(
+             fn -> runner_state(relay_id) =~ ~s("value":7) end,
+             10_000
+           ),
+           "the source runner never applied the confirmed inputs"
+
     assert :ok = shutdown_peer(peer_node, 30_000)
     assert arrived?(relay_id), "the in-band state did not reach the destination's runner"
-
-    # Read off the runner: the controller refuses a live read of a class that
-    # keeps nothing on disk.
-    {:ok, %{runner_id: runner}} = RelayManager.get_overwatch_state(@default_namespace, relay_id)
-    assert Flezha.Relay.Handover.create_snapshot(relay_id, runner) =~ ~s("value":7)
+    assert runner_state(relay_id) =~ ~s("value":7)
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
 
@@ -431,6 +423,15 @@ defmodule FlezhaTest.Handover do
     get_in(Payloader.json_to_map(json), ["store_input_tasklet", "text_inputs"])
   end
 
+  # The relay's state as its runner holds it, "" when unreadable: the
+  # controller refuses a live read of a class that keeps nothing on disk.
+  defp runner_state(relay_id) do
+    case RelayManager.create_snapshot(@default_namespace, relay_id) do
+      {:ok, snapshot} when is_binary(snapshot) -> snapshot
+      _unreadable -> ""
+    end
+  end
+
   # Whether the relay was handed over live to this controller, polled: the
   # registry row naming its new home converges just after the drain reports.
   defp arrived?(op) do
@@ -467,6 +468,17 @@ defmodule FlezhaTest.Handover do
       [:cli, [timeout_ms: timeout_ms]],
       timeout_ms + 15_000
     )
+  end
+
+  # The default namespace's drain outcome, sent once the drain returned. A
+  # peer namespace with nothing to move answers for itself with migrated: 0.
+  defp drain_progress(timeout_ms) do
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
+                    %{namespace: @default_namespace} = meta},
+                   timeout_ms
+
+    assert meta.refused == nil, "the drain was refused: #{inspect(meta.refused)}"
+    m
   end
 
   # A relay on `peer_node` that defers every migration: it holds a correction

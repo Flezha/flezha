@@ -215,7 +215,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
             {:exit, reason} -> {:error, {:task_exit, reason}}
           end
 
-        {m, f} = fold_drain_outcome(ns, result)
+        {m, f, refused} = fold_drain_outcome(ns, result)
 
         :telemetry.execute(
           [:flezha, :shutdown, :drain_progress],
@@ -225,7 +225,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
             remaining_hubs: total - idx,
             elapsed_ms: System.monotonic_time(:millisecond) - phase_start_ms
           },
-          %{namespace: ns}
+          %{namespace: ns, refused: refused}
         )
 
         {m_acc + m, f_acc + f}
@@ -234,7 +234,8 @@ defmodule Flezha.Service.HubManager.Lifecycle do
     {:ok, %{migrated: migrated, forced: forced}}
   end
 
-  # One hub's drain verdict → `{migrated, forced}`. Every error degrades to
+  # One hub's drain verdict → `{migrated, forced, refused}`, `refused` the
+  # reason a drain moved nothing, nil when it ran. Every error degrades to
   # the no-peer path: the relays terminate with the hub supervisor and
   # the next boot restores them from on-disk WAL/snapshot — never a wedge.
   defp fold_drain_outcome(ns, {:ok, %{migrated: migrated, forced: forced}}) do
@@ -242,7 +243,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
       Logger.warning("[shutdown] drain ns=#{ns} force-migrated #{forced} deferred relay(s)")
     end
 
-    {migrated, forced}
+    {migrated, forced, nil}
   end
 
   defp fold_drain_outcome(_ns, {:error, :no_target_nodes}) do
@@ -250,7 +251,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
       "[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot"
     )
 
-    {0, 0}
+    {0, 0, :no_target_nodes}
   end
 
   defp fold_drain_outcome(ns, {:error, reason}) do
@@ -259,7 +260,7 @@ defmodule Flezha.Service.HubManager.Lifecycle do
         "local relays terminate and restore on next boot"
     )
 
-    {0, 0}
+    {0, 0, reason}
   end
 
   @doc """

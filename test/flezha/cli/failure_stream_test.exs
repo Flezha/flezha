@@ -240,6 +240,27 @@ defmodule Flezha.Service.Cli.FailureStreamTest do
     end
   end
 
+  describe "a stop whose drain was refused" do
+    # Fails when: the drain line is not printed, or prints a refused drain as
+    # one that merely had nothing to move.
+    test "prints the drain line naming the refusal" do
+      Mimic.stub(Flezha.Shutdown.Coordinator, :shutdown_and_stop, fn :cli, _opts, report ->
+        :telemetry.execute(
+          [:flezha, :shutdown, :drain_progress],
+          %{migrated: 0, forced: 0, remaining_hubs: 0, elapsed_ms: 22},
+          %{namespace: "default", refused: :partitioned}
+        )
+
+        report.(:ok)
+      end)
+
+      {_outcome, out, err} = CliCapture.run(fn -> Cli.call("Controller.stop", "[]", []) end)
+
+      assert err =~ "drain: migrated=0 remaining=0 elapsed_ms=22 refused=:partitioned"
+      assert out =~ "flz-controller-stop-result: clean"
+    end
+  end
+
   describe "the CLI tree" do
     # `Context` owns the device and is the one module allowed to name a stream;
     # every other file asking for `:stderr` by name gets the controller's log

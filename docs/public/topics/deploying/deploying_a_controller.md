@@ -447,7 +447,7 @@ each phase boundary also logs a `[shutdown] ...` line:
 | `:requested` | none | `reason`, `timestamp_ms`; emitted once |
 | `:phase_started` | none | `phase`: `:quiesce`, `:drain` or `:finalise` |
 | `:phase_completed` | `duration_ms` | `phase` |
-| `:drain_progress` | `migrated`, `forced`, `remaining_hubs`, `elapsed_ms` | `namespace`, one per finished namespace |
+| `:drain_progress` | `migrated`, `forced`, `remaining_hubs`, `elapsed_ms` | `namespace`, one per finished namespace; `refused`: nil, or why its drain moved nothing (`:no_target_nodes`, `:partitioned`, `:draining`, or an error) |
 | `:timeout` | none | `phase`, `still_local` (relay ids) |
 | `:complete` | `duration_ms` | `outcome`: `:clean`, `:partial` or `:forced`; `reason` |
 

@@ -217,9 +217,10 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       detach_telemetry(events)
       received = drain_telemetry()
 
-      assert Enum.any?(received, fn {ev, m, _} ->
+      assert Enum.any?(received, fn {ev, m, meta} ->
                ev == [:flezha, :shutdown, :drain_progress] and m.migrated == 0 and
-                 m.forced == 0 and m.remaining_hubs == 0 and is_integer(m.elapsed_ms)
+                 m.forced == 0 and m.remaining_hubs == 0 and is_integer(m.elapsed_ms) and
+                 meta.refused == :no_target_nodes
              end)
 
       assert Enum.any?(received, fn {ev, _, meta} ->
@@ -227,17 +228,24 @@ defmodule Flezha.Shutdown.CoordinatorTest do
              end)
     end
 
+    # Fails when: the refused drain reports as one that had nothing to move.
     test "a drain precondition failure degrades instead of wedging" do
       on_exit(NodeTestHelper.override_log_level(:warning))
       stub_local_relays()
       stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :locked} end)
+      events = attach_telemetry()
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
           assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
         end)
 
+      detach_telemetry(events)
       assert log =~ "degraded (:locked)"
+
+      assert Enum.any?(drain_telemetry(), fn {ev, _m, meta} ->
+               ev == [:flezha, :shutdown, :drain_progress] and meta.refused == :locked
+             end)
     end
 
     test "forced migrations are counted and logged, outcome stays clean" do
@@ -263,8 +271,9 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       assert log =~ "force-migrated 2"
 
-      assert Enum.any?(received, fn {ev, m, _} ->
-               ev == [:flezha, :shutdown, :drain_progress] and m.migrated == 1 and m.forced == 2
+      assert Enum.any?(received, fn {ev, m, meta} ->
+               ev == [:flezha, :shutdown, :drain_progress] and m.migrated == 1 and
+                 m.forced == 2 and meta.refused == nil
              end)
 
       assert Enum.any?(received, fn {ev, _, meta} ->
