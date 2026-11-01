@@ -28,10 +28,7 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Logs.RelayHistory
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Calls.Token
-  alias Flezha.Relay.ClassRegistry
-  alias Flezha.Relay.Lookup
   alias Flezha.Relay.PartitionGroup
-  alias Flezha.Relay.Replay
   alias Flezha.Partition
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Service.CallerContext
@@ -43,7 +40,6 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.Service.Steps
-  alias Flezha.State.TimeTravel
 
   @type caller_context :: CallerContext.t()
 
@@ -677,36 +673,12 @@ defmodule Flezha.Service.Relay do
     {relay_class, _tasklet, _key} = located.cell_id
 
     with {:ok, at} <- Steps.target(from, "from"),
-         do: RelayManager.on_state_node(relay_class, __MODULE__, :local_replay, [path, at])
-  end
-
-  # On the controller holding the Cell's state, where its history is.
-  @doc false
-  def local_replay(path, at) do
-    with {:ok, %{cell_id: {relay_class, _tasklet, _key} = cell_id}} <-
-           Steps.persisted_cell(path),
-         :ok <- replayable(relay_class, path),
-         {:ok, overwatch} <- overwatch(relay_class),
-         {:ok, %{terminal_seq: seq}} <- TimeTravel.query(cell_id, at) do
-      Replay.replay_from(overwatch, cell_id, seq)
-      {:ok, %{cell: path, from_seq: seq}}
-    end
+         do: RelayManager.on_state_node(relay_class, Steps, :local_replay, [path, at])
   end
 
   # ---------- Helpers ----------
 
   defp replay_row([_namespace, path | _]), do: Steps.cell_path(path)
-
-  defp replayable(relay_class, path) do
-    if ClassRegistry.journals?(relay_class), do: {:error, {:steps_cell, path}}, else: :ok
-  end
-
-  defp overwatch(relay_class) do
-    case Lookup.overwatch(relay_class) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, _reason} -> {:error, {:relay_not_running, relay_class}}
-    end
-  end
 
   defp selector(nil), do: %{}
 

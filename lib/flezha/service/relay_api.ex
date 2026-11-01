@@ -58,9 +58,9 @@ defmodule Flezha.Service.RelayApi do
            namespace,
            {__MODULE__, :factory_here},
            [namespace, relay_id, factory_id],
-           :no_hub
+           :unknown_hub
          ) do
-      {:error, :no_hub} -> factory_here(namespace, relay_id, factory_id)
+      {:error, :unknown_hub} -> factory_here(namespace, relay_id, factory_id)
       answer -> answer
     end
   end

@@ -24,7 +24,10 @@ defmodule Flezha.Service.Steps do
   alias Flezha.Logs.RelayHistory
   alias Flezha.Cluster.{Page, Reads}
   alias Flezha.Config
+  alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Lookup
   alias Flezha.Relay.PartitionGroup
+  alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
   alias Flezha.Service.CallerContext
   alias Flezha.Service.RelayManager
@@ -438,6 +441,30 @@ defmodule Flezha.Service.Steps do
          snapshot_size: byte_size(result.snapshot_bytes),
          change_log_size: byte_size(result.change_log_bytes)
        }}
+    end
+  end
+
+  # On the controller holding the Cell's state, where its history is. A Cell
+  # of a steps relay is refused before anything is rewound.
+  @doc false
+  def local_replay(cell, at) do
+    with {:ok, %{cell_id: {relay_class, _tasklet, _key} = cell_id}} <- persisted_cell(cell),
+         :ok <- replayable(relay_class, cell),
+         {:ok, overwatch} <- overwatch(relay_class),
+         {:ok, %{terminal_seq: seq}} <- TimeTravel.query(cell_id, at) do
+      Replay.replay_from(overwatch, cell_id, seq)
+      {:ok, %{cell: cell, from_seq: seq}}
+    end
+  end
+
+  defp replayable(relay_class, cell) do
+    if ClassRegistry.journals?(relay_class), do: {:error, {:steps_cell, cell}}, else: :ok
+  end
+
+  defp overwatch(relay_class) do
+    case Lookup.overwatch(relay_class) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, _reason} -> {:error, {:relay_not_running, relay_class}}
     end
   end
 

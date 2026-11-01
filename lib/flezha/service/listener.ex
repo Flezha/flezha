@@ -24,6 +24,7 @@ defmodule Flezha.Service.Listener do
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Plugin.ProviderBehaviour.Options
+  alias Flezha.Process.Watch
   alias Flezha.Service.HubManager
   alias Flezha.Service.Listener.Receiver
   alias Flezha.Service.PluginManager
@@ -156,14 +157,13 @@ defmodule Flezha.Service.Listener do
         tally_ms: t.plugin_opts[:tally_ms]
       })
 
-    watching = Process.monitor(receiver)
+    watching = Watch.watch(Watch.new(), receiver, :receiver)
 
     try do
       with :ok <- attach(t, receiver),
            :ok <- Keyword.get(opts, :before, fn -> :ok end).() do
         loop(%{
           receiver: receiver,
-          watching: watching,
           handler: handler,
           asked: false,
           deadline: deadline(t.window_ms),
@@ -172,7 +172,7 @@ defmodule Flezha.Service.Listener do
       end
     after
       PluginManager.detach(namespace, relay_id, plugin_id)
-      Process.demonitor(watching, [:flush])
+      Watch.forget(watching, receiver)
       Receiver.stop(receiver)
     end
   end
@@ -210,7 +210,7 @@ defmodule Flezha.Service.Listener do
     receive do
       {:listener_event, ^receiver, event} -> handle(%{l | asked: false}, event)
       {:listener_end, ^receiver, outcome} -> outcome
-      {:DOWN, ref, :process, _pid, reason} when ref == l.watching -> exit(reason)
+      {:DOWN, _ref, :process, ^receiver, reason} -> exit(reason)
     after
       wait(l) ->
         if expired?(l.deadline), do: {:ok, :window_closed}, else: handle(l, :idle)
