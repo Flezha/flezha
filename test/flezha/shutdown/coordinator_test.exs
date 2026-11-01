@@ -159,19 +159,21 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       # every later test; this runs before the setup's reset.
       on_exit(fn -> send(drainer, :unpark) end)
 
+      # Release the drain once the second call is queued behind it.
+      :erlang.trace(drainer, true, [:receive])
+
       caller_b =
         Task.async(fn ->
           Coordinator.shutdown(:cli, timeout_ms: 5_000)
         end)
 
-      # Release the drain once the second call is queued behind it.
-      coordinator = Process.whereis(Coordinator)
+      caller_b_pid = caller_b.pid
 
-      assert NodeTestHelper.wait_until(
-               fn -> Process.info(coordinator, :message_queue_len) > {:message_queue_len, 0} end,
-               1_000
-             )
+      assert_receive {:trace, ^drainer, :receive,
+                      {:"$gen_call", {^caller_b_pid, _}, {:shutdown, :cli, _}}},
+                     5_000
 
+      :erlang.trace(drainer, false, [:receive])
       send(drainer, :unpark)
 
       assert :ok = Task.await(caller_a, 5_000)
