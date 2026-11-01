@@ -100,11 +100,22 @@ defmodule Flezha.Convergence.ProbePlacementTest do
     refute log =~ "bounded call failed"
   end
 
-  test "CONTROL: a relay that does not answer still warns" do
+  # fails when: every relay still binding during a large start logs a warning
+  # each tick its read times out, although the read answers `:error` for it.
+  test "a relay that does not answer in time reads :error without a warning" do
     on_exit(NodeTestHelper.override_log_level(:warning))
     wedged = spawn_link(fn -> Process.sleep(:infinity) end)
 
     log = capture_log([level: :warning], fn -> assert Probe.overwatch(wedged) == :error end)
+
+    refute log =~ "bounded call failed"
+  end
+
+  test "CONTROL: a relay that crashes while it is read still warns" do
+    on_exit(NodeTestHelper.override_log_level(:warning))
+    crashing = spawn(fn -> receive do: ({:"$gen_call", _, _} -> exit(:boom)) end)
+
+    log = capture_log([level: :warning], fn -> assert Probe.overwatch(crashing) == :error end)
 
     assert log =~ "bounded call failed"
     assert log =~ ":get_overwatch_state"

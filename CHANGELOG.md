@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- The convergence probe no longer logs a warning each time a relay's state read times out while
+  the relay is still binding, as during a large start; the read is still recorded as unknown
+  and in the `safe_call` event.
 - A listener no longer waits for ever when its relay ends just as the plugin's heartbeat fires:
   the release names the workers it stops, and their last heartbeat no longer reads as a
   re-attach.
