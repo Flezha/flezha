@@ -210,7 +210,7 @@ defmodule Flezha.Application do
   # together. A release boots with its code loaded, so there it finds nothing.
   defp preload_code() do
     :code.ensure_modules_loaded(
-      for app <- [:flezha, :process_hub],
+      for app <- ~w(flezha process_hub)a,
           module <- Application.spec(app, :modules) || [],
           do: module
     )
