@@ -340,7 +340,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       task = self()
 
       :sys.replace_state(host, fn state ->
-        binding = %{pid: task, then: nil, from: state.phase}
+        binding = %{pid: task, then: nil, from: state.phase, extensions: state.extensions}
         %{state | halt_reason: :sdk_start_failed, bind_task: binding}
       end)
 

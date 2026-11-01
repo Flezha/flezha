@@ -30,7 +30,6 @@ defmodule Flezha.Plugin.Extension.Table do
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Table.Chain
   alias Flezha.Plugin.Extension.Table.Health
-  alias Flezha.Plugin.Extension.Table.Record
   alias Flezha.Plugin.Extension.Table.Entry
   alias Flezha.Plugin.Extension.Table.Subscription
   alias Flezha.Plugin.Extension.Table.Workers
@@ -604,11 +603,11 @@ defmodule Flezha.Plugin.Extension.Table do
 
   @doc """
   Merge the table a bind task built from `base` with `live`, the one this host
-  kept changing while the task bound (`Record.keep_changed/4`).
+  kept changing while the task bound (`Workers.keep_changed/4`).
   """
   @spec keep_changed(t(), t(), t()) :: t()
   def keep_changed(%__MODULE__{} = bound, %__MODULE__{} = base, %__MODULE__{} = live),
-    do: Record.keep_changed(bound, base, live, &terminate_provider/3)
+    do: Workers.keep_changed(bound, base, live, &terminate_provider/3)
 
   @doc "Every subscriber entry registered for the given extension name."
   @spec subscribers(t(), atom()) :: [entry()]
@@ -722,7 +721,7 @@ defmodule Flezha.Plugin.Extension.Table do
   defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, leave) do
     table = release_workers(table, plugin_id, plugin, leave)
     Entry.departed(Entry.of(table, plugin_id), plugin_id)
-    Record.forget(table, plugin_id, plugin)
+    Workers.forget(table, plugin_id, plugin)
   end
 
   # Let the provider release what the table cannot see, then stop every worker

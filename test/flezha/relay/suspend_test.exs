@@ -335,8 +335,9 @@ defmodule FlezhaTest.Relay.SuspendTest do
 
     for from <- [:running, :suspended] do
       inst = instance_id()
-      task = %{pid: self(), then: nil, from: from}
-      binding = state(inst, phase: from, bind_task: task)
+      binding = state(inst, phase: from)
+      task = %{pid: self(), then: nil, from: from, extensions: binding.extensions}
+      binding = %{binding | bind_task: task}
 
       {:noreply, parked, :hibernate} = Overwatch.handle_cast({:suspend, 4, park()}, binding)
       recovered = %{parked | runner_id: "ex_stale", phase: :running}
@@ -357,8 +358,9 @@ defmodule FlezhaTest.Relay.SuspendTest do
   # or a halted relay's rebind (it did not).
   test "a halt landing while a bind binds stands" do
     for {from, kept} <- [running: :halted, suspended: :suspended, halted: :halted] do
-      task = %{pid: self(), then: nil, from: from}
-      binding = state(instance_id(), phase: from, bind_task: task)
+      binding = state(instance_id(), phase: from)
+      task = %{pid: self(), then: nil, from: from, extensions: binding.extensions}
+      binding = %{binding | bind_task: task}
 
       {:noreply, halted} = Overwatch.handle_info({:restore_refused, :boom}, binding)
       recovered = %{binding | runner_id: "ex_stale", phase: :running, bind_task: nil}
