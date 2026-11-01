@@ -219,6 +219,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- Stopping a relay whose runner has just disconnected no longer waits out the control call
+  timeout (6 s per relay): the controller refuses the stop frame at once instead of queueing
+  it on the closed control stream.
 - The reference Kubernetes manifests boot again: the ConfigMap now puts the relay history
   (`FLEZHA_RELAY_HISTORY_DIR`) on the state volume, where the read-only root filesystem no
   longer stops the controller at its first boot.

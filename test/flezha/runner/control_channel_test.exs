@@ -138,7 +138,7 @@ end
 
 defmodule FlezhaTest.Runner.ControlChannelDisconnectTest do
   alias Flezha.Identificator
-  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.{ControlChannel, FleetManager}
   alias FlezhaTest.Helper.{NodeTestHelper, Telemetry}
 
   # async: false: the live controller and its fleet; registered runner channels.
@@ -164,7 +164,19 @@ defmodule FlezhaTest.Runner.ControlChannelDisconnectTest do
     control_channel_pid = GenServer.whereis(Identificator.control_channel(runner_id))
     assert is_pid(control_channel_pid)
 
-    send(control_channel_pid, {:flz_closed, make_ref(), :test_eof})
+    # FleetManager is held so the eviction cannot stop the channel before the
+    # write below reaches it: a frame sent after the close must be refused, not
+    # queued on the released stream (a relay stop then waited out its timeout).
+    :sys.suspend(FleetManager)
+
+    try do
+      send(control_channel_pid, {:flz_closed, make_ref(), :test_eof})
+
+      assert {:error, :no_connection_available} =
+               ControlChannel.send_control(runner_id, {:ping, %RunnerCommands.Ping{nonce: "n"}})
+    after
+      :sys.resume(FleetManager)
+    end
 
     assert_receive {:disconnected, _, %{runner: ^runner_id}}, 5_000
 

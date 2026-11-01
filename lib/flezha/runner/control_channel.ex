@@ -305,7 +305,7 @@ defmodule Flezha.Runner.ControlChannel do
 
   def handle_cast(:close, state) do
     if state.stream_ref, do: TStream.close(state.stream_ref)
-    handle_connection_closed(%{state | stream_ref: nil}, "closed by the controller")
+    handle_connection_closed(state, "closed by the controller")
   end
 
   # Every control frame leaves through this process, on its stream. `:unbound`
@@ -448,7 +448,10 @@ defmodule Flezha.Runner.ControlChannel do
 
     GenServer.cast(FleetManager, {:runner_disconnected, state.namespace, state.runner_id})
 
-    {:noreply, wake_gate_waiters(state, :closed)}
+    # Unbound, so a frame written while the session is torn down (a relay
+    # stop's `rem_relay`) is refused at once instead of queued on a dead stream
+    # whose reply never comes.
+    {:noreply, wake_gate_waiters(%{state | stream_ref: nil}, :closed)}
   end
 
   defp report_channel_down(runner_id, name, reason) do
