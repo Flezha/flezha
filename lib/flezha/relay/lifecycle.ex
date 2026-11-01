@@ -33,7 +33,6 @@ defmodule Flezha.Relay.Lifecycle do
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.FleetManager.Marks
   alias Flezha.Runner.StreamChannel
-  alias Flezha.Runner.StreamChannel.Gate
   alias Flezha.Runner.StreamPool
   alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
@@ -408,7 +407,7 @@ defmodule Flezha.Relay.Lifecycle do
   # unbound stream needs and the reason no second one is built. A runner with no
   # channel pool at all has nothing to wait for and passes straight through.
   defp await_stream_bound(%Overwatch{} = state) do
-    case Gate.await_bind(state.channel, stream_bind_wait_ms()) do
+    case StreamChannel.Gate.await_bind(state.channel, stream_bind_wait_ms()) do
       :ok -> :ok
       {:error, :stream_unbound} -> {:error, {:stream_unbound, state.channel}}
     end
