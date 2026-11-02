@@ -20,6 +20,7 @@ defmodule FlezhaTest.Relay.RebindTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Extension.Table.Workers
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.StreamChannel
   alias Flezha.Runner.StreamPool
   alias Flezha.Process.Hub
   alias Flezha.Process.Timer
@@ -417,6 +418,30 @@ defmodule FlezhaTest.Relay.RebindTest do
     stub(ProcessHub, :is_alive?, fn _hub_id -> false end)
     assert {:noreply, asked_again} = Overwatch.handle_info(:handover_abandoned, handed)
     assert asked_again.handed_over? and Timer.armed?(asked_again.timers, :handover)
+  end
+
+  # fails when: input that reaches a relay after a move read its state off the
+  # runner, which dropped the relay as it answered, is confirmed taken and lost;
+  # or a cold move that leaves the runner its relay until the stop drains it
+  # stops forwarding.
+  test "input after a move took the runner's state is refused for a retry" do
+    stub(StreamChannel, :io_in, fn
+      nil, _id, _payload -> {:error, :no_stream}
+      _channel, _id, _payload -> :ok
+    end)
+
+    state = running_state()
+    refused = {:error, {:not_accepting_input, state.id}}
+
+    for {migration, after_take} <- [{:hot, refused}, {:cold, :ok}] do
+      stub(Hub, :migration, fn _hub_id -> migration end)
+      assert {:reply, :ok, _} = Overwatch.handle_call({:ingest, "m", %{}}, self(), state)
+
+      {:noreply, handed} = Overwatch.handle_info(:calls_handed_over, state)
+
+      assert {:reply, ^after_take, _} =
+               Overwatch.handle_call({:ingest, "m", %{}}, self(), handed)
+    end
   end
 
   # fails when: a handover away from a runner that is gone stops shipping the

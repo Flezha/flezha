@@ -619,13 +619,15 @@ defmodule Flezha.Relay.Overwatch do
     do: {:noreply, Outbound.timeout(timer_fired(state, {:call, id}), id)}
 
   # The move started: the rows went with the handover; the arriving process answers them.
+  # Input then finds no stream, as when unbound: the runner dropped the relay with its state.
   @impl true
   def handle_info(:calls_handed_over, %__MODULE__{} = state) do
     keys = Map.keys(state.calls.rows) ++ Map.keys(state.calls.out)
     state = Enum.reduce(keys, state, &cancel_timer(&2, {:call, &1}))
+    channel = if Handover.in_band?(state), do: nil, else: state.channel
 
     state = %{state | calls: Inbound.depart(state.calls), handed_over?: true, cause: :move}
-    {:noreply, Handover.await_replacement(state)}
+    {:noreply, Handover.await_replacement(%{state | channel: channel})}
   end
 
   def handle_info(:handover_abandoned, %__MODULE__{} = state),

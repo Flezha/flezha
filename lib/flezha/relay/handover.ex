@@ -42,12 +42,16 @@ defmodule Flezha.Relay.Handover do
   otherwise, and then the disk is the only surviving state.
 
   The waiting callers leave with the payload: this process drops its rows
-  (`:calls_handed_over`), so its terminate owes them nothing. The move starts
-  here, so the lineage is released here too: this process lives on until the
-  new one registers, and a bid from this node in that gap could only fence it.
+  (`:calls_handed_over`), so its terminate owes them nothing. That notice is
+  sent first, so every message arriving while the state is read is handled
+  after it. The move starts here, so the lineage is released here too: this
+  process lives on until the new one registers, and a bid from this node in
+  that gap could only fence it.
   """
   @spec prepare(Overwatch.t()) :: {map(), binary() | nil}
   def prepare(%Overwatch{} = state) do
+    send(self(), :calls_handed_over)
+
     # The hub takes this answer only within its state query timeout, so the
     # serialize and the wait for its cut share that one budget.
     deadline = System.monotonic_time(:millisecond) + Durations.get(:migration_state_query_ms)
@@ -62,7 +66,6 @@ defmodule Flezha.Relay.Handover do
     }
 
     Lifecycle.release_lineage(%Overwatch{state | cause: :move})
-    send(self(), :calls_handed_over)
     {handover, serialize_data}
   end
 
@@ -126,15 +129,23 @@ defmodule Flezha.Relay.Handover do
   # persistent class the destination therefore restores from the copy it pulls
   # once this process has stopped and flushed, and nothing travels in-band.
   defp in_band_state(%Overwatch{} = state, deadline) do
-    if Hub.migration(Identificator.hub(state.namespace)) == :cold and
-         ClassRegistry.persistent?(Overwatch.relay_class(state)) do
-      nil
-    else
+    if in_band?(state) do
       case serialize_relay_sdk(state.runner_id, state.id) do
         nil -> state.snapshot
         data -> await_cut(state, data, deadline)
       end
     end
+  end
+
+  @doc """
+  Whether a move reads the relay's state off its runner, which drops the relay
+  as it answers: every move but a cold one of a class that keeps its state on
+  disk, whose runner keeps the relay until this process stops and drains it.
+  """
+  @spec in_band?(Overwatch.t()) :: boolean()
+  def in_band?(%Overwatch{} = state) do
+    Hub.migration(Identificator.hub(state.namespace)) != :cold or
+      not ClassRegistry.persistent?(Overwatch.relay_class(state))
   end
 
   @doc """

@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A relay whose state a move has read off its runner no longer forwards later input to that
+  runner, which had already dropped the relay: a confirming sender is told the relay is not
+  accepting input and sends it again, instead of being told it was taken and losing it.
 - An input or control frame written on a runner stream whose socket has just closed is now
   refused instead of answered as sent and dropped by the transport, so a confirming sender
   sends it again (or a durable relay re-forwards it on the next bind) rather than losing it.

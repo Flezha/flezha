@@ -86,8 +86,11 @@ runner for one, when the hub moving the relay runs `ColdSwap` and the relay's cl
 The destination SHALL restore the relay from the copy it pulled, as for an empty handover, and
 SHALL NOT mark it as arrived by handover. When the class is not persistent, the source SHALL
 ship the runner's serialized state as before, and the relay SHALL arrive with the state the
-runner had when the state was taken. The source SHALL learn the strategy from its running hub,
-not from the namespace record.
+runner had when the state was taken. From that read on, the source SHALL forward no input to
+that runner, which dropped the relay as it answered: a confirming input that reaches the source
+afterwards SHALL be answered as for a relay without a stream, refused for a class without an
+input log, so its sender sends it again. The source SHALL learn the strategy from its running
+hub, not from the namespace record.
 
 #### Scenario: Input taken between the state query and the stop survives
 
@@ -100,6 +103,12 @@ not from the namespace record.
 - **GIVEN** a relay whose class is not persistent, in a cold namespace, holding in-memory state
 - **WHEN** it moves to another controller
 - **THEN** it arrives with the state its runner serialized when the move took it
+
+#### Scenario: Input that reaches the source after its state was read is refused, not lost
+
+- **GIVEN** a relay without an input log whose state a move has read off its runner
+- **WHEN** a confirming input reaches the source before it stops
+- **THEN** the input is refused as not accepted, and its sender sends it again
 
 ### Requirement: Input sent while no copy runs is not buffered
 
