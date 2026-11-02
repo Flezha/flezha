@@ -100,8 +100,12 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
             id,
             [window_ms: 60_000, before: fn -> send!(ns, id, "retry:2") end],
             fn
-              {:output, _, _} -> :done
-              {:part, payload, md} -> send(test, {:part, payload, md}) && :continue
+              {:output, _, _} ->
+                :done
+
+              {:part, payload, md} ->
+                send(test, {:part, payload, md})
+                :continue
             end
           )
 
@@ -138,9 +142,16 @@ defmodule FlezhaTest.System.PartStreamE2ETest do
         id,
         [window_ms: 60_000, idle_ms: 500, before: fn -> send!(ns, id, "20") end],
         fn
-          :idle -> send(test, :idle) && :continue
-          {:part, _, _} -> send(test, :part) && :continue
-          {:output, "done:20", _} -> :done
+          :idle ->
+            send(test, :idle)
+            :continue
+
+          {:part, _, _} ->
+            send(test, :part)
+            :continue
+
+          {:output, "done:20", _} ->
+            :done
         end
       )
 

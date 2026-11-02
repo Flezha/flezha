@@ -44,7 +44,13 @@ defmodule Flezha.Service.ListenerTest do
   # its outcome and every event come back to the test.
   defp listening(opts, handler \\ nil) do
     test = self()
-    handler = handler || fn event -> send(test, {:event, self(), event}) && :continue end
+
+    handler =
+      handler ||
+        fn event ->
+          send(test, {:event, self(), event})
+          :continue
+        end
 
     pid =
       spawn(fn ->
@@ -444,8 +450,12 @@ defmodule Flezha.Service.ListenerTest do
       test = self()
 
       counting = fn
-        :idle -> send(test, {:idle, now()}) && :continue
-        {:output, "still attached", _} -> :done
+        :idle ->
+          send(test, {:idle, now()})
+          :continue
+
+        {:output, "still attached", _} ->
+          :done
       end
 
       %{receiver: receiver, id: id} = listening([idle_ms: 10, window_ms: 3_600_000], counting)
@@ -469,7 +479,11 @@ defmodule Flezha.Service.ListenerTest do
     # anything but the last event comes less than an interval after one.
     test "events reset the interval" do
       test = self()
-      tick = fn kind -> send(test, {:tick, kind, now()}) && :continue end
+
+      tick = fn kind ->
+        send(test, {:tick, kind, now()})
+        :continue
+      end
 
       handler = fn
         :idle -> tick.(:idle)

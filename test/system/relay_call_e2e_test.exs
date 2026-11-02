@@ -133,8 +133,18 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
         Listener.listen(
           ctx.namespace,
           "pricing",
-          [direction: :calls, window_ms: 60_000, before: fn -> send(test, :watching) && :ok end],
-          &(send(test, {:calls, &1}) && :continue)
+          [
+            direction: :calls,
+            window_ms: 60_000,
+            before: fn ->
+              send(test, :watching)
+              :ok
+            end
+          ],
+          fn calls ->
+            send(test, {:calls, calls})
+            :continue
+          end
         )
       end)
 
@@ -363,8 +373,18 @@ defmodule FlezhaTest.System.RelayCallE2ETest do
         Listener.listen(
           ctx.namespace,
           anna,
-          [direction: :calls, window_ms: 60_000, before: fn -> send(test, :watching) && :ok end],
-          &(send(test, {:calls, &1}) && :continue)
+          [
+            direction: :calls,
+            window_ms: 60_000,
+            before: fn ->
+              send(test, :watching)
+              :ok
+            end
+          ],
+          fn calls ->
+            send(test, {:calls, calls})
+            :continue
+          end
         )
       end)
 
