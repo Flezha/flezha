@@ -64,7 +64,7 @@ jobs:
       - name: Install cargo-about
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-about
+          tool: cargo-about@0.9.3
 
       # One step, and CI keeps no list of its own. The three checks are rows in
       # the gate runner: the formatter driver (which prints a `==>` line per

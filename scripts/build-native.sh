@@ -157,7 +157,7 @@ done
 # travels with them and CI diffs it against a fresh run.
 command -v cargo-about >/dev/null 2>&1 || {
   echo "cargo-about required to regenerate THIRD_PARTY_NOTICES.md." >&2
-  echo "  cargo install cargo-about --locked --features cli" >&2
+  echo "  cargo install cargo-about@0.9.3 --locked --features cli" >&2
   exit 1
 }
 # cargo-about has no up-to-date check of its own: it runs when what it reads

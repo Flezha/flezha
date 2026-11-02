@@ -145,7 +145,7 @@ GATES = (
               "git ls-files -co --exclude-standard -z | xargs -0 -P \"$(nproc)\" -n 300 "
               "sh -c 'reuse lint-file \"$@\" || exit $(($? == 1 ? 1 : 255))' reuse-lint"]},
     {"id": "third-party-notices", "group": "format", "finding": "status:1",
-     "tools": ["cargo-about:cargo install cargo-about"],
+     "tools": ["cargo-about:cargo install cargo-about@0.9.3 --locked --features cli"],
      "argv": ["bash", "-c",
               'g="${TMPDIR:-/tmp}/third_party_notices.md"; '
               # A generator that cannot run is not a stale notices file: keep
