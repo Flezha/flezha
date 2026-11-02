@@ -50,7 +50,7 @@ The system SHALL combine each subscriber's `{:ok, ctx}` return value into the ac
 
 ### Requirement: Cold-start only, snapshot-wins on migration
 
-The system SHALL invoke the init-state plugin chain only when a relay is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `relay-state-persistence` capability. On migration (the Overwatch's rebind, `handle_call({:rebind, _})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated relay. On reconnect of a Cell whose Relay has `keeps_state = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `relay-state-persistence`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
+The system SHALL invoke the init-state plugin chain only when a relay is started cold — that is, when its Builder `init_values` is `%{}` AND there is no incoming migration snapshot AND there is no incoming `RestoreInitState` changelog payload from the `durability-cell-state` capability. On migration (the Overwatch's rebind, `handle_call({:rebind, _})`), the existing snapshot-or-inline-`init_values` logic MUST be preserved unchanged; init-state providers MUST NOT run for a migrated relay. On reconnect of a Cell whose Relay has `keeps_state = true` AND whose agent-side state is non-empty (snapshot file or WAL records exist), the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}` (per `durability-cell-state`) instead of via `init_values`; init-state providers MUST NOT run for a Cell restored via `RestoreInitState`.
 
 For Cells whose Relay has `keeps_state = false`, OR whose agent-side state is empty (no snapshot, no WAL records), the existing init-state capability flow runs unchanged: the init-state plugin chain runs (cold start), or the inline Builder `init_values` is used (cold start with non-empty inline values), or the migration snapshot is used (migrated relay).
 
@@ -73,8 +73,8 @@ For Cells whose Relay has `keeps_state = false`, OR whose agent-side state is em
 
 #### Scenario: Cell restart via changelog
 
-- **WHEN** a Cell reconnects AND its Relay has `keeps_state = true` AND the agent has a non-empty WAL or snapshot under the `relay-state-persistence` capability
-- **THEN** the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Cell; the SDK SHALL restore via `init_state(cell_key)` + runtime auto-snapshot-decode + change-log fold per `relay-state-persistence`
+- **WHEN** a Cell reconnects AND its Relay has `keeps_state = true` AND the agent has a non-empty WAL or snapshot under the `durability-cell-state` capability
+- **THEN** the agent SHALL deliver state via `RestoreInitState{cell_id, snapshot_bytes, change_log_bytes}`; the init-state plugin chain MUST NOT run for that Cell; the SDK SHALL restore via `init_state(cell_key)` + runtime auto-snapshot-decode + change-log fold per `durability-cell-state`
 
 #### Scenario: Cell restart with persistence disabled at Relay class
 
@@ -88,7 +88,7 @@ For Cells whose Relay has `keeps_state = false`, OR whose agent-side state is em
 
 ### Requirement: Per-plugin timeout enforcement
 
-The system SHALL enforce each `:on_relay_init` subscriber's `timeout_ms` by running its `on_relay_init/2` invocation inside an isolated task. If the task does not return within `timeout_ms` milliseconds, the system MUST forcibly terminate the task and treat the timeout as an error for the subscriber's `on_error` handling. A subscriber crashing or raising MUST NOT crash the Overwatch process. Timeout and exception handling MUST be driven by the fold-kind dispatch semantics defined in the `relay-extensions` capability.
+The system SHALL enforce each `:on_relay_init` subscriber's `timeout_ms` by running its `on_relay_init/2` invocation inside an isolated task. If the task does not return within `timeout_ms` milliseconds, the system MUST forcibly terminate the task and treat the timeout as an error for the subscriber's `on_error` handling. A subscriber crashing or raising MUST NOT crash the Overwatch process. Timeout and exception handling MUST be driven by the fold-kind dispatch semantics defined in the `plugin-providers` capability.
 
 #### Scenario: Subscriber returns within timeout
 - **WHEN** a subscriber's `on_relay_init/2` returns `{:ok, ctx}` within `timeout_ms`

@@ -1,7 +1,14 @@
 # controller-configuration Specification
 
 ## Purpose
-TBD - created by archiving change read-every-knob-once. Update Purpose after archive.
+
+How the controller is configured. Every configuration knob is one row of one table, read through one
+function, with one default that every document renders; names read by more than one runtime are
+declared once, every documented variable is observed where its row says, and the boot refuses an
+unknown key or a value its row refuses. The Erlang VM arguments the release sets are declared in one
+place and can be overridden without a rebuild, per-run resources derive from one run token, and a
+relay class setting lives in one layer.
+
 ## Requirements
 ### Requirement: Every configuration knob SHALL be one row of one table, read through one function
 

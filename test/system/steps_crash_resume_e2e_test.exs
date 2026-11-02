@@ -98,7 +98,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
               TaskJournal.restore_state(oid) != nil
           end)
 
-        # steps-task-journal: task A's completion was journaled at the task barrier
+        # steps-durability: task A's completion was journaled at the task barrier
         # before the crash, so the resume SKIPS it — its WAL keeps exactly the
         # pre-crash record (a redo would append a second one) and task B runs
         # seeded from the journaled handoff. Both SDKs honour this contract.
@@ -157,7 +157,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
         end
       end
 
-      # `sdk-graph-authoring` fan-in on a live runner: the diamond
+      # `relay-graph` fan-in on a live runner: the diamond
       # A→(B1→B2, C)→Join. DiamB2 BLOCKS until the release env — one level
       # below its sibling arm, because siblings commit at one level barrier —
       # so the SIGKILL lands with A, B1 and C committed and B2 mid-run. The
@@ -228,7 +228,7 @@ defmodule FlezhaTest.System.StepsCrashResumeE2ETest do
   describe "opted-out class (uds)" do
     @describetag transport: :uds, scenario: :uds_optout
 
-    # steps-task-journal: a `durable: false` class skips the
+    # steps-durability: a `durable: false` class skips the
     # task-commit handshake entirely — no journal, no WAL — and a crash-resume
     # keeps the re-run-from-top contract: with nothing restored and nothing
     # journaled, the only way the chain completes on the replacement is a

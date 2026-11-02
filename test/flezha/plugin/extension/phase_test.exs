@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Plugin.Extension.PhaseTest do
   @moduledoc """
-  The two-phase plugin lifecycle (capability `relay-extensions`,
+  The two-phase plugin lifecycle (capability `plugin-providers`,
   "Two-phase plugin lifecycle gated on SDK readiness"). A plugin enters the
   `:prepared` phase on `Table.bulk_subscribe/2`; `bulk_activate/2` starts its
   declared worker and calls `activate/1`, moving it to `:running`. A provider

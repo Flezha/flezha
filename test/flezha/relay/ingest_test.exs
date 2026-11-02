@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Relay.IngestTest do
   @moduledoc """
-  `relay-to-relay-messaging`: the confirming ingest entry point and its
+  `relay-messaging`: the confirming ingest entry point and its
   verdicts. Every case drives `Overwatch.handle_call/3` directly on a struct —
   the state machine is the unit here, as in `overwatch_suspension_test`.
 

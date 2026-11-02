@@ -12,7 +12,7 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::runner::{RunnerMessage, RunnerNode};
 
-/// Task-commits observed by the fake controller (`steps-task-journal`
+/// Task-commits observed by the fake controller (`steps-durability`
 /// barrier): every `TaskCommit` the drain helpers ack is recorded here
 /// so the gating/handoff assertions can inspect what would be journaled.
 pub static TASK_COMMITS: Mutex<Vec<crate::pb::TaskCommit>> = Mutex::new(Vec::new());
@@ -22,7 +22,7 @@ pub static TASK_COMMITS: Mutex<Vec<crate::pb::TaskCommit>> = Mutex::new(Vec::new
 pub static ITER_COMMITS: Mutex<Vec<crate::pb::IterCommit>> = Mutex::new(Vec::new());
 
 /// Park notifications observed by the fake controller
-/// (`durable-suspension`) — the instance evicted itself at a
+/// (`steps-durability`) — the instance evicted itself at a
 /// committed boundary.
 pub static ITER_PARKS: Mutex<Vec<crate::pb::IterPark>> = Mutex::new(Vec::new());
 

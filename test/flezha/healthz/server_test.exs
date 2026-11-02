@@ -1,10 +1,10 @@
 defmodule Flezha.Healthz.ServerTest do
   @moduledoc """
-  HTTP `/healthz` contract per `convergence-self-healing`
+  HTTP `/healthz` contract per `cluster-convergence`
   §4.6-4.9. Drives the listener over a real TCP socket — the
   hand-rolled `:gen_tcp` request parser is the artefact under test.
 
-  Covered scenarios match the `convergence-self-healing` capability:
+  Covered scenarios match the `cluster-convergence` capability:
     * `/` returns `pong\\n`
     * `/healthz` returns 200 healthy after a tick observation with
       no stalled relays.

@@ -1,4 +1,4 @@
-//! Effect results (`recorded-effects`): what `ctx.effect` keeps so a re-run of
+//! Effect results (`relay-determinism`): what `ctx.effect` keeps so a re-run of
 //! the invocation reads the result of an outside call instead of making it
 //! again.
 //!

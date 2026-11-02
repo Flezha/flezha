@@ -1,7 +1,7 @@
 defmodule Flezha.Cluster.GroupedHashingMultiNodeTest do
   @moduledoc """
   `Flezha.Cluster.GroupedHashing` across real nodes: the scenarios of
-  `grouped-hashing-distribution` that only a cluster can answer.
+  `cluster-placement` that only a cluster can answer.
 
   The hub here holds nothing of Flezha's — groups, children and nodes only —
   because the strategy names no namespace, runner or factory and is meant to

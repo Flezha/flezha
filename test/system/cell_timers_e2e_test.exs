@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.CellTimersE2ETest do
   @moduledoc """
-  End-to-end proof for per-Cell timers (`cell-timers`) against a live
+  End-to-end proof for per-Cell timers (`relay-timers`) against a live
   runner: an input arms an idle deadline, the quiet period
   elapses, the Relay's timer wheel fires it, and `on_timer`'s Change shows
   up in the Cell's state — with no further input to carry it.

@@ -1,6 +1,6 @@
 defmodule Flezha.State.InputLogCallRetentionTest do
   @moduledoc """
-  `durable-input-log`: a record carrying a live call (a request in its
+  `durability-input-log`: a record carrying a live call (a request in its
   callee's log, a `Response` in its caller's) is kept until its
   `flz.deadline_at` plus `call_retention_margin_ms` has passed, and one
   carrying a message id until its append time plus that margin, whatever the

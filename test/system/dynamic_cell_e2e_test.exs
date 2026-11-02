@@ -8,7 +8,7 @@ defmodule FlezhaTest.System.DynamicCellE2ETest do
   reaper → delete-RPC → agent-handler path with no other end-to-end coverage.
 
   The key is declared on the WIRING (`.key_by` / `.keyBy`), so this is also
-  what pins `stream-transforms`' promise that an equivalent topology reaches
+  what pins `relay-graph`' promise that an equivalent topology reaches
   byte-identical Cell identities on disk: the assertions below are unchanged
   from when the key was a Tasklet trait hook.
 

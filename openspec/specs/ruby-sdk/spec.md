@@ -1,8 +1,19 @@
 # ruby-sdk Specification
 
 ## Purpose
-TBD - created by archiving change ruby-sdk. Update Purpose after archive.
+
+The Ruby SDK, a poll host over `flz_core`. Its authoring surface is class based with explicit
+registration and carries the shared vocabulary at full parity, with state and changes serialized
+through author-declared `to_h`/`from_h` over MessagePack and unsigned 64-bit values kept intact. Its
+default host is a fetch-and-run thread pool with a starvation supervisor; every blocking core call
+releases the GVL, it refuses use after a fork, and per-VM state is Ractor-local. It is a feature of
+`flz_core_ffi` shipped as precompiled platform gems or a source gem built at the pinned core tag,
+enables YJIT and `Process.warmup`, negotiates the schema version before connecting, and is proven
+through the shared conformance and end-to-end suites, its own unit-test workflow and a pinned
+coverage library.
+
 ## Requirements
+
 ### Requirement: The Ruby SDK is a poll host over `flz_core`
 
 The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain no kernel code: transport, framing, ordering, per-cell exclusivity, durability, retries, the retry→park ladder, timers, credit, routing, the steps driver and reconnect SHALL remain in the core. The SDK's responsibilities SHALL be limited to the authoring surface, the codec for user types, the threading host, and idiomatic errors.
@@ -336,3 +347,247 @@ gate, `replay_equals`, raising on a mismatch, with no `replay_equals!` or `repla
 - **WHEN** application code calls `runner.start` then `runner.close` twice
 - **THEN** the runner SHALL connect, then drain and release the core once
 
+### Requirement: The default host is a fetch-and-run thread pool with a starvation supervisor
+
+The SDK's default executor SHALL run a base pool of Ruby threads, each looping `poll → dispatch → complete` on itself, and one supervisor thread parked in the core pool governor's supervisor entry (`flz_core_pool_supervise`), which waits on the core's starvation signal and answers what to spawn. Each starvation observation SHALL start one additional worker, up to a ceiling; workers above the base SHALL retire after the governor's idle time, 30 s without work. The base SHALL default to the machine's processor count, passed to the governor as this SDK's default, and SHALL be configured by `FLEZHA_WORKER_POOL_SIZE`; the ceiling SHALL default to ten times the base, never below it, and SHALL be configured by `FLEZHA_WORKER_POOL_MAX`; the core reads both. The supervisor SHALL drain the core's notice queue on every answer. The SDK SHALL introduce no additional pool knob.
+
+#### Scenario: A workload that never starves runs on the base pool
+- **WHEN** handlers return promptly and the runner is saturated with work
+- **THEN** the pool SHALL remain at the base size and no worker SHALL be started by the supervisor
+
+#### Scenario: Blocked handlers buy threads
+- **WHEN** every worker is inside a handler that blocks for seconds and work is queued in the core
+- **THEN** the supervisor SHALL observe starvation and start workers up to the ceiling, and the queued work SHALL be served
+
+#### Scenario: Grown workers retire
+- **WHEN** the blocking workload ends and the grown workers idle past the retirement streak
+- **THEN** the pool SHALL return to the base size
+
+#### Scenario: Concurrency is bounded by the core, not the pool
+- **WHEN** the pool is larger than `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`
+- **THEN** work activations underway SHALL NOT exceed the core's cap
+
+### Requirement: Every blocking core call releases the GVL
+
+The binding SHALL release the global VM lock for the duration of every blocking core call — `poll`, the pool supervisor entry `pool_supervise`, `complete` and the steps relay inbox receive — so that no blocking core call prevents another Ruby thread from running.
+
+#### Scenario: A blocked steps relay receive does not freeze the VM
+- **WHEN** a steps stage waits on the inbox for several seconds
+- **THEN** other Ruby threads, including fetchers, SHALL continue to execute Ruby code throughout the wait
+
+#### Scenario: A blocked poll does not freeze the VM
+- **WHEN** every worker is parked in `poll` with no work available
+- **THEN** an unrelated Ruby thread SHALL run at full speed
+
+### Requirement: The poll timeout is the documented interrupt granularity
+
+Because shutdown wakes every poller and the ABI exposes no per-thread wake, worker threads SHALL bound each `poll` by a timeout, and that timeout SHALL be the documented upper bound on how quickly thread interruption, `Interrupt`, and runner close are observed. The value SHALL be documented alongside the guarantee.
+
+#### Scenario: Interrupt is observed within the bound
+- **WHEN** the process receives an interrupt while all workers are parked in `poll` with no work
+- **THEN** shutdown SHALL begin within the documented poll timeout rather than waiting for work to arrive
+
+### Requirement: The executor seam may never affect per-cell ordering
+
+The SDK SHALL expose an executor seam with at least a thread executor (default) and a `Fiber::Scheduler` executor. Under every executor the thread that fetches SHALL be a real Ruby thread — never a fiber, and never borrowed from a shared I/O pool the application also uses — and an activation SHALL be completed only after its dispatch has returned. An executor SHALL NOT observe, reorder, batch or coalesce activations.
+
+#### Scenario: Ordering holds under either executor
+- **WHEN** the conformance suite runs under the thread executor and again under the fiber executor
+- **THEN** per-cell input ordering and output identity SHALL be identical in both runs
+
+#### Scenario: The fiber executor does not fetch on a fiber
+- **WHEN** the fiber executor is active
+- **THEN** `poll` SHALL be called from a real thread and activations SHALL reach fibers through a hand-off queue
+
+#### Scenario: Completing from a different thread than the one that polled is supported
+- **WHEN** an executor dispatches on a thread or fiber other than the fetcher and completes there
+- **THEN** the completion SHALL be accepted and the cell released identically to same-thread completion
+
+### Requirement: The SDK spawns no processes and refuses use after a fork
+
+The SDK SHALL NOT fork, spawn or supervise processes; process count SHALL be the orchestrator's decision, and each process SHALL be one runner. The SDK SHALL record the process that started the core and SHALL raise, naming the rule, on any core call made from a different process. The documented entrypoint order SHALL be: declare classes, warm up, fork if the user forks at all, then start in the child.
+
+#### Scenario: A core call after a fork is refused loudly
+- **WHEN** a process forks after the core has been started and the child calls into the core
+- **THEN** the SDK SHALL raise an error naming the fork rule, rather than wedging or silently failing to serve
+
+#### Scenario: Fork-then-start is supported
+- **WHEN** a user declares classes in the parent, forks, and starts the core in each child
+- **THEN** each child SHALL serve as an independent runner
+
+### Requirement: Per-VM SDK state is Ractor-local, and the Ractor executor is deferred by name
+
+All per-VM SDK state — the binding handle, the class registry view and the active executor — SHALL be resolved per Ractor rather than through a process-wide singleton, so that a Ractor executor can be added without restructuring. The Ractor executor SHALL be recorded as deferred by name, with the follow-up change that owes it, in the SDK's documentation.
+
+#### Scenario: No process-wide singleton holds the binding
+- **WHEN** the SDK's state accessors are inspected
+- **THEN** each SHALL resolve per Ractor, and none SHALL be a bare constant or global holding a mutable handle
+
+#### Scenario: The deferral is named, not silent
+- **WHEN** the SDK's documentation page is read
+- **THEN** it SHALL name the Ractor executor as deferred and name the follow-up that owes it
+
+### Requirement: The parallelism model is documented as arithmetic
+
+The SDK documentation SHALL state, without hedging: Ruby-level handler execution is bounded to one core per process; everything below the poll seam runs with the GVL released and is genuinely parallel; work underway is capped by `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` regardless of pool size; and the lever for CPU-bound handlers is process count, not thread count.
+
+#### Scenario: The ceiling is stated, not implied
+- **WHEN** a reader consults the Ruby SDK page for how to scale CPU-bound handlers
+- **THEN** it SHALL name process count as the lever and SHALL state the one-core-per-process bound explicitly
+
+### Requirement: The Ruby veneer is a feature of `flz_core_ffi`, not a separate crate
+
+The Ruby binding SHALL be built from `flz_core_ffi` under a `ruby` cargo feature, beside the existing `jni` feature, as a one-to-one veneer over the same C entry points in the same crate. A second crate, a second ABI surface, or a Ruby-only reimplementation of an entry point SHALL be a defect.
+
+#### Scenario: One crate exports both veneers
+- **WHEN** `flz_core_ffi` is built with `--features ruby` and with `--features jni`
+- **THEN** both SHALL produce the same C ABI plus their language veneer, from the same source crate
+
+#### Scenario: The veneer adds no entry point of its own
+- **WHEN** the Ruby veneer's exported functions are compared against the C entry points
+- **THEN** each SHALL map one-to-one onto a C entry point, with no Ruby-only kernel path
+
+### Requirement: Precompiled platform gems install without a Rust toolchain
+
+The SDK SHALL publish a precompiled native gem per supported platform, each embedding the built native library, so that installation on a supported platform requires no Rust toolchain, no cargo invocation and no network fetch of Rust dependencies. A source gem SHALL remain available as the fallback and SHALL state its toolchain requirement. Cross-built gems SHALL be produced by CI on every change to the SDK or the core, and the gem CI installs SHALL be the gem the end-to-end arm runs.
+
+#### Scenario: Installation on a supported platform needs no Rust
+- **WHEN** the gem is installed on a supported platform in an image with no Rust toolchain
+- **THEN** installation SHALL succeed and the runner SHALL start
+
+#### Scenario: The published gem is the tested gem
+- **WHEN** the end-to-end Ruby arm runs in CI
+- **THEN** it SHALL run against the cross-built gem produced by the same steps relay, not against an ad-hoc local build
+
+### Requirement: Schema version is negotiated before any controller connection
+
+Context creation SHALL negotiate the activation schema version between the gem's veneer and the core and SHALL fail with an error naming both versions when they are incompatible, before any controller connection is attempted.
+
+#### Scenario: A stale gem against a newer core fails at boot
+- **WHEN** a gem built against schema version N loads a core speaking an incompatible N+1
+- **THEN** startup SHALL fail naming both versions, and no connection SHALL be attempted
+
+### Requirement: YJIT is enabled by default and reported at startup
+
+The runner entry point SHALL enable YJIT when the running Ruby supports it and the user has not already decided, SHALL allow the user to override that decision, and SHALL report the resulting JIT state in the runner's startup line so a measurement can never be ambiguous about it.
+
+#### Scenario: Default-on and reported
+- **WHEN** the runner starts on a Ruby with YJIT available and no user override
+- **THEN** YJIT SHALL be enabled and the startup line SHALL say so
+
+#### Scenario: The user's decision wins
+- **WHEN** the user has explicitly disabled YJIT
+- **THEN** the SDK SHALL NOT enable it, and the startup line SHALL report it disabled
+
+### Requirement: `Process.warmup` runs after declaration and before serving
+
+The runner entry point SHALL call `Process.warmup` after class declaration completes and before the first `poll`, and the SDK documentation SHALL state that ordering together with the rule that the core must not be started before a fork.
+
+#### Scenario: Warmup precedes the first poll
+- **WHEN** the entry point runs
+- **THEN** `Process.warmup` SHALL be called after the last class declaration and before any activation is polled
+
+#### Scenario: The prefork ordering is documented in one place
+- **WHEN** the SDK page's startup section is read
+- **THEN** it SHALL give the order declare → warm up → fork → start, and SHALL state that starting the core before a fork is unsupported
+
+### Requirement: The reference runner image documents jemalloc
+
+The reference runner image SHALL use jemalloc and the SDK documentation SHALL name heap fragmentation under long-lived workers as the reason. jemalloc SHALL NOT be a hard runtime requirement of the gem.
+
+#### Scenario: The image ships it and the gem does not require it
+- **WHEN** the reference image is built and, separately, the gem is installed on a host without jemalloc
+- **THEN** the image SHALL run with jemalloc preloaded, and the gem SHALL install and run without it
+
+### Requirement: The gem is licensed and marked as SDK-side
+
+The gem SHALL carry the SDK-side licence the other SDKs carry, SHALL be recorded in the repository's licensing manifest, and SHALL ship the third-party notices for the native code it embeds.
+
+#### Scenario: Licensing is declared, not implied
+- **WHEN** the licensing manifest and the built gem are inspected
+- **THEN** the gem SHALL be recorded SDK-side, and the notices for the embedded native library SHALL travel inside the gem
+
+### Requirement: The source gem builds from the wrapper crate at the pinned core tag
+
+The gem's `extconf.rb` SHALL build the wrapper crate in the gem's `ext/`
+directory, whose one dependency is `flz_core_ffi` at the pinned core tag with
+the `ruby` feature, after trying the precompiled library first. It SHALL name
+no path outside the gem. When neither the precompiled library nor `cargo` and
+`git` are available it SHALL refuse naming both and the precompiled gem as
+the alternative. The precompiled platform gems the packaging requirement
+already mandates SHALL be produced by the core release job for every
+supported triple and Ruby minor.
+
+#### Scenario: A source install with a toolchain builds
+- **GIVEN** cargo and git on the host and no precompiled library
+- **WHEN** the source gem installs
+- **THEN** `extconf.rb` SHALL build the wrapper at the pinned tag and the runner SHALL start
+
+#### Scenario: A source install without a toolchain refuses usefully
+- **GIVEN** no cargo on the host and no precompiled library
+- **WHEN** the source gem installs
+- **THEN** it SHALL refuse naming cargo, git and the precompiled gem for the platform
+
+### Requirement: A Ruby test app joins the shared conformance suite without changing the harness
+
+The change SHALL add `test/apps/ruby_runner/` with a `conformance.json` declaring every field the manifest requirement names, and SHALL add `ruby` as a runtime option of the nightly end-to-end steps relay. The suite SHALL admit the SDK with no change to `test/helpers/`, `test/system/`, `test/test_helper.exs` or the formatter, and with no new clause in the static gate: the gate's per-SDK tables — where an SDK spells its language byte, and which of its sources may name a connect variable — SHALL each gain one row, which is what admission means, and no rule SHALL be added, relaxed or special-cased for `ruby`.
+
+#### Scenario: The app is admitted by manifest and one gate row
+- **WHEN** the Ruby test app and its manifest are added
+- **THEN** `mix test` SHALL pass with no edit to the harness, the system tests or the formatter, and the gate's diff SHALL be one row per per-SDK table
+
+#### Scenario: A missing manifest field fails the gate
+- **WHEN** the manifest omits a required field or names a capability outside the vocabulary
+- **THEN** the static gate SHALL fail naming `ruby` and the offending field
+
+### Requirement: The Ruby manifest matches the reference for what it carries and names what it defers
+
+For every capability the Ruby manifest does not defer, its fixture set SHALL equal the Rust reference manifest's. Fixture ids SHALL be the reference's ids, unprefixed, and each SHALL implement the same scenario with the same output channel names, output bytes and declared options. Every deferred capability SHALL be named in `deferred`, and the SDK's documentation SHALL name the follow-up change that owes it.
+
+#### Scenario: Fixture parity with the reference
+- **WHEN** the gate compares `test/apps/ruby_runner/conformance.json` against `test/apps/rust_runner/conformance.json`
+- **THEN** every non-deferred capability's fixture set SHALL be equal, and no Ruby-prefixed fixture id SHALL exist
+
+#### Scenario: A deferral is named, not silent
+- **WHEN** the Ruby manifest defers a capability the reference carries
+- **THEN** it SHALL appear in `deferred` and the follow-up that owes it SHALL be named in the SDK's documentation page
+
+#### Scenario: A capability added later fails Ruby red until carried
+- **WHEN** a later change adds a vocabulary capability or a reference fixture
+- **THEN** the gate SHALL fail for `ruby` until the Ruby app carries it or defers it by name
+
+### Requirement: The end-to-end suite runs green under the Ruby runtime
+
+`FLEZHA_E2E_RUNTIME=ruby` SHALL run the system suite against the Ruby runner over every transport the manifest lists, and every non-deferred capability's tests SHALL pass. The runner SHALL honour the stdin-EOF teardown contract the harness uses to stop runners.
+
+#### Scenario: The full arm is green
+- **WHEN** `FLEZHA_E2E_RUNTIME=ruby mix test --include system` is run
+- **THEN** every test whose capability the manifest does not defer SHALL run and pass
+
+#### Scenario: The declaration snapshot pins the Ruby declaration keys
+- **WHEN** the smoke tier runs under `ruby`
+- **THEN** the decoded class declaration SHALL match the golden snapshot, and an unspelled or misspelled declaration key SHALL fail it
+
+### Requirement: The gem carries its own unit-test workflow
+
+The SDK SHALL have a CI workflow running the gem's unit tests on every supported Ruby version, running the concurrency requirements' scenarios (pool growth and retirement, GVL release, fork refusal, executor ordering) as real tests rather than documentation, and cross-building the platform gems.
+
+#### Scenario: Concurrency behaviour is tested, not asserted in prose
+- **WHEN** the gem's unit suite runs
+- **THEN** it SHALL include tests that observe pool growth under blocked handlers, retirement afterwards, a refused post-fork core call, and identical ordering under both executors
+
+### Requirement: The Ruby SDK SHALL declare a pinned coverage library
+
+The Ruby SDK's `flezha.gemspec` SHALL declare a coverage library as a development dependency at an exact version, alongside the `async`, `minitest`, `rake` and `rubocop` pins it already carries, so the gem's suite can report coverage from its own manifest.
+
+The suite SHALL load it through the `Rakefile`'s existing test task rather than through a second task added beside it, because a coverage run and a plain run SHALL exercise the same suite definition.
+
+#### Scenario: Coverage runs from the gemspec's development dependencies
+
+- **WHEN** the gem's development dependencies are installed into a clean checkout and the suite is run in coverage mode
+- **THEN** a coverage report SHALL be produced without installing a gem the gemspec does not name
+
+#### Scenario: One test task, not two
+
+- **WHEN** the `Rakefile` is read
+- **THEN** the coverage run SHALL use the existing test task's suite definition, and SHALL NOT duplicate it

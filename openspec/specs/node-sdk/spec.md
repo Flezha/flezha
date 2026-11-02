@@ -1,8 +1,19 @@
 # node-sdk Specification
 
 ## Purpose
-TBD - created by archiving change node-sdk. Update Purpose after archive.
+
+The Node SDK. Its authoring surface defines tasklets and relays with factory functions whose types
+drive the wiring, so a mismatched edge is a compile error; it carries the shared context, settings
+tree, short form and channel builder, serializes state and changes as MessagePack, and allows state
+to change only through declared changes. Its host never reaches a blocking core call from
+JavaScript: fetch threads are its own, a completion pool and starvation supervisor keep activations
+moving, dispatch can target one of N event loops, every activation is answered exactly once, and
+shutdown drains in-flight work. It ships as a feature of the existing ABI crate with prebuilt
+per-platform binaries and negotiates the schema version before connecting, and is proven through the
+conformance suite, its own harness and workflow, and Node as a measured runtime.
+
 ## Requirements
+
 ### Requirement: A Node Runner Entry Point Over the Poll Core
 
 The SDK SHALL provide a runner entry point that takes a namespace, accepts flow and steps
@@ -164,7 +175,7 @@ the defaults the other SDKs ship, and SHALL NOT require an observability depende
 
 ### Requirement: The channel builder carries merge, the latest-document router and flatMap
 
-The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(tasklet)` and `into(tasklet, nodeName)`, with the `multi-input-tasklets` semantics: a source is an entry stream or an inter-tasklet stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "tasklet", "group"}`) under one group per merge and SHALL take the merge refusals (`topology.merge_too_few_sources`, `topology.duplicate_merge_source`, `topology.edge_already_wired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `sdk-graph-authoring` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
+The Node channel builder SHALL offer `merge()`, returning a merge handle with `from(source, map)`, `keyBy(key)`, `into(tasklet)` and `into(tasklet, nodeName)`, with the `relay-graph` semantics: a source is an entry stream or an inter-tasklet stream declared on the same builder, each source's mapping composes after that source's own transforms, the key is declared once on the merge and applied to the mapped value on every source's edge, and `into` returns the merged tasklet's own output stream. The builder SHALL record each source as a chain closed by the core's `merge` link (`{"link": "merge", "tasklet", "group"}`) under one group per merge and SHALL take the merge refusals (`topology.merge_too_few_sources`, `topology.duplicate_merge_source`, `topology.edge_already_wired`) from the reference check, carrying no rule of its own. The builder SHALL offer `routeLatest(documents, traffic, keyFn)` and `routeLatestNamed(documents, traffic, keyFn, nodeName)` as the `relay-graph` router, packaged in the SDK as a single-cell tasklet with journaled `{document, version, delivered}` state. Stream handles SHALL offer `flatMap(fn)` beside `map` and `filter`: the closure answers an iterable, each element reaches the consumer on its own, an empty iterable is a drop, and the transform chain is applied as a list so `filter` and `flatMap` are one mechanism; the record carries the same `transform` link as `map`.
 
 #### Scenario: Two channels merge into one tasklet
 - **WHEN** a relay declares `c.merge().from(ticks, (t) => ({kind: 'tick', ...t})).from(quotes, (q) => ({kind: 'quote', ...q})).keyBy((v) => v.symbol).into(Detector)`
@@ -449,3 +460,418 @@ input with `feed`, answer an `Outcome` and expose the Cell's state as `state`.
 - **WHEN** `close()` is awaited twice on a started runner
 - **THEN** the second call SHALL resolve without effect
 
+### Requirement: No Blocking Core Call Is Synchronously Reachable From JavaScript
+
+The SDK SHALL NOT expose any blocking core entry point as a synchronous call from JavaScript.
+`flz_core_poll` SHALL NOT be exported to JavaScript at all. `flz_core_complete`,
+`flz_core_spawn_result` read with a nonzero timeout, and `flz_core_start`
+SHALL be reachable only as asynchronous operations whose blocking work executes on a thread that is
+not an event-loop thread.
+
+This requirement exists to close a process-wide deadlock. Under the default `DropNothing` overflow
+policy a completion's routing push waits until the consumer's mailbox drains, and the consumer
+drains only when its handler runs. If the waiting thread is the event loop, the loop is the only
+thread that could run that handler, and no other thread can free it.
+
+Non-blocking entry points (abandon, buffer free, monotonic clock, last-error, `flz_core_spawn_request`,
+and `flz_core_spawn_result` read with a timeout of zero) MAY be synchronous. `ctx.spawnSteps` SHALL
+therefore return its handle synchronously, the handle's `tryResult()` SHALL be synchronous, and only
+its `wait()` SHALL be asynchronous.
+
+#### Scenario: A blocking entry point cannot be called from the event loop
+- **WHEN** the veneer's exported surface is enumerated in a test
+- **THEN** every blocking core entry point SHALL be absent or asynchronous, and the absence SHALL be
+  asserted rather than reviewed
+
+#### Scenario: A full no-drop consumer does not wedge the process
+- **WHEN** a tasklet emits onto a full consumer mailbox declared `DropNothing`, with the
+  consumer's handler runnable only on an event loop
+- **THEN** the completion SHALL wait off-loop, the consumer's activation SHALL be dispatched and
+  drained, and the completion SHALL then return
+
+#### Scenario: Spawn returns on the event loop and waits off it
+- **WHEN** a tasklet calls `ctx.spawnSteps('worker', payload)` on an event loop and then
+  awaits `handle.wait()` while the controller is slow to answer
+- **THEN** the spawn call SHALL return the handle without blocking the loop, `tryResult()` SHALL
+  answer pending without blocking the loop, and the waiting read SHALL run on a thread that is not
+  an event-loop thread
+
+### Requirement: Fetch Threads Are the SDK's Own and Never the Runtime's Shared Pool
+
+The SDK SHALL poll on native threads it owns, and SHALL NOT poll on the JavaScript runtime's shared
+I/O threadpool. A fetch thread SHALL NOT execute user code, so that it is always available to enter
+`poll`. The fetcher count SHALL be configurable and SHALL default to the value the Java host uses.
+
+#### Scenario: Polling does not consume shared I/O capacity
+- **WHEN** the runner is polling with every fetcher blocked in the core
+- **THEN** the runtime's shared I/O threadpool SHALL remain fully available to unrelated file,
+  name-resolution and cryptographic work
+
+### Requirement: The Completion Pool Grows So a Blocked Push Cannot Exhaust It
+
+Completions SHALL execute on a pool of native threads whose size grows when a completion is queued
+and every thread is occupied, up to a configured ceiling. The pool SHALL be sized through the
+existing worker-pool base and ceiling configuration rather than through new configuration
+vocabulary, and threads above the base SHALL retire after an idle streak.
+
+A fixed pool is refused: if every thread parks pushing to one consumer, the result that would drain
+that consumer has no thread to run on, and the deadlock re-forms one level out from the one the
+event-loop rule closes.
+
+Growth SHALL be driven by the host's own observation of a queued completion with no free thread,
+because the core cannot observe the host's completion queue.
+
+#### Scenario: A blocked push does not exhaust the pool
+- **WHEN** every completion thread is parked pushing to a full consumer mailbox and a further
+  completion is queued
+- **THEN** the pool SHALL grow, the queued completion SHALL execute, and the runner SHALL make
+  progress
+
+#### Scenario: The pool returns to base
+- **WHEN** the condition that grew the pool has cleared and the added threads have been idle for the
+  retirement streak
+- **THEN** the pool SHALL return to its base size
+
+### Requirement: A Starvation Supervisor Covers Queued Direct Activations
+
+The SDK SHALL park one thread in the core's starvation wait, and SHALL respond to an observation by
+making a thread available to enter `poll`. The supervisor SHALL end when the runner shuts down,
+observing the same three-way shape as `poll`.
+
+This covers the condition the core can observe — a queued direct activation with no thread inside
+`poll` — which is distinct from, and not a substitute for, the completion-pool growth rule.
+
+#### Scenario: A queued direct activation is promoted
+- **WHEN** a restore fold, snapshot request or steps relay step is queued with no thread inside `poll`
+  for the core's dwell
+- **THEN** the observation SHALL result in a thread entering `poll` and the activation SHALL be
+  handed out
+
+### Requirement: Dispatch Targets One of N Event Loops Over a Single Code Path
+
+An activation SHALL be handed to one event loop selected by the host, and the selection SHALL be the
+only difference between the single-loop and multi-loop configurations. The number of dispatch loops
+SHALL be configurable both in code and by environment variable, SHALL default to the single-loop
+configuration, and SHALL NOT require a different authoring surface, registration form, or dispatch
+path.
+
+The selection SHALL send every activation addressed to a cell to the same loop, and SHALL spread
+only the prepare crossing — the one activation that names no cell, because the key is what it is
+computing — across loops. A dispatch loop is a separate isolate holding the state its restore fold
+materialized, so an activation for that cell sent elsewhere would find nothing to fold into.
+Exclusivity makes either selection safe for concurrency; only one of them is safe for state.
+
+A cell that carries no key is still a cell: a single-cell tasklet holds state exactly as a
+keyed one does, and an absent key SHALL NOT be read as an absent cell.
+
+#### Scenario: A cell's activations reach the loop holding its state
+- **WHEN** a cell's restore fold has run on one dispatch loop under a multi-loop configuration
+- **THEN** its later activations SHALL be dispatched to that same loop
+
+#### Scenario: A single-cell tasklet is not spread across loops
+- **WHEN** successive activations reach a tasklet that declares no keys under a multi-loop
+  configuration
+- **THEN** they SHALL all be dispatched to the loop holding that tasklet's one cell
+
+#### Scenario: The tiers share one dispatch path
+- **WHEN** the same handler module is run under the single-loop and multi-loop configurations
+- **THEN** dispatch, completion, ordering and results SHALL be identical, and the handler source
+  SHALL be unchanged
+
+#### Scenario: Per-cell ordering holds across loops
+- **WHEN** successive inputs for one cell are dispatched under a multi-loop configuration
+- **THEN** they SHALL be processed in enqueue order regardless of which loop takes each activation
+
+### Requirement: Handlers Are Registered by Module Specifier
+
+The runner entry point SHALL accept handler modules by specifier rather than as already-imported
+values, in every dispatch configuration. A dispatch loop SHALL import the module itself.
+
+Accepting an imported value is refused because a live value cannot cross into a separate isolate, so
+it would make enabling additional dispatch loops a breaking change to the authoring surface.
+
+#### Scenario: Enabling more loops is a flag, not a rewrite
+- **WHEN** a runner written against the single-loop default is reconfigured for multiple loops
+- **THEN** no change to the handler module or its registration SHALL be required
+
+#### Scenario: An unimportable module is named
+- **WHEN** a registered specifier cannot be imported
+- **THEN** startup SHALL fail naming the specifier and chaining the original import error
+
+### Requirement: Module-Scope State Is Per Dispatch Loop, and the SDK Says So
+
+The SDK SHALL document that state held at module scope is instantiated once per dispatch loop, and
+SHALL prove both configurations in its test app. Durable state SHALL be unaffected, being owned by
+the core through the declared change fold.
+
+#### Scenario: Isolation is observable and specified
+- **WHEN** a handler module holds module-scope state and runs under a multi-loop configuration
+- **THEN** each loop SHALL hold its own instance, and this SHALL be asserted by a test rather than
+  described only in prose
+
+### Requirement: Every Activation Is Answered Exactly Once Through a Structural Guard
+
+Every dispatched activation SHALL be answered exactly once — completed, failed, or abandoned —
+through a guard that runs on any exit path, including a thrown error, an unhandled promise
+rejection, and the termination of the dispatch loop that held it. The guard SHALL NOT be a
+convention applied at each return site.
+
+An unanswered activation retires its cell for the life of the process, so this is a correctness
+requirement rather than a hygiene one.
+
+#### Scenario: A throwing handler abandons rather than retiring its cell
+- **WHEN** a handler throws, or its returned promise rejects
+- **THEN** the activation SHALL be answered, and the cell SHALL receive subsequent activations
+
+#### Scenario: A terminating dispatch loop abandons what it held
+- **WHEN** a dispatch loop terminates with activations outstanding
+- **THEN** every outstanding activation SHALL be abandoned before the replacement loop begins
+  dispatching
+
+### Requirement: A Dispatch Loop That Ends Is Replaced
+
+A dispatch loop that ends for any reason other than shutdown SHALL be replaced without user
+action, and its departure SHALL NOT permanently reduce the host's dispatch capacity. A fetch thread
+that ends on an error SHALL likewise be replaced.
+
+The single-loop configuration SHALL document that the main event loop cannot be replaced, and that
+this is the reason a multi-loop configuration is the recommended production posture.
+
+#### Scenario: A dead worker is replaced
+- **WHEN** a dispatch worker terminates unexpectedly
+- **THEN** a replacement SHALL start, the configured loop count SHALL be restored, and the failure
+  SHALL be reported
+
+### Requirement: Event-Loop Delay Is Observed and Reported
+
+The SDK SHALL observe its dispatch loops' event-loop delay and SHALL report a warning, naming the
+tasklet most recently dispatched on that loop, when delay crosses a documented threshold.
+
+A synchronous compute-bound handler is the one failure this SDK cannot prevent, so it SHALL be
+diagnosable at its source rather than only as a controller-side stall verdict.
+
+#### Scenario: A blocking handler is diagnosed at the host
+- **WHEN** a handler occupies its dispatch loop past the delay threshold
+- **THEN** the SDK SHALL warn naming the tasklet and the observed delay, and SHALL point at the
+  multi-loop configuration as the remedy
+
+### Requirement: Shutdown Drains In-Flight Activations
+
+Shutdown SHALL be observed from a signal, from end of file on standard input, and from a
+controller-requested stop, and SHALL drain in-flight activations before exit. The poll timeout SHALL
+bound how quickly a shutdown request is observed, and that bound SHALL be documented.
+
+#### Scenario: Every dispatch loop is drained
+- **WHEN** shutdown is requested with activations in flight across several dispatch loops
+- **THEN** every loop SHALL be drained or its activations abandoned, and the process SHALL exit
+  without requiring a further signal
+
+#### Scenario: A held loop does not prevent the runner from being stopped
+- **WHEN** end of file is reached on standard input while a handler is holding its dispatch loop
+- **THEN** the end of file SHALL be observed off that loop, the remaining loops SHALL be given the
+  documented grace period to drain, and the process SHALL end without a signal
+
+### Requirement: The Parallelism Model Is Stated as Arithmetic
+
+The SDK's documentation SHALL state its concurrency limits as numbers rather than adjectives: that
+concurrent activations are bounded by the core's in-flight cap and not by the fetcher or loop count,
+that compute parallelism equals the dispatch loop count, and that the single-loop default has a
+compute parallelism of one.
+
+#### Scenario: The documentation states the bound
+- **WHEN** a user reads the concurrency documentation
+- **THEN** it SHALL name the in-flight cap, the fetcher default, the loop count's role, and which of
+  those bounds which kind of work
+
+### Requirement: The Node Veneer Is a Feature on the Existing ABI Crate
+
+The Node binding SHALL be built from the existing C ABI crate under its own feature, beside the
+Java shim, and SHALL be a one-to-one veneer over the same entry points. It SHALL NOT introduce a
+second crate, a second copy of the ABI, or a kernel capability the C ABI does not expose.
+
+Enabling the feature SHALL NOT alter the crate's existing artifacts or the binaries other SDKs ship.
+
+#### Scenario: The veneer adds no ABI surface
+- **WHEN** the Node veneer's entry points are compared with the C ABI's
+- **THEN** each SHALL correspond to an existing entry point, and no new kernel capability SHALL be
+  reachable through it
+
+#### Scenario: The feature is additive
+- **WHEN** the crate is built with and without the Node feature
+- **THEN** the existing artifacts SHALL be unchanged and the Java shim SHALL be unaffected
+
+### Requirement: Schema Version Is Negotiated Before Any Controller Connection
+
+The binding SHALL pass its compiled-against activation schema version at context creation, and a
+mismatch SHALL fail with an error naming both versions before any controller connection is
+attempted.
+
+#### Scenario: A skewed binary refuses to start
+- **WHEN** the JavaScript package and the native binary were built against different schema versions
+- **THEN** startup SHALL fail naming both versions, and no connection SHALL be attempted
+
+### Requirement: Payloads Cross the Boundary Without an Intermediate Copy
+
+User payload bytes SHALL be exposed to JavaScript without an intermediate allocation, and every
+buffer the core hands out SHALL be freed through the ABI's free entry point before control returns,
+so that no native buffer escapes into the JavaScript heap unmanaged.
+
+#### Scenario: No native buffer escapes
+- **WHEN** activations are dispatched and completed under sustained load
+- **THEN** native memory SHALL stay bounded and every core-allocated buffer SHALL have been freed
+
+### Requirement: Errors and Panics Map Onto Host Errors
+
+Core errors SHALL surface as host errors preserving the engine's detail, and a panic crossing the
+boundary SHALL become a host error rather than terminating the process.
+
+#### Scenario: A core error carries its detail
+- **WHEN** an entry point fails
+- **THEN** the thrown error SHALL carry the core's recorded reason
+
+### Requirement: Prebuilt Binaries Ship as Per-Platform Optional Dependencies
+
+The package SHALL distribute native binaries as separate per-platform packages resolved through
+optional dependencies, with a source build from a checkout as the fallback, so that installing the
+SDK requires neither a Rust toolchain nor downloading binaries for platforms the user does not run.
+Every per-platform package the SDK declares SHALL be produced by the build and published at the same
+version as the parent package, and SHALL be published before it, so the parent never declares a
+version that cannot yet resolve. The set of declared packages and the set the loader resolves SHALL derive from
+one table, so a platform cannot be added to one and omitted from the other. When no platform
+package resolved and no fallback is available, the SDK SHALL refuse at load with a message naming
+the detected platform, the package it looked for, and how to build the binary locally.
+
+Bundling every supported triple into one artifact is refused: it is the distribution shape already
+recorded as owed a split, and this package has an established convention for doing it correctly from
+the start.
+
+#### Scenario: One platform's binary is installed
+- **WHEN** the package is installed on a supported platform
+- **THEN** only that platform's binary SHALL be fetched, and no toolchain SHALL be required
+
+#### Scenario: An unsupported platform is told what a source build needs
+- **WHEN** the package is installed on a platform no per-platform package is published for
+- **THEN** the SDK SHALL name that platform as unpublished and state the source build's
+  requirements, rather than naming a package that does not exist
+
+#### Scenario: Every declared platform package is produced
+- **WHEN** the build's published artefacts are enumerated
+- **THEN** every package named in the SDK's optional dependencies SHALL be among them, at the parent's version
+
+#### Scenario: A resolution failure is not silent
+- **WHEN** the SDK is loaded on an installation where no platform package resolved and no fallback binary is present
+- **THEN** it SHALL raise an error naming the detected platform, the expected package and the local build command, rather than surfacing a dynamic-loader error
+
+#### Scenario: The shipped file list matches the documented fallback
+- **WHEN** the package's file list is compared against the fallback the documentation describes
+- **THEN** the fallback SHALL be present in the published package, or the documentation SHALL state that it is available only in a source checkout
+
+### Requirement: One Binary Serves Every Supported Host Version
+
+The binding SHALL target the stable ABI its host runtime provides, so that one binary per platform
+serves every supported host version with no per-version rebuild. The supported host version window
+SHALL be documented, and the package SHALL be consumable from both module systems.
+
+#### Scenario: A host upgrade needs no rebuild
+- **WHEN** the host runtime is upgraded within the supported window
+- **THEN** the installed binary SHALL continue to load
+
+#### Scenario: Both module systems import the package
+- **WHEN** the package is imported from an ECMAScript module and required from a CommonJS module
+- **THEN** both SHALL resolve and expose the same surface
+
+### Requirement: The Node Test App Is Admitted by the Conformance Suite
+
+The SDK SHALL ship a Node test app with a conformance manifest declaring its runtime, command
+template, test and bench artifact profiles, build command, connect timeout, transports, deferred
+capabilities and fixtures, and SHALL be dispatchable as a runtime option in the nightly end-to-end
+workflow. The suite SHALL pass for every capability the manifest does not defer, over every
+transport the manifest lists.
+
+Admitting the runtime SHALL require no change to the shared test helpers, the system suites or the
+test helper configuration — a new SDK adds an app, not harness clauses. The conformance gate SHALL
+take one row of data: where that SDK spells its language byte, so the manifest is checked against
+the constant rather than trusted.
+
+#### Scenario: The suite admits the runtime
+- **WHEN** the end-to-end suite is run against the Node runtime
+- **THEN** every non-deferred capability SHALL pass, and the smoke tier's controller-side
+  declaration snapshot SHALL match the reference
+
+#### Scenario: The manifest is the scope matrix
+- **WHEN** the SDK's documentation names the capabilities it carries
+- **THEN** it SHALL point at the manifest rather than restate it, and a discrepancy SHALL fail the
+  gate
+
+### Requirement: Both Dispatch Configurations Are an Axis of the Run
+
+The dispatch loop count SHALL be an axis of the end-to-end run rather than a property of a fixture
+file. One test app SHALL be run under both the single-loop and multi-loop configurations, and there
+SHALL be no per-configuration fixture set.
+
+#### Scenario: One app proves both configurations
+- **WHEN** the suite is run under each dispatch configuration
+- **THEN** the same fixtures SHALL execute, and results SHALL be identical for every capability that
+  does not concern dispatch topology
+
+### Requirement: The Pool-Wedge Capability Is Decided by the Drill
+
+The manifest SHALL claim the pool-wedge capability if the multi-loop configuration produces the
+wedge signature under the drill, and SHALL otherwise defer it by name with a recorded follow-up. The
+claim SHALL NOT be asserted from the design.
+
+#### Scenario: The drill decides the claim
+- **WHEN** the wedge drill is run against the Node runner
+- **THEN** the capability SHALL be claimed or deferred according to the drill's result, and the
+  manifest SHALL record which
+
+### Requirement: The Node Runner Honours the Harness Teardown Contract
+
+The Node test app SHALL terminate when its standard input reaches end of file, so the harness can
+stop runners without signals, and SHALL drain in-flight activations before exiting.
+
+#### Scenario: Closing stdin stops the runner
+- **WHEN** the harness closes the runner's standard input
+- **THEN** the runner SHALL drain its in-flight activations and exit without requiring a signal
+
+### Requirement: A Tasklet Test Harness at Parity With the Other SDKs
+
+The SDK SHALL ship a tasklet test harness at parity with those the Rust and Java SDKs provide:
+construction from an initial state or from a restore payload, application of inputs, timer firing,
+event-time advance, inspection of recorded changes and emits, and a replay-equality gate that folds
+the recorded change log against a freshly constructed initial state and reports a mismatch with both
+states for inspection.
+
+A handler SHALL remain an ordinary function that a plain unit test can invoke with no runtime present
+and no controller running.
+
+#### Scenario: Replay equality is gated in a unit test
+- **WHEN** a handler whose change log does not reproduce its terminal state is exercised through the
+  harness
+- **THEN** the replay-equality gate SHALL report a mismatch carrying the expected and actual states
+
+#### Scenario: A handler is testable with no runtime
+- **WHEN** a defined handler is called directly from a unit test with no runner started
+- **THEN** it SHALL execute as an ordinary function
+
+### Requirement: Node Is a Measured Runtime, Not an Assumed One
+
+The round-trip benchmark SHALL accept the Node runtime as an arm, and the SDK SHALL land with
+per-runtime numbers recorded for it rather than inheriting another runtime's. Measurements SHALL
+interleave arms inside a round, and SHALL report the dispatch configuration under which they were
+taken.
+
+#### Scenario: Numbers are attributed to the runtime and configuration
+- **WHEN** the round-trip benchmark is run for the Node runtime
+- **THEN** the recorded results SHALL name the runtime and the dispatch configuration, and SHALL NOT
+  be reported as another runtime's
+
+### Requirement: The Package Has Its Own Test and Build Workflow
+
+The SDK SHALL ship a continuous-integration workflow running its unit tests, its type-check
+fixtures including those expected to fail compilation, and its native binary builds for every
+supported platform.
+
+#### Scenario: A broken refusal fails the build
+- **WHEN** a compile-time refusal stops working
+- **THEN** the fixture asserting that refusal SHALL fail the workflow

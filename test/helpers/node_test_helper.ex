@@ -897,7 +897,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   after it. Stopped on exit.
 
   A channel in this state answers every `io_in/3` with `{:error, :no_stream}`,
-  which is the window `input-delivery-guarantee` is about. It stays unbound
+  which is the window `durability-input-log` is about. It stays unbound
   until the caller binds a stream to it. Its session is in `_system`, the
   namespace a class nobody claimed resolves to, so a frame for such a class is
   judged as the session's own.

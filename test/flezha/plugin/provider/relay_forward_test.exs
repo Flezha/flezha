@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Plugin.Provider.RelayForwardTest do
   @moduledoc """
-  `relay-to-relay-messaging`, "Effectively-once delivery across the hop for
+  `relay-messaging`, "Effectively-once delivery across the hop for
   durable senders": a payload an effectively-once source emits through the
   relay-forward plugin reaches a durable target once, even when the target's
   confirmation is lost after its journal append and the worker retries.

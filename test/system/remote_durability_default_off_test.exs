@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
   @moduledoc """
-  The default-off pin for `remote-durability-tier`.
+  The default-off pin for `durability-remote-tier`.
 
   The tier's whole claim to being safe to land is that `backend: none` — the
   default — is byte-identical to a build without it. This runs a real

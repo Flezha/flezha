@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.EffectivelyOnceE2ETest do
   @moduledoc """
-  §6.1 end-to-end proof for `effectively-once-output` against a live Rust
+  §6.1 end-to-end proof for `durability-effectively-once` against a live Rust
   runner: a source drives a tier relay (`tier_store`, declared
   `effectively_once()`) whose keyed outputs land on a conforming changelog
   sink (BeamMsgForward with metadata → upsert by `flz.key`, dedup ledger by

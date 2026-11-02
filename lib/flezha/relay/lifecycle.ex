@@ -113,7 +113,7 @@ defmodule Flezha.Relay.Lifecycle do
 
     # Sleeping instances are rediscovered from durable state alone (the park
     # record and the input log), so a controller redeploy neither binds them to
-    # a runner nor loses their sleep (`durable-suspension`). An
+    # a runner nor loses their sleep (`steps-durability`). An
     # instance with undelivered input is not asleep any more: it binds and
     # consumes it. The floor is seeded first, since the log answers that
     # question against it.

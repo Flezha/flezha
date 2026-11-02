@@ -487,7 +487,7 @@ end
 
 defmodule FlezhaTest.Relay.BindReforwardTest do
   @moduledoc """
-  `input-delivery-guarantee`: an input the Controller accepts is delivered or
+  `durability-input-log`: an input the Controller accepts is delivered or
   refused, never accepted-and-dropped — plus §6.3, that the `io_in` path counts
   an unbound-stream drop instead of discarding the channel's answer silently.
 

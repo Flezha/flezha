@@ -307,7 +307,7 @@ defmodule Flezha.Relay.Ingest do
 
   # Durable ingest point — the one place an inbound payload is made durable
   # BEFORE it is forwarded, asynchronously, for an instance with durable input
-  # (`durable-input-log`): a flow relay on the effectively-once tier or a durable
+  # (`durability-input-log`): a flow relay on the effectively-once tier or a durable
   # steps relay. The payload is appended to the instance's input log and the
   # answer stamps `flz.offset`, which the SDK threads into the effect record or
   # the iteration commit as the consumed offset. A `flz.msg_id` the log still

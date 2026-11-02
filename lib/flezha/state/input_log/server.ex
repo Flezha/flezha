@@ -33,7 +33,7 @@ defmodule Flezha.State.InputLog.Server do
   defp header_time(<<ts_ms::64-big, @header_version::8, _::binary>>), do: ts_ms
   defp header_time(_), do: nil
 
-  # Source-ingestion credit (`credit-grant-flow-control` §source): appends
+  # Source-ingestion credit (`transport-flow-control` §source): appends
   # debit the per-Relay ledger; min-watermark advances drain it (batched
   # by the low watermark); at zero credit the append parks via a deferred
   # reply, which the Overwatch holds open on the source's call

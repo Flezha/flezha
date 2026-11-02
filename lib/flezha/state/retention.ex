@@ -122,7 +122,7 @@ defmodule Flezha.State.Retention do
   end
 
   # Effectively-once tier: truncate each relay's input-log below its
-  # min durable consumed-offset watermark (`durable-input-log`).
+  # min durable consumed-offset watermark (`durability-input-log`).
   defp sweep_input_logs() do
     Enum.each(Sweep.all_classes(), &Sweep.run/1)
   end

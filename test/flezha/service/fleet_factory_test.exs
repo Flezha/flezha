@@ -1,6 +1,6 @@
 defmodule Flezha.Service.FleetFactoryTest do
   @moduledoc """
-  `factory-description` on one controller: a factory's announcement carries its
+  `runner-factory-sync` on one controller: a factory's announcement carries its
   class declarations and the richer graph, the factory rows carry them, and
   `Fleet.factory` describes one factory whether or not an instance of it runs.
   """

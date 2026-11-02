@@ -1,7 +1,13 @@
 # sdk-local-mode Specification
 
 ## Purpose
-TBD - created by archiving change add-sdk-local-mode. Update Purpose after archive.
+
+Running a relay graph in process with no controller. Every SDK can run a declared graph locally on
+the production code path: the caller supplies input on a named entry channel and receives outputs
+through a callback, timers the class declares fire, the run states at runtime that nothing is
+durable, and anything local mode cannot honour is refused. The surface is not named as testing
+material, and it proves every capability the language layer owns.
+
 ## Requirements
 ### Requirement: A declared relay graph SHALL run in process with no controller
 

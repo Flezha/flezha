@@ -1,7 +1,12 @@
 # controller-process-model Specification
 
 ## Purpose
-TBD - created by archiving change bound-every-call-find-every-process-once. Update Purpose after archive.
+
+The rules the controller's processes follow. Every call into a resolved process is bounded and
+declares its refusal, one resolver answers which process serves a relay, a watched process's death
+is recorded once by one watch seam, timers go through one helper, supervised children take their
+restart kind from one table, and a fan-out over many targets takes a bound.
+
 ## Requirements
 ### Requirement: Every call into a resolved process SHALL be bounded and SHALL declare its refusal
 

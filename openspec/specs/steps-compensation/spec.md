@@ -1,0 +1,313 @@
+# steps-compensation Specification
+
+## Purpose
+
+Undoing the work of a steps relay. A tasklet may declare a compensation hook; when a run ends
+abnormally the hooks fire in reverse order per Cell, within the rollback scope the author chose,
+durably recorded so a crash mid-rollback completes, and the ended run reports whether its rollback
+completed. `flz relay rewind` takes a looping relay back to a committed iteration: it compensates
+every later iteration, restores the handoff and inbox offset of that boundary, republishes re-run
+output under a bumped epoch, and is refused when an unwound tasklet staged output it cannot undo.
+
+## Requirements
+
+### Requirement: A tasklet may declare a compensation hook
+
+A tasklet in a steps relay MAY declare a compensation hook (`compensate(ctx, completed_output, state)` in Rust/Java). The hook expresses how to undo that tasklet's committed effect and SHALL receive the tasklet's own completed output and its cell state, so it can undo precisely. Declaring a compensation hook SHALL be optional per tasklet; tasklets without one SHALL be skipped during compensation.
+
+#### Scenario: A tasklet declares compensation
+
+- **WHEN** a tasklet that performs a reversible side effect declares a `compensate` hook
+- **THEN** the hook SHALL be registered for that tasklet and invoked only during abnormal-termination compensation, receiving that tasklet's completed output and state
+
+### Requirement: Compensation fires in reverse order, per cell
+
+When a steps relay terminates abnormally — a tasklet returns an error, or it is force-stopped after partial progress — the SDK SHALL fire the compensation hooks of already-**completed** tasklets in **reverse order**, back to the last commit point (see modes below). For a tasklet that ran across multiple cells, its hook SHALL fire **once per cell** that ran, the cells being the ones the stage's record names by identity — a declared cell, or one a keyed edge created during the pass — and never a declared cell the stage handed nothing to; the order among those cells is unspecified (they are independent keys). A cell that ran a compensable tasklet in a stage the declared rollback mode would still undo SHALL stay live until the instance ends or that stage falls outside the rollback scope, so its hook runs over the state it accumulated; idle-TTL eviction SHALL NOT reach it. Undo SHALL be strictly top-down: an earlier step SHALL NOT be undone while a later step that depended on it is kept. Tasklets that had not completed SHALL NOT be compensated, and a clean termination (`ok`) SHALL NOT trigger compensation.
+
+#### Scenario: Reverse-order compensation on a failed step
+
+- **WHEN** tasklets A then B then C completed and tasklet D then failed
+- **THEN** the SDK SHALL compensate C, then B, then A (D is not compensated, having not completed), and the relay SHALL complete with status `error`
+
+#### Scenario: Per-cell compensation for a parallel tasklet
+
+- **WHEN** a completed tasklet that ran across multiple cells is compensated
+- **THEN** its `compensate` hook SHALL fire once per cell that ran, each receiving that cell's own output and state
+
+#### Scenario: A keyed tasklet is compensated once per key
+
+- **WHEN** a keyed compensable tasklet ran for keys `a`, `b` and `c` in a pass and a later tasklet then fails
+- **THEN** its hook SHALL fire exactly three times, once in each of `a`'s, `b`'s and `c`'s cells, a compensation-done marker SHALL be written for each of those three identities, and a static cell of the same stage that received nothing SHALL NOT be compensated
+
+#### Scenario: An idle keyed cell a rollback could reach is kept for its undo
+
+- **WHEN** an all-or-nothing `per_input` steps relay committed an iteration in which a keyed compensable tasklet ran for `a`, the instance then idles past the tasklet's TTL, and a later iteration fails
+- **THEN** `a`'s cell is still live when the rollback reaches that iteration, and its hook runs over the state it committed
+
+#### Scenario: Clean completion does not compensate
+
+- **WHEN** a steps relay completes all work successfully
+- **THEN** no compensation hook SHALL fire
+
+### Requirement: Rollback scope is the author's choice per relay
+
+A steps relay SHALL declare one of two rollback modes; the default SHALL be **all-or-nothing**:
+
+- **all-or-nothing (default):** any failure SHALL undo **all** completed tasklets in reverse, back to the start.
+- **keep-progress:** each successfully finished **loop iteration** SHALL commit (be kept); a failure SHALL undo only the **in-flight** iteration's completed tasklets, in reverse. Within a single iteration — or in a no-loop pass — rollback SHALL be all-or-nothing.
+
+The commit boundary SHALL be the loop iteration (or the end of a no-loop pass), NEVER an individual tasklet, so that a classic single-pass saga (`reserve → charge → ship`) still undoes earlier steps when a later step fails.
+
+#### Scenario: All-or-nothing undoes the whole job
+
+- **WHEN** an all-or-nothing steps relay completes tasklets Op1 and several loop iterations of Op2, then fails
+- **THEN** every completed tasklet including all finished Op2 iterations SHALL be undone in reverse, back to Op1
+
+#### Scenario: Keep-progress keeps finished iterations
+
+- **WHEN** a keep-progress steps relay finishes loop iterations 1–9 of a tasklet and iteration 10 fails
+- **THEN** only iteration 10's completed steps SHALL be undone, and iterations 1–9 (and any tasklet before the loop) SHALL be kept
+
+### Requirement: Compensation is durably recorded and crash-safe
+
+For a durable steps relay, the completion of each tasklet SHALL be durably recorded (a compensation-intent record) and each compensation's completion SHALL likewise be recorded (a compensation-done record). A crash during compensation SHALL resume the remaining hooks on respawn rather than re-running already-completed compensations. Compensation hooks SHALL be idempotent by author contract.
+
+#### Scenario: Crash mid-compensation resumes the remainder
+
+- **WHEN** a durable steps relay is compensating C → B → A, crashes after C's compensation is recorded, and is respawned
+- **THEN** it SHALL resume by compensating B then A, and SHALL NOT re-run C's compensation
+
+### Requirement: Compensation undo-effects are delivered durably and keyed
+
+Plugin-bound output emitted by a `compensate` hook SHALL NOT be delivered
+best-effort from the runner for a durable steps relay; it SHALL be written in the
+compensating Cell's own effect record when the `CompensateRun` activation settles, together
+with any state change the hook applied, and released through that Cell's outbox only once the
+`compensated` journal entry naming the record is durable and acked, so that a crash between a
+compensation's completion and its undo-output delivery re-drives the delivery with the same
+identity. The undo record's seq is above the forward record's, so an undo output can never
+collide with the forward output it reverses, and no compensation marker is added to its `flz.seq`.
+The `compensated` entry SHALL name, for each Cell whose hook ran, its identity, the seq of its
+undo record (absent when the hook changed nothing and emitted nothing) and the channels the
+record wrote on; the controller SHALL append it only after every named record is durable, exactly
+as it appends a `task_committed` entry. The existing per-cell compensation intent/done markers
+SHALL remain the sole mechanism deciding which hooks run on resume, and the done marker SHALL be
+written after the `compensated` entry is acked, so a crash between the two re-runs the idempotent
+hook rather than losing its undo output.
+
+#### Scenario: Undo output is durable and released at the compensated entry
+
+- **WHEN** tasklet B is compensated and its hook emits an undo record
+- **THEN** the undo output is in B's Cell's effect record before the `compensated` entry is appended, reaches the output only after that entry is acked, and carries `flz.seq` above B's forward output's
+
+#### Scenario: Undo delivery survives a crash
+
+- **WHEN** a compensation hook completes and the process crashes after the `compensated` entry is durable but before its undo output reaches the plugin
+- **THEN** after respawn the undo output SHALL be delivered (not lost), with the same identity, and the hook itself SHALL NOT re-run
+
+#### Scenario: Markers still gate hook execution
+
+- **WHEN** a respawned instance resumes a partially-complete compensation pass
+- **THEN** which hooks run SHALL be decided by the per-cell intent/done markers exactly as before this change
+
+### Requirement: A compensation entry the controller does not acknowledge SHALL leave its Cell unmarked and fail the run
+
+A `compensated` entry the controller refuses SHALL be sent again under the same reference id,
+as one whose acknowledgement timed out is, within the same count of three sends, and a late
+acknowledgement SHALL continue the undo. A Cell's compensation-done marker SHALL be written only
+after the `compensated` entry naming its undo record is acknowledged. When the sends run out, the
+Cell's done marker SHALL NOT be written, the remaining undo steps SHALL still run, and the run
+SHALL end with status `error` naming the tasklet whose compensation was not journaled and the
+controller's answer, whatever end the undo was planned to reach. A resume of such a run SHALL
+re-run that Cell's (idempotent) hook, since no marker says it ran.
+
+#### Scenario: A refused compensation entry is sent again
+
+- **WHEN** the controller refuses the first `compensated` entry of a saga's undo and acknowledges the second send
+- **THEN** both sends SHALL carry the same reference id, the Cell's done marker SHALL be written after the acknowledgement, and the run SHALL end as the undo planned
+
+#### Scenario: An unjournaled compensation fails the run and keeps the hook re-runnable
+
+- **WHEN** the controller refuses or never acknowledges all three sends of a `compensated` entry for tasklet `b`'s Cell while `a` is also to be undone
+- **THEN** `b`'s Cell SHALL have no done marker, `a`'s compensation SHALL still run and be marked, and the run SHALL end `error` with an error naming `b`
+
+### Requirement: A run that ended SHALL report whether its rollback completed
+
+`RelayCompleted` SHALL carry `undo`: `complete` when the run ended after a compensation pass in
+which every compensate hook it planned succeeded and was journaled, `partial` when any planned
+hook failed or its journal entry was refused, and empty when no compensation pass ran. The
+runtime that ran the pass SHALL set it, for durable and memory-only classes alike.
+
+#### Scenario: A fully rolled-back run
+
+- **WHEN** an `undo_all` steps run fails and every compensate hook succeeds
+- **THEN** its `RelayCompleted` SHALL carry `status: "error"` and `undo: "complete"`
+
+#### Scenario: A rollback with a failing hook
+
+- **WHEN** one compensate hook of the pass raises
+- **THEN** its `RelayCompleted` SHALL carry `undo: "partial"`
+
+### Requirement: Rewind to a committed iteration
+
+`flz relay rewind <instance> --to-iteration N` SHALL: compensate the
+tasklets of iterations above N in reverse order using the existing per-cell
+compensation machinery, restore the instance's inter-task handoff and consumed
+input-log offset to the iteration-N boundary, bump the epoch, and resume the loop at
+iteration N+1. Iteration N SHALL remain committed. Rewinding to an iteration that
+has not committed SHALL be refused with a typed error reporting the committed
+range, and SHALL make no durable change.
+
+Cell **state** SHALL be returned to the boundary by the unwound tasklets'
+own `compensate` hooks, the existing saga contract, in which a tasklet that
+needs its effects undone declares one and reverses its own State change. The
+engine SHALL NOT truncate the per-Cell state WAL to do it. A tasklet that
+declares no hook therefore leaves its State change in place, exactly as it does
+under an `UndoAll` crash rollback today.
+
+A rewind is undo-and-continue, not replay: an iteration's **input** is released
+to the input log's retention at its commit, and the instance's floor in that
+log, the highest offset any committed iteration consumed, SHALL NOT be lowered
+by a rewind, so the unwound iterations are not re-run from their original
+inputs even while the log still retains them. The loop resumes waiting, and the
+next input it receives is processed as iteration N+1.
+
+The rewind point SHALL be made durable before any compensation runs, so that a
+crash mid-rewind resumes as a rewind rather than as a partially unwound loop.
+
+#### Scenario: Chat rewound to an earlier turn
+
+- **WHEN** a chat relay has committed iterations 1..5 and the user rewinds
+  to iteration 3
+- **THEN** the tasklets of iterations 5 and 4 are compensated in that order,
+  the handoff equals the iteration-3 commit, and the next input is processed as
+  iteration 4
+
+#### Scenario: Retained input is not re-delivered by a rewind
+
+- **WHEN** the user rewinds to iteration 3 while the input log still retains
+  the inputs iterations 4 and 5 consumed
+- **THEN** the instance's floor stays at the offset iteration 5 consumed and
+  neither input is forwarded again
+
+#### Scenario: Crash mid-rewind resumes without double compensation
+
+- **WHEN** the process crashes after compensating iteration 5's tasklets but
+  before iteration 4's
+- **THEN** the resumed rewind compensates only iteration 4
+
+#### Scenario: Rewind target must be committed
+
+- **WHEN** the user requests `--to-iteration 7` but only 5 iterations have
+  committed
+- **THEN** the verb fails with a typed error listing the committed range and the
+  journal is unchanged
+
+### Requirement: A rewound iteration's work is neither resumed nor flushed
+
+After a rewind to iteration N, the journal SHALL fold as though the tasklets of
+iterations above N had not been committed: they SHALL NOT be skipped as
+already-done on resume, and the effect records those tasklets wrote whose outputs had not yet
+been handed to the plugin chain SHALL NOT be released: the rebind that follows the rewind
+SHALL re-derive each Cell writer's committed records from the folded journal's live entries
+and drop the queued entries no live entry names. An output already handed to the chain before the rewind SHALL be left to its
+confirmation, and the unwound tasklet's `compensate` hook is what reverses it. Tasklets
+journaled after the rewind SHALL fold normally, including a re-run of an iteration that was
+unwound, and their records SHALL be released as any committed stage's are.
+
+#### Scenario: Unreleased output of an unwound iteration is dropped
+
+- **WHEN** iteration 5 committed a tasklet whose Cell record's output had not yet reached the
+  plugin chain, and the instance is rewound to iteration 3
+- **THEN** that output is never released, the rebind drops it from the writer's queue, and the
+  re-run of iteration 4 releases only its own records' outputs
+
+#### Scenario: Re-run of an unwound iteration commits normally
+
+- **WHEN** iteration 4 re-runs after a rewind to iteration 3 and commits
+- **THEN** the journal folds to iteration 5 as the next iteration, and the re-run's
+  tasklets are the ones resumed from
+
+### Requirement: Rewound outputs republish under a bumped epoch
+
+A rewind SHALL bump the instance's journal epoch, which keys every later barrier's identity so
+a re-run's `TaskCommit` for a `(task_idx, iter)` the rewind unwound is a new entry and not a
+re-send of the old one. Outputs carry no journal epoch: an output's `flz.epoch` is its Cell's
+WAL epoch, unchanged by a rewind, and an output emitted after a rewind is a newer record of
+the same Cell, so its `flz.seq` sorts above every output of the unwound iterations and a
+conforming output accepts it as newer. Crash-retry re-emits within an un-rewound run SHALL keep
+their identity and be deduplicated. This is the same ordering rule a flow relay's outputs follow,
+and a stream correction's epoch bump stays the one thing that moves a Cell's `flz.epoch`.
+
+#### Scenario: A re-run turn's output sorts above the unwound turn's
+
+- **WHEN** iteration 4 re-runs after a rewind and emits on a channel that iteration
+  4's original run had already written to a guarded output
+- **THEN** the re-run's output carries the same `flz.epoch` and a higher `flz.seq` than the original, and the
+  output's final visible value for the affected identity is the re-run's
+
+#### Scenario: A re-sent barrier after a rewind is a new entry
+
+- **WHEN** iteration 4 re-runs after a rewind to 3 and its first tasklet commits
+- **THEN** its `task_committed(0, iter 4)` entry carries the bumped journal epoch and is appended, not answered from the unwound entry
+
+#### Scenario: Crash re-emit keeps its identity
+
+- **WHEN** a crash re-drives an un-rewound instance's undelivered outputs
+- **THEN** the re-driven outputs carry their original `flz.cell`, `flz.seq` and `flz.epoch`
+
+### Requirement: Compensation-coverage guard
+
+A rewind SHALL be refused with a typed error when any tasklet being unwound
+wrote plugin output and its tasklet declares no `compensate` hook. A rewind is undo-and-continue:
+nothing re-runs over the unwound iterations' inputs, so no later output overwrites the original
+at an output by its key, and a semantic undo is
+therefore the only coverage the engine can guarantee. The channels a tasklet wrote on SHALL be
+read from the journal's stage entries, which name them per Cell, never from the Cell WALs,
+which compaction may have truncated. The error SHALL name
+the uncovered channels, and no compensation and no epoch bump SHALL occur.
+
+A tasklet that wrote no plugin output SHALL require no coverage.
+
+#### Scenario: Uncovered emitting tasklet blocks rewind
+
+- **WHEN** iteration 5 ran a tasklet that wrote output on a channel and that
+  tasklet declares no `compensate`
+- **THEN** the rewind is refused before any compensation runs, naming that channel,
+  and the journal is unchanged
+
+#### Scenario: Pure state iterations rewind freely
+
+- **WHEN** the iterations being unwound wrote no plugin output
+- **THEN** the rewind proceeds with no coverage requirement
+
+#### Scenario: The guard reads the journal after the Cell WAL was compacted
+
+- **WHEN** a compensable class's Cell was compacted past the records iteration 5 wrote, and the user rewinds to iteration 3
+- **THEN** the guard still names the channels iteration 5 wrote on, from the `task_committed` entries alone
+
+### Requirement: A rewind SHALL treat a dead-lettered iteration as committed and already undone
+
+A `dead_lettered` iteration SHALL count as a committed iteration for `flz relay rewind`:
+it SHALL be a valid `--to-iteration` target, it SHALL fall inside the committed range a
+refusal reports, and the loop resumed after a rewind to it SHALL take its next input as the
+following iteration. A rewind to an iteration below it SHALL NOT compensate any of its
+tasklets a second time, because each undo the failure ran is a journaled `compensated`
+entry, and an undo the failure still owes when the rewind is asked SHALL run once. The
+compensation-coverage guard SHALL NOT refuse a rewind over a dead-lettered iteration for a
+tasklet without a hook, because that iteration's outputs were settled when it failed. A
+rewind SHALL NOT touch the dead-letter queue.
+
+#### Scenario: Rewinding past a failed turn undoes nothing twice
+
+- **GIVEN** a keep-progress session with iterations 1 and 2 committed, 3 dead-lettered after
+  its first tasklet's undo ran, and 4 committed
+- **WHEN** the user rewinds to iteration 1
+- **THEN** iterations 4 and 2 SHALL be compensated, iteration 3's first tasklet SHALL NOT be
+  compensated again, the DLQ entry of iteration 3 SHALL stay, and the next input SHALL be
+  iteration 2
+
+#### Scenario: A failed turn is a valid target
+
+- **WHEN** the user rewinds to a dead-lettered iteration 3 of a session that has committed 5
+- **THEN** iterations 5 and 4 SHALL be compensated and the next input SHALL be iteration 4

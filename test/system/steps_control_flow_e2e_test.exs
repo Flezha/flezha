@@ -428,7 +428,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   describe "loop rewind (uds)" do
     @describetag transport: :uds, scenario: :uds_rewind
 
-    # `steps-loop-rewind`, end to end on a real runner: three chat turns
+    # `steps-compensation`, end to end on a real runner: three chat turns
     # commit, the user rewinds to iteration 0, and
     #
     #   * iterations 2 and 1 are compensated in that order — the reply tasklet's
@@ -535,7 +535,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
   describe "cell retry (uds)" do
     @describetag transport: :uds, scenario: :uds_retry
 
-    # `steps-cell-retry` on a live runner: `retry_flaky` fails its first
+    # `steps-durable-loop` on a live runner: `retry_flaky` fails its first
     # attempt, the per-cell ladder re-runs it in place, and the tasklet
     # commits normally — nothing compensates and the run reports `ok`.
     test "a transient cell failure is retried and the run completes", ctx do
@@ -585,7 +585,7 @@ defmodule FlezhaTest.System.StepsControlFlowE2ETest do
     # The chain's args are the serialized `init_values` the harness starts with.
     @seed ~s({"seed":"go"})
 
-    # `steps-branching` on a live runner. BranchA fans out to BranchB and
+    # `steps-relay` on a live runner. BranchA fans out to BranchB and
     # BranchC; BranchB feeds BranchD, which blocks. The SIGKILL therefore lands
     # with A, B and C committed and only D's subtree outstanding — and the
     # respawn must re-run D ALONE, seeded from B's journaled edge.

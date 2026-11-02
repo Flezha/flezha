@@ -42,26 +42,11 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, "scripts")
 import gate_support
 
-SPECS = "openspec/specs"
-
-SECTION = re.compile(r"^##\s+(.+?)\s*$")
 REQUIREMENT = re.compile(r"^###\s*Requirement:\s*(.+?)\s*$")
 SCENARIO = re.compile(r"^####\s+Scenario:\s*(.+?)\s*$")
 RENAME = re.compile(r"^\s*-?\s*(FROM|TO):\s*`?###\s*Requirement:\s*(.+?)`?\s*$")
 REMOVAL = re.compile(r"^Removes scenario:\s*(.+?)\s*$", re.M)
 NOTES = ("proposal.md", "design.md")
-
-
-def sections(text):
-    """Each `## ` section's lines, keyed by its lower-cased title."""
-    found, current = {}, None
-    for line in text.splitlines():
-        match = SECTION.match(line)
-        if match:
-            current = found.setdefault(match.group(1).lower(), [])
-        elif current is not None:
-            current.append(line)
-    return found
 
 
 def scenarios_by_requirement(lines):
@@ -94,22 +79,14 @@ def dropped(delta, published, notes=""):
     block in `delta` replaces and does not carry, unless `notes` (the change's
     proposal and design) records its removal."""
     removed = set(REMOVAL.findall(notes))
-    parts = sections(delta)
+    parts = gate_support.sections(delta)
     modified = scenarios_by_requirement(parts.get("modified requirements", []))
     sources = renamed_from(parts.get("renamed requirements", []))
-    before = scenarios_by_requirement(sections(published).get("requirements", []))
+    before = scenarios_by_requirement(gate_support.sections(published).get("requirements", []))
     return [(title, scenario)
             for title, carried in modified.items()
             for scenario in before.get(sources.get(title, title), [])
             if scenario not in carried and scenario not in removed]
-
-
-def read(path):
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return fh.read()
-    except OSError:
-        return None
 
 
 def judge():
@@ -122,11 +99,13 @@ def judge():
     refusals = []
     for change_id in opened:
         change = os.path.join(gate_support.OPENSPEC_CHANGES, change_id)
-        notes = "\n".join(read(os.path.join(change, name)) or "" for name in NOTES)
+        notes = "\n".join(gate_support.read_text(os.path.join(change, name)) or ""
+                          for name in NOTES)
         specs = os.path.join(change, "specs")
-        for capability in sorted(os.listdir(specs)) if os.path.isdir(specs) else ():
-            delta = read(os.path.join(specs, capability, "spec.md"))
-            published = read(os.path.join(SPECS, capability, "spec.md"))
+        for capability in gate_support.subdirectories(specs):
+            delta = gate_support.read_text(os.path.join(specs, capability, "spec.md"))
+            published = gate_support.read_text(
+                os.path.join(gate_support.OPENSPEC_SPECS, capability, "spec.md"))
             if delta is None or published is None:
                 continue
             refusals.extend(

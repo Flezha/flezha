@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelCommitsTest do
   @moduledoc """
-  SDK -> Controller `TaskCommit` dispatch path (`steps-task-journal`): the
+  SDK -> Controller `TaskCommit` dispatch path (`steps-durability`): the
   commit worker waits until every effect record the barrier names is durable
   on its Cell's writer, appends the `task_committed` entry naming them, fsyncs,
   replies `TaskCommitResponse` under the request's reference_id, and only then

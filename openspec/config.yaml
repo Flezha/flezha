@@ -1,20 +1,46 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# The area list below is read by scripts/check-openspec-order.sh: one `- <area>: ...` line per
+# area. Keep that shape when adding an area.
+context: |
+  Spec areas. Every folder in openspec/specs/ is named <area>-<subject>, or just <area>, where
+  <area> is one of these. Every spec states its purpose in plain words; whoever archives a change
+  that creates a spec writes its Purpose in the same step.
+  - relay: the relay model and what a running relay does: graph, calls, messaging, outputs,
+    determinism, timers, dead letters, partitions, inspection
+  - steps: the steps run: lifecycle, durability, durable loops, compensation, spawning
+  - durability: how state and input are kept: Cell state, input log, effectively-once tier,
+    remote tier, schema evolution
+  - cluster: the controller cluster: convergence, boot recovery, split behaviour, placement,
+    relay moves
+  - controller: one controller node: configuration, process model, isolation, shutdown, packaging
+  - runner: a runner's connection, identity and session with the controller, and its factories
+  - transport: the wire between controller and runners: driver, buffers, frame limits, flow control
+  - security: authentication, authorization, namespaces and quotas
+  - api: the controller's published operations, its HTTP and MCP surfaces, and the error model
+  - cli: the `flz` command line
+  - plugin: the plugin model, installation, controller hooks, and each first-party plugin
+  - observability: signals, their export, and the controller's durable logs
+  - sdk: what holds across every SDK: authoring contract, poll core, C ABI, conformance, local
+    mode, admin API, project templates
+  - docs: the documentation's layout and content
+  - repo: checks and tools that run on this repository: code quality, formatting, structure
+    gates, the OpenSpec workflow, build artefacts, benches
+  - elixir-sdk: the Elixir SDK
+  - go-sdk: the Go SDK
+  - java-sdk: the Java SDK
+  - node-sdk: the Node SDK
+  - php-sdk: the PHP SDK
+  - python-sdk: the Python SDK
+  - ruby-sdk: the Ruby SDK
+  - rust-sdk: the Rust SDK
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - >-
+      Put new requirements into an existing spec of their area; propose a new capability only
+      when no existing spec can hold them. Every bullet under `### New Capabilities` names a
+      capability `<area>-<subject>` in a declared area and says which existing spec it could
+      not extend and why, in the form Not in `<spec>`: <reason>, for example
+      Not in `relay-inspection`: it is a durable record, not a live read. The spec named must be
+      a folder in openspec/specs/. scripts/check-openspec-order.sh refuses a bullet without it.

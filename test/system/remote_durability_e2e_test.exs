@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   @moduledoc """
-  The kill-the-disk drill for `remote-durability-tier`, against a live Rust
+  The kill-the-disk drill for `durability-remote-tier`, against a live Rust
   runner and a real Postgres backend.
 
   This is the failure the tier exists for and nothing else in the suite covers:

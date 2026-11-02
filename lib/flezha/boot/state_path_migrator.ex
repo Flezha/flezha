@@ -4,7 +4,7 @@ defmodule Flezha.Boot.StatePathMigrator do
   layout first:
 
     1. Legacy `{runner_id}/{relay_class}/{tasklet_id}/` → flat
-       `{relay_class}/{tasklet_id}/` (`auto-restore-on-boot`).
+       `{relay_class}/{tasklet_id}/` (`cluster-boot-recovery`).
     2. Flat `{relay_class}/...` → namespaced
        `_system/{relay_class}/...` (`finish-platform-authn-authz`) —
        one atomic `rename/2` per class dir, so an interrupted pass leaves

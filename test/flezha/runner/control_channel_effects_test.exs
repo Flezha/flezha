@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelEffectsTest do
   @moduledoc """
-  SDK -> Controller `EffectResult` (`recorded-effects`): the result is kept in
+  SDK -> Controller `EffectResult` (`relay-determinism`): the result is kept in
   its instance's effect log and only then answered `EffectResultAck`; a second
   result for the identity is answered with the first; a result from a runner
   that does not own the relay keeps nothing; at `durable: remote` the ack waits

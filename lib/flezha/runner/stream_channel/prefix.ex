@@ -1,6 +1,6 @@
 defmodule Flezha.Runner.StreamChannel.Prefix do
   @moduledoc """
-  Confirming a runner's processed-prefix markers (`durable-input-log`): a
+  Confirming a runner's processed-prefix markers (`durability-input-log`): a
   marker names an instance and an offset `P`, and says every record the
   instance produced for input at or below `P` is ahead of it on this stream.
   `P` is confirmed once every Cell writer of the instance has fsynced past the

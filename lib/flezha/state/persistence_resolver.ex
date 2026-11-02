@@ -109,7 +109,7 @@ defmodule Flezha.State.PersistenceResolver do
   @doc """
   Whether `relay_class` keeps its work `durable: remote`: its commit
   barriers reach the remote durability tier before they are acked
-  (`remote-durability-tier`, RPO 0). The class's own setting and nothing else:
+  (`durability-remote-tier`, RPO 0). The class's own setting and nothing else:
   a behaviour of a relay is declared in its class.
   """
   @spec remote?(binary()) :: boolean()

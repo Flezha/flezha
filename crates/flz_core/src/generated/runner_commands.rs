@@ -174,7 +174,7 @@ pub struct AddRelay {
     /// 0 for a fresh spawn, a flow relay, or an opted-out steps relay one.
     #[prost(uint32, tag = "5")]
     pub resume_cell_count: u32,
-    /// Steps relay task-journal crash-resume (steps-task-journal): the instance's
+    /// Steps relay task-journal crash-resume (steps-durability): the instance's
     /// committed task indexes + latest journaled handoff. Instance-scoped, so it
     /// rides the bind itself rather than a per-Cell restore — a durable
     /// steps class with no per-Cell state ships no RestoreInitState at all,
@@ -371,7 +371,7 @@ pub struct CommittedCell {
     pub first_seq: ::core::option::Option<u64>,
 }
 /// SDK -> Controller, at each tasklet barrier of a durable structured
-/// steps relay (steps-task-journal): tasklet `task_idx` completed
+/// steps relay (steps-durability): tasklet `task_idx` completed
 /// forward on `cells_ran`, each naming the effect records it wrote in the
 /// stage, and released the serialized `handoff` batch. The Controller waits
 /// until every named record is durable on its Cell's writer, appends ONE
@@ -508,7 +508,7 @@ pub struct IterCommitResponse {
 /// not a terminal outcome). The Controller writes the instance's park record and
 /// evicts it from the runner; the registry keeps it `suspended` until a new
 /// input-log append, or the wake deadline, rehydrates it
-/// (durable-suspension). `wake_deadline_ms` is 0 when the relay
+/// (steps-durability). `wake_deadline_ms` is 0 when the relay
 /// declared no durable timer. `consumed_offset` is the highest input-log offset
 /// the run parked to the dead-letter queue unread, absent when none: consumed
 /// without a pass, so the Controller releases it rather than re-delivering it.
@@ -543,7 +543,7 @@ pub struct TaskCommittedTask {
     pub trigger: ::core::option::Option<TimerTrigger>,
 }
 /// What one committed tasklet of the in-flight iteration released, keyed by
-/// its task_idx (steps-branching). A tasklet tree re-seeds each uncommitted
+/// its task_idx (steps-relay). A tasklet tree re-seeds each uncommitted
 /// child branch from its own parent's edge, so the resume state carries every
 /// in-flight commit's handoff — not just the latest one's.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -554,7 +554,7 @@ pub struct TaskEdgeHandoff {
     pub handoff: ::prost::alloc::vec::Vec<TaskHandoffItem>,
 }
 /// Committed task-journal state shipped back on crash-resume
-/// (steps-task-journal). `iter` is the iteration to resume at — the one after
+/// (steps-durability). `iter` is the iteration to resume at — the one after
 /// the highest journaled `iter_committed` (0 for a non-looping chain);
 /// `committed_task_idxs` are the tasklets already committed inside that
 /// still-in-flight iteration, which the driver skips, and `task_handoffs` what
@@ -569,7 +569,7 @@ pub struct TaskEdgeHandoff {
 /// input.
 ///
 /// `rewind_undo` carries the tasklets a rewind unwound that have not been
-/// compensated yet (steps-loop-rewind). The driver runs them through the
+/// compensated yet (steps-compensation). The driver runs them through the
 /// ordinary compensation planner before resuming forward at `iter`, which the
 /// journal has already folded back to the rewound-to iteration. Each undo
 /// journals a `compensated` entry, so the list shrinks across a crash and

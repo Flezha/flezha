@@ -193,7 +193,7 @@ end
 defmodule FlezhaTest.Runner.ControlChannelSpawnStepsTest do
   @moduledoc """
   SDK -> Controller `SpawnStepsRequest` dispatch
-  (`tasklet-requested-spawn`): the ControlChannel decodes the frame on the
+  (`steps-spawning`): the ControlChannel decodes the frame on the
   SDK-initiated-command seam, resolves it off-process against the channel's own
   namespace, and writes one `SpawnStepsResponse` back under the request's
   reference id.

@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.DlqE2ETest do
   @moduledoc """
-  End-to-end proof for `dead-letter-queue` against live runners.
+  End-to-end proof for `relay-dead-letters` against live runners.
 
   Tier-off (`poison_probe`, on whichever SDK the run selects): a poison
   payload exhausts the retry budget, parks durably (park frame →

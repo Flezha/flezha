@@ -89,7 +89,7 @@ ALLOWED = [
 # package's.
 KAFKA_SCOPE = (
     "docs/public/plugins/kafka_producer.md",
-    "openspec/specs/kafka-producer-plugin/",
+    "openspec/specs/plugin-kafka/",
 )
 KAFKA_POLICY = [re.compile(p) for p in (
     r":block\b",

@@ -297,7 +297,7 @@ defmodule Flezha.Relay.Suspend do
   def wake_to_stop(%Overwatch{} = state), do: {:reply, {:error, :awake}, state}
 
   @doc """
-  The recorded wake deadline elapsed (`durable-suspension`): it is
+  The recorded wake deadline elapsed (`steps-durability`): it is
   the earliest timer the instance's Cells held when it parked, so the
   rehydrate alone wakes it: the restored Cells re-arm the timer and its
   firing opens the pass. Nothing is appended. A racing message collapses

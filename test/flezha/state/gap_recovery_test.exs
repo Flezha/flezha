@@ -1,6 +1,6 @@
 defmodule Flezha.State.GapRecoveryTest do
   @moduledoc """
-  Defect B / `relay-state-persistence`: a persistence seq gap must
+  Defect B / `durability-cell-state`: a persistence seq gap must
   trigger a `RestoreInitState` resync (and let the WAL advance again)
   rather than wedge the Cell forever with `{:error, {:gap}}`.
 

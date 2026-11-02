@@ -1,7 +1,16 @@
 # sdk-core-abi Specification
 
 ## Purpose
-TBD - created by archiving change extract-sdk-poll-core. Update Purpose after archive.
+
+The C ABI of the shared SDK core, the one surface every non-Rust SDK reaches the core through. It
+covers the lifecycle and thread-safety contract, a versioned activation schema refused at boot when
+it does not match, a declaration surface for the full host layer, an ABI that cannot lag the crate
+API and is asserted against a fixture, and entries for the topology check, spawns read through a
+handle, parts that never wait, connection settings, termination signals, knobs read through the
+core's parse rule, the pool governor and the standard-input watch. Every failure crosses as the one
+error document of the failing thread, a failed start leaves no runner behind, and the core's notices
+reach every host's log.
+
 ## Requirements
 ### Requirement: C ABI surface and lifecycle
 
@@ -486,7 +495,7 @@ The C ABI SHALL expose a tasklet's part as one entry point,
 `flz_core_part(ctx, token, item, payload, payload_len)`, where `token` is the live
 activation's token and `item` is the index, within that activation, of the work item whose
 invocation sends the part. The entry SHALL number the part, stamp it, apply the drop rules
-of `output-parts` and write its frame, and SHALL return without waiting for the controller.
+of `relay-outputs` and write its frame, and SHALL return without waiting for the controller.
 It SHALL answer `FLZ_OK` for a part that left and for a part it dropped, and `FLZ_ERR` with
 the error document in `flz_core_last_error` for a refusal (`part.no_output`,
 `part.outside_invocation`, an item index the activation does not hold). The per-item

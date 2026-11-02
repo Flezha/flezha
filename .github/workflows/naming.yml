@@ -82,8 +82,10 @@ name: Naming
 # work that is not ready yet. It reads disk and not the git index for a reason
 # worth stating here: /openspec/changes is in .gitignore, so this job's checkout
 # carries none of it and the row reads an empty queue and says so. Where the
-# gate bites is a developer's tree, and the `--run @naming` made before an
-# archive.
+# queue checks bite is a developer's tree, and the `--run @naming` made before
+# an archive. The same row also judges the spec tree, which this checkout does
+# carry: a folder in openspec/specs/ whose name starts with no area declared in
+# openspec/config.yaml, or a spec whose Purpose is still the archive placeholder.
 #
 # check-openspec-scenarios reads the same queue from the same disk, so it too
 # judges nothing in this job. It refuses an open change whose `## MODIFIED

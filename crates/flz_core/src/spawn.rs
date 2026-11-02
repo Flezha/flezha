@@ -1,5 +1,5 @@
 //! Tasklet-requested spawn of a steps relay
-//! (`tasklet-requested-spawn`).
+//! (`steps-spawning`).
 //!
 //! [`request`] ships one `SpawnStepsRequest` on the control plane and hands
 //! the caller a [`SpawnHandle`] at once. The request never blocks the

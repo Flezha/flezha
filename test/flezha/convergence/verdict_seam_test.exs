@@ -29,7 +29,7 @@ defmodule Flezha.Convergence.VerdictSeamTest do
 
   # The seam itself, plus the files whose two-or-more states are a FACT in
   # another sense. Every entry states the difference that forbids the fold —
-  # `refactor-gates`: "a refusal to fold names the difference".
+  # `repo-structure-gates`: "a refusal to fold names the difference".
   @allowed %{
     # the seam
     "lib/flezha/convergence/verdict.ex" => "the record",

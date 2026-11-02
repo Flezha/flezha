@@ -1,4 +1,4 @@
-//! An instance's processed prefix (`durable-input-log`): the highest input-log
+//! An instance's processed prefix (`durability-input-log`): the highest input-log
 //! offset `P` at or below which every input the instance took has been
 //! processed and every record it produced is on the data stream. An input holds
 //! `P` below it from the moment it enters a Cell's mailbox until the record it

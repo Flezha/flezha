@@ -1,7 +1,13 @@
 # sdk-admin-api Specification
 
 ## Purpose
-TBD - created by archiving change let-an-application-administer-its-namespace. Update Purpose after archive.
+
+Administering a namespace from runner code. An application can start, stop and list relays and act
+on other namespace-scoped objects in its own namespace through every SDK's one shared entry; the
+request names no namespace and no principal, is judged and recorded like any other user act, and
+cannot reach node-wide or authorization-state administration. A started relay outlives its
+requester, a start answers the id and the outcome, and the list reads answer what `flz` lists.
+
 ## Requirements
 ### Requirement: An application administers its own namespace from runner code
 

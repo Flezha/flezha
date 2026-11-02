@@ -497,7 +497,7 @@ defmodule FlezhaTest.Runner.AddRelayResponseTest do
   end
 
   test "keyless is declared only when true — a keyed class says nothing" do
-    # `partitioned-relays`: the SDK announces `keyed: "false"` for a class
+    # `relay-partitions`: the SDK announces `keyed: "false"` for a class
     # with no keyed entry-fed tasklet, so the controller can refuse a
     # partitioned start of it before touching a runner. A keyed class declares
     # nothing, which is what keeps its response byte-identical.

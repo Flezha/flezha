@@ -204,7 +204,7 @@ defmodule Flezha.Convergence.Diff do
         :skip
 
       # Suspended at a committed iteration boundary: unbound BY DESIGN
-      # (`durable-suspension`). Rebinding it would undo the very
+      # (`steps-durability`). Rebinding it would undo the very
       # eviction it asked for; its own wake sources bring it back.
       %Verdict{state: :suspended} ->
         :skip

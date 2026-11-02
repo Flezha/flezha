@@ -1,7 +1,17 @@
 # sdk-conformance Specification
 
 ## Purpose
-TBD - created by archiving change sdk-conformance-suite. Update Purpose after archive.
+
+How every SDK is proven to behave alike. One end-to-end suite runs against the runtime selected per
+run; every SDK test app carries a conformance manifest with its language byte and build profile,
+each scenario has one fixture id in every SDK and is tagged by capability, and deferred capabilities
+skip by name. A static drift gate in the default test suite holds manifests, live factory sets and
+declared surfaces to their golden copies, so rolling out a new SDK is enforced rather than
+remembered. This capability also covers the smoke and full tiers, the nightly and on-demand CI runs,
+the conformance report, the shared fixtures and wire constants an extracted SDK vendors, and the
+required capabilities every SDK must prove, from the short form and steps relays to parts, calls and
+refusal rows.
+
 ## Requirements
 ### Requirement: The runtime under test is selected per run, from the environment
 

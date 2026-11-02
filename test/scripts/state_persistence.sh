@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Per-Cell state-persistence smoke test (engagement-only).
 #
-# Verifies the data-plane half of the `relay-state-persistence`
+# Verifies the data-plane half of the `durability-cell-state`
 # contract (see `docs/internal/state_persistence.md`): with a relay
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under the namespaced layout
@@ -31,7 +31,7 @@
 #   * `flz state at` / `flz state get` / `flz state rotate`. An older note
 #     here claimed these crash the BEAM; they do not — all three were driven
 #     against this stack and the node stayed up. `state get` and `state at`
-#     belong to `cell-state-live-query` and the time-travel CLI, `rotate`
+#     belong to `relay-inspection` and the time-travel CLI, `rotate`
 #     to `cell-compaction`; wiring them in is those capabilities' job, not
 #     this one's. Note `state at` takes the DECODED cell key, so the
 #     on-disk filename (`_.wal` for the empty key) is not a path fragment.

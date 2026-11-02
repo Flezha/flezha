@@ -1,11 +1,11 @@
 defmodule FlezhaTest.Relay.SuspendTest do
   @moduledoc """
-  `durable-suspension` lifecycle on the Overwatch: park (evict from the
+  `steps-durability` lifecycle on the Overwatch: park (evict from the
   runner, keep the registry entry), rehydrate on a new input or the durable
   timer, exactly one rehydration when both wake sources race, and rediscovery of
   a suspended instance from durable state alone after a controller redeploy.
 
-  Plus `steps-loop-rewind`, which rides the same evict → rehydrate path: the
+  Plus `steps-compensation`, which rides the same evict → rehydrate path: the
   refusals (uncommitted target, uncompensable output) and the durable effect of
   the ones that go through.
 
@@ -660,7 +660,7 @@ defmodule FlezhaTest.Relay.SuspendTest do
     assert log =~ "its state key is its instance id"
   end
 
-  # ---------- steps-loop-rewind ----------
+  # ---------- steps-compensation ----------
 
   # The rewind rides the same evict → rehydrate path a park does, so the same
   # stubs stand in for the runner side.

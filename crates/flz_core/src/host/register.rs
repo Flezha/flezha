@@ -567,7 +567,7 @@ fn refuse_edge_keying(
     }
 }
 
-/// The shared graph-shape rule (`sdk-graph-authoring`): one or more entry
+/// The shared graph-shape rule (`relay-graph`): one or more entry
 /// channels feed the graph, every node reachable from some entry, no cycles.
 /// A steps class's own shape is judged over the same walk.
 fn refuse_graph_shape(

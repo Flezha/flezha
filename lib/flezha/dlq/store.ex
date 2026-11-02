@@ -1,6 +1,6 @@
 defmodule Flezha.Dlq.Store do
   @moduledoc """
-  Durable dead-letter store (`dead-letter-queue`).
+  Durable dead-letter store (`relay-dead-letters`).
 
   One controller-wide GenServer owning `storage/app/dlq/<relay_class>/<tasklet_id>/`:
   a JSONL metadata index (`entries.jsonl`, one record per parked payload)

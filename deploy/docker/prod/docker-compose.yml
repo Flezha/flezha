@@ -49,7 +49,7 @@ services:
       - flezha_data:/flezha/storage/app/data
       - flezha_certs:/flezha/storage/app/certs
       - flezha_logs:/flezha/storage/logs
-      # ProcessHub's persistent registry (auto-restore-on-boot) and
+      # ProcessHub's persistent registry (cluster-boot-recovery) and
       # per-Cell WAL files. Must survive container restarts.
       - flezha_state:/flezha/storage/app/state
       - flezha_process_hub:/flezha/storage/app/process_hub

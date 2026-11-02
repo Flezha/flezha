@@ -161,7 +161,7 @@ defmodule Flezha.Plugin.Extension.Table do
   arrives). Already-running plugins are skipped.
 
   Invoked by relay hosts after `start_relay_sdk/2` returns `{:ok, _}` — see
-  `relay-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
+  `plugin-providers` "Two-phase plugin lifecycle gated on SDK readiness".
 
   An `activate/1` callback that fails or raises is logged at `:error` level and
   the plugin remains in `:prepared`. It is also RETURNED: the second element is

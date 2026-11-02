@@ -160,7 +160,7 @@ defmodule Flezha.State.Durable do
 
   A `.claim` sidecar is not in-progress and is not declared here: it is the
   fencing counter a durability-tier key carries beside its object
-  (`remote-durability-tier`), it outlives every write, and a scanner excludes
+  (`durability-remote-tier`), it outlives every write, and a scanner excludes
   it by name where it lives.
   """
   @spec in_progress?(binary()) :: boolean()

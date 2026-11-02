@@ -461,7 +461,7 @@ defmodule Flezha.Relay.ClassRegistry do
   @doc """
   Record whether `relay_class` keeps its work `durable: remote`: its commit
   barriers are remotely durable before they are acked
-  (`remote-durability-tier`). Same ETS + durable-sidecar shape as the tier: the
+  (`durability-remote-tier`). Same ETS + durable-sidecar shape as the tier: the
   gate is consulted on the commit path of an instance that may have been bound
   by a previous controller.
   """

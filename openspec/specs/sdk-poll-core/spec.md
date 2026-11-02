@@ -1,7 +1,16 @@
 # sdk-poll-core Specification
 
 ## Purpose
-TBD - created by archiving change extract-sdk-poll-core. Update Purpose after archive.
+
+The poll/complete model by which the shared core hands work to an SDK host. Poll and complete are
+the only invocation surface: the core hands out a per-cell batch with exclusive access to the Cell,
+the host completes it with an effect record, and host-participating commands, Cell and relay
+departures, prepare crossings and steps relay lifecycles all arrive as activation kinds. Edge
+transforms and keys evaluate on the producer side, no core call blocks a host thread, deferred wakes
+and running steps instances hold no thread, the core caps the jobs underway and signals starvation
+to the supervisor every poll host brings, and an output that cannot be delivered defers and gates
+its producer.
+
 ## Requirements
 ### Requirement: Poll/complete is the only invocation surface
 

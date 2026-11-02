@@ -1,8 +1,18 @@
 # go-sdk Specification
 
 ## Purpose
-The Go SDK's authoring surface and runner: tasklets as types with a Spec and a typed Run, relays wired with typed streams, the function short form, JSON state with named changes, deterministic effects, local mode and diagnostics.
+
+The Go SDK. Its authoring surface makes a tasklet a type with a Spec and a typed Run, wires relays
+with typed streams, offers a function short form, keeps state and changes as named JSON records, and
+serves deterministic effects through `Ctx`, local mode and standard-library diagnostics. Its runner
+serves activations from a pool of poll goroutines grown by a starvation supervisor that cannot be
+configured away, copies core buffers before use, and owns the termination signals. It reaches the
+core through the plain C ABI over cgo, linked statically into one executable with the standard
+library only, and is proven by its admission to the conformance suite, the harness teardown
+contract, a tasklet test harness at parity with the other SDKs, and Go as a measured runtime.
+
 ## Requirements
+
 ### Requirement: Go SDK entry point and runner lifecycle
 The Go SDK SHALL expose a runner created by `flezha.CreateRunner(namespace string)`, carrying declaration and lifecycle on one value: `RegisterFactory` registers a relay type of either run, `UnregisterFactory` is its inverse, `Start` connects, `AwaitTermination` blocks until the runner stops, `Close` is the one public shutdown verb, and `Run` is `Start` followed by `AwaitTermination`. Every fallible call SHALL return an `error` carrying the core's error document (`code`, `class`, `message`, `details`, `hint`), and a caller SHALL be able to branch on the code with `errors.As`.
 
@@ -144,3 +154,129 @@ The Go SDK SHALL log through `log/slog` at `FLEZHA_LOG_LEVEL` (default `warn`) u
 - **WHEN** an application hands the runner its own `*slog.Logger` and the core writes a notice
 - **THEN** the notice SHALL arrive at that logger with its level, and nothing SHALL be written to standard error
 
+### Requirement: The Go host is a poll goroutine pool with a starvation supervisor
+The Go SDK SHALL run a base pool of goroutines, each looping `poll -> dispatch -> complete`, and one supervisor goroutine answering the core's pool governor through `flz_core_pool_supervise`. Each spawn answer SHALL start one more worker, up to the governor's ceiling; a grown worker SHALL retire after the governor's retire time of polls without work, and give its seat back through `flz_core_pool_left`. The pool SHALL be opened with `flz_core_pool_open` over a default base of `runtime.NumCPU()`, which `FLEZHA_WORKER_POOL_SIZE` overrides; the ceiling SHALL be the governor's, ten times the base by default and set by `FLEZHA_WORKER_POOL_MAX`. The SDK SHALL add no pool knob of its own.
+
+#### Scenario: A workload that never starves stays on the base pool
+- **WHEN** handlers return promptly and the runner is saturated with work
+- **THEN** the pool SHALL stay at the base size
+
+#### Scenario: Blocked handlers buy workers
+- **WHEN** every worker is inside a handler that blocks for seconds and work is queued in the core
+- **THEN** the supervisor SHALL start workers up to the ceiling and the queued work SHALL be served
+
+#### Scenario: Grown workers retire
+- **WHEN** the blocking workload ends and the grown workers idle past the retirement streak
+- **THEN** the pool SHALL return to the base size
+
+### Requirement: The Go starvation supervisor cannot be configured away
+The SDK SHALL NOT offer a configuration without the supervisor, including a single-worker mode, because a completion can block on a full `DropNothing` consumer and only a new poller drains it.
+
+#### Scenario: A DropNothing wedge recovers on a base pool of one
+- **WHEN** `FLEZHA_WORKER_POOL_SIZE=1` and a handler emits onto a full `DropNothing` consumer mailbox
+- **THEN** the supervisor SHALL start a worker, that worker SHALL drain the consumer, and the blocked completion SHALL return
+
+### Requirement: Per-cell ordering is the core's, not the Go SDK's
+The Go SDK SHALL NOT implement mailboxes, drain gates or ordering of its own. No goroutine SHALL stay locked to its OS thread beyond one core call: a call is pinned only until the error document the core keeps for that thread is read. An activation MAY be completed from a thread other than the one that polled it, as the core allows.
+
+#### Scenario: Different cells run concurrently
+- **WHEN** inputs for two distinct cell keys arrive together on a pool of two or more
+- **THEN** both activations MAY be in flight at once, and the SDK SHALL add no serialization
+
+#### Scenario: One cell never runs concurrently with itself
+- **WHEN** many inputs for one cell key arrive
+- **THEN** the SDK SHALL never have two activations for that cell in flight, and `Run` SHALL observe the inputs in arrival order
+
+### Requirement: Core buffers never outlive the call that handed them out
+The Go SDK SHALL copy each buffer the core hands out into Go memory and SHALL free the core's buffer through `flz_core_buf_free` before dispatching, so no Go value can refer to memory the core frees. Bytes handed to the core SHALL be Go byte slices that hold no Go pointers, passed for the duration of the call only.
+
+#### Scenario: The pointer checks pass under load
+- **WHEN** the Go SDK's concurrency tests run with `GODEBUG=cgocheck=1` and the race detector
+- **THEN** no cgo pointer violation and no data race SHALL be reported
+
+### Requirement: Go owns the termination signals and hands them to the core
+The Go runner SHALL call `flz_core_host_owns_signals` before starting the core, SHALL receive SIGTERM and SIGINT through `os/signal`, and on the first SHALL call `flz_core_terminate`, so the core drains and exits as it does for every host. The runner SHALL also start the core's standard-input watch when standard input is not a terminal.
+
+#### Scenario: SIGTERM drains instead of crashing
+- **WHEN** a started Go runner with activations in flight receives SIGTERM
+- **THEN** the in-flight activations SHALL complete within the core's grace and the process SHALL exit with the status the core's graceful end gives, with no Go runtime crash report
+
+#### Scenario: Closing standard input stops the runner
+- **WHEN** the harness closes the runner's standard input
+- **THEN** the runner SHALL drain and exit within the core's grace
+
+### Requirement: The Go binding is the plain C ABI over cgo
+The Go SDK SHALL call the `flz_core_ffi` C entry points through cgo, with no Rust glue feature, no new Rust crate and no Go implementation of the protocol. The entry points it declares SHALL be asserted against `test/fixtures/abi_surface.txt` by a test in the SDK's own suite, so a symbol the core removes or renames fails that test.
+
+#### Scenario: The declared surface matches the fixture
+- **WHEN** the Go SDK's declared C entry points are compared with `abi_surface.txt`
+- **THEN** every declared entry SHALL be in the fixture, and a declared entry the fixture lacks SHALL fail the test naming it
+
+### Requirement: The Go runner links the core statically into one executable
+The Go SDK SHALL link the crate's `staticlib`, `libflz_core_ffi.a`, with the library directory supplied by the build through `CGO_LDFLAGS`, and SHALL name in its cgo directives the system libraries the core needs, taken from the Rust toolchain's report for that target. A built Go runner SHALL NOT need `libflz_core_ffi` at run time.
+
+#### Scenario: The runner needs no core library at run time
+- **WHEN** the Go test app is built by `scripts/build-go-sdk.sh` and its dynamic dependencies are listed
+- **THEN** no `libflz_core_ffi` SHALL be among them, and the runner SHALL start from a directory holding only itself
+
+#### Scenario: A missing library names the setting
+- **WHEN** the SDK is built without a directory holding `libflz_core_ffi.a`
+- **THEN** the SDK guide's build section SHALL name `CGO_LDFLAGS` and the build script that sets it, and the link error SHALL name `flz_core_ffi`
+
+### Requirement: The Go SDK depends on the standard library only
+The Go SDK's module SHALL require no module beyond the Go standard library, and its `go.mod` SHALL declare the toolchain floor: the older of the two Go releases the Go project supports on the day the change is applied.
+
+#### Scenario: The module requires nothing
+- **WHEN** `go.mod` is read
+- **THEN** it SHALL carry a `go` directive at the floor and no `require` line
+
+### Requirement: The Go SDK is developed and tested from its own tree
+The SDK SHALL live in its own repository, `flezha/flezha_go_sdk`, pinned as a submodule at `sdk/go` with `test/apps/go_runner` a symlink to its test app, and SHALL carry the three tiers an SDK repository runs without a controller, resolving the contract set through `$FLEZHA_CONTRACT_DIR`, then `contract/`, then the tree the module sits in, and failing rather than skipping when none resolves.
+
+#### Scenario: The suite runs in the SDK tree without a controller
+- **WHEN** `go test ./...` runs in `sdk/go` with the core library built
+- **THEN** the unit, fixture and fake-controller tiers SHALL run and no controller SHALL be started
+
+#### Scenario: A missing contract set fails
+- **WHEN** the suite runs with no contract set reachable
+- **THEN** the fixture tests SHALL fail naming the three places searched
+
+### Requirement: The Go test app is admitted by the conformance suite
+`test/apps/go_runner/conformance.json` SHALL declare runtime `go`, `sdk_lang` 8, test and bench profiles, its transports, its dispatch model `thread-pool`, its topology surfaces, and every capability of the vocabulary, with no capability deferred. `go` SHALL be a `workflow_dispatch` option of `.github/workflows/nightly-e2e.yml`, and the manifest's `docs` page SHALL be `docs/internal/sdk/go_sdk.md`. The gate's source-of-truth tables SHALL record where Go spells its language byte and its version constant, and that Go has no package metadata to compare the version against.
+
+#### Scenario: The gate admits the Go app
+- **WHEN** `mix test` runs the conformance gate with the Go manifest present
+- **THEN** the gate SHALL pass with no change to the harness
+
+#### Scenario: The smoke and full tiers pass on Go
+- **WHEN** `FLEZHA_E2E_RUNTIME=go` runs the smoke tier and then the full tier
+- **THEN** every carried capability's scenarios SHALL pass and none SHALL be skipped as deferred
+
+### Requirement: The Go runner honours the harness teardown contract
+The Go runner SHALL exit when the harness closes its standard input, within the core's grace, and SHALL leave no process, socket file or temporary directory of its own behind.
+
+#### Scenario: Teardown leaves nothing behind
+- **WHEN** a conformance scenario ends and the harness closes the runner's port
+- **THEN** the runner process SHALL be gone within the grace and its socket files SHALL be removed
+
+### Requirement: A Go tasklet test harness at parity with the other SDKs
+The package `flezhatest` SHALL provide `TaskletTestHarness` with the one harness shape every SDK carries: a drive verb that feeds an input and returns the outcome, the cell's state, timers fired on demand, and the replay check that folds the recorded changes again and compares the result with the live state. It SHALL run tasklets without a controller and without the core's network session.
+
+#### Scenario: A harness test drives a tasklet
+- **WHEN** a test feeds two inputs to a stateful tasklet through the harness
+- **THEN** it SHALL see each outcome's emits and the state after each, and the replay check SHALL pass
+
+#### Scenario: A timer fires on demand
+- **WHEN** a test registers a timer through a fed input and fires it through the harness
+- **THEN** the tasklet's `OnTimer` SHALL run with the firing's kind and scheduled time
+
+### Requirement: Go is a measured runtime
+The acceptance bench SHALL carry a `chain_4_go` case in the quick and the standard profiles, run through the Go manifest's bench profile, with its baseline kept per case and runtime. The stripped size of the Go test app's runner SHALL be measured and stated in the SDK guide beside the Rust runner's size for the same app.
+
+#### Scenario: The quick profile measures Go
+- **WHEN** the acceptance bench's quick profile runs
+- **THEN** it SHALL report a `chain_4_go` result against Go's own baseline, never against another runtime's
+
+#### Scenario: The guide states a measured size
+- **WHEN** the Go SDK guide's packaging section is read
+- **THEN** it SHALL state the measured stripped runner size, the date it was measured and the Rust runner's size for the same app

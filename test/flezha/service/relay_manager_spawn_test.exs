@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Service.RelayManagerSpawnTest do
   @moduledoc """
   `RelayManager.spawn_or_deliver/6` — the controller half of a tasklet's
-  `ctx.spawn_steps` (`tasklet-requested-spawn`).
+  `ctx.spawn_steps` (`steps-spawning`).
 
   The registry is `FakeStartRegistry`, whose `insert_new` is the same atomic
   claim ProcessHub's `start_child` performs, so the concurrency case exercises

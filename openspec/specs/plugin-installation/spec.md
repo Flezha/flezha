@@ -769,7 +769,7 @@ provider that refuses its options in `init_provider/1` SHALL answer `plugin.prov
 `plugin.provider_failed` (internal), each with the package id, the provider id and the
 package's own text in `details`, including when the refusal is nested in a relay's park
 reason; a networked caller reads `plugin.provider_failed`'s text as the controller's log
-(error-model). A package SHALL NOT add codes to the error catalogue at boot.
+(api-errors). A package SHALL NOT add codes to the error catalogue at boot.
 
 #### Scenario: A refused package is listed with its reason
 

@@ -1,6 +1,6 @@
 defmodule Flezha.Service.RelayApiTest do
   @moduledoc """
-  `relay-api` on the controller: the factory table keeps each runner's
+  `relay-calls` on the controller: the factory table keeps each runner's
   announced API, `Relay.api` lists the latest, `Relay.call_channel` encodes a
   value by it and calls or sends, and `flz relay info <id>` and
   `flz relay call --arg` read it. The callee's Overwatch is a stand-in, as in

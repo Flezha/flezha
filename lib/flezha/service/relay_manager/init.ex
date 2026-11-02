@@ -46,7 +46,7 @@ defmodule Flezha.Service.RelayManager.Init do
   # The declared set is written at start and at stop and has nowhere else to
   # learn anything, so a setting changed while a relay runs never reaches
   # the record a restart rebuilds it from. This is that update, and it lives
-  # here because `durable-relay-intent` puts every declared-set write behind
+  # here because `cluster-convergence` puts every declared-set write behind
   # the start authority: the plugin manager asks, it does not reach in.
 
   # One re-check after a write that changed something, so a write that raced a

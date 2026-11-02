@@ -181,7 +181,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   # `init_provider/1` validates and normalises config; it does NOT open the
   # upstream WebSocket. The TLS handshake and the subscribe round trip are the
   # worker's, started by `Flezha.Plugin.Extension.Table` at activation once the
-  # relay's SDK side has confirmed bound. See `relay-extensions`
+  # relay's SDK side has confirmed bound. See `plugin-providers`
   # "Two-phase plugin lifecycle gated on SDK readiness".
   @impl true
   def init_provider(opts) do

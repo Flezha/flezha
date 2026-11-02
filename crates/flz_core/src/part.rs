@@ -1,5 +1,5 @@
 //! A part: a preview of the output an invocation is producing, sent while it
-//! runs (`output-parts`).
+//! runs (`relay-outputs`).
 //!
 //! [`send`] frames one part on its invocation's own stream and never waits:
 //! a part the wire cannot take at once is dropped and counted by reason. A

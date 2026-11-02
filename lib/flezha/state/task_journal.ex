@@ -354,7 +354,7 @@ defmodule Flezha.State.TaskJournal do
   `committed_task_idxs` are the tasklets already committed inside that
   still-in-flight iteration (skipped on resume) and `task_handoffs` what each of
   them released, so every uncommitted child branch re-seeds from exactly its own
-  parent's edge (`steps-branching`). `handoff` is the previous iteration's
+  parent's edge (`steps-relay`). `handoff` is the previous iteration's
   terminal handoff — what a handoff-chained loop feeds its next iteration.
   `committed_tasks` carries every forward task commit with its iteration, the
   identities of the Cells it ran and the completion it asked for, which is what

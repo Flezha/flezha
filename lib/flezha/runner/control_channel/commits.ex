@@ -341,7 +341,7 @@ defmodule Flezha.Runner.ControlChannel.Commits do
   defp status(:ok), do: :ok
   defp status({:error, _}), do: :error
 
-  # Task-boundary commit (steps-task-journal): ONE `task_committed` entry
+  # Task-boundary commit (steps-durability): ONE `task_committed` entry
   # (the Cells the stage ran, each with the records it wrote, and the handoff),
   # appended once those records are durable and acked once the entry is. The
   # ack IS the durable point the driver gates the next tasklet on, and the

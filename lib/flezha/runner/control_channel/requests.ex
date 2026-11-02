@@ -202,7 +202,7 @@ defmodule Flezha.Runner.ControlChannel.Requests do
 
   @doc """
   An instance has been idle for its class's `sleep_after` and stopped
-  without a completion (`durable-suspension`). Hand it to its
+  without a completion (`steps-durability`). Hand it to its
   Overwatch, which writes the park record durably before it evicts the instance
   from this runner and keeps it resumable; with no Overwatch here, the record
   is written under the instance's own key so the sleep is rediscovered when the

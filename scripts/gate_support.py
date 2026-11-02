@@ -180,6 +180,14 @@ def disk_files(roots):
 
 
 OPENSPEC_CHANGES = "openspec/changes"
+OPENSPEC_SPECS = "openspec/specs"
+
+
+def subdirectories(root):
+    """The directory names directly under `root`, sorted; none when it is absent."""
+    if not os.path.isdir(root):
+        return []
+    return sorted(name for name in os.listdir(root) if os.path.isdir(os.path.join(root, name)))
 
 
 def open_changes():
@@ -188,10 +196,33 @@ def open_changes():
     Read from disk: `/openspec/changes` is in .gitignore, so a CI checkout
     carries none of it and every gate that reads the queue judges nothing there.
     """
-    if not os.path.isdir(OPENSPEC_CHANGES):
-        return []
-    return sorted(name for name in os.listdir(OPENSPEC_CHANGES)
-                  if name != "archive" and os.path.isdir(os.path.join(OPENSPEC_CHANGES, name)))
+    return [name for name in subdirectories(OPENSPEC_CHANGES) if name != "archive"]
+
+
+def read_text(path):
+    """A file's text, or None when it cannot be read: whether an OpenSpec file
+    must exist is `openspec validate`'s question, not a gate's."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def sections(text, depth=2):
+    """Each heading's lines at `depth` (`## ` by default), keyed by its
+    lower-cased title, the way the OpenSpec CLI reads a spec or a proposal.
+    A deeper heading stays inside its section, so a nested read passes the
+    section's lines back in with `depth + 1`."""
+    heading = re.compile(rf"^#{{{depth}}}\s+(.+?)\s*$")
+    found, current = {}, None
+    for line in text.splitlines():
+        match = heading.match(line)
+        if match:
+            current = found.setdefault(match.group(1).lower(), [])
+        elif current is not None:
+            current.append(line)
+    return found
 
 
 def stale_baseline(path, baseline, hits, what):

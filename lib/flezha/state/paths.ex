@@ -63,7 +63,7 @@ defmodule Flezha.State.Paths do
 
   @doc """
   Reserved journal identity for a steps instance's task-journal
-  (`steps-task-journal`). Steps relay per-instance state is keyed by the
+  (`steps-durability`). Steps relay per-instance state is keyed by the
   instance id in the class position, so both dir levels carry it.
   """
   @spec journal_id(binary()) :: cell_id()

@@ -2,16 +2,16 @@
 
 ## Purpose
 
-The controller-packaging capability defines what the Flezha agent ships as. Three Docker tags compose the published surface:
+What the controller ships as and how it is deployed. The production image is a Debian slim,
+multi-architecture Mix release with a graceful-restart entrypoint, sized VM arguments, the
+applications its dependencies need, pinned downloads, no cookie file, and a size gate; dev and
+toolchain images, unprivileged harness containers and the CI workflows that build them follow one
+toolchain version. The Kubernetes reference manifests declare resource limits, probes, labels,
+portable storage, the controller's plugins and a restricted security profile, and limit who reaches
+the distribution ports.
 
-| Tag                                | Dockerfile                          | Purpose                                                            |
-|------------------------------------|-------------------------------------|--------------------------------------------------------------------|
-| `flezha/flezha:latest`           | `deploy/docker/prod/Dockerfile.controller`      | Prod runtime — Mix release + graceful-restart entrypoint           |
-| `flezha/flezha:latest-dev`       | `deploy/docker/dev/Dockerfile.runtime`     | Runtime + Node.js + pre-built testnet WS server                    |
-| `flezha/flezha:latest-toolchain` | `deploy/docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
-
-The capability defines the prod runtime image base, layer composition, supported architectures, exposed binaries, and the explicitly excluded surface (no Node.js, no testnet, no full Elixir installation, no extra arches). It also covers the runtime-dev image contract (prod runtime + Node + pre-built testnet, for downstream consumers), the toolchain image contract (host-arch only, full dev toolchain bundled, for hacking on Flezha itself), and the build-context discipline (Java SDK natives and fat jars are committed artefacts; CI never cross-compiles them).
 ## Requirements
+
 ### Requirement: Prod runtime image SHALL be based on `debian:bookworm-slim`
 
 The final stage of `deploy/docker/prod/Dockerfile.controller` SHALL use `debian:bookworm-slim` (or a pinned digest of it) as its base image. The runtime image SHALL NOT contain a system-installed Elixir, Erlang, or build toolchain. Instead, the agent SHALL run from the Mix release's bundled ERTS (`include_erts: true` in `mix.exs`).
@@ -189,7 +189,7 @@ The image inherits the prod image's HEALTHCHECK (control-socket readiness, see t
    - **Disabled** (`FLEZHA_GRACEFUL_SHUTDOWN_ENABLED` set to `false`/`0`/`no`/`off` case-insensitive): the trap SHALL `kill -TERM` the agent directly, bypassing the coordinator. This is the kill-switch fall-through, and it matches what the same variable means inside the BEAM (`controller-graceful-shutdown`: `SignalHandler` installs no OS handlers, so kernel's `erl_signal_handler` stays the owner).
 5. `wait` on the agent PID.
 
-Restart survival SHALL come from ProcessHub's durable registry and the per-Cell WAL (`auto-restore-on-boot`, `relay-state-persistence`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
+Restart survival SHALL come from ProcessHub's durable registry and the per-Cell WAL (`cluster-boot-recovery`, `durability-cell-state`). The entrypoint SHALL NOT write or read a cluster-wide snapshot file, and the image SHALL NOT ship a pre-stop snapshot hook.
 
 The image SHALL declare a HEALTHCHECK that tests for the existence of `${FLEZHA_SOCKET_FILES_PATH}/runner_control_channel.sock`.
 
@@ -653,3 +653,175 @@ build.
 - **WHEN** the image build fetches `rebar3` and its digest differs from the recorded one
 - **THEN** the build SHALL fail at that step
 
+### Requirement: Reference workloads declare resource requests and limits
+Every container in the reference manifests (`deploy/kubernetes/flezha-daemonset.yaml` controller container and `deploy/kubernetes/service-template.yaml` runner container) SHALL declare CPU and memory `requests` and `limits` with conservative, documented defaults that a user can tune. No reference workload container SHALL ship without resource bounds.
+
+#### Scenario: Controller container has resource bounds
+- **WHEN** `deploy/kubernetes/flezha-daemonset.yaml` is applied
+- **THEN** the `flezha` container declares `resources.requests` and `resources.limits` for both `cpu` and `memory`, with values documented as tunable defaults in `deploy/kubernetes/README.md`
+
+#### Scenario: Runner template carries the same baseline
+- **WHEN** the `service-template.yaml` reference is used
+- **THEN** its runner container also declares CPU and memory requests and limits
+
+### Requirement: Controller container declares liveness, readiness, and startup probes
+
+The controller container SHALL declare a `startupProbe`, a `livenessProbe`, and a `readinessProbe` so Kubernetes restarts a wedged controller and gates rollouts and traffic on the right fact. The probes SHALL use a controller-provided signal (an HTTP endpoint the controller itself serves, a `flz` command exec, or a TCP check on a controller port) and SHALL NOT assume any external dependency.
+
+Liveness and readiness are different questions and SHALL NOT share one endpoint. The `livenessProbe` and the `startupProbe` SHALL read the health endpoint, which answers success throughout a planned recovery so the kubelet does not restart a controller mid-replay. The `readinessProbe` SHALL read the readiness endpoint, which answers failure for exactly that same window, so a pod that has not finished coming up is not routed to.
+
+A readiness probe SHALL NOT report a controller ready on the grounds that nothing is yet running on it. A controller in its first tick — no namespace hub created, no relay bound, nothing restored — SHALL read as not ready.
+
+#### Scenario: Probes present and self-contained
+
+- **WHEN** `deploy/kubernetes/flezha-daemonset.yaml` is applied
+- **THEN** the `flezha` container declares `startupProbe`, `livenessProbe`, and `readinessProbe`, each using a self-contained check served by the controller itself, with no probe depending on a service outside the pod
+
+#### Scenario: Liveness and readiness read different endpoints
+
+- **WHEN** `deploy/kubernetes/flezha-daemonset.yaml` is inspected
+- **THEN** the `livenessProbe` and `startupProbe` target the health endpoint and the `readinessProbe` targets the readiness endpoint
+
+#### Scenario: A recovering controller is live but not ready
+
+- **GIVEN** a controller whose namespace hubs are replaying their durable registry
+- **WHEN** the kubelet runs both probes
+- **THEN** the liveness probe SHALL succeed, so the pod is not restarted, and the readiness probe SHALL fail, so the pod is removed from readiness-gated endpoints until the replay completes
+
+#### Scenario: A freshly started controller is not ready
+
+- **GIVEN** a controller pod in its first seconds, before any namespace hub exists
+- **WHEN** the kubelet runs the readiness probe
+- **THEN** it SHALL fail, and the pod SHALL NOT be added to readiness-gated endpoints
+
+#### Scenario: Failing health restarts the pod
+
+- **WHEN** the controller becomes unhealthy past the liveness threshold
+- **THEN** the kubelet restarts the container, and while unready the pod is removed from readiness-gated endpoints
+
+### Requirement: Reference manifests meet the Pod Security Standards restricted profile
+The controller (and runner template) Pod and container `securityContext` SHALL satisfy the *restricted* Pod Security Standard: `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile.type: RuntimeDefault`, and `readOnlyRootFilesystem: true` with explicit writable `emptyDir`/volume mounts for any path the process must write. Where a root-running init container (e.g. `fix-permissions`) is required only because a volume does not honor `fsGroup`, the manifest SHALL document that switching to an `fsGroup`-honoring volume removes the need for the root init container under the restricted profile.
+
+#### Scenario: Restricted securityContext fields are set
+- **WHEN** `deploy/kubernetes/flezha-daemonset.yaml` is applied
+- **THEN** the controller container sets `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: ["ALL"]`, `seccompProfile.type: RuntimeDefault`, and `readOnlyRootFilesystem: true`, with writable mounts declared for every path the controller writes
+
+#### Scenario: Restricted profile admits the namespace
+- **WHEN** the `flezha` namespace is labelled `pod-security.kubernetes.io/enforce: restricted`
+- **THEN** the reference DaemonSet and runner template are admitted without warnings, OR the README documents the exact reason and the `fsGroup`-volume alternative that makes them compliant
+
+### Requirement: Reference image is pinned and the pull secret is optional
+The reference manifests SHALL reference the controller image by a **pinned version tag** (not `:latest`). Because the published image is public, a stock `kubectl apply -f deploy/kubernetes/` SHALL succeed **without** creating any registry secret: `imagePullSecrets` SHALL be optional (absent by default or clearly commented), and the README SHALL document how to add one for a private registry.
+
+#### Scenario: Stock apply needs no pull secret
+- **WHEN** a user runs `kubectl apply -f deploy/kubernetes/` against a cluster that can reach Docker Hub
+- **THEN** the controller image pulls successfully without any `imagePullSecrets` being created first
+
+#### Scenario: Image tag is immutable
+- **WHEN** the reference DaemonSet is inspected
+- **THEN** the controller `image` uses a pinned version tag rather than `:latest`
+
+### Requirement: Reference manifests carry the recommended Kubernetes labels
+All reference manifests SHALL set the recommended `app.kubernetes.io/*` labels (`name`, `instance`, `component`, `part-of`, `managed-by`, and `version`) so standard tooling and selectors work, in addition to any existing selector labels.
+
+#### Scenario: Recommended labels present
+- **WHEN** any reference manifest is applied
+- **THEN** its resources carry `app.kubernetes.io/name`, `app.kubernetes.io/component`, `app.kubernetes.io/part-of`, and `app.kubernetes.io/managed-by` labels (with `instance`/`version` where applicable)
+
+### Requirement: Persistent storage is portable and parameterized
+The reference manifests SHALL NOT hardcode environment-specific assumptions for persistent state. The controller's persistent recovery path MAY default to a node-local volume (correct for a DaemonSet), but the path and volume type SHALL be parameterized and `deploy/kubernetes/README.md` SHALL document the portable choice (a CSI/`local` PersistentVolume for cloud clusters) versus `hostPath` (bare-metal/single-node), including the trade-offs.
+
+#### Scenario: Storage is documented and tunable, not assumed
+- **WHEN** a cloud user reviews the reference manifests
+- **THEN** the persistent-state volume path/type is parameterized (not a fixed host directory baked into the only supported path), and the README explains the CSI/local-PV option alongside `hostPath` with their trade-offs
+
+### Requirement: Reference manifests are correct and environment-agnostic
+The reference manifests SHALL be free of YAML/scheduling defects and SHALL NOT embed any environment-specific identifiers (node hostnames, single-cluster IPs, or architecture pins beyond the multi-arch image). The `service-template.yaml` `podAntiAffinity` SHALL use a valid `ops` key in its `matchExpressions`.
+
+#### Scenario: podAntiAffinity expression is valid
+- **WHEN** `deploy/kubernetes/service-template.yaml` is applied
+- **THEN** its `podAntiAffinity` `matchExpressions` entry uses `operator: In` (not the invalid `runner: In`), and the manifest is accepted by the API server
+
+#### Scenario: No environment-specific identifiers
+- **WHEN** any reference manifest is reviewed
+- **THEN** it contains no node hostnames, no hardcoded cluster IPs, and no architecture-specific node selectors (architecture is resolved by the multi-arch image)
+
+### Requirement: The reference manifests SHALL declare the controller's plugins
+
+`deploy/kubernetes/flezha-configmap.yaml` SHALL set `FLEZHA_PLUGIN_ROOT` to a directory on the
+persistent recovery volume (`/var/lib/flezha/plugins`), because the controller container's
+root filesystem is read-only and the loader expands packages under the plugin root at every
+boot. It SHALL carry `FLEZHA_PLUGINS` as a commented example of a declared list, with a
+pinned `#sha256=` entry. The DaemonSet SHALL add no init container for plugins: the image
+entrypoint syncs the declared list before it starts the controller (`controller-packaging`).
+`deploy/kubernetes/README.md` SHALL state that a change to the list takes effect with
+`kubectl rollout restart daemonset/flezha-daemonset`, that the declared list is the only
+truth on such a node (install and uninstall are refused there), and how to supply a
+package from a URL the cluster can reach.
+
+#### Scenario: A declared plugin loads in the reference deployment
+
+- **GIVEN** a throwaway single-node cluster running the reference manifests with the locally
+  built image and `FLEZHA_PLUGINS` naming the example package
+- **WHEN** the pod becomes ready
+- **THEN** `kubectl exec` of `flz plugin list --installed` SHALL show the package loaded, and
+  its archive SHALL be under `/var/lib/flezha/plugins`
+
+#### Scenario: Changing the list is a rollout
+
+- **GIVEN** that deployment
+- **WHEN** `FLEZHA_PLUGINS` is emptied in the ConfigMap and the DaemonSet is restarted with
+  `kubectl rollout restart`
+- **THEN** the new pod SHALL list no package, and the archive SHALL be gone from the plugin
+  root
+
+#### Scenario: Install is refused on a node whose list is declared
+
+- **GIVEN** that deployment with `FLEZHA_PLUGINS` set
+- **WHEN** `kubectl exec` runs `flz plugin install` of any archive
+- **THEN** it SHALL be refused with `plugin.list_declared`
+
+### Requirement: The reference manifests SHALL limit who reaches the distribution ports
+
+The reference manifests SHALL include a NetworkPolicy for the controller pods that admits traffic
+to the EPMD port and the distribution port only from pods labelled as Flezha controllers, admits
+traffic to the `http_api` port from pods labelled as the console, and admits traffic to the health
+port from any source. The DaemonSet SHALL set `FLEZHA_DIST_PORT` and declare that port and the
+EPMD port on the controller container. The console's Kubernetes example SHALL reach the
+controllers through the `http_api` port with a client certificate and a token, and SHALL NOT be
+given the cookie.
+
+#### Scenario: The manifest declares the policy and the port
+
+- **WHEN** the reference manifests are read
+- **THEN** a NetworkPolicy SHALL select the controller pods and allow ports 4369 and the
+  `FLEZHA_DIST_PORT` value only from the controller label, and the `http_api` port from the
+  console label, and the DaemonSet SHALL set `FLEZHA_DIST_PORT` and declare it as a container port
+
+#### Scenario: An unrelated pod is blocked on a cluster that enforces policies
+
+- **GIVEN** the reference manifests applied to a throwaway k3s cluster with policy enforcement
+- **WHEN** a pod without the controller or console label connects to a controller's port 4369 or
+  its distribution port
+- **THEN** the connection SHALL fail, while the controllers still form a cluster and the health
+  probes still pass
+
+#### Scenario: The console pod cannot reach distribution
+
+- **GIVEN** the same cluster with the console example applied
+- **WHEN** a console pod connects to a controller's port 4369 or its distribution port
+- **THEN** the connection SHALL fail, while its HTTPS calls to the `http_api` port succeed
+
+### Requirement: The reference init container SHALL NOT widen file modes
+
+The init container that prepares the controller's host paths SHALL set ownership and SHALL NOT
+make any file or directory under them readable by other users. It SHALL NOT change the mode of
+files the controller has already written.
+
+#### Scenario: Keys stay private across a restart
+
+- **GIVEN** a controller pod has written key files with mode `0600` under its certificate host
+  path
+- **WHEN** the pod restarts and the init container runs again
+- **THEN** the key files SHALL still have mode `0600`, and no directory the init container touched
+  SHALL be readable by other users

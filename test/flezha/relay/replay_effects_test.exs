@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Relay.ReplayEffectsTest do
   @moduledoc """
-  A bind's effect results (`recorded-effects`): the kept results for inputs
+  A bind's effect results (`relay-determinism`): the kept results for inputs
   above the instance's floor are counted onto `AddRelay.effect_result_count`
   and shipped to the bound runner as `EffectResults` batches, awaited; the
   ones at or below the floor stay behind.

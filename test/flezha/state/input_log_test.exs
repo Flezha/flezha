@@ -1,6 +1,6 @@
 defmodule Flezha.State.InputLogTest do
   @moduledoc """
-  `durable-input-log`: offset monotonicity across appends and restarts,
+  `durability-input-log`: offset monotonicity across appends and restarts,
   torn-tail discard, watermark truncation that respects the slowest reporter,
   the message-id index, answers that wait for their sync, frozen-watermark
   telemetry, the fsync companion's death, and the tier-off cost-free default

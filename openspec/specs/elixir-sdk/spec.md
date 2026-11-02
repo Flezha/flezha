@@ -1,7 +1,17 @@
 # elixir-sdk Specification
 
 ## Purpose
-TBD - created by archiving change elixir-sdk-native-transport. Update Purpose after archive.
+
+The Elixir SDK, a veneer host over `flz_core`. It serves two deployment modes from one core, a
+standalone runner node that does not become a controller and a runner embedded beside one, with one
+runner or local run live per BEAM. Authors write relays and tasklets with `use` macros that expand
+to its behaviours, including the three-option short form, a `state` block with defaults and
+`defchange` as the one way to change state, the producer-first graph builder's v1 subset,
+per-tasklet schema versions with migrations, and spawn-or-deliver of steps instances. The runner
+keeps a mutable per-runner factory set, announces each class's run and language byte, reaches the
+controller through its own NIF, dispatches on a worker pool fed by native poll threads, and ships a
+tasklet test harness.
+
 ## Requirements
 ### Requirement: The Elixir runner entry point mirrors the cross-SDK runner-as-handle surface
 The SDK SHALL expose `Flezha.SDK.create_runner/2` — `create_runner(namespace, opts)` with `transport: :uds | :quic` defaulting to `:uds` — returning a runner handle carrying its own declared factory set (empty at creation; no connection, no singleton claim, no process spawn), with `register_factory/2` (a relay module of either run, the run read from the module's `run/0`, `:flow` when it defines none; a module that is not a relay answers `{:error, %Flezha.SDK.Error{code: "topology.no_relay_exported"}}` naming the module in its details; the body is `channels/1` for both) and its inverse `unregister_factory/2`, and the lifecycle verbs `start/1`, `await_termination/1`, `run/1` (exactly `start/1` then `await_termination/1`, never an independent implementation), `close/1`, and `namespace/1`. The process-wide active-runner slot SHALL be claimed atomically inside `start/1` — any number of unstarted handles may exist; the loser receives `{:error, %Flezha.SDK.Error{code: "runtime.runner_already_running"}}` naming `ns`; double-start on one handle errors; closing a never-started handle is a no-op. Zero-relay start SHALL be legal. Authoring and connection failures SHALL be named error tuples returned at the causing call site (mirroring the Rust `FlezhaError` variants) — never a raise. `Flezha.SDK.child_spec/1` SHALL accept `namespace:`, `relays:` (a list of relay modules of either run), `transport:` and `namespace_secret:`, and wrap exactly the create → register → start → await sequence for the host application's supervision tree — it MUST NOT introduce a second lifecycle path. On start the SDK SHALL declare every registered class to `flz_core` and start the core's runner, which connects over the selected transport.

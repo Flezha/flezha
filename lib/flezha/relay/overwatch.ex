@@ -420,7 +420,7 @@ defmodule Flezha.Relay.Overwatch do
       when reason != nil,
       do: {:reply, {:error, :startup_failed}, state}
 
-  # Confirming ingest (`relay-to-relay-messaging`): the same single
+  # Confirming ingest (`relay-messaging`): the same single
   # pre-delivery path as the `{:io_in, _, _}` cast, answering what happened so a
   # forwarding sink can tell "done" from "retry". The cast keeps its
   # fire-and-forget shape, including its silent drop for a halted relay.

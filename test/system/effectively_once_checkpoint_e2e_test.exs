@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   @moduledoc """
-  End-to-end proof for `effectively-once-checkpoint-granularity` against a live
+  End-to-end proof for `durability-effectively-once` against a live
   Rust runner: a source drives `checkpoint_store` (declared
   `effectively_once()` + `ack_checkpoint()`), whose keyed outputs land on a
   conforming changelog sink. Every input folds into the Cell's state, but

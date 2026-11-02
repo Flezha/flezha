@@ -180,7 +180,7 @@ defmodule FlezhaTest.System.SchemaEvolutionE2ETest do
     # so the reason has to be the stamp and not an incidental decode failure.
     assert reason =~ "schema_version 2 is above the running tasklet's 1"
 
-    # `relay-state-persistence`, "A refused restore fails the bind instead of
+    # `durability-cell-state`, "A refused restore fails the bind instead of
     # cold-starting the Cell": the relay is left unbound. Whether
     # `start_relay/2`'s own reply carried the refusal is NOT part of that
     # guarantee and is a real race — `Replay.restore_on_bind/2` reports the

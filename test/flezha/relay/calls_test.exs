@@ -368,7 +368,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       assert :sys.get_state(host).calls.rows == %{}
     end
 
-    # The `output-parts` scenario "An outside caller sees the answer alone".
+    # The `relay-outputs` scenario "An outside caller sees the answer alone".
     test "a caller waiting beside a listener receives the answer alone", %{inst: inst} do
       listener =
         Flezha.Plugin.new(
@@ -649,7 +649,7 @@ defmodule FlezhaTest.Relay.CallsTest do
     end
   end
 
-  # `relay-io-listener`: the calls a relay takes and how each ended, as the
+  # `relay-listener`: the calls a relay takes and how each ended, as the
   # `on_call` hook hands them to the test standing in for its listener.
   describe "the on_call listeners" do
     setup :set_mimic_global_until_exit
@@ -708,7 +708,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       )
     end
 
-    # Also the `relay-extensions` scenario "A call reaches a calls listener and
+    # Also the `plugin-providers` scenario "A call reaches a calls listener and
     # nothing else": the sink and the output listener see the answer alone.
     test "an answered call: one call event, then answered, under an id that is not the token",
          %{inst: inst} do

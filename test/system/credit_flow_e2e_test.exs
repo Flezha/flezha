@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.CreditFlowE2ETest do
   @moduledoc """
-  End-to-end proof for `credit-grant-flow-control` against live runners:
+  End-to-end proof for `transport-flow-control` against live runners:
   a deliberately tiny credit window is overdriven by a burst of
   state-changing inputs, so the SDK exhausts its window and parks between
   the controller's fsync-minted grants — and every Change still lands

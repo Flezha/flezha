@@ -288,7 +288,7 @@ For any single Cell, two invocations of its Tasklet's `run(...)` method SHALL NO
 - **THEN** the Cell's State SHALL end with `[a, b, c]` in exactly that order
 
 ### Requirement: Typed channels with compile-time wiring checks
-All inter-Tasklet and Tasklet-to-plugin routing SHALL go through Channels declared on the Relay via the producer-first graph builder (`sdk-graph-authoring`). Each Channel SHALL carry its payload type `T`, taken from the producing Tasklet's `Output` type — there is no user-supplied type token and no `.from(...)` clause for inter-tasklet channels. The wiring API SHALL refuse to build in any of these cases:
+All inter-Tasklet and Tasklet-to-plugin routing SHALL go through Channels declared on the Relay via the producer-first graph builder (`relay-graph`). Each Channel SHALL carry its payload type `T`, taken from the producing Tasklet's `Output` type — there is no user-supplied type token and no `.from(...)` clause for inter-tasklet channels. The wiring API SHALL refuse to build in any of these cases:
 
 - A consumer Tasklet whose `Input` associated type is not `T` is wired via `.into::<X>()` / `.into(X.class)` onto a stream of payload type `T`.
 - A node is wired as the producer of more than one output channel (the emit surface carries one output channel per tasklet, so a second one could never be routed).
@@ -308,7 +308,7 @@ In Rust these refusals SHALL be compile-time where the builder shape permits, ot
 - **THEN** the program MUST fail at compile time (or at registration time if compile-time enforcement is impossible for the chosen builder shape) with an error naming the node
 
 ### Requirement: Per-relay channel namespace
-Channel names SHALL be scoped to a single Relay instance. Two Relay instances (for example the BTC Relay and the ETH Relay) SHALL each have their own independent channel namespace; a channel named `"trade.raw"` on one Relay SHALL be a distinct logical channel from a channel of the same name on another Relay. Auto-derived channel names (from the producer node's identity, per `sdk-graph-authoring`), `.named(...)` overrides, and explicit entry names SHALL all share this namespace and its duplicate check; a collision SHALL fail registration naming both declarations.
+Channel names SHALL be scoped to a single Relay instance. Two Relay instances (for example the BTC Relay and the ETH Relay) SHALL each have their own independent channel namespace; a channel named `"trade.raw"` on one Relay SHALL be a distinct logical channel from a channel of the same name on another Relay. Auto-derived channel names (from the producer node's identity, per `relay-graph`), `.named(...)` overrides, and explicit entry names SHALL all share this namespace and its duplicate check; a collision SHALL fail registration naming both declarations.
 
 #### Scenario: Same-named channels on different relays are independent
 - **WHEN** the BTC Relay declares `c.input::<Trade>("trade.raw")` and the ETH Relay also declares `c.input::<Trade>("trade.raw")`
