@@ -302,15 +302,17 @@ clustered || fail "the controllers did not connect after the restart"
 IP="$(pod_ip "${PODS[0]}")"
 
 pod_flz() { kc -n flezha exec "${PODS[0]}" -c flezha -- env FLEZHA_TOKEN="${ADMIN:-}" /flezha/bin/flz "$@"; }
+# The token `flz auth bootstrap` or `flz token issue` printed, from its output on stdin.
+shown_token() { sed -n 's/^.*token (shown once, store it now): //p'; }
 claim="$(kc -n flezha exec "${PODS[0]}" -c flezha -- \
   sh -c '/flezha/bin/flz auth bootstrap < /var/lib/flezha/auth/bootstrap.token')"
-ADMIN="$(sed -n 's/^admin token (shown once, store it now): //p' <<<"$claim")"
+ADMIN="$(shown_token <<<"$claim")"
 [ -n "$ADMIN" ] || fail "the bootstrap claim answered no admin token: $claim"
 pod_flz plugin enable api http_api --namespace _system --Xbind=0.0.0.0 \
   --Xtls_certfile=/etc/flezha/channel/node.pem --Xtls_keyfile=/etc/flezha/channel/node.key \
   --Xtls_client_cacertfile=/etc/flezha/channel/ca.pem || fail "http_api did not enable"
 issued="$(pod_flz token issue console@_system _system admin --ttl never)"
-TOKEN="$(sed -n 's/^token (shown once, store it now): //p' <<<"$issued")"
+TOKEN="$(shown_token <<<"$issued")"
 [ -n "$TOKEN" ] || fail "no token was issued: $issued"
 
 # The console's pod as its example runs it: uid 1000, the channel's files
