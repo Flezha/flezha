@@ -103,8 +103,9 @@ defmodule Mix.Tasks.Bench.Fleet do
   # configuration that ships nowhere, and would never exercise the admission
   # path at all.
   #
-  # Both are gated on the same predicate `Quotas.check_allocation/3` reads, so a
-  # run that will not be enforced writes no catalog row and issues no credential.
+  # The catalog row is gated on the predicate `Quotas.check_allocation/3` reads,
+  # and the credential on the posture `Flezha.AuthZ.RunnerProof` reads, which
+  # asks for one before the bootstrap is claimed too.
   #
   # Quotas are wide enough that the bench never measures a ceiling: the defaults
   # cap a namespace at 100 relays, which `-n 100` sits exactly on.
@@ -136,7 +137,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   """
   @spec runner_credential(binary()) :: [{binary(), binary()}]
   def runner_credential(namespace) do
-    if AuthZ.enabled?() do
+    if AuthZ.enforcement_posture() != :open do
       for %{role: :runner, revoked_at: nil, token_hash: hash} <- TokenStore.list(namespace),
           do: TokenStore.revoke(hash)
 

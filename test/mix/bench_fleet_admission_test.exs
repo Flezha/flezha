@@ -54,3 +54,31 @@ defmodule Mix.Tasks.Bench.FleetAdmissionTest do
              RunnerProof.prove(nil, @namespace, frame(second), :uds)
   end
 end
+
+defmodule Mix.Tasks.Bench.FleetAdmissionPendingTest do
+  @moduledoc """
+  The same precondition before the bootstrap is claimed: enforcement is
+  configured on, so the connect gate already asks for a credential.
+  """
+  use FlezhaTest.Case,
+    fixtures: [{:auth_stores, prefix: "flz_bench_admission_pending"}],
+    async: false
+
+  import ExUnit.CaptureIO
+
+  alias Flezha.AuthZ
+  alias Flezha.AuthZ.RunnerProof
+  alias Mix.Tasks.Bench.Fleet
+
+  test "a runner is handed a credential the gate accepts before the bootstrap is claimed" do
+    assert AuthZ.enforcement_posture() == :bootstrap_pending
+
+    {credential, printed} = with_io(fn -> Fleet.runner_credential("bench") end)
+
+    assert printed =~ "Issued a runner credential for namespace bench"
+    assert [{"FLEZHA_NAMESPACE_SECRET", secret}] = credential
+
+    assert {:ok, %{namespace: "bench"}} =
+             RunnerProof.prove(nil, "bench", %{"namespace_secret" => secret}, :uds)
+  end
+end
