@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The observability-foundation capability provides the Flezha Controller's first-class, pluggable subsystem that unifies metrics, events, logs, and in-process trace spans behind one contract. It defines a single signal envelope (`kind` ∈ `:metric | :event | :log | :trace_span`), a `Source` behaviour for producers and a `Sink` behaviour for consumers, an ETS-backed `Registry` enumerating live sources and sinks with per-source cardinality budgets, and a fan-out bus that is non-blocking on the producer side (default policy: drop-with-counter — observability never back-pressures the hot path). The capability ships two default sinks (an in-memory per-source ring buffer queryable via the service API, and a `Phoenix.PubSub` fan-out for a future LiveView UI), a `:logger` handler that bridges Elixir log records onto the bus, and a single dispatching `:telemetry` handler that lifts the existing `[:flezha, ...]` events onto the bus without modifying any call-site. The service-API module `Flezha.Service.Observability` is callable from both the CLI (via `Flezha.Service.CliManager`) and the planned Phoenix UI directly, with a `caller_context` argument on every public function so a future authorization capability can plug in without a breaking API change. External exporters, built-in VM/host probes, and cross-transport trace-context propagation are explicitly out of scope and deferred to follow-up capabilities.
+The observability-foundation capability provides the Flezha Controller's first-class, pluggable subsystem that unifies metrics, events, logs, and in-process trace spans behind one contract. It defines a single signal envelope (`kind` ∈ `:metric | :event | :log | :trace_span`), a `Source` behaviour for producers and a `Sink` behaviour for consumers, an ETS-backed `Registry` enumerating live sources and sinks with per-source cardinality budgets, and a fan-out bus that is non-blocking on the producer side (default policy: drop-with-counter — observability never back-pressures the hot path). The capability ships two default sinks (an in-memory per-source ring buffer queryable via the service API, and a `Phoenix.PubSub` fan-out for a future LiveView UI), a `:logger` handler that bridges Elixir log records onto the bus, and a single dispatching `:telemetry` handler that lifts the existing `[:flezha, ...]` events onto the bus without modifying any call-site. The service-API module `Flezha.Service.Observability` is callable from both the CLI (via `Flezha.Service.CliManager`) and the planned Phoenix UI directly, with a `caller_context` argument on every public function so a future authorization capability can plug in without a breaking API change. External exporters, built-in VM/host probes, and cross-transport trace-context propagation are explicitly out of scope and deferred to follow-up capabilities. Every event name the tree writes and every data-heartbeat slot is declared once, held by the suite.
 ## Requirements
 ### Requirement: Unified signal taxonomy
 
@@ -609,4 +609,17 @@ it discards.
 
 - **WHEN** the audit sink boots with `:extra_subscriptions: [{:my_source, :critical}]`
 - **THEN** its registered bus filter SHALL include `:my_source`
+
+### Requirement: An event name and a heartbeat slot SHALL each be declared once, held by the suite
+
+Every `[:flezha, …]` event name the tree writes SHALL be a key of the telemetry bridge's mapping or
+a member of its pinned unexported list, held by
+`test/flezha/observability/telemetry_event_seam_test.exs`; and every key of the shared core's data
+heartbeat SHALL be mirrored by the controller from one declared set, held by
+`test/sdk_conformance/gate_test.exs` ("data heartbeat").
+
+#### Scenario: An unbridged event name
+
+- **WHEN** a module writes a `[:flezha, …]` event name the bridge neither maps nor lists
+- **THEN** `telemetry_event_seam_test.exs` SHALL fail naming the file and the event
 

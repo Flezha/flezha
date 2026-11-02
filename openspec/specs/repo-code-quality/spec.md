@@ -2,7 +2,16 @@
 
 ## Purpose
 
-The repo-code-quality capability defines a project-wide build-hygiene contract: default Cargo, Maven, and Mix builds emit zero warnings from project-owned source, default-feature workspace tests pass, lib output filenames do not collide, comments describe present-tense behavior, and dead-code suppressions carry justification. The capability establishes a durable normative baseline; any future change that regresses it must explicitly carry the regression in its proposal. Third-party crate, Hex package, and protobuf-generated source warnings are out of scope and do not gate the build.
+What every source file, build and CI job in the repository holds to. Default Cargo, clippy, Maven
+and Mix builds emit no warnings from project code, default-feature workspace tests pass, lib output
+filenames do not collide, a dependency is declared only when used and resolves from a published
+version, and comments describe present-tense behaviour. Modules are named, placed and moved by
+stated rules, and a lower directory never names a higher one. CI workflows take every toolchain
+version from one set, a CI job never reports success when it could not run, an SDK's test toolchain
+and coverage driver come from its own manifest, every gate is a row of one runner, lint counts and
+size ceilings only shrink, the committed protobuf code equals its generator's output, and the
+decisions publication makes irreversible are recorded before the first release. Warnings from
+third-party and generated code do not gate the build. How tests behave is `repo-test-hygiene`.
 ## Requirements
 ### Requirement: Default Cargo build SHALL produce zero warnings from project crates
 
@@ -112,98 +121,6 @@ Every `#[allow(dead_code)]` attribute in project crates SHALL be accompanied by 
 - **WHEN** a contributor adds a `#[allow(dead_code)]` attribute to a project source file
 - **THEN** the attribute SHALL be either preceded by a one-line `//` comment explaining why, or use the Rust 1.81+ `#[allow(dead_code, reason = "...")]` form
 
-### Requirement: A test SHALL restore any process-global test mode it changes
-
-A test module SHALL return a process-global test-double mode to its default
-before that module's tests finish. A module SHALL NOT rely on the library
-observing its owner exit: the library begins watching an owner only once that
-owner registers a test double, so a test that registers none is never watched
-and the mode outlives it.
-
-Test sources SHALL NOT call the raw mode-setting function. They SHALL use the
-repository's releasing wrapper, so the release cannot be forgotten. The wrapper's
-own definition is the single exemption and SHALL be allowlisted by path.
-
-A gate SHALL fail when a test source calls the raw function, naming the file and
-the wrapper to use instead.
-
-#### Scenario: A module that stubs nothing does not leak the mode
-
-- **GIVEN** a test module that enters global mode and registers no stub
-- **WHEN** its tests finish and another module calls `stub/3` from its own process
-- **THEN** that call SHALL succeed
-
-#### Scenario: A module hands the default mode to the next one
-
-- **GIVEN** a test module that enters global mode
-- **WHEN** its tests finish, on any seed
-- **THEN** the process-global mode SHALL read as the default, whatever the
-  module's last-run test did
-
-#### Scenario: The gate refuses a raw mode-setting call in a test
-
-- **GIVEN** a test source calling the raw global-mode function directly
-- **WHEN** the gate runs
-- **THEN** it SHALL exit non-zero naming that file and the wrapper to use
-
-#### Scenario: The wrapper's own definition is exempt
-
-- **WHEN** the gate runs against a tree whose only raw call is inside the
-  wrapper's own module
-- **THEN** it SHALL exit zero, the exemption being declared by path
-
-### Requirement: A failure-path test SHALL assert its diagnostic
-
-A test that deliberately drives a path which logs an error SHALL capture that
-log and assert on the part of the message that carries meaning. The diagnostic
-becomes something the test checks, rather than output the run prints and the
-merge gate trips over.
-
-Capturing without asserting SHALL NOT satisfy this: it quiets the run while
-removing the diagnostic from everything, which trades a visible problem for an
-invisible one. A module-wide capture SHALL NOT be used either, because it also
-swallows lines a later test emits by accident — including the ones that would
-have revealed a defect.
-
-#### Scenario: A failure-path test asserts what it provoked
-
-- **GIVEN** a test that drives a path which logs an error
-- **WHEN** it runs
-- **THEN** it SHALL capture that log and assert on the message's meaningful part
-
-#### Scenario: A silenced diagnostic does not count
-
-- **GIVEN** a test that captures a log and discards it, or a module-wide capture
-- **WHEN** the practice is reviewed
-- **THEN** it SHALL NOT be treated as satisfying this requirement
-
-### Requirement: A log gate SHALL be demonstrated to fail
-
-A gate that searches output for a forbidden pattern SHALL be shown to go red on
-a deliberate violation and green on its removal. A gate that has only ever
-reported one verdict has been shown to be consistent, not to work — and one that
-has been red since it was written reports nothing, because no one can tell a new
-violation from the standing ones.
-
-#### Scenario: The gate goes red on purpose
-
-- **GIVEN** a deliberate uncaptured error added to the suite
-- **WHEN** the gate's own command runs against the run's output
-- **THEN** it SHALL exit non-zero, and SHALL exit zero once that error is removed
-
-### Requirement: A test SHALL remove the temporary directories it creates
-
-A test that creates a temporary directory SHALL register its removal at the
-point of creation, so a run leaves the temporary-directory count no higher than
-it found it. Cleanup SHALL NOT depend on a shared teardown helper that each
-module must remember to call, which reproduces the same omission one level up.
-
-#### Scenario: A run leaves no temporary directories behind
-
-- **GIVEN** the count of temporary directories before a plain `mix test`
-- **WHEN** the run completes
-- **THEN** the count SHALL be no higher than before
-
 ### Requirement: A dependency SHALL resolve from a published version
 
 Every dependency SHALL be declared as a published version requirement, so that
@@ -237,36 +154,6 @@ version.
 - **GIVEN** an environment variable naming a local checkout of a dependency
 - **WHEN** the project is built with it set
 - **THEN** the build SHALL use that checkout, and with it unset SHALL use the published version
-
-### Requirement: An assertion about a path's absence SHALL be shown able to fail
-
-A test asserting that a path does not exist SHALL be demonstrated to fail when
-that path genuinely does exist. An assertion whose subject can never be present
-reports nothing: it passes identically whether the behaviour it guards works or
-has been broken since the day it was written.
-
-A durable path SHALL be derived from the function that owns the layout, not
-rebuilt from its parts at the call site. Where the owning module exposes no
-suitable path, that path SHALL be added to it rather than assembled by the
-caller.
-
-#### Scenario: The assertion fails when its subject is present
-
-- **GIVEN** a test asserting a durable path does not exist
-- **WHEN** that path is genuinely created and the test runs
-- **THEN** the test SHALL fail
-
-#### Scenario: A path is derived, not rebuilt
-
-- **WHEN** a test names a durable directory
-- **THEN** it SHALL obtain it from the module that defines the layout, and SHALL NOT join a root to a name itself
-
-#### Scenario: A test whose subject is the layout builds the path itself
-
-- **GIVEN** a test that exists to pin the layout, or one asserting a layout the code no longer writes
-- **WHEN** it names a durable directory
-- **THEN** it SHALL assemble the path from its parts, because deriving it would make the assertion follow the resolution it exists to prove
-- **AND** it SHALL say so where the path is built
 
 ### Requirement: A module's documented layout SHALL match what it implements
 
@@ -309,76 +196,6 @@ than the whole entry being left to overstate.
 - **GIVEN** an entry of which some claims are measured to be no longer true
 - **WHEN** it is revised
 - **THEN** the stale claims SHALL be removed and what was measured in their place recorded
-
-### Requirement: A plain test run SHALL emit no uncaptured error log
-
-A default `mix test` on a clean tree SHALL produce no `[error]` or `[critical]`
-line. Every failure path a test drives on purpose is captured and asserted; any
-line that reaches the console is an unasserted failure, whether it comes from a
-test or from the production code under it.
-
-A line SHALL be closed at its cause. Narrowing the gate's pattern, allowlisting a
-message, filtering the log, or wrapping a test that drives no failure path in a
-module-wide capture SHALL NOT satisfy this: each makes the gate pass without
-making the run quiet, which is the condition the gate exists to detect.
-
-A production defect surfaced this way SHALL be fixed as a production change or
-recorded with a reproduction and left — never silenced from the test side, which
-would hide a live defect behind a green gate.
-
-#### Scenario: A clean tree runs quiet
-
-- **GIVEN** a working tree with no local modifications
-- **WHEN** a default `mix test` runs and the log gate's own pattern is applied to its output
-- **THEN** the pattern SHALL match nothing
-
-#### Scenario: Silencing the symptom does not count
-
-- **GIVEN** an uncaptured error closed by narrowing the gate, allowlisting the message, or capturing a test that drives no failure path
-- **WHEN** the practice is reviewed
-- **THEN** it SHALL NOT be treated as satisfying this requirement
-
-### Requirement: A test SHALL scope its observation of a process-global signal
-
-A test SHALL scope its observation of a process-global signal to what the test
-itself caused, by a discriminator the test controls. This covers any VM-wide
-facility a signal arrives through — a `:telemetry` handler, a named table, or a
-shared registry — and it covers a **direct read** of such a facility as well as
-a delivered signal: an assertion over a whole node-global ledger asserts about
-every emitter on the node, not about the code under test.
-
-Handlers of this kind fire for events raised in any process, so an unscoped
-observation in an `async: true` module receives whatever a concurrently running
-module or a background process emits. The resulting assertion is not about the
-code under test, and it fails intermittently and only in a full run, which is the
-most expensive shape a test failure can take.
-
-Waiting, retrying, or settling before the assertion SHALL NOT satisfy this: it
-defers the foreign signal rather than excluding it, and leaves the same
-observation open for the next emitter.
-
-A test that scopes one observation of a facility and leaves another unscoped in
-the same body SHALL be treated as unscoped. The scoping SHALL be demonstrated by
-a foreign entry the test itself creates, so the discriminator is proved
-load-bearing rather than assumed.
-
-#### Scenario: A concurrent emitter does not reach another test's assertion
-
-- **GIVEN** an `async: true` test observing a process-global signal
-- **WHEN** another module or a background process emits the same signal while it runs
-- **THEN** the observation SHALL NOT deliver that emitter's signal to the test
-
-#### Scenario: A settle does not count as scoping
-
-- **GIVEN** an unscoped observation made to pass by waiting, retrying, or settling
-- **WHEN** the practice is reviewed
-- **THEN** it SHALL NOT be treated as satisfying this requirement
-
-#### Scenario: A direct read of a node-global ledger is scoped like a signal
-
-- **GIVEN** a test asserting on the contents of a node-global ledger it did not create alone
-- **WHEN** another module has left an entry in that ledger
-- **THEN** the assertion SHALL be scoped to the reference the test itself created, and SHALL NOT be satisfied by clearing or re-reading the ledger
 
 ### Requirement: A module SHALL be named so that its last segment survives aliasing
 
@@ -590,74 +407,6 @@ its removal, before the rename it guards is committed.
 - **THEN** a test of the shared walk SHALL run beside them, covering a record written
   on one line, a record spanning two markers, a block left open, and a file with no
   markers, and SHALL fail if any of those exempts more or fewer lines than it delimits
-
-### Requirement: A test SHALL stop the background worker it starts
-
-A test SHALL stop, before it ends, every long-lived process it starts under a
-supervisor that outlives the test. A supervisor from the application's own
-supervision tree is such a supervisor: a worker started under it is owned by the
-application, not by the test, and `start_supervised/1` does not apply to it.
-
-A worker left behind keeps running its own timers. Its next tick executes
-against whatever global state the suite has reached by then — a stub owned by an
-unrelated module, a table whose owner has exited — and raises somewhere no test
-is watching. The run stays green and the console carries an unattributable
-error, which is the most expensive shape a defect can take.
-
-Answering the crash rather than the leak SHALL NOT satisfy this. Hardening the
-one function the retry happened to reach closes one landing site out of an open
-set, because the leaked worker calls into whatever is currently installed.
-
-#### Scenario: A worker started by a test does not outlive it
-
-- **GIVEN** a test that starts a worker under a supervisor from the application's supervision tree
-- **WHEN** the test ends
-- **THEN** that worker SHALL no longer be running
-
-#### Scenario: The leak is detected at the next test, not at the next release
-
-- **GIVEN** a test module whose tests start such workers
-- **WHEN** a test in that module begins
-- **THEN** any worker surviving from an earlier test SHALL fail that test and SHALL be named in the failure
-
-#### Scenario: Hardening the landing site does not count
-
-- **GIVEN** a leaked worker whose retry raised inside a helper or a stub, closed by making that helper answer instead of raising
-- **WHEN** the practice is reviewed
-- **THEN** it SHALL NOT be treated as satisfying this requirement
-
-### Requirement: A minted test identifier SHALL fit the limit its subject enforces
-
-A helper that mints an identifier SHALL bound what it mints to the limit its
-subject enforces, so the result is accepted at any value of the varying part.
-The limit SHALL be read from the production constant's own accessor, never
-restated as a literal in test code.
-
-A per-call-site truncation SHALL NOT satisfy this. It leaves the bound wherever
-someone remembered to write it, cannot be applied to a computed prefix, and
-budgets a fixed number of digits that a longer run exceeds silently.
-
-A bound that reserves a digit count SHALL NOT satisfy this either: it moves the
-cliff rather than removing it. The bound SHALL be computed from the value being
-minted.
-
-#### Scenario: A minted id is accepted at any counter width
-
-- **GIVEN** an identifier minted from a prefix and a monotonically growing counter
-- **WHEN** the counter reaches any width
-- **THEN** the minted identifier SHALL be accepted by the validator the subject enforces
-
-#### Scenario: An id that already fits is unchanged
-
-- **GIVEN** a prefix and counter whose concatenation is already within the limit
-- **WHEN** the identifier is minted
-- **THEN** it SHALL be byte-identical to the plain `prefix <> "_" <> counter` concatenation
-
-#### Scenario: A per-call-site truncation is not the bound
-
-- **GIVEN** a call site that truncates its prefix by hand before minting
-- **WHEN** the practice is reviewed
-- **THEN** it SHALL NOT be treated as satisfying this requirement
 
 ### Requirement: A split names only modules that cannot reach it back
 
@@ -1114,31 +863,6 @@ exact version.
 - **WHEN** a manifest entry the reader is asked for is a range rather than an exact version
 - **THEN** the reader SHALL exit non-zero and the install step SHALL fail
 
-### Requirement: A durable-state reset in the test harness SHALL be complete when it returns
-
-A test helper that removes durable state SHALL return only when nothing it
-terminated can still write to that state and nothing can restore from what it
-removed, so that a test which calls it starts from the state it declares
-whatever the previous test left running. A reset that returns while a writer is
-still flushing, or before a teardown it depends on has finished, produces a
-failure that lands on a different test on every run, and a module that passes
-alone and fails in the suite cannot be verified by any run of the module.
-
-Such a helper SHALL wait on the exit of what it terminated, never on time.
-
-#### Scenario: A relay stopped by the previous test cannot leak into the next
-
-- **WHEN** a test stops a relay in its teardown, the next test resets durable
-  state and starts a relay under the same id
-- **THEN** the new relay's Cell SHALL hold no input the previous test sent,
-  on every run and at every seed
-
-#### Scenario: The full suite is as green as the module
-
-- **WHEN** a module whose setup resets durable state is run inside the full suite
-- **THEN** it SHALL pass at every seed it passes alone, and a failure that appears
-  only in the full run SHALL be treated as this defect rather than as load
-
 ### Requirement: A module's file SHALL live in the directory that owns its feature
 
 Every module under `lib/flezha/` SHALL sit in the directory that owns the feature it
@@ -1191,46 +915,6 @@ move, and the change SHALL prove it by the suite rather than by assertion.
 - **WHEN** a change proposes to relocate a module and rename it at once
 - **THEN** the change SHALL be split, so that the move can be proved by a rename-only
   diff and the rename judged on its own migration cost
-
-### Requirement: A test fixture SHALL be declared, not rebuilt in a test's own setup
-
-A test module SHALL obtain every shared fixture — a temporary directory, an
-auth store, an environment override, a state tree, a supervised collaborator —
-by declaring it against one fixture table, and SHALL NOT build one in its own
-`setup` or `setup_all`. The table SHALL live in `test/helpers/`, SHALL hold one
-row per fixture naming its setup and its cleanup, and SHALL run every row's
-cleanup through a single `on_exit` so that a fixture cannot be set up without
-being torn down. A module that must build its own fixture SHALL be named on an
-allow-list with a written reason.
-
-A fixture kind that does something beyond creating and removing a resource —
-restoring an environment key, detaching a telemetry handler, closing a writer,
-uninstalling a stub — SHALL be a row in the table rather than an exception to
-it. A caller running on a second BEAM, where `on_exit` raises, SHALL stay
-guarded outside the table.
-
-#### Scenario: A test declares the fixtures it needs
-
-- **GIVEN** a test module that needs a temporary data root and an
-  environment override
-- **WHEN** it declares `use FlezhaTest.Case, fixtures: [:tmp_app_data, :env]`
-- **THEN** both fixtures are set up before the first test and both are removed
-  after the last one, with no `on_exit` written in the module
-
-#### Scenario: A hand-built fixture fails the gate
-
-- **GIVEN** a test module whose own `setup` calls `System.tmp_dir!/0` and is not
-  on the allow-list
-- **WHEN** the gate runs
-- **THEN** it reports that module by path and exits with the finding code
-
-#### Scenario: A cleanup that does more than remove a path is a row
-
-- **GIVEN** a fixture that must restore an application environment key it
-  changed
-- **WHEN** it is added to the table as a row whose cleanup restores the key
-- **THEN** every test declaring it gets the restore, and no test file writes its
-  own restoring `on_exit`
 
 ### Requirement: Every gate SHALL be a row in one runner with one exit contract
 
@@ -1533,135 +1217,6 @@ baseline SHALL only shrink (`load_baseline`).
 - **WHEN** a new directory appears under `lib/flezha/` with no row in the layer table
 - **THEN** the gate SHALL fail naming the directory before judging its contents
 
-### Requirement: A remedy SHALL pass through one seam, held by `remedy_seam_test.exs`
-
-Every remedy SHALL be executed through `Flezha.Convergence.Heal.execute/1`, planned by the Planner
-from a Diff that consumes every declared fact through one field. `test/flezha/convergence/
-remedy_seam_test.exs` SHALL hold it: every primitive has a key rule, an executor and an evidence
-rule; every kind is consumed by one Diff field and planned by one rule; and no source outside
-`lib/flezha/convergence/` calls a remedy entry point.
-
-#### Scenario: A remedy called from outside the seam
-
-- **WHEN** a module outside `lib/flezha/convergence/` calls a remedy entry point
-- **THEN** `remedy_seam_test.exs` SHALL fail naming the file
-
-### Requirement: The health verdict SHALL be one seam, held by `verdict_seam_test.exs`
-
-"Is this subject healthy" SHALL be answered by `Flezha.Convergence.Verdict` alone.
-`test/flezha/convergence/verdict_seam_test.exs` SHALL fail when a file outside the seam carries two
-or more of the verdict states, when `relay_health` is written into the published snapshot from
-more than one site, or when a detector entry reads facts of another shape than its declared kind.
-
-#### Scenario: A second verdict vocabulary
-
-- **WHEN** a module outside the seam spells two of the verdict states
-- **THEN** `verdict_seam_test.exs` SHALL fail naming the file and the states
-
-### Requirement: A retry ladder and a named duration SHALL be written in one table, held by `backoff_seam_test.exs`
-
-Every wait and every duration in `lib/flezha` SHALL be a row of the backoff or durations table
-(`lib/flezha/config/backoff.ex`, `lib/flezha/config/durations.ex`), and
-`test/flezha/config/backoff_seam_test.exs` SHALL fail on ladder arithmetic or a millisecond literal
-beside them that its shapes match, on an unread row, and on an SDK row that differs from the
-constant `flz_core` compiles.
-
-#### Scenario: A hand-written ladder
-
-- **WHEN** a module computes a backoff with its own arithmetic
-- **THEN** `backoff_seam_test.exs` SHALL fail naming the file
-
-### Requirement: A topology SHALL be judged by one check, held by `topology_check_test.exs`
-
-Judging a topology SHALL be done by `flz_core::host::register::check` against
-`test/fixtures/reference_topologies.txt`, in one vocabulary of refusals.
-`test/sdk_conformance/topology_check_test.exs` SHALL hold the clauses that need no runner and
-`test/system/topology_refusal_e2e_test.exs` the clauses that need one per runtime.
-
-#### Scenario: A rule raised outside the check
-
-- **WHEN** an SDK builder raises a topology refusal of its own
-- **THEN** `topology_check_test.exs` SHALL fail naming the site
-
-### Requirement: A knob SHALL be read only through the keys table, held by `keys_seam_test.exs`
-
-Every configuration knob SHALL be one row of `Flezha.Config.Keys`, read only through the seam.
-`test/flezha/config/keys_seam_test.exs` SHALL fail when a knob is read outside the seam, when a row
-is incomplete or a name in the tree has no row, when a default is written twice, and when a runtime
-reads a name it is not declared to.
-
-#### Scenario: A direct environment read
-
-- **WHEN** a module under `lib/flezha` reads a `FLEZHA_*` variable with `System.get_env/1`
-- **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
-
-### Requirement: A process call, lookup, monitor, timer or child spec SHALL go through the process seam, held by `process_seam_test.exs`
-
-The five process mechanisms (call and lookup, monitor, timer, child spec, remote call) SHALL each
-have one implementation in the process seam, and a site SHALL declare into it.
-`test/flezha/process/process_seam_test.exs` SHALL fail on a primitive used outside the seam's own
-files and on a declared resolver, restart kind or timer key that does not exist, or one that exists
-undeclared.
-
-#### Scenario: A monitor kept by hand
-
-- **WHEN** a module calls `Process.monitor/1` and keeps its own ref map
-- **THEN** `process_seam_test.exs` SHALL fail naming the file
-
-### Requirement: A path under the data root SHALL be resolved through the layout table, held by `table_test.exs`
-
-Every subtree under the data root SHALL be a row of `Flezha.Layout.Table`, and
-`test/flezha/layout/table_test.exs` SHALL fail when a subtree has a private root or a second module
-spells `storage/app/<x>`, holding the table to `test/fixtures/layout_rows.txt`.
-
-#### Scenario: A second spelling of a data path
-
-- **WHEN** a module outside the table builds `storage/app/<x>` itself
-- **THEN** `table_test.exs` SHALL fail naming the file
-
-### Requirement: An event name and a heartbeat slot SHALL each be declared once, held by the suite
-
-Every `[:flezha, …]` event name the tree writes SHALL be a key of the telemetry bridge's mapping or
-a member of its pinned unexported list, held by
-`test/flezha/observability/telemetry_event_seam_test.exs`; and every key of the shared core's data
-heartbeat SHALL be mirrored by the controller from one declared set, held by
-`test/sdk_conformance/gate_test.exs` ("data heartbeat").
-
-#### Scenario: An unbridged event name
-
-- **WHEN** a module writes a `[:flezha, …]` event name the bridge neither maps nor lists
-- **THEN** `telemetry_event_seam_test.exs` SHALL fail naming the file and the event
-
-### Requirement: Every call bound SHALL name a duration row, held by `backoff_seam_test.exs`
-
-Every call into a process SHALL take its bound from a row read, a parameter, or `:infinity`,
-never the implicit 5 s and never an integer literal: `GenServer.call`, `:gen_server.call`, the
-bounded safe call, `Task.await` and `Task.yield` in `lib`, `plugins/*/lib` and `sdk/elixir/lib`; a sleep, a
-default argument and an option default that is a duration SHALL name a row too.
-`test/flezha/config/backoff_seam_test.exs` SHALL walk the three roots and fail naming the file and
-the line.
-
-#### Scenario: An implicit bound
-
-- **WHEN** a module under `lib` calls `GenServer.call(server, :stats)` with no timeout
-- **THEN** `backoff_seam_test.exs` SHALL fail naming the file and the line
-
-#### Scenario: A literal bound in a package
-
-- **WHEN** a plugin package calls `GenServer.call(pid, :y, 30_000)`
-- **THEN** `backoff_seam_test.exs` SHALL fail naming the file and the line
-
-### Requirement: The keys seam SHALL walk every reader of a knob
-
-`test/flezha/config/keys_seam_test.exs` SHALL walk `crates/cli/src`, every Java SDK module, `rel/`,
-`deploy/kubernetes/`, multi-line Elixir reads and Rust reads through a named constant, and SHALL fail on a
-name read with no row and a row no runtime reads, for every runtime a row names.
-
-#### Scenario: A read through a constant
-
-- **WHEN** a Rust crate reads <!-- docs-citation-record:begin -->`FLEZHA_X_MS` through `const ENV_X: &str = "FLEZHA_X_MS"`<!-- docs-citation-record:end --> and no row names it
-- **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
-
 ### Requirement: The workspace SHALL compile for macOS without a Mac
 
 `python3 scripts/run_gates.py --run @macos` SHALL cross-compile every crate of the Rust
@@ -1692,22 +1247,84 @@ not run, naming the install command, rather than as a finding.
 - **WHEN** a push to `main` touches a Rust crate, and when a pull request touches the same crate
 - **THEN** the push runs `@macos` on a Linux runner and the pull request runs no job that installs `cargo-zigbuild`
 
-### Requirement: A test SHALL depend on a Linux-only interface only when it is compiled for Linux alone
+### Requirement: Cargo dependency declarations SHALL match actual source usage
 
-A Rust test SHALL be compiled only for `target_os = "linux"`, together with any helper only such
-tests use, when it reads `/proc` or relies on behaviour only Linux has (`RLIMIT_NPROC` limiting
-threads, CPU affinity). A test that only needs a fixture with a property SHALL build
-that fixture portably instead of borrowing a Linux path for it:
-- a directory this process cannot enter: a temporary directory with no permissions, restored
-  before it is removed
-- a directory candidate that cannot be created: a path under a regular file
-- a process that is alive: `kill -0`
+Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at least one `use <crate>::` or `extern crate <crate>` reference in that crate's `src/`. Dependencies declared but unused SHALL be removed. Specifically, `byteorder` SHALL be removed from `crates/flz_nif/Cargo.toml`, `sdk/rust/Cargo.toml`, and `test/apps/rust_runner/Cargo.toml` (it remains in `crates/flz_transport/Cargo.toml` where `src/service/payloader.rs` uses it).
 
-#### Scenario: A denied socket directory needs no /proc
-- **WHEN** the socket probe, `flz runner check` or `flz reset --include-sockets` is tested against a directory this process cannot enter, run as a non-root user
-- **THEN** the fixture is a temporary directory with mode `000` created by the test, the probe reports access denied with the `FLEZHA_SOCKET_DIR_GROUP` fix, and the directory is removed after the test
+#### Scenario: byteorder is removed from non-using crates
 
-#### Scenario: A Linux mechanism stays tested on Linux
-- **WHEN** the workspace's tests are compiled for macOS
-- **THEN** the tests that count threads through `/proc/self/task` or stop thread creation through `RLIMIT_NPROC` are not compiled, and on Linux they run as before
+- **GIVEN** the cleaned-up Cargo.toml files
+- **WHEN** `grep '^byteorder' crates/flz_nif/Cargo.toml sdk/rust/Cargo.toml test/apps/rust_runner/Cargo.toml` is run
+- **THEN** stdout is empty
+
+#### Scenario: Workspace still builds after cleanup
+
+- **GIVEN** the cleaned-up Cargo.toml files
+- **WHEN** `cargo build --workspace` is run
+- **THEN** the build completes with exit 0 and no errors
+
+### Requirement: `elixir.yml` SHALL be Elixir+Rust only
+
+`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). Beside `mix deps.get` (in the shared `setup-beam` action), `mix compile --warnings-as-errors` and `mix test`, the workflow SHALL run only what that suite needs: the testnet build, the `rust_runner` pre-build, the QUIC certificate generation, the Rust crates' `cargo test`, and a gate that fails on an uncaptured `[error]` or `[critical]` line in the `mix test` output. `mix test` uses the default-excluded tag set, `:system` among it, and therefore spawns no runner; the SDK conformance gate is an untagged module and runs inside it.
+
+#### Scenario: elixir.yml does not set up Java
+
+- **GIVEN** the merged `.github/workflows/elixir.yml`
+- **WHEN** the file is grepped for `setup-java` or `actions/setup-java`
+- **THEN** there SHALL be no matches
+
+#### Scenario: elixir.yml does not run cargo workspace build
+
+- **GIVEN** the merged `.github/workflows/elixir.yml`
+- **WHEN** the file is grepped for `cargo build --workspace` or `mvn`
+- **THEN** there SHALL be no matches
+
+### Requirement: CI workflows SHALL use a single, consistent OTP/Elixir version pair
+
+A workflow SHALL take every toolchain version from one declared version set,
+and SHALL NOT write a version literal of its own. Every workflow under
+`.github/workflows/` that sets up a language toolchain is bound by this. The set
+SHALL cover every toolchain CI installs —
+Erlang/Elixir, Java, Node, Python, Ruby, PHP and Rust — and the `(otp, elixir)`
+pair SHALL match the version used by the agent's prod Docker build. If the prod
+build pins OTP 27 + Elixir 1.17, the declared set SHALL say OTP 27 + Elixir
+1.17, and no workflow SHALL silently use a different pair.
+
+A workflow SHALL obtain a toolchain through the shared composite action for that
+toolchain, which owns the setup step, the cache key and the dependency fetch. A
+deliberate fan-out over several versions — a test matrix proving an SDK on more
+than one runtime version — SHALL be expressed as an input to that action, and
+the versions it fans out over SHALL be declared beside the set.
+
+An SDK's own test-toolchain pin SHALL stay in that SDK's own manifest and SHALL
+be read from it, not copied into the version set; only the CI steps that read
+the pin are shared.
+
+#### Scenario: All workflows pin matching versions
+
+- **GIVEN** the merged set of CI workflows
+- **WHEN** every `setup-beam` step is inspected
+- **THEN** every step's `otp-version` and `elixir-version` SHALL match the pair
+  used in `deploy/docker/prod/Dockerfile.controller`
+
+#### Scenario: A version literal in a workflow is refused
+
+- **GIVEN** a workflow that sets `node-version: 24` directly
+- **WHEN** the CI gate runs
+- **THEN** it fails naming the workflow, the line and the toolchain, because the
+  version belongs to the declared set
+
+#### Scenario: A matrix fan-out is an input, not a second pin
+
+- **GIVEN** an SDK workflow that proves its package on two runtime versions
+- **WHEN** it passes those versions to the composite action as an input
+- **THEN** the gate passes, and the fan-out's versions are declared beside the
+  set rather than written into the job
+
+#### Scenario: The Docker toolchain reads the same set
+
+- **GIVEN** the Dockerfiles that install a Rust toolchain
+- **WHEN** the images are built
+- **THEN** the toolchain version comes from the declared set, through one base
+  stage, rather than from a literal written per Dockerfile
 

@@ -10,7 +10,7 @@ declared surfaces to their golden copies, so rolling out a new SDK is enforced r
 remembered. This capability also covers the smoke and full tiers, the nightly and on-demand CI runs,
 the conformance report, the shared fixtures and wire constants an extracted SDK vendors, and the
 required capabilities every SDK must prove, from the short form and steps relays to parts, calls and
-refusal rows.
+refusal rows. Judging a topology is one check in one vocabulary of refusals, held by its own tests.
 
 ## Requirements
 ### Requirement: The runtime under test is selected per run, from the environment
@@ -1136,4 +1136,16 @@ workflow, action or script SHALL spell a runner's build command itself.
 
 - **WHEN** a runtime's manifest declares no `build.test`
 - **THEN** the entry SHALL exit non-zero naming the runtime, rather than pass having built nothing
+
+### Requirement: A topology SHALL be judged by one check, held by `topology_check_test.exs`
+
+Judging a topology SHALL be done by `flz_core::host::register::check` against
+`test/fixtures/reference_topologies.txt`, in one vocabulary of refusals.
+`test/sdk_conformance/topology_check_test.exs` SHALL hold the clauses that need no runner and
+`test/system/topology_refusal_e2e_test.exs` the clauses that need one per runtime.
+
+#### Scenario: A rule raised outside the check
+
+- **WHEN** an SDK builder raises a topology refusal of its own
+- **THEN** `topology_check_test.exs` SHALL fail naming the site
 

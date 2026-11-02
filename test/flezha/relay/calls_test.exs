@@ -708,7 +708,7 @@ defmodule FlezhaTest.Relay.CallsTest do
       )
     end
 
-    # Also the `plugin-providers` scenario "A call reaches a calls listener and
+    # Also the `plugin-relay-hooks` scenario "A call reaches a calls listener and
     # nothing else": the sink and the output listener see the answer alone.
     test "an answered call: one call event, then answered, under an id that is not the token",
          %{inst: inst} do

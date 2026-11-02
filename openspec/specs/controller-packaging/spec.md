@@ -4,11 +4,11 @@
 
 What the controller ships as and how it is deployed. The production image is a Debian slim,
 multi-architecture Mix release with a graceful-restart entrypoint, sized VM arguments, the
-applications its dependencies need, pinned downloads, no cookie file, and a size gate; dev and
-toolchain images, unprivileged harness containers and the CI workflows that build them follow one
-toolchain version. The Kubernetes reference manifests declare resource limits, probes, labels,
-portable storage, the controller's plugins and a restricted security profile, and limit who reaches
-the distribution ports.
+applications its dependencies need, pinned downloads, no cookie file, and a size gate, beside dev
+and toolchain images and unprivileged harness containers. The Kubernetes reference manifests declare
+resource limits, probes, labels, portable storage, the controller's plugins and a restricted
+security profile, limit who reaches the distribution ports, and are held by a test that reads their
+volumes and variables.
 
 ## Requirements
 
@@ -79,22 +79,6 @@ The Dockerfile SHALL NOT contain branches for any other Linux architecture, and 
 - **GIVEN** a dev-env compile via `mix compile`
 - **WHEN** `iex -S mix` is started
 - **THEN** evaluating `Code.ensure_loaded?(:observer)` returns `true`
-
-### Requirement: Cargo dependency declarations SHALL match actual source usage
-
-Every `[dependencies]` entry in any crate's `Cargo.toml` SHALL correspond to at least one `use <crate>::` or `extern crate <crate>` reference in that crate's `src/`. Dependencies declared but unused SHALL be removed. Specifically, `byteorder` SHALL be removed from `crates/flz_nif/Cargo.toml`, `sdk/rust/Cargo.toml`, and `test/apps/rust_runner/Cargo.toml` (it remains in `crates/flz_transport/Cargo.toml` where `src/service/payloader.rs` uses it).
-
-#### Scenario: byteorder is removed from non-using crates
-
-- **GIVEN** the cleaned-up Cargo.toml files
-- **WHEN** `grep '^byteorder' crates/flz_nif/Cargo.toml sdk/rust/Cargo.toml test/apps/rust_runner/Cargo.toml` is run
-- **THEN** stdout is empty
-
-#### Scenario: Workspace still builds after cleanup
-
-- **GIVEN** the cleaned-up Cargo.toml files
-- **WHEN** `cargo build --workspace` is run
-- **THEN** the build completes with exit 0 and no errors
 
 ### Requirement: `Flezha.Testnet` and the testnet TS app SHALL be test-only
 
@@ -278,71 +262,6 @@ context the same size as a clean checkout's.
 - **GIVEN** a working tree where the five native binaries and both fat jars have been built and are present on disk but untracked
 - **WHEN** `make docker-build` is run with BuildKit enabled
 - **THEN** the build context size SHALL still be less than 50MB
-
-### Requirement: `elixir.yml` SHALL be Elixir+Rust only
-
-`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). Beside `mix deps.get` (in the shared `setup-beam` action), `mix compile --warnings-as-errors` and `mix test`, the workflow SHALL run only what that suite needs: the testnet build, the `rust_runner` pre-build, the QUIC certificate generation, the Rust crates' `cargo test`, and a gate that fails on an uncaptured `[error]` or `[critical]` line in the `mix test` output. `mix test` uses the default-excluded tag set, `:system` among it, and therefore spawns no runner; the SDK conformance gate is an untagged module and runs inside it.
-
-#### Scenario: elixir.yml does not set up Java
-
-- **GIVEN** the merged `.github/workflows/elixir.yml`
-- **WHEN** the file is grepped for `setup-java` or `actions/setup-java`
-- **THEN** there SHALL be no matches
-
-#### Scenario: elixir.yml does not run cargo workspace build
-
-- **GIVEN** the merged `.github/workflows/elixir.yml`
-- **WHEN** the file is grepped for `cargo build --workspace` or `mvn`
-- **THEN** there SHALL be no matches
-
-### Requirement: CI workflows SHALL use a single, consistent OTP/Elixir version pair
-
-A workflow SHALL take every toolchain version from one declared version set,
-and SHALL NOT write a version literal of its own. Every workflow under
-`.github/workflows/` that sets up a language toolchain is bound by this. The set
-SHALL cover every toolchain CI installs —
-Erlang/Elixir, Java, Node, Python, Ruby, PHP and Rust — and the `(otp, elixir)`
-pair SHALL match the version used by the agent's prod Docker build. If the prod
-build pins OTP 27 + Elixir 1.17, the declared set SHALL say OTP 27 + Elixir
-1.17, and no workflow SHALL silently use a different pair.
-
-A workflow SHALL obtain a toolchain through the shared composite action for that
-toolchain, which owns the setup step, the cache key and the dependency fetch. A
-deliberate fan-out over several versions — a test matrix proving an SDK on more
-than one runtime version — SHALL be expressed as an input to that action, and
-the versions it fans out over SHALL be declared beside the set.
-
-An SDK's own test-toolchain pin SHALL stay in that SDK's own manifest and SHALL
-be read from it, not copied into the version set; only the CI steps that read
-the pin are shared.
-
-#### Scenario: All workflows pin matching versions
-
-- **GIVEN** the merged set of CI workflows
-- **WHEN** every `setup-beam` step is inspected
-- **THEN** every step's `otp-version` and `elixir-version` SHALL match the pair
-  used in `deploy/docker/prod/Dockerfile.controller`
-
-#### Scenario: A version literal in a workflow is refused
-
-- **GIVEN** a workflow that sets `node-version: 24` directly
-- **WHEN** the CI gate runs
-- **THEN** it fails naming the workflow, the line and the toolchain, because the
-  version belongs to the declared set
-
-#### Scenario: A matrix fan-out is an input, not a second pin
-
-- **GIVEN** an SDK workflow that proves its package on two runtime versions
-- **WHEN** it passes those versions to the composite action as an input
-- **THEN** the gate passes, and the fan-out's versions are declared beside the
-  set rather than written into the job
-
-#### Scenario: The Docker toolchain reads the same set
-
-- **GIVEN** the Dockerfiles that install a Rust toolchain
-- **WHEN** the images are built
-- **THEN** the toolchain version comes from the declared set, through one base
-  stage, rather than from a literal written per Dockerfile
 
 ### Requirement: A CI gate SHALL prevent prod-image size regressions
 
@@ -825,3 +744,13 @@ files the controller has already written.
 - **WHEN** the pod restarts and the init container runs again
 - **THEN** the key files SHALL still have mode `0600`, and no directory the init container touched
   SHALL be readable by other users
+
+### Requirement: A k8s manifest sanity test SHALL prevent volume/env-var drift
+
+The repository SHALL include a unit test that loads `deploy/kubernetes/flezha-daemonset.yaml` and `deploy/kubernetes/flezha-configmap.yaml` and asserts the volumes and env vars this change relies on are present and well-formed, so that future deployment-manifest edits cannot silently break the dev/k8s parity.
+
+#### Scenario: Required volumes and env vars are present
+- **GIVEN** the k8s manifests at `deploy/kubernetes/flezha-daemonset.yaml` and `deploy/kubernetes/flezha-configmap.yaml`
+- **WHEN** the manifest sanity test runs
+- **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_RUNNER_REMOVAL_GRACE_MS` with a positive integer (in milliseconds)
+- **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails

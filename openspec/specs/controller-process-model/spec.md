@@ -5,7 +5,8 @@
 The rules the controller's processes follow. Every call into a resolved process is bounded and
 declares its refusal, one resolver answers which process serves a relay, a watched process's death
 is recorded once by one watch seam, timers go through one helper, supervised children take their
-restart kind from one table, and a fan-out over many targets takes a bound.
+restart kind from one table, and a fan-out over many targets takes a bound. A test fails on any of
+these taken outside the process seam, and on a call bound that names no duration row.
 
 ## Requirements
 ### Requirement: Every call into a resolved process SHALL be bounded and SHALL declare its refusal
@@ -104,4 +105,36 @@ A walk over many targets SHALL step over one that cannot be reached, SHALL repor
 
 - **WHEN** a teardown step creates an ETS table, unlinks a process or seeds a route naming the caller
 - **THEN** that step SHALL run in the calling process and SHALL NOT be spawned, and the walk SHALL hand it the remaining budget
+
+### Requirement: A process call, lookup, monitor, timer or child spec SHALL go through the process seam, held by `process_seam_test.exs`
+
+The five process mechanisms (call and lookup, monitor, timer, child spec, remote call) SHALL each
+have one implementation in the process seam, and a site SHALL declare into it.
+`test/flezha/process/process_seam_test.exs` SHALL fail on a primitive used outside the seam's own
+files and on a declared resolver, restart kind or timer key that does not exist, or one that exists
+undeclared.
+
+#### Scenario: A monitor kept by hand
+
+- **WHEN** a module calls `Process.monitor/1` and keeps its own ref map
+- **THEN** `process_seam_test.exs` SHALL fail naming the file
+
+### Requirement: Every call bound SHALL name a duration row, held by `backoff_seam_test.exs`
+
+Every call into a process SHALL take its bound from a row read, a parameter, or `:infinity`,
+never the implicit 5 s and never an integer literal: `GenServer.call`, `:gen_server.call`, the
+bounded safe call, `Task.await` and `Task.yield` in `lib`, `plugins/*/lib` and `sdk/elixir/lib`; a sleep, a
+default argument and an option default that is a duration SHALL name a row too.
+`test/flezha/config/backoff_seam_test.exs` SHALL walk the three roots and fail naming the file and
+the line.
+
+#### Scenario: An implicit bound
+
+- **WHEN** a module under `lib` calls `GenServer.call(server, :stats)` with no timeout
+- **THEN** `backoff_seam_test.exs` SHALL fail naming the file and the line
+
+#### Scenario: A literal bound in a package
+
+- **WHEN** a plugin package calls `GenServer.call(pid, :y, 30_000)`
+- **THEN** `backoff_seam_test.exs` SHALL fail naming the file and the line
 

@@ -2,7 +2,8 @@
 # Runner-restart plugin-persistence smoke test.
 #
 # Asserts the contract from
-# openspec/specs/plugin-subscription-persistence/spec.md: plugins
+# openspec/specs/cluster-convergence/spec.md ("Plugins are durable
+# across controller restart"): plugins
 # enabled via `flz plugin enable` after `flz relay start` SHALL
 # survive a `docker compose restart rust` without runner
 # intervention. Before the cspec-persistence change, this fails — the

@@ -8,7 +8,8 @@ and by compaction, and committed manifest last with epoch supersession; recovery
 manifest into the existing restore path, and a claim counter fences two nodes from writing one
 relay. The backend defaults to none and announces the posture, a selected backend that cannot work
 refuses the boot, an exceeded recovery point objective is reported, disabling the tier loses
-nothing, and the `remote` durability level gates acknowledgement on the shipped copy.
+nothing, and the `remote` durability level gates acknowledgement on the shipped copy. The same tier
+ships the cluster's declared intent off-cluster as ProcessHub's remote manifest adapter.
 
 ## Requirements
 ### Requirement: Backends implement blob storage only
@@ -369,4 +370,32 @@ running class beside the RPO.
 
 - **WHEN** a `remote` flow class and a `local` steps class run and `flz controller status` is read
 - **THEN** the status SHALL show `remote` for the first and `local` for the second, and the docs table SHALL state "nothing acknowledged" for the first's row and "the work since the last ship, at most the RPO target" for the second's
+
+### Requirement: The durability tier is the remote manifest adapter
+
+Flezha SHALL implement `ProcessHub.Storage.RemoteManifest` over
+`Flezha.State.DurabilityTier`, shipping the declared set off-cluster as one
+more tier artifact class. No other remote-storage mechanism SHALL be added
+for intent, and adapter failures SHALL never fail or delay a start/stop
+command. The tier SHALL offer at least the same storage options as the
+upstream adapters — file storage (`:local_path`, for paths that outlive the
+cluster such as an NFS mount) and S3 (`:s3`) — alongside `:postgres`, with an
+explicit `{module, opts}` backend as the extension point for any other store
+(e.g. a Kubernetes-backed one).
+
+#### Scenario: Total disk loss restores from the tier
+
+- **GIVEN** a stop shipped to the durability tier at declared-set version V,
+  after which every cluster disk holding version V is lost and one node
+  returns with a stale local set
+- **WHEN** that node boots and the hub fetches the remote manifest
+- **THEN** version V is adopted: the stopped relay stays stopped and the
+  relays version V declares are restored
+
+#### Scenario: Tier outage does not block commands
+
+- **WHEN** the durability tier is unreachable while relays are started
+  and stopped
+- **THEN** every command succeeds locally, the failed ships are retried, and
+  the tier converges to the latest set version once reachable
 

@@ -230,16 +230,6 @@ The repository SHALL include an integration test that uses `deploy/docker/dev/do
 - **THEN** within 5 s of the runner's first successful reconnect, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
 - **AND** the test SHALL NOT have restarted the agent container or issued any explicit re-assignment
 
-### Requirement: A k8s manifest sanity test SHALL prevent volume/env-var drift
-
-The repository SHALL include a unit test that loads `deploy/kubernetes/flezha-daemonset.yaml` and `deploy/kubernetes/flezha-configmap.yaml` and asserts the volumes and env vars this change relies on are present and well-formed, so that future deployment-manifest edits cannot silently break the dev/k8s parity.
-
-#### Scenario: Required volumes and env vars are present
-- **GIVEN** the k8s manifests at `deploy/kubernetes/flezha-daemonset.yaml` and `deploy/kubernetes/flezha-configmap.yaml`
-- **WHEN** the manifest sanity test runs
-- **THEN** the test SHALL assert: a `flezha-sockets` volume exists in the daemonset and is mounted at `/flezha/sockets`; the daemonset's container env contains `FLEZHA_SOCKET_FILES_PATH=/flezha/sockets`; the configmap defines `FLEZHA_RUNNER_REMOVAL_GRACE_MS` with a positive integer (in milliseconds)
-- **AND** the test SHALL fail with a clear message naming the missing field if any assertion fails
-
 ### Requirement: Rust SDK SHALL bound the wait for the controller's registration ack and reconnect on timeout
 
 After the Rust SDK opens a control channel and writes its `connect_control_channel` init frame, it SHALL require the controller to send at least one frame (the assign-runner-id command issued by `FleetManager.runner_connect/3`) within a bounded window. The window SHALL default to 10 s and be overridable via `FLEZHA_CONTROL_ACK_TIMEOUT_MS`. If no frame arrives within the window, the SDK SHALL treat the connection as a non-servicing controller, post `RunnerMessage::Reconnect`, and drive the existing reconnect loop. Once the first frame arrives the SDK SHALL clear the read deadline and read indefinitely (steady state is unchanged).

@@ -7,7 +7,8 @@ function, with one default that every document renders; names read by more than 
 declared once, every documented variable is observed where its row says, and the boot refuses an
 unknown key or a value its row refuses. The Erlang VM arguments the release sets are declared in one
 place and can be overridden without a rebuild, per-run resources derive from one run token, and a
-relay class setting lives in one layer.
+relay class setting lives in one layer. A test walks every reader of a knob in every runtime and
+fails on one outside the table, and every path under the data root is a row of one layout table.
 
 ## Requirements
 ### Requirement: Every configuration knob SHALL be one row of one table, read through one function
@@ -290,4 +291,38 @@ SHALL keep serving within the bound.
 - **WHEN** one more client connects and sends a request
 - **THEN** that client SHALL receive `503`, and a client connecting after one of the open
   connections closes SHALL receive the health verdict
+
+### Requirement: A knob SHALL be read only through the keys table, held by `keys_seam_test.exs`
+
+Every configuration knob SHALL be one row of `Flezha.Config.Keys`, read only through the seam.
+`test/flezha/config/keys_seam_test.exs` SHALL fail when a knob is read outside the seam, when a row
+is incomplete or a name in the tree has no row, when a default is written twice, and when a runtime
+reads a name it is not declared to.
+
+#### Scenario: A direct environment read
+
+- **WHEN** a module under `lib/flezha` reads a `FLEZHA_*` variable with `System.get_env/1`
+- **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
+
+### Requirement: The keys seam SHALL walk every reader of a knob
+
+`test/flezha/config/keys_seam_test.exs` SHALL walk `crates/cli/src`, every Java SDK module, `rel/`,
+`deploy/kubernetes/`, multi-line Elixir reads and Rust reads through a named constant, and SHALL fail on a
+name read with no row and a row no runtime reads, for every runtime a row names.
+
+#### Scenario: A read through a constant
+
+- **WHEN** a Rust crate reads <!-- docs-citation-record:begin -->`FLEZHA_X_MS` through `const ENV_X: &str = "FLEZHA_X_MS"`<!-- docs-citation-record:end --> and no row names it
+- **THEN** `keys_seam_test.exs` SHALL fail naming the file and the name
+
+### Requirement: A path under the data root SHALL be resolved through the layout table, held by `table_test.exs`
+
+Every subtree under the data root SHALL be a row of `Flezha.Layout.Table`, and
+`test/flezha/layout/table_test.exs` SHALL fail when a subtree has a private root or a second module
+spells `storage/app/<x>`, holding the table to `test/fixtures/layout_rows.txt`.
+
+#### Scenario: A second spelling of a data path
+
+- **WHEN** a module outside the table builds `storage/app/<x>` itself
+- **THEN** `table_test.exs` SHALL fail naming the file
 

@@ -1,7 +1,7 @@
 # api-mcp Specification
 
 ## Purpose
-What an AI assistant gets from Flezha over MCP: `flz mcp`, a stdio server that answers through the controller the way `flz` does and works before any controller runs; the four knowledge tools (rules and docs map, an SDK's echo example, an error's meaning, a guide page) that answer from the installed release on every Flezha MCP server; and the generated `priv/ai_kit/` they read, held to its sources.
+What an AI assistant gets from Flezha over MCP: `flz mcp`, a stdio server that answers through the controller the way `flz` does and works before any controller runs; the HTTP API's `/mcp` endpoint, stateless and tools only, with one tool per catalogue entry the token's role grants, the relay tools beside them, and a Flezha failure answered as a tool error with its code and hint; the four knowledge tools (rules and docs map, an SDK's echo example, an error's meaning, a guide page) that answer from the installed release on every Flezha MCP server; and the generated `priv/ai_kit/` they read, held to its sources.
 ## Requirements
 ### Requirement: `flz mcp` SHALL serve MCP over stdio with no controller needed to start
 
@@ -152,4 +152,94 @@ Error meanings and operations SHALL be read from the code at call time, not copi
 - **WHEN** a release is built
 - **THEN** `flezha_sdk_example` and `flezha_docs` SHALL answer from it with the source tree
   absent
+
+### Requirement: The MCP endpoint SHALL speak Streamable HTTP, stateless and tools only
+
+`POST /mcp` SHALL accept JSON-RPC 2.0 and answer `application/json`. It SHALL implement
+`server/discover`, `ping`, `tools/list` and `tools/call` for the pinned revision, answer
+`initialize` and accept notifications for a client of the earlier handshake revision,
+declare only the `tools` capability, mint no session, and answer `405` to `GET /mcp` and
+`DELETE /mcp`. A request naming a revision it does not support SHALL be answered `400`
+listing the supported ones. An unknown method SHALL be answered with JSON-RPC error
+`-32601`.
+
+#### Scenario: A client discovers the server
+
+- **WHEN** a client sends `server/discover` naming the pinned revision
+- **THEN** the answer SHALL list the supported revisions, the `tools` capability and the
+  server named `flezha`
+
+#### Scenario: A client of the handshake revision initializes
+
+- **WHEN** a client sends `initialize`
+- **THEN** the answer SHALL carry the supported handshake revision, the `tools` capability
+  and `serverInfo` named `flezha`, and no session id
+
+#### Scenario: A server stream is asked for
+
+- **WHEN** a client sends `GET /mcp`
+- **THEN** the answer SHALL be `405`
+
+### Requirement: Each tool SHALL be generated from its catalogue entry
+
+Every remote, non-streaming catalogue entry the token's role grants SHALL be one tool:
+
+- its name SHALL be the entry name in snake case with `.` replaced by `_`;
+- its description SHALL be the entry's description;
+- its input schema SHALL be generated from the entry's argument rows, with the required rows
+  required and no other property allowed;
+- its `readOnlyHint` SHALL be true only for an operation whose row writes no audit record.
+
+A tool SHALL be listed only when the token's role grants its row's action. Beside the
+operation tools, the five knowledge tools of the `api-mcp` capability SHALL be
+listed for every token, and the server's `instructions` SHALL carry the working rules.
+
+#### Scenario: The schema follows the rows
+
+- **WHEN** `tools/list` is read and the entry `Dlq.list` declares one optional string argument
+  `relay_class`
+- **THEN** the tool `dlq_list` SHALL have an input schema with one optional string property
+  `relay_class` and `additionalProperties: false`
+
+#### Scenario: A role sees only what it may call
+
+- **WHEN** a namespace `viewer` token sends `tools/list`
+- **THEN** no tool whose action the viewer role does not grant SHALL be listed
+
+#### Scenario: The knowledge tools are served over HTTP
+
+- **WHEN** a namespace `viewer` token sends `tools/list` to `POST /mcp`
+- **THEN** `flezha_guide`, `flezha_sdk_example`, `flezha_error`, `flezha_docs` and
+  `flezha_new_project` SHALL be listed
+
+### Requirement: A Flezha failure SHALL reach the model as a tool error with its code and hint
+
+A `tools/call` whose operation fails SHALL answer a result with `isError: true`, whose text
+content is the error object as JSON and whose structured content is `{"error": {...}}`
+carrying `code`, `class`, `message`, `details` and `hint`. A protocol fault (an unknown tool,
+arguments that are not an object) SHALL be answered as a JSON-RPC error instead. A success
+SHALL answer the door's JSON as text content and as structured content, wrapped as
+`{"result": ...}` when it is not a JSON object.
+
+#### Scenario: A dead letter that does not exist
+
+- **WHEN** `tools/call` of `dlq_get` names an entry that does not exist
+- **THEN** the result SHALL carry `isError: true` and the code `dlq.not_found`
+
+#### Scenario: An unknown tool
+
+- **WHEN** `tools/call` names `controller_stop`
+- **THEN** the answer SHALL be a JSON-RPC error, not a tool result
+
+### Requirement: Relay tools SHALL be listed beside the catalogue tools
+
+`tools/list` on `POST /mcp` SHALL include the relay tools of the `relay-calls` capability for
+the token's namespace, after the catalogue and knowledge tools, and `tools/call` on one SHALL go
+through the door as `Relay.call_channel`.
+
+#### Scenario: One list for both
+
+- **WHEN** an `app` role token of namespace `desk` lists tools and factory `orders` describes
+  `place`
+- **THEN** the list holds the catalogue tools, the knowledge tools and `orders_place`
 

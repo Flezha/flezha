@@ -10,7 +10,8 @@ the hub's declared set, apart from runtime rows, and a deliberate stop is rememb
 starts have one idempotent authority, `RecoveryGate` answers whether a hub is still recovering, and
 a hub without quorum is left alone. This capability also covers output-stalled and wedged relays and
 runners, plugins kept running across restarts, host sleep and rolling upgrades, and a `/healthz`
-that reports only what is true.
+that reports only what is true. The remedy seam, the verdict seam and the backoff table are each
+held by a test that fails on a bypass.
 
 ## Requirements
 
@@ -1269,33 +1270,43 @@ start authority so that re-deriving runtime state cannot double-bind.
   start authority, and concurrent restore attempts for one relay yield
   exactly one live instance
 
-### Requirement: The durability tier is the remote manifest adapter
+### Requirement: A remedy SHALL pass through one seam, held by `remedy_seam_test.exs`
 
-Flezha SHALL implement `ProcessHub.Storage.RemoteManifest` over
-`Flezha.State.DurabilityTier`, shipping the declared set off-cluster as one
-more tier artifact class. No other remote-storage mechanism SHALL be added
-for intent, and adapter failures SHALL never fail or delay a start/stop
-command. The tier SHALL offer at least the same storage options as the
-upstream adapters — file storage (`:local_path`, for paths that outlive the
-cluster such as an NFS mount) and S3 (`:s3`) — alongside `:postgres`, with an
-explicit `{module, opts}` backend as the extension point for any other store
-(e.g. a Kubernetes-backed one).
+Every remedy SHALL be executed through `Flezha.Convergence.Heal.execute/1`, planned by the Planner
+from a Diff that consumes every declared fact through one field. `test/flezha/convergence/
+remedy_seam_test.exs` SHALL hold it: every primitive has a key rule, an executor and an evidence
+rule; every kind is consumed by one Diff field and planned by one rule; and no source outside
+`lib/flezha/convergence/` calls a remedy entry point.
 
-#### Scenario: Total disk loss restores from the tier
+#### Scenario: A remedy called from outside the seam
 
-- **GIVEN** a stop shipped to the durability tier at declared-set version V,
-  after which every cluster disk holding version V is lost and one node
-  returns with a stale local set
-- **WHEN** that node boots and the hub fetches the remote manifest
-- **THEN** version V is adopted: the stopped relay stays stopped and the
-  relays version V declares are restored
+- **WHEN** a module outside `lib/flezha/convergence/` calls a remedy entry point
+- **THEN** `remedy_seam_test.exs` SHALL fail naming the file
 
-#### Scenario: Tier outage does not block commands
+### Requirement: The health verdict SHALL be one seam, held by `verdict_seam_test.exs`
 
-- **WHEN** the durability tier is unreachable while relays are started
-  and stopped
-- **THEN** every command succeeds locally, the failed ships are retried, and
-  the tier converges to the latest set version once reachable
+"Is this subject healthy" SHALL be answered by `Flezha.Convergence.Verdict` alone.
+`test/flezha/convergence/verdict_seam_test.exs` SHALL fail when a file outside the seam carries two
+or more of the verdict states, when `relay_health` is written into the published snapshot from
+more than one site, or when a detector entry reads facts of another shape than its declared kind.
+
+#### Scenario: A second verdict vocabulary
+
+- **WHEN** a module outside the seam spells two of the verdict states
+- **THEN** `verdict_seam_test.exs` SHALL fail naming the file and the states
+
+### Requirement: A retry ladder and a named duration SHALL be written in one table, held by `backoff_seam_test.exs`
+
+Every wait and every duration in `lib/flezha` SHALL be a row of the backoff or durations table
+(`lib/flezha/config/backoff.ex`, `lib/flezha/config/durations.ex`), and
+`test/flezha/config/backoff_seam_test.exs` SHALL fail on ladder arithmetic or a millisecond literal
+beside them that its shapes match, on an unread row, and on an SDK row that differs from the
+constant `flz_core` compiles.
+
+#### Scenario: A hand-written ladder
+
+- **WHEN** a module computes a backoff with its own arithmetic
+- **THEN** `backoff_seam_test.exs` SHALL fail naming the file
 
 ## Removed Requirements
 

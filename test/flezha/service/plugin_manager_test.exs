@@ -238,7 +238,7 @@ defmodule Flezha.Service.PluginManagerTest do
     end
   end
 
-  # The `plugin-providers` scenario "An output plugin cannot subscribe to calls".
+  # The `plugin-relay-hooks` scenario "An output plugin cannot subscribe to calls".
   test "every first-party relay provider but the listener's is refused on on_call" do
     catalog = Flezha.Relay.Overwatch.__extensions_catalog__()
 

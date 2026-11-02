@@ -19,13 +19,14 @@ context: |
   - security: authentication, authorization, namespaces and quotas
   - api: the controller's published operations, its HTTP and MCP surfaces, and the error model
   - cli: the `flz` command line
-  - plugin: the plugin model, installation, controller hooks, and each first-party plugin
+  - plugin: the plugin model, installation, relay and controller hooks, and each first-party
+    plugin
   - observability: signals, their export, and the controller's durable logs
   - sdk: what holds across every SDK: authoring contract, poll core, C ABI, conformance, local
     mode, admin API, project templates
   - docs: the documentation's layout and content
-  - repo: checks and tools that run on this repository: code quality, formatting, structure
-    gates, the OpenSpec workflow, build artefacts, benches
+  - repo: checks and tools that run on this repository: code quality, test hygiene,
+    formatting, structure gates, the OpenSpec workflow, build artefacts, benches
   - elixir-sdk: the Elixir SDK
   - go-sdk: the Go SDK
   - java-sdk: the Java SDK

@@ -88,7 +88,7 @@ For Cells whose Relay has `keeps_state = false`, OR whose agent-side state is em
 
 ### Requirement: Per-plugin timeout enforcement
 
-The system SHALL enforce each `:on_relay_init` subscriber's `timeout_ms` by running its `on_relay_init/2` invocation inside an isolated task. If the task does not return within `timeout_ms` milliseconds, the system MUST forcibly terminate the task and treat the timeout as an error for the subscriber's `on_error` handling. A subscriber crashing or raising MUST NOT crash the Overwatch process. Timeout and exception handling MUST be driven by the fold-kind dispatch semantics defined in the `plugin-providers` capability.
+The system SHALL enforce each `:on_relay_init` subscriber's `timeout_ms` by running its `on_relay_init/2` invocation inside an isolated task. If the task does not return within `timeout_ms` milliseconds, the system MUST forcibly terminate the task and treat the timeout as an error for the subscriber's `on_error` handling. A subscriber crashing or raising MUST NOT crash the Overwatch process. Timeout and exception handling MUST be driven by the fold-kind dispatch semantics defined in the `plugin-relay-hooks` capability.
 
 #### Scenario: Subscriber returns within timeout
 - **WHEN** a subscriber's `on_relay_init/2` returns `{:ok, ctx}` within `timeout_ms`
