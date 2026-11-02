@@ -52,8 +52,8 @@ python-abi3 = ["python", "pyo3/abi3-py311"]
 fake-controller = ["dep:prost"]
 
 [dependencies]
-flz_core = { path = "../flz_core" }
-flz_transport = { path = "../flz_transport" }
+flz_core = { version = "0.1.0", path = "../flz_core" }
+flz_transport = { version = "0.1.0", path = "../flz_transport" }
 serde.workspace = true
 serde_json.workspace = true
 postcard.workspace = true

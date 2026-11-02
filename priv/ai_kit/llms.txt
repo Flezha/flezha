@@ -1,6 +1,6 @@
 # Flezha
 
-> Distributed stateful relays — durable flow and steps compute
+> A durable runtime for streams, workflows and agents.
 
 This map lists every guide page and the published API. Read it whole, then open
 only the pages a task needs: each link is that page's full Markdown, next to this file.
