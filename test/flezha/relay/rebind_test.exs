@@ -487,8 +487,8 @@ defmodule FlezhaTest.Relay.RebindTest do
     stub(Hub, :migration, fn _hub_id -> :cold end)
     test_pid = self()
 
-    stub(ControlUnit, :send_control_await, fn _runner, request ->
-      send(test_pid, {:asked, request})
+    stub(ControlUnit, :serialize_relay, fn _runner, relay_id, _timeout_ms, _opts ->
+      send(test_pid, {:asked, relay_id})
       {:ok, "sdk-state"}
     end)
 
@@ -498,7 +498,7 @@ defmodule FlezhaTest.Relay.RebindTest do
 
     stub(ClassRegistry, :persistent?, fn _class -> false end)
     assert {%{id: _}, "sdk-state"} = Overwatch.prepare_handover_state(state)
-    assert_received {:asked, {:migration_serialization, _}}
+    assert_received {:asked, relay_id} when relay_id == state.id
   end
 
   # fails when: a snapshot read is kept on the Overwatch, so a handover after
