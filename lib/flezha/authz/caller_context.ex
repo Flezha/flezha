@@ -14,9 +14,11 @@ defmodule Flezha.Service.CallerContext do
   @valid_sources [:cli, :ui, :sdk, :http, :mcp, :internal]
 
   # The sources held to what the network may reach: a runner connection, HTTP,
-  # and the web console and an AI assistant through `flz mcp`, which ride the
-  # controller's own distribution but serve someone at a distance. The others
-  # run on that distribution with the relay's full reach.
+  # and an AI assistant through `flz mcp`, which rides the controller's own
+  # distribution but serves someone at a distance. `:ui` is the console's old
+  # distribution path, refused at `Flezha.Service.Admin` and kept valid for the
+  # audit records it wrote. The others run on that distribution with the
+  # relay's full reach.
   @networked_sources [:sdk, :http, :ui, :mcp]
 
   @type t :: Flezha.AuthZ.caller_context()

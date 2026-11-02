@@ -35,7 +35,6 @@ defmodule Flezha.AuthZ.Verbs do
     # Liveness surfaces and the helpers a consumer names: no policy question.
     boot_status: @public,
     boot_await: @public,
-    partition_report: @public,
     retention_default: @public,
     # The one-time token is its own credential.
     authz_bootstrap: [action: :public, remote: false],

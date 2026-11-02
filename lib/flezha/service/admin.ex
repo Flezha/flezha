@@ -42,8 +42,10 @@ defmodule Flezha.Service.Admin do
   `call/4` answers the published function's value as JSON, and a failure as
   its `%Flezha.Error{}`; `run/4` answers the value itself, for a surface that
   renders terms. A request the door cannot place is refused with a `control.*`
-  code. A failure reaches a caller over HTTP, MCP or the console as
-  `Flezha.Error.withheld/2` leaves it, and a runner as it crosses the wire.
+  code, and a caller of source `:ui`, a console still on Erlang distribution,
+  with `control.surface_retired`: the console calls the HTTP API. A failure
+  reaches a caller over HTTP or MCP as `Flezha.Error.withheld/2` leaves it, and
+  a runner as it crosses the wire.
   """
 
   alias Flezha.AuthZ
@@ -61,6 +63,8 @@ defmodule Flezha.Service.Admin do
   """
   @spec run(String.t(), String.t() | [term()], CallerContext.t(), placement()) ::
           {:ok, term()} | {:error, Flezha.Error.t()}
+  def run(_name, _args, %{source: :ui}, _placement), do: refused("control.surface_retired", [])
+
   def run(name, args, caller_context, placement) when is_binary(name) do
     with {:ok, entry} <- resolve(name, caller_context),
          {:ok, written} <- decode_args(args),

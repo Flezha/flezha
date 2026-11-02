@@ -24,7 +24,7 @@ defmodule Flezha.Service.HubManagerSplitBehaviourTest do
   alias ProcessHub.Strategy.PartitionTolerance.{Divergence, DynamicQuorum, StaticQuorum}
 
   @namespace_hub :split_behaviour_test_hub
-  @ops %{source: :ui, principal: "op@_system", role: :ops, namespace: "_system"}
+  @ops %{source: :http, principal: "op@_system", role: :ops, namespace: "_system"}
 
   defp split(behaviour, settings \\ []) do
     Application.put_env(:flezha, :split_behaviour, behaviour)

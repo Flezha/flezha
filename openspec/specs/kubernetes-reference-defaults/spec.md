@@ -134,16 +134,19 @@ package from a URL the cluster can reach.
 ### Requirement: The reference manifests SHALL limit who reaches the distribution ports
 
 The reference manifests SHALL include a NetworkPolicy for the controller pods that admits traffic
-to the EPMD port and the distribution port only from pods labelled as Flezha controllers or as the
-console, and admits traffic to the health port from any source. The DaemonSet SHALL set
-`FLEZHA_DIST_PORT` and declare that port and the EPMD port on the controller container.
+to the EPMD port and the distribution port only from pods labelled as Flezha controllers, admits
+traffic to the `http_api` port from pods labelled as the console, and admits traffic to the health
+port from any source. The DaemonSet SHALL set `FLEZHA_DIST_PORT` and declare that port and the
+EPMD port on the controller container. The console's Kubernetes example SHALL reach the
+controllers through the `http_api` port with a client certificate and a token, and SHALL NOT be
+given the cookie.
 
 #### Scenario: The manifest declares the policy and the port
 
 - **WHEN** the reference manifests are read
 - **THEN** a NetworkPolicy SHALL select the controller pods and allow ports 4369 and the
-  `FLEZHA_DIST_PORT` value only from the controller and console labels, and the DaemonSet SHALL set
-  `FLEZHA_DIST_PORT` and declare it as a container port
+  `FLEZHA_DIST_PORT` value only from the controller label, and the `http_api` port from the
+  console label, and the DaemonSet SHALL set `FLEZHA_DIST_PORT` and declare it as a container port
 
 #### Scenario: An unrelated pod is blocked on a cluster that enforces policies
 
@@ -152,6 +155,12 @@ console, and admits traffic to the health port from any source. The DaemonSet SH
   its distribution port
 - **THEN** the connection SHALL fail, while the controllers still form a cluster and the health
   probes still pass
+
+#### Scenario: The console pod cannot reach distribution
+
+- **GIVEN** the same cluster with the console example applied
+- **WHEN** a console pod connects to a controller's port 4369 or its distribution port
+- **THEN** the connection SHALL fail, while its HTTPS calls to the `http_api` port succeed
 
 ### Requirement: The reference init container SHALL NOT widen file modes
 

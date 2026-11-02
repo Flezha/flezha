@@ -30,9 +30,9 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
   @class "GateTestRelay"
   @payload "parked-business-data"
 
-  @unbound %{source: :ui}
-  @ops %{source: :ui, principal: "op@_system", role: :ops, namespace: "_system"}
-  @viewer %{source: :ui, principal: "vw@_system", role: :viewer, namespace: "_system"}
+  @unbound %{source: :http}
+  @ops %{source: :http, principal: "op@_system", role: :ops, namespace: "_system"}
+  @viewer %{source: :http, principal: "vw@_system", role: :viewer, namespace: "_system"}
 
   setup do
     AuthTestHelper.setup_auth_stores(enabled: true, claim: true)
@@ -73,7 +73,6 @@ defmodule Flezha.Api.AdministrationVerbGateTest do
       assert {:ok, _entries} = Dlq.list(@class, @ops)
       assert {:ok, _entry, @payload} = Dlq.get(ctx.entry_ref, @ops)
       assert {:ok, _stats} = Dlq.stats(@ops)
-      assert {:ok, _tasklets} = Dlq.tasklets(nil, @ops)
     end
 
     test "still manages schedules, and a viewer still lists them" do

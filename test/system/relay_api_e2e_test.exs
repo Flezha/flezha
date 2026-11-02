@@ -75,7 +75,8 @@ defmodule FlezhaTest.System.RelayApiE2ETest do
         :given
       )
 
-  defp context(namespace), do: %{source: :ui, principal: "console@_system", namespace: namespace}
+  defp context(namespace),
+    do: %{source: :http, principal: "console@_system", namespace: namespace}
 
   defp drill(relay_id, go) do
     script = [%{relay: relay_id, channel: "place", value: @order, when: go, call: true}]

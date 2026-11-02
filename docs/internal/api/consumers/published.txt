@@ -42,7 +42,6 @@ Flezha.Service.Dlq.get/2
 Flezha.Service.Dlq.list/2
 Flezha.Service.Dlq.replay/2
 Flezha.Service.Dlq.stats/1
-Flezha.Service.Dlq.tasklets/2
 Flezha.Service.Fleet.drop_runner/3
 Flezha.Service.Fleet.dropped_runners/2
 Flezha.Service.Fleet.factories/2
@@ -96,10 +95,7 @@ Flezha.Service.Relay.list/2
 Flezha.Service.Relay.list_namespaces/1
 Flezha.Service.Relay.listen/5
 Flezha.Service.Relay.relay_plugins/2
-Flezha.Service.Relay.relay_rows/2
 Flezha.Service.Relay.overwatch_state/3
-Flezha.Service.Relay.partition_groups/2
-Flezha.Service.Relay.registry/2
 Flezha.Service.Relay.replay/4
 Flezha.Service.Relay.send/6
 Flezha.Service.Relay.start/3

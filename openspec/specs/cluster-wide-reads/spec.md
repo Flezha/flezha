@@ -161,8 +161,8 @@ finished relay on any controller.
 
 ### Requirement: Dead letters SHALL be read and acted on across the cluster
 
-`Dlq.list/2`, `Dlq.stats/1` and `Dlq.tasklets/2` SHALL answer the parked entries of every
-controller in the cluster answer shape, each row carrying the `node` whose store holds it.
+`Dlq.list/2` and `Dlq.stats/1` SHALL answer the parked entries of every controller in the
+cluster answer shape, each row carrying the `node` whose store holds it.
 `Dlq.list/2` SHALL keep its order, nearest-to-expiry first, across controllers. `Dlq.get/2`,
 `Dlq.drop/2` and `Dlq.replay/2` SHALL find the entry on whichever controller holds it, judge the
 caller against the entry's namespace as they do today, and act on that controller. An entry no

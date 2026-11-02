@@ -1,13 +1,16 @@
 # The console on bare metal
 
 The console runs as a release on the machine, started by systemd, beside a controller
-release on the same machine. [The console](console.md) explains the link and every setting
-used here.
+release on the same machine, reaching it over the controller's HTTP API on loopback.
+[The console](console.md) explains the channel and every setting used here.
 
 > #### What you need {: .tip}
 >
 > - A controller release running on this machine
->   ([Deploying a controller](../topics/deploying/deploying_a_controller.md)), version 0.1.2 or later.
+>   ([Deploying a controller](../topics/deploying/deploying_a_controller.md)), version 0.1.0 or
+>   later; the 0.1.0-alpha.1 pre-release has no channel for the console.
+> - The HTTP API's plugin package, `flezha_http-0.1.0.fpz`
+>   ([Installing plugins](../topics/plugins/installing_plugins.md#example)).
 > - To build the release from source instead of downloading it: Elixir 1.14 or later with
 >   Erlang/OTP, and Node.js with npm.
 > - A Postgres database and a role for the console.
@@ -69,16 +72,22 @@ $ sudo -u postgres psql -c "CREATE ROLE console LOGIN PASSWORD 'console-db-passw
   -c "CREATE DATABASE console OWNER console"
 ```
 
-## The controller's cookie and the console's token
+## The controller's HTTP API and the console's token
 
-The console joins the controller's node under the controller's cookie, which puts it inside
-the cluster's trust boundary: run it on a machine you trust as much as the controller's. A
-controller started
-without `RELEASE_COOKIE` minted one at its first start and keeps it in
-`storage/app/state/cookie` in its release folder.
+The console holds no cookie and starts no Erlang distribution: it calls the controller's HTTP
+API, here on `127.0.0.1:8765`, where plain HTTP is allowed because nothing leaves the
+machine. A console on another machine needs the API over TLS with a client certificate
+([How it reaches the controller](console.md#how-it-reaches-the-controller)).
 
-> Claim the admin, if no one has yet, and issue the console a token of its own, from the
-> controller's release folder.
+> Install the HTTP API's package and restart the controller, from its release folder.
+> {: .step}
+
+```sh
+$ ./bin/flz plugin install ./flezha_http-0.1.0.fpz
+```
+
+> Claim the admin, if no one has yet, and enable the HTTP API on loopback with the admin
+> token.
 > {: .step}
 
 ```sh
@@ -89,6 +98,18 @@ $ ./bin/flz auth bootstrap < storage/app/auth/bootstrap.token
 bootstrap claimed; admin@_system bound to admin-187c0f387e574b17
 admin token (shown once, store it now): flzt_…
 ```
+
+```sh
+$ FLEZHA_TOKEN=flzt_… ./bin/flz plugin enable api http_api --namespace _system
+```
+
+```output
+Enabling plugin...
+Plugin api enabled.
+```
+
+> Issue the console a token of its own.
+> {: .step}
 
 ```sh
 $ FLEZHA_TOKEN=flzt_… ./bin/flz token issue console@_system _system admin --ttl never
@@ -113,11 +134,7 @@ PHX_URL_SCHEME=http
 PHX_URL_PORT=4000
 DATABASE_URL=ecto://console:console-db-password@127.0.0.1/console
 SECRET_KEY_BASE=<openssl rand -base64 48>
-RELEASE_DISTRIBUTION=name
-RELEASE_NODE=flezha_console@127.0.0.1
-RELEASE_COOKIE=<the controller's cookie>
-ERL_FLAGS=-hidden
-FLEZHA_NODE=flezha@127.0.0.1
+FLEZHA_CONTROLLER_URL=http://127.0.0.1:8765
 FLEZHA_TOKEN=flzt_…
 FLEZHA_CONSOLE_ADMIN_EMAIL=admin@example.com
 FLEZHA_CONSOLE_ADMIN_PASSWORD=<a passphrase of 12 to 72 characters>
@@ -128,9 +145,9 @@ $ sudo chmod 600 /etc/flezha_console/console.env
 ```
 
 - **`PHX_SERVER=true`** makes the release serve the web endpoint.
-- **`FLEZHA_NODE=flezha@127.0.0.1`** is the controller's node: `flezha@` and its
-  `FLEZHA_NODE_HOST`, which is `127.0.0.1` unless set.
-- **`127.0.0.1`** keeps both nodes on this machine. Put the console behind a proxy with TLS
+- **`FLEZHA_CONTROLLER_URL=http://127.0.0.1:8765`** is the controller's HTTP API on this
+  machine. The console takes plain `http` only for a loopback address.
+- **`PHX_HOST=localhost`** serves the console on this machine. Put it behind a proxy with TLS
   to serve it to others, and set `PHX_HOST`, `PHX_URL_SCHEME` and `PHX_URL_PORT` to the
   address browsers use.
 
@@ -172,9 +189,8 @@ $ journalctl -u flezha-console | grep -E 'NodeConnector|Endpoint'
 ```
 
 ```output
-[info] [NodeConnector] Will connect to flezha@127.0.0.1
-[info] [NodeConnector] Connected to flezha@127.0.0.1
 [info] Running FlezhaConsoleWeb.Endpoint with Bandit 1.10.3 at :::4000 (http)
+[info] [NodeConnector] Reached the controller 127.0.0.1 at http://127.0.0.1:8765
 ```
 
 Open http://localhost:4000 and sign in with `FLEZHA_CONSOLE_ADMIN_EMAIL` and

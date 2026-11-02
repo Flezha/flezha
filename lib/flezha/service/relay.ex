@@ -29,7 +29,6 @@ defmodule Flezha.Service.Relay do
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Calls.Token
   alias Flezha.Relay.PartitionGroup
-  alias Flezha.Partition
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Service.CallerContext
   alias Flezha.Service.HubManager
@@ -137,17 +136,6 @@ defmodule Flezha.Service.Relay do
   end
 
   @doc """
-  One row per relay in `namespace`: node, health and partition. `unreachable`
-  names the controllers that did not answer.
-  """
-  @spec relay_rows(String.t(), caller_context()) :: {:ok, map()} | {:error, term()}
-  verb relay_rows(namespace, caller_context),
-    verb: :relay_info,
-    args: [namespace: @namespace] do
-    {:ok, Info.rows(namespace)}
-  end
-
-  @doc """
   The plugin bindings each relay in `namespace` declares. Each row is
   `{relay_id, bindings}`, read on a member of the namespace's hub.
   """
@@ -157,26 +145,6 @@ defmodule Flezha.Service.Relay do
     args: [namespace: @namespace] do
     {rows, unreachable} = Info.hub_read(namespace, {HubManager, :relay_bindings, [namespace]})
     {:ok, %{rows: rows, unreachable: unreachable}}
-  end
-
-  @doc "The namespace's hub registry, as a member of its hub reports it."
-  @spec registry(String.t(), caller_context()) :: {:ok, term()} | {:error, term()}
-  verb registry(namespace, caller_context), verb: :relay_info, args: [namespace: @namespace] do
-    RelayManager.on_hub_member(namespace, namespace, {HubManager, :get_registry, [namespace]})
-  end
-
-  @doc """
-  The partition groups `rows` describe. Each answers its group, declared width,
-  members and key-group coverage.
-
-  The report, not the row: `list/2` collapses the same rows into one row per
-  group.
-  """
-  @spec partition_groups([map()], caller_context()) :: {:ok, [map()]} | {:error, term()}
-  verb partition_groups(rows, caller_context) when is_list(rows),
-    verb: :partition_report,
-    args: [rows: [type: :list, doc: "The relay rows."]] do
-    {:ok, Partition.groups(rows)}
   end
 
   @doc """

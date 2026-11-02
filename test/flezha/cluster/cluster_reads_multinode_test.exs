@@ -32,7 +32,7 @@ defmodule Flezha.Cluster.ReadsMultiNodeTest do
   @moduletag timeout: 180_000
 
   @factory "chat_loop_steps"
-  @context %{source: :ui, principal: "console@_system"}
+  @context %{source: :http, principal: "console@_system"}
 
   setup do
     TestHelpers.reset_all_cells()

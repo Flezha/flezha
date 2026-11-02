@@ -170,7 +170,8 @@ The system SHALL maintain a small binary catalog `storage/app/audit/INDEX` conta
 ### Requirement: Service-API surface
 
 The audit log SHALL be read through `Flezha.Service.Logs` with `kind: "audit"` (see
-`log-kinds`), callable from both the CLI and the console directly. `Flezha.Service.AuditLog`
+`log-kinds`), callable from both the CLI and the console directly.
+<!-- docs-citation-record:begin -->`Flezha.Service.AuditLog`<!-- docs-citation-record:end -->
 SHALL NOT exist. Every public function SHALL accept a `caller_context` argument with the same
 shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk,
 :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL authorize

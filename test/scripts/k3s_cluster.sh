@@ -6,6 +6,10 @@
 #   k3s_import <image> [tag]  loads a local image into every node, tagged <tag> too
 #   k3s_down                  removes the nodes, their network and the kubeconfig
 #   k3s_dump                  prints the controller pods and every container's recent logs
+#   k3s_package <builder> <project> <out>
+#                             builds the plugin project <project> (a path in the
+#                             repository) into a package in <out>, in <builder>, an
+#                             image of Dockerfile.controller's plugin-builder target
 #   kc ...                    kubectl against the cluster
 #
 # The kubeconfig is a temp file of its own, never the default one. k3s's own
@@ -63,6 +67,22 @@ k3s_dump() {
   kc -n flezha get pods -o wide || true
   kc -n flezha logs -l app=flezha --all-containers --prefix --tail=40 --previous 2>/dev/null ||
     kc -n flezha logs -l app=flezha --all-containers --prefix --tail=40 || true
+}
+
+k3s_package() {
+  local builder=$1 project=$2 out=$3 src root
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  src="$(mktemp -d)"
+  mkdir -p "$out"
+  (cd "$root" && tar -cf - \
+    --exclude='_build' --exclude='deps' --exclude='target' \
+    mix.exs mix.lock config lib crates/protobufs rel \
+    crates/flz_transport/errors.json crates/flz_core/src/schema.rs crates/flz_core_ffi/src/veneer/shape.rs \
+    openspec/specs/java-sdk/spec.md test/fixtures sdk/elixir "$project") |
+    tar -xf - -C "$src"
+  docker run --rm -v "$src:/src" -v "$out:/out" -w "/src/$project" "$builder" \
+    sh -c "mix deps.get >/dev/null && mix flezha.plugin.package --output /out && chown -R $(id -u):$(id -g) /src /out"
+  rm -rf "$src"
 }
 
 k3s_down() {

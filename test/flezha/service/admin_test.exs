@@ -370,10 +370,10 @@ defmodule Flezha.Service.AdminTest do
 
     defp as(source), do: %{source: source, principal: @principal, namespace: @ns, role: :app}
 
-    # Fails when: an HTTP or console caller is answered an internal failure's
-    # raw term, or the operator's log loses it.
-    test "a caller over HTTP or from the console reads the code, and the log the reason" do
-      for source <- [:http, :ui], {failure, code} <- internal_failures() do
+    # Fails when: an HTTP or MCP caller is answered an internal failure's raw
+    # term, or the operator's log loses it.
+    test "a caller over HTTP or MCP reads the code, and the log the reason" do
+      for source <- [:http, :mcp], {failure, code} <- internal_failures() do
         failing_with(failure)
 
         log =
@@ -563,24 +563,25 @@ defmodule Flezha.Service.AdminTest do
     end
   end
 
-  describe "the web console" do
-    # Fails when: the console reaches an operation its row keeps off the network.
-    test "reaches no operation that is not remote, Controller.stop included" do
-      refute Enum.any?(Admin.reachable(as(:ui)), &(not &1.remote))
+  describe "a console still on Erlang distribution" do
+    # Fails when: a caller of source `:ui` is still served, or its request
+    # runs before it is refused.
+    test "is refused naming the HTTP API, and runs nothing" do
+      bind_app!()
+      boundary = System.monotonic_time(:microsecond)
 
-      assert {:error, %Flezha.Error{code: "control.unknown_function"}} =
-               Admin.call("Controller.stop", "[]", as(:ui), :given)
-    end
+      for {name, args} <- [
+            {"Relay.list", Jason.encode!([@ns])},
+            {"Relay.start", Jason.encode!([@ns, %{id: "o1", factory_id: "f1"}])}
+          ] do
+        assert {:error, %Flezha.Error{code: "control.surface_retired"} = error} =
+                 Admin.call(name, args, as(:ui), :given)
 
-    # Fails when: the console loses the streams it renders.
-    test "tails the audit log into an :emit pid" do
-      context = Map.merge(as(:ui), %{emit: self(), window_ms: 10})
-      assert Enum.any?(Admin.reachable(context), &(&1.name == "Logs.tail"))
+        assert error.message =~ "HTTP API"
+      end
 
-      refute match?(
-               {:error, %Flezha.Error{code: "control.unknown_function"}},
-               Admin.run("Logs.tail", ~s([{"kind":"audit"}]), context, :given)
-             )
+      TestSinks.settle(RingBufferSink)
+      assert RingBufferSink.query(:relay_service, boundary) == []
     end
   end
 

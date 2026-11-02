@@ -31,7 +31,7 @@ defmodule Flezha.Cluster.SplitBehaviourMultinodeTest do
   alias FlezhaTest.Helper.RelayTestHelper
 
   @factory "store_input"
-  @ops %{source: :ui, principal: "op@_system", role: :ops, namespace: "_system"}
+  @ops %{source: :http, principal: "op@_system", role: :ops, namespace: "_system"}
 
   setup context do
     namespace = "split-#{System.unique_integer([:positive])}"

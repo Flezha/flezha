@@ -33,7 +33,7 @@ defmodule Flezha.Cluster.OperationsMultiNodeTest do
   @moduletag timeout: 180_000
 
   @factory "chat_loop_steps"
-  @context %{source: :ui, principal: "console@_system"}
+  @context %{source: :http, principal: "console@_system"}
 
   setup do
     TestHelpers.reset_all_cells()
@@ -66,8 +66,6 @@ defmodule Flezha.Cluster.OperationsMultiNodeTest do
 
     assert {:ok, %{rows: stats}} = Dlq.stats(@context)
     assert %{entries: 2} = Enum.find(stats, &(&1.relay_class == id and &1.node == peer))
-    assert {:ok, %{rows: tasklets}} = Dlq.tasklets(id, @context)
-    assert Enum.sort(Enum.map(tasklets, & &1.node)) == Enum.sort([node(), peer])
 
     assert {:ok, %{"payload_bytes" => 7}, "dropped"} = Dlq.get(dropped_ref, @context)
     assert :ok = Dlq.drop(dropped_ref, @context)

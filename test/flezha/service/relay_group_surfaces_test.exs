@@ -18,7 +18,7 @@ defmodule Flezha.Service.RelayGroupSurfacesTest do
 
   setup :set_mimic_global_until_exit
 
-  @context %{source: :ui, principal: "console@_system"}
+  @context %{source: :http, principal: "console@_system"}
   @entry %{
     channel: "in",
     codec: "text",

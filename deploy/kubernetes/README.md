@@ -133,10 +133,11 @@ The controllers form one Erlang cluster, and a node connected to it can run any 
 others, so who reaches the distribution ports matters. The DaemonSet pins the distribution
 port with `FLEZHA_DIST_PORT=9100` and declares it beside EPMD's 4369.
 `flezha-networkpolicy.yaml` admits those two ports only from pods labelled `app: flezha`
-(the controllers) and `app: console`, the health port 9569 from anywhere, and QUIC 4433/UDP
-for runners; any other port of the controller pods is closed to other pods. It takes effect
-only on a network plugin that enforces NetworkPolicy, and tooling that reaches the
-controllers over distribution needs one of the two labels.
+(the controllers), the HTTP API's port 8765 from pods labelled `app: console`, the health
+port 9569 from anywhere, and QUIC 4433/UDP for runners; any other port of the controller pods
+is closed to other pods. The console holds a client certificate and a token, never the
+cookie. The policy takes effect only on a network plugin that enforces NetworkPolicy, and
+tooling that reaches the controllers over distribution needs the controller label.
 
 To run distribution over mutual TLS, apply the cert-manager recipe in
 [`../dist-tls/kubernetes/`](../dist-tls/kubernetes/README.md): each pod gets its own

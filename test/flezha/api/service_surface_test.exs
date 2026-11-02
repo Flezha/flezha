@@ -54,7 +54,6 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       {:list, [nil]},
       {:get, ["rc/task/id"]},
       {:stats, []},
-      {:tasklets, [nil]},
       {:drop, ["rc/task/id"]},
       {:replay, ["rc/task/id"]}
     ],
@@ -92,10 +91,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     ],
     Relay => [
       {:list_namespaces, []},
-      {:relay_rows, ["default"]},
       {:relay_plugins, ["default"]},
-      {:registry, ["default"]},
-      {:partition_groups, [[]]},
       {:cell_state, ["default", "rc", "key"]},
       {:overwatch_state, ["default", "rc"]},
       {:start, ["default", %{}]},
@@ -221,7 +217,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
       for {module, fun, args} <- gated do
         assert match?(
                  {:error, %Flezha.Error{class: :denied}},
-                 apply(module, fun, args ++ [%{source: :ui}])
+                 apply(module, fun, args ++ [%{source: :http}])
                ),
                "#{inspect(module)}.#{fun}/#{length(args) + 1} served an unbound caller under enforcement"
       end
@@ -230,12 +226,10 @@ defmodule Flezha.Api.ServiceSurfaceTest do
 
   describe "the reads answer data for a valid caller" do
     test "the ones that need no fleet, hub or store running" do
-      context = %{source: :ui, principal: "console@_system"}
+      context = %{source: :http, principal: "console@_system"}
 
       assert {:ok, kinds} = Namespace.quota_kinds(context)
       assert is_list(kinds) and kinds != []
-
-      assert {:ok, []} = Relay.partition_groups([], context)
 
       assert {:ok, counters} = Controller.liveness_counters(context)
       assert is_map(counters) or is_list(counters)
@@ -247,7 +241,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
     # A consumer on another node ages a signal against the controller's clock,
     # and reads the two fleet answers as `{:ok, value}` like every other read.
     test "the status carries the clock, and the fleet reads are wrapped once" do
-      context = %{source: :ui, principal: "console@_system"}
+      context = %{source: :http, principal: "console@_system"}
 
       before = System.monotonic_time(:microsecond)
       assert {:ok, %{rows: [%{monotonic_us: clock}]}} = Controller.status(context)
@@ -300,7 +294,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
                10_000
              )
 
-      context = %{source: :ui, principal: "console@_system"}
+      context = %{source: :http, principal: "console@_system"}
 
       assert {:ok, %{relays: [], totals: %{io_in_received: 7}, unreachable: []}} =
                Controller.liveness_counters([filter: [namespace: namespace], limit: 0], context)
@@ -317,7 +311,7 @@ defmodule Flezha.Api.ServiceSurfaceTest do
         NodeTestHelper.start_peer_node(:ctl_list, app_env: [host_node: "machine-b"])
 
       on_exit(fn -> NodeTestHelper.stop_peer_node(peer_pid, peer) end)
-      %{peer: peer, context: %{source: :ui, principal: "console@_system"}}
+      %{peer: peer, context: %{source: :http, principal: "console@_system"}}
     end
 
     test "lists both, with their machines, and marks the one that answered",

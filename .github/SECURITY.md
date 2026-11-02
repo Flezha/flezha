@@ -48,8 +48,10 @@ Inside that boundary, everything else is scoped:
 - **Tokens** carry a principal and a role in a namespace, and every command is
   checked against them when authorization is on.
 - **Namespaces** separate tenants: their relays, plugins, files and roles.
-- **The console** is a hidden Erlang node holding the cookie, so it sits inside
-  the boundary: whoever controls the console machine controls the cluster.
+- **The console** sits outside the boundary. It reaches the controllers over
+  their HTTP API with a client certificate and a token, never the cookie, and
+  can do only what that token allows. A console that still connects over
+  distribution is refused with `control.surface_retired`.
 
 ## Hardening a production cluster
 
@@ -61,13 +63,15 @@ Inside that boundary, everything else is scoped:
 - Keep `{versions, ['tlsv1.3']}` in that file; without it only TLS 1.2 is
   offered.
 - Set `FLEZHA_DIST_PORT` so the distribution port is fixed, and allow port 4369
-  and that port only from the other controllers' and the console's IP addresses.
+  and that port only from the other controllers' IP addresses.
 - Bind EPMD and distribution to a private address (`ERL_EPMD_ADDRESS`,
   `-kernel inet_dist_use_interface`), for example on a WireGuard network.
 - On Kubernetes, apply `deploy/kubernetes/flezha-networkpolicy.yaml` on a
   network plugin that enforces it, and `deploy/dist-tls/kubernetes/` for mTLS.
-- Run the console on a machine you trust as much as the controllers, and give
-  it its own certificate from the distribution authority.
+- Give the console a client certificate from an authority of its own, never the
+  distribution authority, name that authority as the HTTP API's
+  `tls_client_cacertfile`, and open only the HTTP API's port to it. Never give
+  it the cookie.
 - Treat crash dumps (`erl_crash.dump`) as secrets: they hold the cookie in
   clear text.
 - To cut a node off, rotate the cookie and the authority on every other node and
@@ -79,7 +83,8 @@ Inside that boundary, everything else is scoped:
 
 A controller with authorization turned off takes every command on trust; that
 is how the dev and test configuration runs, and it is not a vulnerability.
-Neither is what a node that holds the cookie and passes the TLS check can do,
-the console included: the model above places it inside the boundary.
+Neither is what a node that holds the cookie and passes the TLS check can do:
+the model above places it inside the boundary. The console is not such a node;
+what it can do beyond its token is a vulnerability.
 [Authorization](../docs/public/topics/core/authorization.md) explains the
 postures and what a production controller should use.

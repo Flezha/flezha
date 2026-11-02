@@ -1,16 +1,17 @@
 # The console on Kubernetes
 
 The console runs as one Deployment in the namespace `flezha`, beside the controllers that
-[Kubernetes](../topics/deploying/kubernetes.md) runs from the reference manifests. It finds them through a
-headless service, so a controller pod that is replaced under a new address is found again.
-[The console](console.md) explains the link and every setting used here. This page was run
-on k3s.
+[Kubernetes](../topics/deploying/kubernetes.md) runs from the reference manifests. It reaches
+them over their HTTP API through a headless service, with a client certificate and a token,
+so a controller pod that is replaced under a new address is found again.
+[The console](console.md) explains the channel and every setting used here.
 
 > #### What you need {: .tip}
 >
-> - The controllers running from `deploy/kubernetes/`, with the Secret `flezha-secrets`
->   holding their `RELEASE_COOKIE`. The console needs controller 0.1.2 or later: set the
->   DaemonSet's image to `flezha/flezha:0.1.2` if it pins an earlier one.
+> - The controllers running from `deploy/kubernetes/`, version 0.1.0 or later, with the
+>   HTTP API's package `flezha_http` in their `FLEZHA_PLUGINS`
+>   ([Plugins in the Kubernetes README](https://github.com/flezha/flezha/blob/main/deploy/kubernetes/README.md#plugins)).
+> - A checkout of the Flezha repository, for `deploy/dist-tls/make-certs.sh`, and `openssl`.
 > - The console's image in the cluster. Build it as [Docker](console_docker.md#build-the-image)
 >   shows, then import it into k3s, or push it to your registry and change `image:` in the
 >   manifest.
@@ -19,7 +20,44 @@ on k3s.
 $ docker save flezha-console:0.1.0 | sudo k3s ctr images import -
 ```
 
-## Issue the console's token
+## The channel's certificates
+
+> Make the channel's authority, one server certificate for every controller, naming the
+> headless service the console calls, and the console's client certificate.
+> {: .step}
+
+```sh
+$ deploy/dist-tls/make-certs.sh ca channel
+$ deploy/dist-tls/make-certs.sh node channel controllers --dns flezha-controllers.flezha.svc.cluster.local
+$ deploy/dist-tls/make-certs.sh node channel console --dns console.flezha.svc.cluster.local
+```
+
+Keep `channel/ca.key` off the cluster. The authority is the channel's alone: never use the
+distribution authority here, because a certificate it signs joins the cluster.
+
+> Put the controllers' files and the console's files in a Secret each.
+> {: .step}
+
+```sh
+$ kubectl -n flezha create secret generic flezha-channel --from-file=channel/controllers/
+$ kubectl -n flezha create secret generic flezha-console-channel \
+  --from-file=ca.pem=channel/console/ca.pem \
+  --from-file=console.pem=channel/console/node.pem \
+  --from-file=console.key=channel/console/node.key
+```
+
+The reference DaemonSet mounts the Secret `flezha-channel` at `/etc/flezha/channel` once it
+exists.
+
+> Restart the controllers so every pod has the files.
+> {: .step}
+
+```sh
+$ kubectl -n flezha rollout restart ds/flezha-daemonset
+$ kubectl -n flezha rollout status ds/flezha-daemonset
+```
+
+## Enable the HTTP API and issue the console's token
 
 > Claim the admin with the bootstrap token the controller wrote at its first start, if no one
 > has yet ([Claim the admin](../topics/core/authorization.md#claim-the-admin)).
@@ -27,12 +65,30 @@ $ docker save flezha-console:0.1.0 | sudo k3s ctr images import -
 
 ```sh
 $ kubectl -n flezha exec ds/flezha-daemonset -c flezha -- \
-  sh -c '/flezha/bin/flz auth bootstrap "$(cat /var/lib/flezha/auth/bootstrap.token)"'
+  sh -c '/flezha/bin/flz auth bootstrap < /var/lib/flezha/auth/bootstrap.token'
 ```
 
 ```output
 bootstrap claimed; admin@_system bound to admin-6087a2dd4e861d6e
 admin token (shown once, store it now): flzt_…
+```
+
+> Enable the HTTP API on every controller's pod address, over TLS, asking each client for a
+> certificate from the channel's authority.
+> {: .step}
+
+```sh
+$ kubectl -n flezha exec ds/flezha-daemonset -c flezha -- \
+  env FLEZHA_TOKEN=flzt_… /flezha/bin/flz plugin enable api http_api --namespace _system \
+  --Xbind=0.0.0.0 \
+  --Xtls_certfile=/etc/flezha/channel/node.pem \
+  --Xtls_keyfile=/etc/flezha/channel/node.key \
+  --Xtls_client_cacertfile=/etc/flezha/channel/ca.pem
+```
+
+```output
+Enabling plugin...
+Plugin api enabled.
 ```
 
 > Issue the console a token of its own, as an `admin` in `_system`.
@@ -66,17 +122,27 @@ $ kubectl -n flezha create secret generic flezha-console \
 
 ## The manifest
 
-<!-- docs-citation-record:begin -->`deploy/kubernetes/console.yaml`<!-- docs-citation-record:end --> in the console's repository:
+Save this as `console.yaml`; the console's repository carries it as
+<!-- docs-citation-record:begin -->`deploy/kubernetes/console.yaml`<!-- docs-citation-record:end -->.
 
 ```yaml
 # The console on Kubernetes, beside the controllers that core's deploy/kubernetes/ runs in the
-# namespace `flezha`: a Postgres for its accounts, the console itself as a hidden node, and a
-# headless service that resolves to every controller pod. Before applying, create the Secret
-# `flezha-console` (see the console guide in the Flezha docs); `flezha-secrets` holds the
-# controllers' RELEASE_COOKIE already.
+# namespace `flezha`: a Postgres for its accounts, the console itself, and a headless service
+# that resolves to every controller pod's HTTP API. The console reaches the controllers over
+# HTTPS with a client certificate and a flezha token; it holds no cookie and starts no Erlang
+# distribution.
+#
+# Before applying:
+#   - enable the `http_api` plugin in `_system` on the controllers with TLS and
+#     `tls_client_cacertfile`, each controller's certificate naming
+#     flezha-controllers.flezha.svc.cluster.local;
+#   - create the Secret `flezha-console` (see the console guide in the Flezha docs);
+#   - create the Secret `flezha-console-channel` holding `ca.pem`, the authority the
+#     controllers' certificates chain to, and `console.pem` and `console.key`, a client
+#     certificate from the authority `tls_client_cacertfile` names.
 
-# Every controller pod, by address: the console names a controller after the address its pod
-# has now (FLEZHA_NODE_QUERY below).
+# Every controller pod's HTTP API, by address: the console pins one that answers, which is
+# one holding `_system`, and moves to another when it stops answering.
 apiVersion: v1
 kind: Service
 metadata:
@@ -87,8 +153,8 @@ spec:
   selector:
     app: flezha
   ports:
-    - name: epmd
-      port: 4369
+    - name: http-api
+      port: 8765
 ---
 apiVersion: v1
 kind: Service
@@ -121,7 +187,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:17-alpine
+          image: postgres:17.11-alpine
           env:
             - name: POSTGRES_USER
               value: console
@@ -185,6 +251,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        # The Secret's files belong to this group, so the console's user can read them.
+        fsGroup: 1000
       containers:
         - name: console
           image: flezha-console:0.1.0
@@ -193,25 +261,16 @@ spec:
             - name: http
               containerPort: 4000
           env:
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
-            # A hidden node under the controllers' cookie: it reaches the controllers without
-            # joining their mesh.
-            - name: RELEASE_DISTRIBUTION
-              value: name
-            - name: RELEASE_NODE
-              value: flezha_console@$(POD_IP)
-            - name: ERL_FLAGS
-              value: -hidden
-            - name: RELEASE_COOKIE
-              valueFrom:
-                secretKeyRef:
-                  name: flezha-secrets
-                  key: RELEASE_COOKIE
-            - name: FLEZHA_NODE_QUERY
-              value: flezha@flezha-controllers.flezha.svc.cluster.local
+            # The controllers' HTTP API, and the files the console proves itself and checks
+            # theirs with. A token works only on the controller cluster that issued it.
+            - name: FLEZHA_CONTROLLER_URL
+              value: https://flezha-controllers.flezha.svc.cluster.local:8765
+            - name: FLEZHA_CONTROLLER_CA
+              value: /etc/flezha-console/channel/ca.pem
+            - name: FLEZHA_CLIENT_CERT
+              value: /etc/flezha-console/channel/console.pem
+            - name: FLEZHA_CLIENT_KEY
+              value: /etc/flezha-console/channel/console.key
             - name: FLEZHA_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -246,6 +305,10 @@ spec:
               value: http
             - name: PHX_URL_PORT
               value: "4000"
+          volumeMounts:
+            - name: channel
+              mountPath: /etc/flezha-console/channel
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /users/log-in
@@ -263,18 +326,21 @@ spec:
               cpu: 50m
             limits:
               memory: 512Mi
+      volumes:
+        - name: channel
+          secret:
+            secretName: flezha-console-channel
+            defaultMode: 0440
 ```
 
-- **`flezha-controllers`** is a headless service over every controller pod, so its DNS name
-  resolves to their addresses. `FLEZHA_NODE_QUERY` names it, and the console connects to
-  `flezha@<address>` for one of them, the one it already holds first.
-- **`RELEASE_NODE: flezha_console@$(POD_IP)`** names the console after its own pod address, as the
-  controllers are named after theirs. The controllers' `RELEASE_COOKIE` comes from
-  `flezha-secrets`, which puts the console inside the cluster's trust boundary.
-- **`app: console`** is the label `flezha-networkpolicy.yaml` admits to the controllers'
-  EPMD and distribution ports. Where the controllers run the mutual-TLS recipe of
-  `deploy/dist-tls/kubernetes/`, give the console pod its two init containers and volume too,
-  so it gets its own certificate from the distribution authority.
+- **`flezha-controllers`** is a headless service over every controller pod's HTTP API, so its
+  DNS name resolves to their addresses. `FLEZHA_CONTROLLER_URL` names it, the name the
+  controllers' server certificate carries, and the console pins an address that answers.
+- **`flezha-console-channel`** holds the channel's authority and the console's client
+  certificate, mounted read-only. The console holds no cookie and starts no Erlang
+  distribution, so it stays outside the cluster's trust boundary.
+- **`app: console`** is the label `flezha-networkpolicy.yaml` admits to the controllers' HTTP
+  API port, 8765, and to nothing else: EPMD and the distribution port stay closed to it.
 - **`console-db`** is a small Postgres for the console's accounts, on a volume of its own. To
   use a database you already run, drop it and point `DATABASE_URL` there.
 - **`PHX_HOST`, `PHX_URL_SCHEME`, `PHX_URL_PORT`** are the address browsers use. They are set
@@ -285,15 +351,14 @@ spec:
 > {: .step}
 
 ```sh
-$ kubectl apply -f deploy/kubernetes/console.yaml
+$ kubectl apply -f console.yaml
 $ kubectl -n flezha rollout status deploy/console
 $ kubectl -n flezha logs deploy/console | grep -E 'NodeConnector|Endpoint'
 ```
 
 ```output
-[info] [NodeConnector] Will connect to flezha@10.42.0.4
 [info] Running FlezhaConsoleWeb.Endpoint with Bandit 1.10.3 at :::4000 (http)
-[info] [NodeConnector] Connected to flezha@10.42.0.4
+[info] [NodeConnector] Reached the controller flezha-controllers.flezha.svc.cluster.local at https://10.42.0.4:8765
 ```
 
 > Reach it from your machine.
@@ -316,8 +381,8 @@ $ kubectl -n flezha exec deploy/console -- \
 ## Remove it
 
 ```sh
-$ kubectl delete -f deploy/kubernetes/console.yaml
-$ kubectl -n flezha delete secret flezha-console
+$ kubectl delete -f console.yaml
+$ kubectl -n flezha delete secret flezha-console flezha-console-channel
 ```
 
 The database's volume claim, `data-console-db-0`, stays until you delete it.

@@ -86,16 +86,17 @@ defmodule FlezhaTest.Deployment.K8sManifestTest do
       assert policy =~ ~r/podSelector:\s*\n\s+matchLabels:\s*\n\s+app: flezha\n\s+policyTypes/
     end
 
-    test "admits EPMD and the distribution port from controllers and the console alone",
+    test "admits EPMD and the distribution port from controllers alone",
          %{rules: rules, dist_port: dist_port} do
       for port <- [4369, dist_port] do
         assert [rule] = Enum.filter(rules, &(port in ports(&1))), "port #{port}"
-
-        assert Regex.scan(~r/app: (\S+)/, rule, capture: :all_but_first) == [
-                 ["flezha"],
-                 ["console"]
-               ]
+        assert Regex.scan(~r/app: (\S+)/, rule, capture: :all_but_first) == [["flezha"]]
       end
+    end
+
+    test "admits the HTTP API's port from the console alone", %{rules: rules} do
+      assert [rule] = Enum.filter(rules, &(8765 in ports(&1)))
+      assert Regex.scan(~r/app: (\S+)/, rule, capture: :all_but_first) == [["console"]]
     end
 
     test "admits the health port from anywhere", %{rules: rules} do

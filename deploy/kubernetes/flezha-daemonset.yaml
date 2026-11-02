@@ -237,6 +237,12 @@ spec:
               mountPath: /flezha/tmp
             - name: tmp
               mountPath: /tmp
+            # The HTTP API's TLS files, when the Secret `flezha-channel` exists: the
+            # server certificate the console checks and the authority its client
+            # certificate chains to (docs/public/console/console_kubernetes.md).
+            - name: flezha-channel
+              mountPath: /etc/flezha/channel
+              readOnly: true
       volumes:
         - name: flezha-sockets
           hostPath:
@@ -277,3 +283,9 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        - name: flezha-channel
+          secret:
+            secretName: flezha-channel
+            optional: true
+            # Group-readable: fsGroup above makes the files the controller's group's.
+            defaultMode: 0440

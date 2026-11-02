@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.CallResponseE2ETest do
 
   @moduletag timeout: 300_000
 
-  @context %{source: :ui, principal: "e2e@_system"}
+  @context %{source: :http, principal: "e2e@_system"}
   @deadline_ms 30_000
 
   # One runner for the module: every test starts relays of its own.

@@ -101,18 +101,6 @@ defmodule Flezha.Service.Dlq do
     {:ok, Reads.rows(Reads.controllers(), Store, :stats, [])}
   end
 
-  @doc """
-  The tasklets that hold parked entries on every controller, each as
-  `relay_class`, `tasklet_id` and `node`.
-  """
-  @spec tasklets(String.t() | nil, caller_context()) :: {:ok, Reads.rows()} | {:error, term()}
-  verb tasklets(relay_class, caller_context),
-    verb: :dlq_list,
-    row: &class_scope/1,
-    args: [relay_class: @relay_class] do
-    {:ok, Reads.rows(Reads.controllers(), __MODULE__, :local_tasklets, [relay_class])}
-  end
-
   # ---------- Mutations ----------
 
   @doc """
@@ -146,13 +134,6 @@ defmodule Flezha.Service.Dlq do
   end
 
   # ---------- The local halves ----------
-
-  @doc false
-  # The local half of `tasklets/2`.
-  @spec local_tasklets(String.t() | nil) :: [map()]
-  def local_tasklets(relay_class) do
-    for {rc, sh} <- Store.tasklets(relay_class), do: %{relay_class: rc, tasklet_id: sh}
-  end
 
   @doc false
   # The local half of `replay/2`, run on the controller holding the entry.

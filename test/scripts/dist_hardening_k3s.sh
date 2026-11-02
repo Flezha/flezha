@@ -3,8 +3,8 @@
 # two-node k3s cluster in Docker:
 #
 #   1. The controllers form a cluster on the pinned distribution port and the
-#      health probes pass, while a pod without the controller or console label
-#      cannot reach EPMD or the distribution port, and a console-labelled one can.
+#      health probes pass, while a pod without the controller label, a
+#      console-labelled one included, cannot reach EPMD or the distribution port.
 #   2. A key file the controller's user wrote stays 0600, and the host
 #      directories the init container prepares stay closed to other users,
 #      across a pod restart.
@@ -12,11 +12,17 @@
 #      controller pods join over mutual TLS; a pod holding a certificate of the
 #      distribution authority and the cookie connects, and one holding a
 #      certificate of another authority and the cookie is refused.
+#   4. With the HTTP API's package installed and `http_api` enabled over TLS
+#      with the channel's authority, a console-labelled stand-in holding a
+#      client certificate and a token is served by port 8765, as the console's
+#      Kubernetes example runs it.
 #
 # The cluster is `k3s_cluster.sh`'s, with a kubeconfig of its own. Needs the
-# runtime image built from this tree; pass it in, or it builds it:
+# runtime image built from this tree and the HTTP API's package built against
+# it; pass them in, or it builds both:
 #
-#   RUNTIME_IMAGE=flezha/flezha:x test/scripts/dist_hardening_k3s.sh
+#   RUNTIME_IMAGE=flezha/flezha:x HTTP_ARCHIVE=/path/flezha_http-0.1.0.fpz \
+#     test/scripts/dist_hardening_k3s.sh
 
 set -euo pipefail
 
@@ -43,11 +49,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -z "${RUNTIME_IMAGE:-}" ]; then
-  note "building the runtime image"
+if [ -z "${RUNTIME_IMAGE:-}" ] || [ -z "${HTTP_ARCHIVE:-}" ]; then
+  note "building the runtime image and the HTTP API's package"
   RUNTIME_IMAGE="flezha/flezha:${RUN_ID}"
-  BUILT+=("$RUNTIME_IMAGE")
+  BUILDER="flezha/plugin-builder:${RUN_ID}"
+  BUILT+=("$RUNTIME_IMAGE" "$BUILDER")
   docker build -q -f "$REPO_ROOT/deploy/docker/prod/Dockerfile.controller" -t "$RUNTIME_IMAGE" "$REPO_ROOT" >/dev/null
+  docker build -q --target plugin-builder -f "$REPO_ROOT/deploy/docker/prod/Dockerfile.controller" \
+    -t "$BUILDER" "$REPO_ROOT" >/dev/null
+  k3s_package "$BUILDER" plugins/flezha_http_plugin "$WORK/pkg"
+  HTTP_ARCHIVE="$WORK/pkg/flezha_http-0.1.0.fpz"
 fi
 
 note "starting a two-node ${K3S_IMAGE} cluster"
@@ -108,8 +119,8 @@ note "scenario 1: an unlabelled pod cannot reach 4369 or 9100, and reaches 9569"
 if reaches run=probe "$IP" 4369; then fail "an unlabelled pod reached EPMD"; fi
 if reaches run=probe "$IP" 9100; then fail "an unlabelled pod reached the distribution port"; fi
 reaches run=probe "$IP" 9569 || fail "an unlabelled pod could not reach the health port"
-reaches app=console "$IP" 4369 || fail "a console-labelled pod could not reach EPMD"
-reaches app=console "$IP" 9100 || fail "a console-labelled pod could not reach the distribution port"
+if reaches app=console "$IP" 4369; then fail "a console-labelled pod reached EPMD"; fi
+if reaches app=console "$IP" 9100; then fail "a console-labelled pod reached the distribution port"; fi
 
 note "scenario 2: keys stay 0600 and directories stay closed across a pod restart"
 # The node container `$1` names: the host paths a pod there mounts.
@@ -154,10 +165,38 @@ clustered || fail "the controllers did not connect over mutual TLS"
 proto="$(pod_rpc "${PODS[0]}" 'IO.inspect(:init.get_argument(:proto_dist))')"
 grep -q 'inet_tls' <<<"$proto" || fail "distribution is not TLS: $proto"
 
+# The reference policy admits distribution from controllers alone. This one
+# admits the dial pods below too, without making them controllers the
+# DaemonSet or the pod discovery would claim, so only the TLS check can turn
+# them away.
+kc apply -f - >/dev/null <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dial-probe
+  namespace: flezha
+spec:
+  podSelector:
+    matchLabels:
+      app: flezha
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              probe: dial
+      ports:
+        - protocol: TCP
+          port: 4369
+        - protocol: TCP
+          port: 9100
+EOF
+
 # A pod of the controller image that dials a controller once, with the cookie
 # and the certificates in the Secret `secret`, and prints whether it got in.
-# Labelled as the console, so only the TLS check can turn it away. It does not
-# check the certificate it is answered with, as an intruder would not.
+# It does not check the certificate it is answered with, as an intruder would
+# not.
 dial() {
   local name=$1 secret=$2 target
   target="flezha@$(pod_ip "${PODS[0]}")"
@@ -171,7 +210,7 @@ metadata:
   name: ${name}
   namespace: flezha
   labels:
-    app: console
+    probe: dial
 spec:
   restartPolicy: Never
   securityContext:
@@ -240,5 +279,94 @@ note "scenario 3: a certificate of the distribution authority gets in"
 [ "$(dial member member-dist)" = "connected=true" ] || fail "a member of the authority was refused"
 note "scenario 3: a certificate of another authority is refused"
 [ "$(dial intruder intruder-dist)" = "connected=false" ] || fail "a certificate of another authority got in"
+
+note "scenario 4: the console reaches the HTTP API with a client certificate and a token"
+CHANNEL_HOST=flezha-controllers.flezha.svc.cluster.local
+"$REPO_ROOT/deploy/dist-tls/make-certs.sh" ca "$WORK/channel"
+"$REPO_ROOT/deploy/dist-tls/make-certs.sh" node "$WORK/channel" controllers --dns "$CHANNEL_HOST"
+"$REPO_ROOT/deploy/dist-tls/make-certs.sh" node "$WORK/channel" console --dns console.flezha.svc.cluster.local
+kc -n flezha create secret generic flezha-channel --from-file="$WORK/channel/controllers" >/dev/null
+kc -n flezha create secret generic flezha-console-channel \
+  --from-file=ca.pem="$WORK/channel/console/ca.pem" \
+  --from-file=console.pem="$WORK/channel/console/node.pem" \
+  --from-file=console.key="$WORK/channel/console/node.key" >/dev/null
+for pod in "${PODS[@]}"; do
+  kc -n flezha exec -i "$pod" -c flezha -- sh -c 'cat >/tmp/flezha_http.fpz' <"$HTTP_ARCHIVE"
+  kc -n flezha exec "$pod" -c flezha -- /flezha/bin/flz plugin install /tmp/flezha_http.fpz >/dev/null
+done
+# The restart loads the package and mounts the channel's Secret.
+kc -n flezha rollout restart daemonset/flezha-daemonset >/dev/null
+sleep 5
+await_pods
+clustered || fail "the controllers did not connect after the restart"
+IP="$(pod_ip "${PODS[0]}")"
+
+pod_flz() { kc -n flezha exec "${PODS[0]}" -c flezha -- env FLEZHA_TOKEN="${ADMIN:-}" /flezha/bin/flz "$@"; }
+claim="$(kc -n flezha exec "${PODS[0]}" -c flezha -- \
+  sh -c '/flezha/bin/flz auth bootstrap < /var/lib/flezha/auth/bootstrap.token')"
+ADMIN="$(sed -n 's/^admin token (shown once, store it now): //p' <<<"$claim")"
+[ -n "$ADMIN" ] || fail "the bootstrap claim answered no admin token: $claim"
+pod_flz plugin enable api http_api --namespace _system --Xbind=0.0.0.0 \
+  --Xtls_certfile=/etc/flezha/channel/node.pem --Xtls_keyfile=/etc/flezha/channel/node.key \
+  --Xtls_client_cacertfile=/etc/flezha/channel/ca.pem || fail "http_api did not enable"
+issued="$(pod_flz token issue console@_system _system admin --ttl never)"
+TOKEN="$(sed -n 's/^token (shown once, store it now): //p' <<<"$issued")"
+[ -n "$TOKEN" ] || fail "no token was issued: $issued"
+
+# The console's pod as its example runs it: uid 1000, the channel's files
+# mounted 0440 to its fsGroup, and the label the policy admits to port 8765
+# alone.
+kc apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: console-standin
+  namespace: flezha
+  labels:
+    app: console
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      command:
+        - sh
+        - -c
+        - |
+          # A new pod may be dropped until the network policy has learned its address.
+          for _ in \$(seq 1 15); do
+            code=\$(curl -sS -o /tmp/body -w '%{http_code}' --max-time 5 \
+              --resolve ${CHANNEL_HOST}:8765:${IP} \
+              --cacert /etc/flezha-console/channel/ca.pem \
+              --cert /etc/flezha-console/channel/console.pem \
+              --key /etc/flezha-console/channel/console.key \
+              -H 'authorization: Bearer ${TOKEN}' -H 'content-type: application/json' \
+              -d '[]' https://${CHANNEL_HOST}:8765/v1/call/Namespace.whoami)
+            [ "\$code" = 200 ] && break
+            sleep 2
+          done
+          echo "status=\$code"
+          cat /tmp/body; echo
+      volumeMounts:
+        - name: channel
+          mountPath: /etc/flezha-console/channel
+          readOnly: true
+  volumes:
+    - name: channel
+      secret:
+        secretName: flezha-console-channel
+        defaultMode: 0440
+EOF
+kc -n flezha wait --for=jsonpath='{.status.phase}'=Succeeded pod/console-standin --timeout=180s >/dev/null ||
+  { kc -n flezha logs console-standin || true; fail "the console stand-in did not finish"; }
+served="$(kc -n flezha logs console-standin)"
+echo "$served"
+grep -q '^status=200' <<<"$served" || fail "the HTTP API did not serve the console"
+grep -q 'console@_system' <<<"$served" || fail "the HTTP API did not answer as the console's principal"
 
 note "PASS"

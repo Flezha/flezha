@@ -9,7 +9,7 @@ defmodule Flezha.Cluster.Reads do
   called by name on each node: closures are never shipped over distribution.
 
   `controllers/0` is every controller the cluster directory lists, so a
-  connected node that is not a controller (a console) is never asked.
+  connected node that is not a controller (the `flz` CLI) is never asked.
   `newest/3` and `grouped/3` merge the rows of a read, and `on/5` acts on the
   one controller that holds what a call names.
   """

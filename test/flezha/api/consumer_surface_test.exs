@@ -1,9 +1,9 @@
 defmodule Flezha.Api.ConsumerSurfaceTest do
   @moduledoc """
-  `flezha_console` is this platform's console and reaches the controller by runtime
-  name over `:erpc`. Its `mix.exs` does not depend on this project, so no
-  compiler sees both sides and a rename here compiles clean in both trees,
-  failing only on a user's machine.
+  `flezha_console` is this platform's console and reaches the controller over
+  its HTTP API, naming each operation by the module and function it calls. Its
+  `mix.exs` does not depend on this project, so no compiler sees both sides and
+  a rename here compiles clean in both trees, failing only on a user's machine.
 
   `docs/internal/api/consumers/flezha_console.txt` records what the console calls, and this
   test resolves every line of it against this tree's real exports. The break is
@@ -32,26 +32,10 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
     {Flezha.Service.Admin, :context, 2}
   ]
 
-  # The door the console runs every published operation through. It takes the
-  # caller context third rather than last, so the published surface does not
-  # list it.
-  @door [{Flezha.Service.Admin, :run, 4}]
-
   # What the console calls today and this tree does not answer. A break
   # recorded here is one the console has not caught up with yet, named in its
   # own spelling; the console's maintainer clears it.
-  @unresolved_today %{
-    # The audit log is the `audit` kind of `Flezha.Service.Logs` now; the
-    # console moves to it in its own logs page change.
-    {Flezha.Service.AuditLog, :list_files, 1} => :withdrawn,
-    {Flezha.Service.AuditLog, :read, 2} => :moved,
-    {Flezha.Service.AuditLog, :rotate, 1} => :moved,
-    {Flezha.Service.AuditLog, :stats, 1} => :moved,
-    {Flezha.Service.AuditLog, :tail, 2} => :moved,
-    # Retention is the class's `keep_finished` declaration now, so the verb
-    # takes no instance metadata; the console drops its `%{}` argument.
-    {Flezha.Service.Steps, :completed_retention_hours, 3} => :withdrawn
-  }
+  @unresolved_today %{}
 
   setup_all do
     # Just under the console's distinct calls today: the floor guards against a
@@ -179,15 +163,17 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
       end
     end
 
+    # An operation is sent by name; a call that fills its optional arguments
+    # reaches the same published function, and the test above checks its arity.
     test "every call the console makes is on the published surface", ctx do
-      known = MapSet.new(@context_free ++ @door ++ Map.keys(@unresolved_today))
-      allowed = ctx.published |> call_set() |> MapSet.union(known)
+      known = MapSet.new(@context_free ++ Map.keys(@unresolved_today))
+      allowed = ctx.published |> call_set() |> MapSet.union(known) |> names()
 
-      off_surface = ctx.entries |> call_set() |> MapSet.difference(allowed)
+      off_surface = ctx.entries |> call_set() |> names() |> MapSet.difference(allowed)
 
       assert MapSet.size(off_surface) == 0,
              "the console calls names that are not published: " <>
-               Enum.map_join(off_surface, ", ", fn {m, f, a} -> "#{inspect(m)}.#{f}/#{a}" end)
+               Enum.map_join(off_surface, ", ", fn {m, f} -> "#{inspect(m)}.#{f}" end)
     end
   end
 
@@ -223,6 +209,8 @@ defmodule Flezha.Api.ConsumerSurfaceTest do
   end
 
   defp call_set(entries), do: MapSet.new(entries, fn {m, f, a, _where} -> {m, f, a} end)
+
+  defp names(calls), do: MapSet.new(calls, fn {m, f, _a} -> {m, f} end)
 
   defp manifest_entries(path, floor) do
     assert File.exists?(path),

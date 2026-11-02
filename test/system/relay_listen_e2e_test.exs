@@ -222,7 +222,7 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
       namespace: ns
     } do
       id = start_bound!(ns, "bench_echo")
-      console = watch_calls(ns, id)
+      holder = watch_calls(ns, id)
 
       capture_io(fn ->
         Cli.call(
@@ -240,18 +240,6 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
       assert_paired("from-cli", "cli")
 
-      assert {:ok, "from-ui", _} =
-               :erpc.call(node(), Flezha.Service.Relay, :call, [
-                 ns,
-                 id,
-                 "from-ui",
-                 "",
-                 [deadline_ms: 10_000],
-                 %{source: :ui}
-               ])
-
-      assert_paired("from-ui", "ui")
-
       for source <- [:http, :mcp] do
         message = "from-#{source}"
         args = [ns, id, message, "", %{"deadline_ms" => 10_000}]
@@ -262,8 +250,8 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
         assert_paired(message, Atom.to_string(source))
       end
 
-      # The console going away ends the listen, which detaches as it returns.
-      Process.exit(console, :kill)
+      # The holder going away ends the listen, which detaches as it returns.
+      Process.exit(holder, :kill)
       assert wait_until(fn -> listeners(ns, id) == [] end, 30_000)
     end
 
@@ -273,12 +261,12 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
 
       assert {:ok, "printed", _} =
                Flezha.Service.Relay.call(ns, id, "printed", "", [deadline_ms: 10_000], %{
-                 source: :ui
+                 source: :http
                })
 
       call = printed_line(listener, &String.starts_with?(&1, "-\tprinted\tcall="))
       [_, _, "call=" <> rest] = String.split(call, "\t")
-      [call_id, "source=ui"] = String.split(rest, " ")
+      [call_id, "source=http"] = String.split(rest, " ")
       assert printed_line(listener, &(&1 =~ ~r/^echo\tprinted\tcall=#{call_id} answered ms=\d+$/))
       end_by_caller(ns, listener, [id])
     end
@@ -353,22 +341,22 @@ defmodule FlezhaTest.System.RelayListenE2ETest do
     %{pid: pid, ref: ref, device: device}
   end
 
-  # A calls listener the way the console holds one: `Relay.listen/5` with a
-  # pid as `:emit`, here a stand-in for the console that hands every event on
-  # to the test. Answers the stand-in, whose exit ends the listen.
+  # A calls listener the way the HTTP stream route holds one: `Relay.listen/5`
+  # with a pid as `:emit`, here a stand-in that hands every event on to the
+  # test. Answers the stand-in, whose exit ends the listen.
   defp watch_calls(ns, id) do
     test = self()
-    console = spawn(fn -> hand_on(test) end)
+    holder = spawn(fn -> hand_on(test) end)
 
     spawn(fn ->
       Flezha.Service.Relay.listen(ns, id, :calls, [window_ms: 120_000], %{
         source: :internal,
-        emit: console
+        emit: holder
       })
     end)
 
     assert_receive {:flezha_emit, :attached}, 30_000
-    console
+    holder
   end
 
   defp hand_on(test) do

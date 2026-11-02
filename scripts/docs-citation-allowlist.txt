@@ -44,5 +44,5 @@ openspec/specs/controller-configuration/spec.md:FLEZHA_NEW_KNOB
 # --- the console's own settings ------------------------------------------
 # The console is a separate repository; these variables are read by it, never
 # by anything here. Exact names only, so the controller's variables on the same
-# pages (`FLEZHA_NODE_HOST`, `FLEZHA_TOKEN`) are still judged.
-docs/public/console/:FLEZHA_(?:NODE(?:_QUERY)?|TOKEN_FILE|CONSOLE_ADMIN_(?:EMAIL|PASSWORD))\b
+# pages (`FLEZHA_TOKEN`, `FLEZHA_PLUGINS`) are still judged.
+docs/public/console/:FLEZHA_(?:CONTROLLER_(?:URL|CA)|CLIENT_(?:CERT|KEY)|TOKEN_FILE|CONSOLE_ADMIN_(?:EMAIL|PASSWORD))\b

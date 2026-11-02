@@ -18,8 +18,9 @@ v0.1.0-alpha.1 pre-release.
 - `FLEZHA_DIST_PORT` pins the distribution port of a started controller, so a firewall can
   name it; `flzvm rpc` and `remote` do not take it, and unset nothing changes.
 - The Kubernetes manifests pin the distribution port to 9100 and ship
-  `flezha-networkpolicy.yaml`, which admits EPMD and that port only from controller and
-  console pods. `deploy/dist-tls/kubernetes/` is a cert-manager recipe that gives each
+  `flezha-networkpolicy.yaml`, which admits EPMD and that port only from controller pods,
+  and the HTTP API's port 8765 from console pods. The DaemonSet mounts the Secret
+  `flezha-channel`, when it exists, at `/etc/flezha/channel` for the HTTP API's TLS files. `deploy/dist-tls/kubernetes/` is a cert-manager recipe that gives each
   controller pod its own certificate naming its IP.
 - `.github/SECURITY.md` describes the security model and a checklist for hardening a
   production cluster, and the clustering, console, configuration and plugin pages describe
@@ -33,6 +34,17 @@ v0.1.0-alpha.1 pre-release.
 
 ### Changed
 
+- **Breaking:** the console no longer reaches a controller over Erlang distribution. A
+  caller of source `ui`, a console still connecting as a hidden node with the cookie, is
+  refused with `control.surface_retired` on every call. Use a console that calls the
+  controller's HTTP API with a client certificate and a token, as `flezha_console` does from
+  its first release, 0.1.0, and remove the cookie from its deployment
+  ([the console](docs/public/console/console.md#how-it-reaches-the-controller)). Audit
+  records already written with source `ui` read as before.
+- **Breaking:** `Relay.relay_rows`, `Relay.registry`, `Relay.partition_groups` and
+  `Dlq.tasklets` are removed from the published API, the HTTP API and MCP. Only the old
+  console read them; `Relay.list` answers the relay rows and their partition groups, and
+  `Dlq.stats` the tasklets that hold parked entries.
 - **Breaking:** an `http_api` listener off loopback with TLS asks every client for a
   certificate. Set `tls_client_cacertfile` to the authority that signs your clients'
   certificates, or set `require_client_cert` to `false` and accept a warning on every enable

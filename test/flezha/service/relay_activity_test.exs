@@ -21,7 +21,7 @@ defmodule Flezha.Service.RelayActivityTest do
 
   setup :set_mimic_global_until_exit
 
-  @context %{source: :ui, principal: "console@_system"}
+  @context %{source: :http, principal: "console@_system"}
 
   setup do
     namespace = "relay_activity_#{System.unique_integer([:positive])}"

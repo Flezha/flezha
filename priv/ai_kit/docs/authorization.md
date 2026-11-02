@@ -616,11 +616,13 @@ again with the older `flz`; one holding a single role behaves as before.
   at a file holding an `admin@_system` token, or every stop skips the drain.
 - **A partition accepts writes on both sides.** They merge on reconnect by
   the controllers' clocks, so keep them in sync (NTP).
-- **The web console is inside the cluster's trust boundary.** It joins as a
-  hidden Erlang node holding the cookie, so whoever controls its machine
-  controls the cluster, whatever its token. Its token decides only what its own
-  pages offer: they cannot stop the controller, issue or revoke tokens, bind or
-  unbind roles, delete a namespace or claim the admin.
+- **The web console is outside the cluster's trust boundary.** It calls the
+  [HTTP API](../../plugins/http_api.md) with a client certificate and a token
+  and never holds the cookie, so whoever controls its machine can do what its
+  token allows and nothing more. Over HTTP nobody can stop the controller, issue
+  or revoke tokens, bind or unbind roles, delete a namespace or claim the admin.
+  A console that still connects over Erlang distribution is refused with
+  `control.surface_retired`.
 
 ## See also
 

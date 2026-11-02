@@ -13,8 +13,8 @@ defmodule Flezha.AuthZ.VerbsTest do
   alias FlezhaTest.Helper.{AuthTestHelper, RpcSurface}
 
   @published "docs/internal/api/consumers/published.txt"
-  @unbound %{source: :ui}
-  @viewer %{source: :ui, principal: "vw@_system", role: :viewer, namespace: "_system"}
+  @unbound %{source: :http}
+  @viewer %{source: :http, principal: "vw@_system", role: :viewer, namespace: "_system"}
 
   test "every published function binds a row, and no context-taking function on a published module escapes one" do
     manifest = RpcSurface.manifest(@published)

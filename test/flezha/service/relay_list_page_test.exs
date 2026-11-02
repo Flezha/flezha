@@ -180,7 +180,7 @@ defmodule Flezha.Service.RelayListPageTest do
     assert summary.summary.waiting == [%{factory: "orders", relays: 3}]
 
     members = Enum.flat_map(unpaged, &(&1[:members] || []))
-    {:ok, groups} = Relay.partition_groups(members, @caller)
+    groups = Flezha.Partition.groups(members)
 
     faulted =
       for g <- groups, Enum.any?(g.members, &(&1.health == :failed)) do

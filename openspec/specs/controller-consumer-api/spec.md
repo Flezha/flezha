@@ -479,3 +479,18 @@ carries an `:emit` holder, which only a surface that keeps the stream open sets.
 - **WHEN** an `:http` caller's call fails with an internal code carrying a reason
 - **THEN** the reason SHALL read as naming the controller's log
 
+### Requirement: A caller of source `:ui` SHALL be refused
+
+The door SHALL refuse a caller context of source `:ui` with `control.surface_retired`, naming the
+HTTP API as the console's channel. `:ui` SHALL remain a valid source in stored audit records.
+
+#### Scenario: A console still on distribution is refused
+
+- **WHEN** a caller with source `:ui` calls `Relay.list` through the door
+- **THEN** the door SHALL answer `control.surface_retired` and run nothing
+
+#### Scenario: Old audit records still read
+
+- **WHEN** the audit log holds a record written with caller source `ui` and an admin reads it
+- **THEN** the record SHALL be returned as written
+

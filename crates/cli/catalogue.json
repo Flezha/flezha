@@ -189,22 +189,6 @@
       "args": []
     },
     {
-      "name": "Dlq.tasklets",
-      "doc": "The tasklets that hold parked entries on every controller, each as `relay_class`, `tasklet_id` and `node`.",
-      "action": "dlq.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "relay_class",
-          "type": "string",
-          "required": false,
-          "default": null,
-          "doc": "The relay whose entries to read; every relay when absent."
-        }
-      ]
-    },
-    {
       "name": "Fleet.drop_runner",
       "doc": "Drop one runner serving a namespace.",
       "action": "runner.drop",
@@ -1290,53 +1274,8 @@
       ]
     },
     {
-      "name": "Relay.partition_groups",
-      "doc": "The partition groups `rows` describe.",
-      "action": "public",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "rows",
-          "type": "list",
-          "required": true,
-          "doc": "The relay rows."
-        }
-      ]
-    },
-    {
-      "name": "Relay.registry",
-      "doc": "The namespace's hub registry, as a member of its hub reports it.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
       "name": "Relay.relay_plugins",
       "doc": "The plugin bindings each relay in `namespace` declares.",
-      "action": "relay.list",
-      "remote": true,
-      "stream": false,
-      "args": [
-        {
-          "name": "namespace",
-          "type": "string",
-          "required": true,
-          "doc": "The namespace."
-        }
-      ]
-    },
-    {
-      "name": "Relay.relay_rows",
-      "doc": "One row per relay in `namespace`: node, health and partition.",
       "action": "relay.list",
       "remote": true,
       "stream": false,

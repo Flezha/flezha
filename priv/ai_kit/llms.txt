@@ -100,7 +100,7 @@ only the pages a task needs: each link is that page's full Markdown, next to thi
 - [The console](console.md): The console is Flezha's web console: a Phoenix app you run beside your controllers.
 - [The console on Docker](console_docker.md): One Compose file runs a controller, the console and the console's database on one machine.
 - [The console on Kubernetes](console_kubernetes.md): The console runs as one Deployment in the namespace `flezha`, beside the controllers that [Kubernetes](../topics/deploying/kubernetes.md) runs from the reference manifests.
-- [The console on bare metal](console_bare_metal.md): The console runs as a release on the machine, started by systemd, beside a controller release on the same machine.
+- [The console on bare metal](console_bare_metal.md): The console runs as a release on the machine, started by systemd, beside a controller release on the same machine, reaching it over the controller's HTTP API on loopback.
 
 ## Reference
 

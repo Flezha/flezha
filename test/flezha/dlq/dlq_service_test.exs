@@ -70,14 +70,14 @@ defmodule Flezha.Service.DlqTest do
       _ = RingBufferSink.query(:dlq_service, 0)
       before_ts = System.monotonic_time(:microsecond)
 
-      assert :ok = DlqSvc.drop(ref, %{source: :ui, principal: "console@_system"})
+      assert :ok = DlqSvc.drop(ref, %{source: :http, principal: "console@_system"})
       assert {:error, :not_found} = Store.get(ref)
 
       TestSinks.settle(RingBufferSink)
 
       assert Enum.any?(RingBufferSink.query(:dlq_service, before_ts), fn signal ->
                signal.name == :drop and signal.metadata[:entry] == ref and
-                 signal.metadata[:caller_source] == :ui and
+                 signal.metadata[:caller_source] == :http and
                  signal.metadata[:principal] == "console@_system"
              end),
              "a drop through the service API must be audited the way the CLI's is"
@@ -108,9 +108,6 @@ defmodule Flezha.Service.DlqTest do
                &(&1.relay_class == relay_class and &1.tasklet_id == "task" and
                    &1.entries == 1)
              )
-
-      assert {:ok, %{rows: tasklets}} = DlqSvc.tasklets(relay_class, context())
-      assert %{relay_class: relay_class, tasklet_id: "task", node: node()} in tasklets
     end
 
     test "list pages newest first across the cluster", %{entry: entry, relay_class: relay_class} do
@@ -165,5 +162,5 @@ defmodule Flezha.Service.DlqTest do
     end
   end
 
-  defp context, do: %{source: :ui, principal: "console@_system"}
+  defp context, do: %{source: :http, principal: "console@_system"}
 end

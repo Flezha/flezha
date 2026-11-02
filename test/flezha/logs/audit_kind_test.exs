@@ -375,13 +375,13 @@ defmodule Flezha.Logs.AuditKindTest do
 
   # ---------- a tail forwarded to a pid ----------
 
-  # The `:erpc` worker a consumer on another node reaches runs the tail and
-  # hands each record the writer broadcasts to the pid the consumer names.
+  # The HTTP stream route runs the tail in a task, which hands each record the
+  # writer broadcasts to the pid the context names as `:emit`.
   describe "a tail forwarded to a pid" do
     test "hands each record on and releases the subscription when the pid exits", %{dir: dir} do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
-      {sink, tail} = forwarded_tail(%{source: :ui})
+      {sink, tail} = forwarded_tail(%{source: :http})
 
       :ok =
         Writer.append(kind(), encode(Signal.new(%{kind: :event, source: :t, name: :forwarded})))
@@ -398,7 +398,7 @@ defmodule Flezha.Logs.AuditKindTest do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
       AuthTestHelper.setup_auth_stores(prefix: "flz_audit_tail", claim: true)
-      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      context = %{source: :http, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
       {sink, tail} = forwarded_tail(context)
 
       for {name, namespace} <- [other: "b", own: "team-a"] do
@@ -697,6 +697,29 @@ defmodule Flezha.Logs.AuditKindTest do
                })
     end
 
+    test "a record written by a console of source ui reads back as written", %{dir: dir} do
+      configure(dir)
+      {:ok, _} = start_audit_supervisor()
+
+      line =
+        encode(
+          Signal.new(%{
+            kind: :event,
+            source: :relay_service,
+            name: :stop,
+            metadata: %{caller_source: :ui, principal: "console@_system", relay: "o1"}
+          })
+        )
+
+      :ok = Writer.append(kind(), line)
+      {:ok, _} = Writer.rotate_now(kind())
+      {:ok, written} = Codec.decode(line)
+      admin = %{source: :http, principal: "admin@_system", namespace: "_system", role: :admin}
+
+      assert {:ok, %{records: [^written]}} =
+               Logs.read(%{kind: "audit", filters: %{source: "relay_service"}}, admin)
+    end
+
     test "read refuses a filter the kind does not declare", %{dir: dir} do
       configure(dir)
       {:ok, _} = start_audit_supervisor()
@@ -792,16 +815,14 @@ defmodule Flezha.Logs.AuditKindTest do
     unless Enum.any?(lines, &(&1 =~ fragment)), do: assert_broadcast_line(fragment)
   end
 
-  # A tail held by an `:erpc` worker for a sink process that forwards what it
-  # is handed to the test; answers once the worker has subscribed.
+  # A tail held by a task for a sink process that forwards what it is handed
+  # to the test; answers once the task has subscribed.
   defp forwarded_tail(context) do
     test = self()
     sink = spawn(fn -> forward_to(test) end)
 
     tail =
-      Task.async(fn ->
-        :erpc.call(node(), Logs, :tail, [%{kind: "audit"}, Map.put(context, :emit, sink)])
-      end)
+      Task.async(fn -> Logs.tail(%{kind: "audit"}, Map.put(context, :emit, sink)) end)
 
     assert NodeTestHelper.wait_until(&tail_subscribed?/0, 5_000)
     {sink, tail}

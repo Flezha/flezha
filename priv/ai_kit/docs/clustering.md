@@ -268,8 +268,11 @@ $ flz relay call anna --namespace agents --text 'Are you still there?'
 ## Securing the cluster
 
 A controller that joins the cluster can run any code on the others, so the network between
-controllers carries the cluster's whole trust. [The node cookie](../core/authorization.md#the-node-cookie)
-explains the model; this is what to set up around it.
+controllers carries the cluster's whole trust. Distribution is for controllers only: the
+[console](../../console/console.md) and every other client reach a controller through the
+[HTTP API](../../plugins/http_api.md) or the runner transport, never with the cookie.
+[The node cookie](../core/authorization.md#the-node-cookie) explains the model; this is what to
+set up around it.
 
 **Ports.** Controllers meet on two TCP ports: 4369, where EPMD tells a node which port
 another one listens on, and that distribution port. The distribution port is random unless
@@ -283,7 +286,7 @@ $ FLEZHA_DIST_PORT=9100 ./bin/flz controller start
 `flzvm remote`, which run VMs of their own on the same machine.
 
 **Firewall by address.** Allow 4369 and the distribution port only from the other
-controllers' and the console's IP addresses, written as addresses, since a rule by host name
+controllers' IP addresses, written as addresses, since a rule by host name
 is resolved once and goes stale. An address allowlist narrows who can try; it does not
 authenticate anyone, because an address can be borrowed on a shared network. EPMD and the
 distribution port listen on every interface unless told otherwise.
@@ -307,8 +310,8 @@ file leaves a gap.
 
 **Kubernetes.** The reference manifests pin `FLEZHA_DIST_PORT` to 9100 and ship
 `flezha-networkpolicy.yaml`, which admits EPMD and the distribution port only from pods
-labelled `app: flezha` (the controllers) or `app: console`, the health port from anywhere,
-and QUIC for runners. A NetworkPolicy works only on a network plugin that enforces it.
+labelled `app: flezha` (the controllers), the HTTP API's port 8765 from pods labelled
+`app: console`, the health port from anywhere, and QUIC for runners. A NetworkPolicy works only on a network plugin that enforces it.
 `deploy/dist-tls/kubernetes/` adds mutual TLS: cert-manager keeps the distribution
 authority, and each pod gets a certificate naming its IP when it starts.
 

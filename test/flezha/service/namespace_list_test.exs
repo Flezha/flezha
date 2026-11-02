@@ -110,7 +110,7 @@ defmodule Flezha.Service.NamespaceListTest do
     test "a namespace-scoped caller sees its own namespace and no other" do
       assert {:ok, %{rows: [%{namespace: "team-orders", running: true, nodes: [_]}]}} =
                Relay.list_namespaces(%{
-                 source: :ui,
+                 source: :http,
                  role: :viewer,
                  namespace: "team-orders",
                  principal: "viewer-1"
@@ -120,7 +120,7 @@ defmodule Flezha.Service.NamespaceListTest do
     test "an admin in the system namespace still sees the whole cluster" do
       assert {:ok, %{rows: running}} =
                Relay.list_namespaces(%{
-                 source: :ui,
+                 source: :http,
                  role: :admin,
                  namespace: "_system",
                  principal: "root"
@@ -156,7 +156,7 @@ defmodule Flezha.Service.NamespaceListTest do
     test "a tenant-bound caller is judged, runs, and sees only its own namespace" do
       assert {:ok, %{rows: [%{namespace: "team-orders"}]}} =
                Relay.list_namespaces(%{
-                 source: :ui,
+                 source: :http,
                  role: :viewer,
                  namespace: "team-orders",
                  principal: "viewer-1"
@@ -167,7 +167,7 @@ defmodule Flezha.Service.NamespaceListTest do
       :ok = RoleStore.bind("tenant-alice", "team-orders", :viewer, bound_by: "root")
 
       assert {:error, %Flezha.Error{code: "authz.namespace_mismatch"}} =
-               Relay.list_namespaces(%{source: :ui, principal: "tenant-alice"})
+               Relay.list_namespaces(%{source: :http, principal: "tenant-alice"})
     end
 
     # The fail-open, pinned rather than left to be discovered. A principal the
@@ -179,7 +179,7 @@ defmodule Flezha.Service.NamespaceListTest do
       :ok = RoleStore.bind("system-alice", "_system", :viewer, bound_by: "root")
 
       assert {:ok, %{rows: running}} =
-               Relay.list_namespaces(%{source: :ui, principal: "system-alice"})
+               Relay.list_namespaces(%{source: :http, principal: "system-alice"})
 
       assert "team-orders" in names(running)
       assert "team-billing" in names(running)

@@ -200,6 +200,7 @@ SDK raises or returns its one error type carrying them.
 | `control.args_not_array` | invalid | 2 | the arguments must be a JSON array |  |
 | `control.invalid_args_json` | invalid | 2 | the arguments are not valid JSON: {reason} |  |
 | `control.no_control_plane` | unavailable | 7 | there is no control plane to administer over: the runner is closed or has no controller |  |
+| `control.surface_retired` | denied | 4 | the console no longer reaches the controller over Erlang distribution; it calls the controller's HTTP API (POST /v1/call) with a client certificate and a token |  |
 | `control.timeout` | unavailable | 7 | the controller did not answer the administration call within {seconds}s |  |
 | `control.unknown_function` | not_found | 5 | no published function is named '{function}' |  |
 | `control.unknown_parameter` | invalid | 2 | unknown parameter '{parameter}' |  |

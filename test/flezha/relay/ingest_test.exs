@@ -25,7 +25,7 @@ defmodule FlezhaTest.Relay.IngestTest do
   import Host, only: [state: 1, state: 2]
   import FlezhaTest.Helper.MessageTestHelper, only: [collect: 1]
 
-  @ui %{source: :ui, principal: "console@_system"}
+  @ui %{source: :http, principal: "console@_system"}
 
   defp instance_id(), do: "confirm_#{System.unique_integer([:positive])}"
 

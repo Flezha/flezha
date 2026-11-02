@@ -22,7 +22,7 @@ defmodule Flezha.Service.FleetFactoryTest do
 
   setup :set_mimic_global_until_exit
 
-  @context %{source: :ui, principal: "console@_system"}
+  @context %{source: :http, principal: "console@_system"}
 
   setup do
     original = :sys.get_state(FleetManager)

@@ -1,9 +1,11 @@
 # Who may reach the controller pods. A connected Erlang node is trusted with
 # everything, so EPMD (4369) and the distribution port (FLEZHA_DIST_PORT in
-# flezha-daemonset.yaml) admit only the controllers themselves and the console.
-# The health port answers the kubelet and any monitor, and QUIC answers runners
-# from anywhere. A port not listed here is closed to every pod once this policy
-# applies: add a rule for one you open (the HTTP API on a pod address, say).
+# flezha-daemonset.yaml) admit only the controllers themselves. The console
+# reaches the HTTP API (8765, the `http_api` plugin's default port) with a
+# client certificate and a token, never distribution. The health port answers
+# the kubelet and any monitor, and QUIC answers runners from anywhere. A port
+# not listed here is closed to every pod once this policy applies: add a rule
+# for one you open, or change 8765 if the HTTP API listens elsewhere.
 #
 # A NetworkPolicy takes effect only on a network plugin that enforces it
 # (Calico, Cilium, k3s's default flannel with its policy controller); on one
@@ -28,14 +30,18 @@ spec:
         - podSelector:
             matchLabels:
               app: flezha
-        - podSelector:
-            matchLabels:
-              app: console
       ports:
         - protocol: TCP
           port: 4369
         - protocol: TCP
           port: 9100
+    - from:
+        - podSelector:
+            matchLabels:
+              app: console
+      ports:
+        - protocol: TCP
+          port: 8765
     - ports:
         - protocol: TCP
           port: 9569

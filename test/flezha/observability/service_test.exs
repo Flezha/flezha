@@ -81,7 +81,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
       TestSinks.settle(RingBufferSink)
 
-      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      context = %{source: :http, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
       %{recent: %{signals: signals}} = listed(src, context)
 
       assert signals |> Map.keys() |> Enum.sort() == [:bare, :own]
@@ -119,7 +119,7 @@ defmodule Flezha.Service.ObservabilityTest do
       {:ok, %{rows: results}} =
         Observability.query(
           %{source: src, since_us: 0},
-          %{source: :ui}
+          %{source: :http}
         )
 
       assert is_list(results)
@@ -141,7 +141,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
       TestSinks.settle(RingBufferSink)
 
-      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      context = %{source: :http, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
 
       assert {:ok, %{rows: [%Signal{name: :own}]}} =
                Observability.query(%{source: src, limit: 2}, context)
@@ -149,7 +149,7 @@ defmodule Flezha.Service.ObservabilityTest do
 
     test "missing :source param returns error" do
       assert {:error, %Flezha.Error{code: "observability.missing_source"}} =
-               Observability.query(%{}, %{source: :ui})
+               Observability.query(%{}, %{source: :http})
     end
   end
 
@@ -171,7 +171,7 @@ defmodule Flezha.Service.ObservabilityTest do
                  s.metadata[:caller_source] == :cli and s.metadata[:request_id] == "req-123"
              end)
 
-      {:ok, %{applied: [_]}} = Observability.enable_source(src, %{source: :ui})
+      {:ok, %{applied: [_]}} = Observability.enable_source(src, %{source: :http})
       {:ok, %{status: :active}} = Registry.lookup_source(src)
     end
 
@@ -315,14 +315,14 @@ defmodule Flezha.Service.ObservabilityTest do
     end
   end
 
-  # A consumer on another node reaches the controller through an `:erpc`
-  # worker, whose `self()` dies when the call returns: the tail has to run in
-  # that worker and hand each signal to a pid the consumer names.
+  # The HTTP stream route runs the tail in a task and holds the request open
+  # in another process: the tail hands each signal to the pid the context
+  # names as `:emit`, and ends when that pid exits.
   describe "a tail forwarded to a pid" do
     test "hands each signal on as {:flezha_emit, signal} and ends when the pid exits",
          %{src: src} do
       TestSinks.claim_pubsub_sink()
-      {sink, tail} = forwarded_tail(src, %{source: :ui})
+      {sink, tail} = forwarded_tail(src, %{source: :http})
 
       Bus.emit(Signal.new(%{kind: :event, source: src, name: :forwarded}))
       assert_receive {:forwarded, %Signal{source: ^src, name: :forwarded}}, 2_000
@@ -335,11 +335,14 @@ defmodule Flezha.Service.ObservabilityTest do
     test "ends when the context's window runs out", %{src: src} do
       TestSinks.claim_pubsub_sink()
 
-      assert {:ok, :window_closed} =
-               :erpc.call(node(), Observability, :tail, [
-                 src,
-                 %{source: :ui, emit: self(), window_ms: 50}
-               ])
+      holder = self()
+
+      tail =
+        Task.async(fn ->
+          Observability.tail(src, %{source: :http, emit: holder, window_ms: 50})
+        end)
+
+      assert {:ok, :window_closed} = Task.await(tail, 2_000)
 
       assert TestSinks.subscribers(src) == []
     end
@@ -347,7 +350,7 @@ defmodule Flezha.Service.ObservabilityTest do
     test "drops a signal of a namespace the caller may not read", %{src: src} do
       TestSinks.claim_pubsub_sink()
       AuthTestHelper.setup_auth_stores(prefix: "flz_obs_tail", claim: true)
-      context = %{source: :ui, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
+      context = %{source: :http, principal: "viewer@team-a", namespace: "team-a", role: :viewer}
       {sink, tail} = forwarded_tail(src, context)
 
       Bus.emit(
@@ -496,17 +499,15 @@ defmodule Flezha.Service.ObservabilityTest do
     out |> String.split("\n", trim: true) |> List.first() |> Jason.decode!()
   end
 
-  # A tail held by an `:erpc` worker on behalf of a sink process that forwards
-  # what it is handed to the test; answers once the worker has subscribed.
+  # A tail held by a task on behalf of a sink process that forwards what it is
+  # handed to the test; answers once the task has subscribed.
   defp forwarded_tail(src, context) do
     test = self()
 
     sink = spawn(fn -> forward_to(test) end)
 
     tail =
-      Task.async(fn ->
-        :erpc.call(node(), Observability, :tail, [src, Map.put(context, :emit, sink)])
-      end)
+      Task.async(fn -> Observability.tail(src, Map.put(context, :emit, sink)) end)
 
     assert NodeTestHelper.wait_until(fn -> TestSinks.subscribers(src) != [] end, 2_000)
     {sink, tail}

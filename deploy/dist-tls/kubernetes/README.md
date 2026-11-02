@@ -20,7 +20,8 @@ $ kubectl -n flezha patch daemonset flezha-daemonset --patch-file deploy/dist-tl
   certificate signed, a memory volume at `/etc/flezha/dist` for the three files, and
   `FLEZHA_DIST_TLS_OPTFILE`.
 
-The console joins the same way: give its pod the two init containers and the volume, and set
-`FLEZHA_DIST_TLS_OPTFILE` for it. `test/scripts/dist_hardening_k3s.sh` applies this recipe to
+The console does not join: it reaches the controllers over their HTTP API with a client
+certificate from an authority of its own, never this one ([the console on
+Kubernetes](../../../docs/public/console/console_kubernetes.md)). `test/scripts/dist_hardening_k3s.sh` applies this recipe to
 a throwaway cluster and checks it. The trust model behind it is in
 `docs/public/topics/core/authorization.md`.
