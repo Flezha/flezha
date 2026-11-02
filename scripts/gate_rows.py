@@ -223,6 +223,14 @@ def _smoke(row_id, group, cwd, *runner, **opts):
                 "--timeout-ms", "60000", "--", *runner, cwd=cwd, **opts)
 
 
+def _elixir_runner(prefix, group):
+    """The Elixir test runner: its own deps fetched and compiled, then built."""
+    app = "test/apps/elixir_runner"
+    return [_bar(f"{prefix}-deps", group, "mix", "deps.get", cwd=app, stderr_ok=True),
+            *_deps_compile(prefix, group, app, "dev"),
+            _build(prefix, group, "elixir")]
+
+
 def _e2e_smoke(runtime, env=None):
     """The shared smoke tier under one SDK's runtime, against the controller."""
     return _mix_test(f"sdk-{runtime}-e2e-smoke", f"sdk-{runtime}", "--include", "sdk_smoke",
@@ -241,6 +249,8 @@ def _core():
             # The WebSocket testnet bundle the testnet cases need (`mix test.setup`).
             _bar("core-testnet", "core", "mix", "test.setup", stderr_ok=True),
             _build("core-prep-runner", "core", "rust"),
+            # The transport suite also starts an Elixir runner.
+            *_elixir_runner("core-prep-elixir", "core"),
             _bar("core-prep-certs", "core", "mix", "run", "--no-start", "-e",
                  "Flezha.Transport.CertGenerator.ensure_certs()", env={"MIX_ENV": "test"},
                  stderr_ok=True, builds=True)]
@@ -268,10 +278,8 @@ BOOT_READINESS = "test/system/boot_readiness_drill_test.exs"
 def _e2e(runtime):
     """The `:system` tier under one runtime, in shards of six files."""
     group = f"e2e-{runtime}"
-    app = "test/apps/elixir_runner"
-    rows = [_bar("e2e-prep-elixir-deps", group, "mix", "deps.get", cwd=app, stderr_ok=True),
-            *_deps_compile("e2e-prep-elixir", group, app, "dev")] if runtime == "elixir" else []
-    rows.append(_build(f"e2e-prep-{runtime}", group, runtime))
+    rows = (_elixir_runner("e2e-prep-elixir", group) if runtime == "elixir"
+            else [_build(f"e2e-prep-{runtime}", group, runtime)])
     system = [path for path in _files("test/system/*_test.exs")
               if path not in (PACKAGE_RELEASE, BOOT_READINESS)]
     for start in range(0, len(system), 6):
