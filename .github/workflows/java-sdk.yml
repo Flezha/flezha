@@ -68,12 +68,6 @@ jobs:
       - name: Set up Java
         uses: ./.github/actions/setup-java
 
-      - name: Set up Node.js (for the testnet build)
-        uses: ./.github/actions/setup-node
-        with:
-          deps-dir: test/apps/testnet
-
       - uses: ./.github/actions/sdk-smoke
         with:
           runtime: java
-          testnet: "true"

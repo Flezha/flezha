@@ -95,8 +95,9 @@ jobs:
           restore-keys: |
             rust-sdk-perf-main-
 
+      # Until a push to main has saved a baseline there is nothing to compare.
       - name: Compare PR vs main
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' && steps.restore-main.outputs.cache-matched-key != '' }}
         run: |
           set -euo pipefail
           # Re-run benches comparing against the cached "main" baseline.

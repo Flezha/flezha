@@ -11,10 +11,6 @@ inputs:
       The runtime whose `@sdk-<runtime>` rows run; its runner is built by its
       conformance manifest's `build.test` command, as the first of them.
     required: true
-  testnet:
-    description: Build the WebSocket testnet bundle first (`true` or `false`).
-    required: false
-    default: "false"
 
 runs:
   using: composite
@@ -28,6 +24,12 @@ runs:
     - name: Install protoc
       uses: ./.github/actions/setup-protoc
 
+    # Every controller the smoke tier boots starts the testnet daemon.
+    - name: Set up Node for the testnet
+      uses: ./.github/actions/setup-node
+      with:
+        deps-dir: test/apps/testnet
+
     # The Java build refreshes the third-party notices its jar carries.
     - name: Install cargo-about
       if: inputs.runtime == 'java'
@@ -40,7 +42,6 @@ runs:
       run: python3 scripts/run_gates.py --run @deps
 
     - name: Build the testnet bundle
-      if: inputs.testnet == 'true'
       shell: bash
       run: python3 scripts/run_gates.py --run core-testnet
 
