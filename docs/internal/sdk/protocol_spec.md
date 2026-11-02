@@ -839,7 +839,7 @@ one that predates `cells_of` answers without `cells`.
 
 ### MigrationSerialization
 
-`MigrationSerialization { relay_id }` serializes the instance's whole state
+`MigrationSerialization { relay_id, drain_within_ms: uint64 }` serializes the instance's whole state
 (JSON shape in §3) into `raw_data`, then **removes** the instance from the
 registry so the controller can re-create it on another runner. Each Cell is
 serialized from the same cut as a compaction: an open checkpoint interval
@@ -851,6 +851,12 @@ the destination only once those records are durable on it
 (`Flezha.Relay.Handover.durable_cut?/2`, within `forced_handover_grace_ms` and
 what is left of the hub's state query timeout), and hands over no state past
 that. The runner's walk shares one serializer deadline across its Cells.
+
+A non-zero `drain_within_ms` moves a relay whose input is not journaled: the
+controller sends the stop marker first and the runner drains the instance as
+for a draining `RemRelay`, off its control reader, before it serializes. When
+`drain_within_ms` passes first, it serializes all the same. The controller
+does not wait for the final marker.
 
 ### MigrationDeserialization
 
@@ -1873,7 +1879,7 @@ every record it produced is on this stream ahead of the marker. The body is
 empty, or two bytes big-endian naming how many streams the runner sent the
 same marker on when it spreads the instance's records over several; the
 controller then counts `P` once each of them has. A one-byte body `1` is the
-final marker of a stop that drained the instance (`RemRelay.drain_within_ms`):
+final marker of a stop or move that drained the instance (`drain_within_ms`):
 its seq is `0` and it confirms no offset. The runner never holds a
 marker for a reconnect, and sends none covering a record it lost.
 

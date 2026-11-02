@@ -223,6 +223,9 @@ v0.1.0-alpha.1 pre-release.
 
 ### Fixed
 
+- A move of a relay without an input log now lets its runner apply the inputs already on their
+  way to it before it takes the relay's state, as a stop does, so inputs the controller had
+  confirmed to their senders are no longer missing from the state the relay arrives with.
 - A relay whose state a move has read off its runner no longer forwards later input to that
   runner, which had already dropped the relay: a confirming sender is told the relay is not
   accepting input and sends it again, instead of being told it was taken and losing it.

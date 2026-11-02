@@ -177,8 +177,12 @@ message RemRelay {
     uint64 drain_within_ms = 2;
 }
 
+// A non-zero drain_within_ms reads the state of a relay whose input is not
+// journaled only once it has drained as a RemRelay of that value does, or once
+// that time has passed. 0 reads it at once.
 message MigrationSerialization {
     string relay_id = 1;
+    uint64 drain_within_ms = 2;
 }
 
 message MigrationDeserialization {

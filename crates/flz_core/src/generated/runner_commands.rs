@@ -252,10 +252,15 @@ pub struct RemRelay {
     #[prost(uint64, tag = "2")]
     pub drain_within_ms: u64,
 }
+/// A non-zero drain_within_ms reads the state of a relay whose input is not
+/// journaled only once it has drained as a RemRelay of that value does, or once
+/// that time has passed. 0 reads it at once.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MigrationSerialization {
     #[prost(string, tag = "1")]
     pub relay_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub drain_within_ms: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct MigrationDeserialization {

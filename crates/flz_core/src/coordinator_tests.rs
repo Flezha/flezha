@@ -524,6 +524,7 @@ fn a_move_hands_over_a_seq_above_what_the_source_drains_as_it_stops() {
     let mut errors = Vec::new();
     let serialize = crate::pb::MigrationSerialization {
         relay_id: slot.instance_id.to_string(),
+        drain_within_ms: 0,
     };
     let reply = crate::command::CommandAction::handle(&serialize, &mut node, "", &mut errors);
 
@@ -641,11 +642,50 @@ fn deliver(handle: &RelayDispatchHandle, id: &str, payload: Vec<u8>, key: &str, 
 }
 
 /// `RemRelay` of `id`, given `drain_ms` to drain.
-fn stop(id: &str, drain_ms: u64) -> Command {
+fn stop(id: impl Into<String>, drain_ms: u64) -> Command {
     Command::RemRelay(crate::pb::RemRelay {
-        relay_id: id.to_string(),
+        relay_id: id.into(),
         drain_within_ms: drain_ms,
     })
+}
+
+const DRAINED_INPUTS: usize = 4;
+
+/// `DRAINED_INPUTS` inputs into a relay whose Cell is busy with the first, its stop
+/// marker, then `command` given the deadline to drain: its answer, and what
+/// reached the state sink for the relay meanwhile.
+fn drained_behind_inputs(
+    tag: &str,
+    command: impl FnOnce(String, u64) -> Command,
+) -> (crate::pb::CommandResponse, Vec<&'static str>) {
+    let _env = crate::runner::env_test_guard();
+    let _sink = crate::state_sink::test_guard();
+    let id = format!("drain_stop_{}_{tag}", std::process::id());
+    let shipped = shipped_by(&id);
+    let host = BusyHost::serve();
+    let (mut controller, handle) = draining_runner(&[&id]);
+    for n in 0..DRAINED_INPUTS {
+        deliver(&handle, &id, vec![n as u8], "channel", "in");
+    }
+    host.held.recv_timeout(DEADLINE).expect("the Cell is busy");
+
+    deliver(&handle, &id, Vec::new(), "flz.control", "stop");
+    controller.request(
+        "ref-drain",
+        command(id.clone(), DEADLINE.as_millis() as u64),
+    );
+    crate::test_support::spin_until("the drain begins", || {
+        crate::host::pending_leave(&id).is_some()
+    });
+    host.release.send(()).expect("the host waits");
+    let answer = controller.answer("ref-drain");
+    drop(host);
+
+    crate::state_sink::reset_for_test();
+    assert_eq!(answer.status, "success", "{:?}", answer.errors);
+    assert!(handle.registry.get(&id).is_none(), "the relay was dropped");
+    let shipped = shipped.lock().unwrap().clone();
+    (answer, shipped)
 }
 
 /// fails when: a stop drops the relay while its Cell is busy, so the inputs
@@ -653,35 +693,38 @@ fn stop(id: &str, drain_ms: u64) -> Command {
 /// and no record of them reaches the state sink ahead of the final marker.
 #[test]
 fn a_stop_ships_the_records_of_every_input_sent_before_it() {
-    const INPUTS: usize = 4;
-    let _env = crate::runner::env_test_guard();
-    let _sink = crate::state_sink::test_guard();
-    let id = format!("drain_stop_{}_shipped", std::process::id());
-    let shipped = shipped_by(&id);
-    let host = BusyHost::serve();
-    let (mut controller, handle) = draining_runner(&[&id]);
-    for n in 0..INPUTS {
-        deliver(&handle, &id, vec![n as u8], "channel", "in");
-    }
-    host.held.recv_timeout(DEADLINE).expect("the Cell is busy");
+    let (_, shipped) = drained_behind_inputs("shipped", stop);
 
-    deliver(&handle, &id, Vec::new(), "flz.control", "stop");
-    controller.request("ref-stop", stop(&id, DEADLINE.as_millis() as u64));
-    crate::test_support::spin_until("the stop begins", || {
-        crate::host::pending_leave(&id).is_some()
-    });
-    host.release.send(()).expect("the host waits");
-    let answer = controller.answer("ref-stop");
-    drop(host);
-
-    crate::state_sink::reset_for_test();
-    assert_eq!(answer.status, "success", "{:?}", answer.errors);
     assert_eq!(
-        *shipped.lock().unwrap(),
-        [vec!["record"; INPUTS], vec!["final"]].concat(),
+        shipped,
+        [vec!["record"; DRAINED_INPUTS], vec!["final"]].concat(),
         "every input's record ships ahead of the final marker"
     );
-    assert!(handle.registry.get(&id).is_none(), "the relay was dropped");
+}
+
+/// fails when: a move reads the state of a relay without an input log while
+/// its Cell is busy, so the inputs queued behind the running one, sent before
+/// the move, are missing from the state it hands over.
+#[test]
+fn a_move_hands_over_the_state_of_every_input_sent_before_it() {
+    let (answer, shipped) = drained_behind_inputs("moved", |relay_id, drain_within_ms| {
+        Command::MigrationSerialization(crate::pb::MigrationSerialization {
+            relay_id,
+            drain_within_ms,
+        })
+    });
+
+    let moved: serde_json::Value = serde_json::from_slice(&answer.raw_data).expect("a JSON state");
+    assert_eq!(
+        moved["$cells"][0]["next_seq"].as_u64(),
+        Some(DRAINED_INPUTS as u64),
+        "the handed-over state covers every input sent before the move"
+    );
+    assert_eq!(
+        shipped,
+        [vec!["record"; DRAINED_INPUTS], vec!["final"]].concat(),
+        "every input's record ships ahead of the final marker"
+    );
 }
 
 /// fails when: a draining stop waits on the coordinator, so another relay's

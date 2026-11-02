@@ -225,7 +225,7 @@ defmodule Flezha.Runner.ControlUnit do
           {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
   def stop_relay(runner_id, relay_id, timeout_ms, opts \\ []) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    drain_ms = if Keyword.get(opts, :drain, false), do: div(timeout_ms, 2), else: 0
+    drain_ms = drain_ms(timeout_ms, opts)
     stop = %RunnerCommands.RemRelay{relay_id: relay_id, drain_within_ms: drain_ms}
 
     with {:ok, _} = answer when drain_ms > 0 <-
@@ -237,6 +237,26 @@ defmodule Flezha.Runner.ControlUnit do
       end
     end
   end
+
+  @doc """
+  `MigrationSerialization`: the relay's state off its runner, which drops the
+  relay as it answers, awaited for up to `timeout_ms`. With `drain: true` the
+  runner first drains the relay within half of it, as for `stop_relay/4`, and
+  the answer does not wait for `{:relay_drained, relay_id}`.
+  """
+  @spec serialize_relay(binary() | nil, binary(), non_neg_integer(), keyword()) ::
+          {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
+  def serialize_relay(runner_id, relay_id, timeout_ms, opts \\ []) do
+    serialize = %RunnerCommands.MigrationSerialization{
+      relay_id: relay_id,
+      drain_within_ms: drain_ms(timeout_ms, opts)
+    }
+
+    send_control_await(runner_id, {:migration_serialization, serialize}, timeout: timeout_ms)
+  end
+
+  defp drain_ms(timeout_ms, opts),
+    do: if(Keyword.get(opts, :drain, false), do: div(timeout_ms, 2), else: 0)
 
   @doc """
   Hard, fire-and-forget `RemRelay`: remove the relay from the runner

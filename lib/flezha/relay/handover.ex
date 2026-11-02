@@ -21,6 +21,7 @@ defmodule Flezha.Relay.Handover do
   alias Flezha.Process.Timer
   alias Flezha.Relay.Calls.Inbound
   alias Flezha.Relay.ClassRegistry
+  alias Flezha.Relay.Ingest
   alias Flezha.Relay.Lifecycle
   alias Flezha.Relay.Overwatch
   alias Flezha.Relay.Plugins
@@ -130,7 +131,7 @@ defmodule Flezha.Relay.Handover do
   # once this process has stopped and flushed, and nothing travels in-band.
   defp in_band_state(%Overwatch{} = state, deadline) do
     if in_band?(state) do
-      case serialize_relay_sdk(state.runner_id, state.id) do
+      case serialize_relay_sdk(state, deadline) do
         nil -> state.snapshot
         data -> await_cut(state, data, deadline)
       end
@@ -364,10 +365,13 @@ defmodule Flezha.Relay.Handover do
     false
   end
 
-  defp serialize_relay_sdk(runner_id, relay_id) do
-    command = %RunnerCommands.MigrationSerialization{relay_id: relay_id}
+  # The runner drops the relay as it answers, so one without an input log
+  # first applies what is on its stream, as a stop does.
+  defp serialize_relay_sdk(%Overwatch{} = state, deadline) do
+    left = max(deadline - System.monotonic_time(:millisecond), 0)
+    drain? = Ingest.stop_marker(state)
 
-    case ControlUnit.send_control_await(runner_id, {:migration_serialization, command}) do
+    case ControlUnit.serialize_relay(state.runner_id, state.id, left, drain: drain?) do
       {:ok, serialized_data} ->
         serialized_data
 

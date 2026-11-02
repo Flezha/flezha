@@ -750,15 +750,11 @@ defmodule Flezha.Relay.Lifecycle do
   defp control_unit_step({%Overwatch{runner_id: nil}, _reason}, _budget), do: :ok
 
   # Awaited for half the budget: the runner ships its Cells' last changes as it
-  # removes the relay, and the stop flushes them in before its files go; with no
-  # input log to re-forward what it has not applied, the stop rides behind the
-  # last input. A runner that is gone or does not answer has nothing to wait for.
+  # removes the relay, and the stop flushes them in before its files go. A
+  # runner that is gone or does not answer has nothing to wait for.
   defp control_unit_step({state, _reason}, budget) do
-    behind? =
-      Replay.floor_reporter(state) == nil and
-        StreamChannel.control(state.channel, state.id, "stop") == :ok
-
-    _answer = ControlUnit.stop_relay(state.runner_id, state.id, div(budget, 2), drain: behind?)
+    drain? = Ingest.stop_marker(state)
+    _answer = ControlUnit.stop_relay(state.runner_id, state.id, div(budget, 2), drain: drain?)
     :ok
   end
 

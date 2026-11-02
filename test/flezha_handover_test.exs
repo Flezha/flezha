@@ -281,21 +281,14 @@ defmodule FlezhaTest.Handover do
   end
 
   # fails when: a cold move of a class that keeps nothing on disk ships no
-  # in-band state, so the relay arrives empty.
+  # in-band state, so the relay arrives empty, or reads it before the runner
+  # applied the confirmed inputs still on its stream, so they are lost.
   @tag :multi_node
   @tag :cold_drain_memory
   test "a cold drain carries the state of a class that keeps none on disk" do
     {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:cold_memory_node)
     relay_id = RelayFixture.start_on(peer_node, "cold_memory", "persistence_off_counter")
     for n <- ["3", "4"], do: confirm(relay_id, n)
-
-    # A taken input is on its way to the runner, and the move carries the
-    # state the runner holds when asked, so the inputs are applied first.
-    assert NodeTestHelper.wait_until(
-             fn -> runner_state(relay_id) =~ ~s("value":7) end,
-             10_000
-           ),
-           "the source runner never applied the confirmed inputs"
 
     assert :ok = shutdown_peer(peer_node, 30_000)
     assert arrived?(relay_id), "the in-band state did not reach the destination's runner"

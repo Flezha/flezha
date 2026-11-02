@@ -701,6 +701,9 @@ defmodule Flezha.Relay.Overwatch do
   defp unexpected(state, {{:seed_taken, from, announce?, call}, verdict}),
     do: GenServer.reply(from, Ingest.started(state, announce?, call, verdict))
 
+  # A move drained the relay, and the runner's final marker came back after it.
+  defp unexpected(_state, {:relay_drained, _relay_id}), do: :ok
+
   defp unexpected(state, msg),
     do: Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
 

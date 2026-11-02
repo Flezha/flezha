@@ -25,6 +25,7 @@ defmodule Flezha.Relay.Ingest do
   alias Flezha.Relay.Plugins
   alias Flezha.Relay.Replay
   alias Flezha.Relay.Suspend
+  alias Flezha.Runner.StreamChannel
   alias Flezha.State.InputLog
   alias Flezha.Transport.LivenessCounters
 
@@ -287,6 +288,17 @@ defmodule Flezha.Relay.Ingest do
       _none_left_or_late ->
         :ok
     end
+  end
+
+  @doc """
+  Send the relay's stop marker behind its last input when it has no input log
+  to re-forward what its runner has not applied, so the runner drains the
+  relay before it drops it. True when the marker is on the stream.
+  """
+  @spec stop_marker(Overwatch.t()) :: boolean()
+  def stop_marker(%Overwatch{} = state) do
+    Replay.floor_reporter(state) == nil and
+      StreamChannel.control(state.channel, state.id, "stop") == :ok
   end
 
   # A journaled payload is kept in the log, never forwarded from here.
