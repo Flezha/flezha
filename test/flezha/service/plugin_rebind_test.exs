@@ -33,13 +33,15 @@ defmodule Flezha.Service.PluginRebindTest do
     stub(HubManager, :relay_bindings, fn @namespace, _member -> {:ok, []} end)
 
     stub(Init, :write_plugins, fn @namespace, member, _rewrite ->
-      send(parent, {:written, member}) && :ok
+      send(parent, {:written, member})
+      :ok
     end)
 
     stub(RelayManager, :get_relay_pid, fn @namespace, _member -> {:ok, parent} end)
 
     stub(Overwatch, :plugin_subscribe, fn _pid, id, _binding, ^entry ->
-      send(parent, {:subscribed, id}) && :ok
+      send(parent, {:subscribed, id})
+      :ok
     end)
 
     :ok

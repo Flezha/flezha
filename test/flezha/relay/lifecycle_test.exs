@@ -633,8 +633,12 @@ defmodule FlezhaTest.Relay.OverwatchRetryTest do
       end)
 
       stub(ProcessHub, :stop_children, fn
-        _hub, [^id], _opts -> send(test_pid, {:hub_stop, id}) && :declared_only
-        hub, ids, opts -> Mimic.call_original(ProcessHub, :stop_children, [hub, ids, opts])
+        _hub, [^id], _opts ->
+          send(test_pid, {:hub_stop, id})
+          :declared_only
+
+        hub, ids, opts ->
+          Mimic.call_original(ProcessHub, :stop_children, [hub, ids, opts])
       end)
 
       stub(ProcessHub.Future, :await, fn

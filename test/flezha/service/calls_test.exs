@@ -67,9 +67,12 @@ defmodule FlezhaTest.Service.CallsTest do
           deliver: fn message, _md ->
             :counters.add(attempts, 1, 1)
 
-            if :counters.get(attempts, 1) < 3,
-              do: {:error, :not_ready},
-              else: send(test_pid, {:delivered, message}) && :ok
+            if :counters.get(attempts, 1) < 3 do
+              {:error, :not_ready}
+            else
+              send(test_pid, {:delivered, message})
+              :ok
+            end
           end,
           expires_at: fn _message, md -> md.deadline_at end
         })

@@ -516,7 +516,8 @@ defmodule FlezhaTest.Relay.PartitionGroupRescaleTest do
       end)
 
       stub(PluginManager, :rebind_all, fn @namespace, saved ->
-        send(parent, {:rebound, saved}) && :ok
+        send(parent, {:rebound, saved})
+        :ok
       end)
 
       stub(InputLog, :tail, fn class ->

@@ -510,7 +510,10 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       stub(
         module,
         function,
-        Map.get(overrides, name, fn _target, _budget -> send(test_pid, {:row, name}) && :ok end)
+        Map.get(overrides, name, fn _target, _budget ->
+          send(test_pid, {:row, name})
+          :ok
+        end)
       )
     end
   end

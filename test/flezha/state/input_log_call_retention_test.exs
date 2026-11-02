@@ -177,7 +177,12 @@ defmodule Flezha.State.InputLogCallRetentionTest do
     test "the walk is asked for what was appended by the margin's end" do
       parent = self()
       before = now()
-      MsgIndex.floor(index([{"a", 2}]), 8, fn time, _ -> send(parent, {:time, time}) && nil end)
+
+      MsgIndex.floor(index([{"a", 2}]), 8, fn time, _ ->
+        send(parent, {:time, time})
+        nil
+      end)
+
       margin = :timer.minutes(10)
       assert_received {:time, time}
       assert time in (before - margin + 1)..(now() - margin + 1)

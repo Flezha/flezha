@@ -51,7 +51,11 @@ defmodule Flezha.Logs.LogsMultiNodeTest do
 
   test "a tail on one controller hears a record the other writes", %{peer: peer, ns: ns} do
     test = self()
-    emit = fn record -> send(test, {:tailed, record}) && :ok end
+
+    emit = fn record ->
+      send(test, {:tailed, record})
+      :ok
+    end
 
     tail =
       Task.async(fn ->

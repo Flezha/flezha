@@ -32,8 +32,12 @@ defmodule FlezhaTest.Helper.StepsResumeHarness do
 
   def collect_loop(acc) do
     receive do
-      {:message_forward, msg, md} -> collect_loop([{to_string(msg), md} | acc])
-      {:collected?, from} -> send(from, {:collected, acc}) && collect_loop(acc)
+      {:message_forward, msg, md} ->
+        collect_loop([{to_string(msg), md} | acc])
+
+      {:collected?, from} ->
+        send(from, {:collected, acc})
+        collect_loop(acc)
     end
   end
 

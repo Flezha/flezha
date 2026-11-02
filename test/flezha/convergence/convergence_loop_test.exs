@@ -110,7 +110,11 @@ defmodule Flezha.Convergence.LoopTest do
     # test reads no longer depends on when the Loop's own tick runs.
     defp observe_heals(answer) do
       test_pid = self()
-      stub(Heal, :execute, fn op -> send(test_pid, {:healed, op.primitive}) && answer end)
+
+      stub(Heal, :execute, fn op ->
+        send(test_pid, {:healed, op.primitive})
+        answer
+      end)
     end
 
     # fails when: the release walks only the parked relays and resets only

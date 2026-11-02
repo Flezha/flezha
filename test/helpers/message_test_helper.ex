@@ -70,8 +70,12 @@ defmodule FlezhaTest.Helper.MessageTestHelper do
     {_key, {ref, message}} = Enum.find(:sys.get_state(pid).timers, fn {key, _} -> key?.(key) end)
 
     case Process.cancel_timer(ref) do
-      false -> false
-      left -> send(pid, message) && left
+      false ->
+        false
+
+      left ->
+        send(pid, message)
+        left
     end
   end
 

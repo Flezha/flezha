@@ -28,6 +28,13 @@ runs:
     - name: Install protoc
       uses: ./.github/actions/setup-protoc
 
+    # The Java build refreshes the third-party notices its jar carries.
+    - name: Install cargo-about
+      if: inputs.runtime == 'java'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-about@0.9.3
+
     - name: Compile the third-party dependencies
       shell: bash
       run: python3 scripts/run_gates.py --run @deps
