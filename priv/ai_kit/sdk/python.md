@@ -49,8 +49,8 @@ and defaults to `default`: `.venv/bin/python runner.py my_app`.
 
 ## Building from a checkout
 
-The package is not on PyPI yet. From the package root, build a wheel for
-this platform once:
+To run the example against a Flezha checkout instead of the published package,
+build a wheel for this platform once, from the package root:
 
 ```sh
 pip install "maturin>=1.9,<2.0"
@@ -67,8 +67,6 @@ cd examples/echo
 python3 -m venv .venv
 .venv/bin/pip install ../../dist/flezha-0.1.0-*.whl
 ```
-
-Once the package is published, the step goes away.
 
 ## Where to go next
 

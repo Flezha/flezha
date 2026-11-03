@@ -47,16 +47,14 @@ namespace is the first argument and defaults to `default`:
 
 ## Building from a checkout
 
-The SDK is not on Maven Central yet, so `com.flezha:flezha-sdk:0.1.0` has to be
-in your local Maven repository before this resolves. From the repository root:
+To run the example against a Flezha checkout instead of the published SDK, install
+the checkout's `com.flezha:flezha-sdk:0.1.0` into your local Maven repository, which
+Maven reads before Maven Central. From the repository root:
 
 ```sh
 scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native
 mvn -f sdk/java/pom.xml -DskipTests install
 ```
-
-That is a one-time step. Once the SDK is published, it goes away and the command
-above is all you need.
 
 ## Where to go next
 

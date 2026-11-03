@@ -18,9 +18,14 @@ You need a controller running and reachable, as
 starts one. From this folder, run the test and start the runner:
 
 ```sh
+eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
 go test ./...
 go run .
 ```
+
+The `eval` line fetches the SDK's prebuilt core library and sets `CGO_LDFLAGS`, as
+the SDK's [Install](../../README.md#install) describes; on a platform it has no
+library for, build one from a checkout ([Building from a checkout](#building-from-a-checkout)).
 
 Then, from another terminal, start the relay and call it:
 
@@ -43,11 +48,11 @@ Nothing inside the files is renamed for you. Change the module path in
 `go.mod`. `starter` is the name `flz relay start` takes. `count` is the name
 the tasklet's state is saved under, so choose it before the first run.
 
-## Before the SDK is published
+## Building from a checkout
 
-`github.com/flezha/flezha_go_sdk` is not published yet, and neither is the
-core library it links through cgo, so a C toolchain and a Flezha checkout are
-needed. From the root of the checkout, build the core once:
+To run the project against a Flezha checkout instead of the published module,
+or on a platform with no prebuilt core library, a C toolchain and the checkout
+are needed. From the root of the checkout, build the core once:
 
 ```sh
 scripts/build-go-sdk.sh --release

@@ -283,6 +283,7 @@ $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrd
 ### Go
 
 ```sh
+$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
 $ FLEZHA_NAMESPACE_SECRET=flzt_3j5bftycxn43ivwoxbd2peghazjgtnru5bxqgshvfqcft7lrdsra go run .
 ```
 

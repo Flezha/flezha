@@ -572,9 +572,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`Split` and `Tally` are ordinary tasklets with nothing local about them. Flezha
-is not on crates.io yet, so the crate is a path dependency on a checkout
-(`flezha_runner = { path = "../flezha/sdk/rust" }`). From a checkout:
+`Split` and `Tally` are ordinary tasklets with nothing local about them. The
+crate is `flezha_runner` from crates.io (`flezha_runner = "0.1.0"`). The example
+is in the SDK's repository; from a checkout:
 
 ```sh
 $ cargo run -p flezha_runner --example local_word_count

@@ -621,10 +621,12 @@ $ mix deps.get && mix run --no-halt
 ### Go
 
 ```sh
+$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
 $ go run .
 ```
 
-Until the Go SDK is published, set the folder up once as its README's
+The first line fetches the SDK's prebuilt core library and sets `CGO_LDFLAGS`. On a
+platform it has no library for, set the folder up once as its README's
 [Building from a checkout](https://github.com/flezha/flezha_go_sdk/tree/main/examples/echo#building-from-a-checkout)
 says.
 

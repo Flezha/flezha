@@ -45,11 +45,11 @@ Nothing inside the files is renamed for you. `starter` is the name
 `flz relay start` takes. `count` is the name the tasklet's state is saved under,
 so choose it before the first run.
 
-## Before the SDK is published
+## Building from a checkout
 
-The gem is not on RubyGems yet. In a Flezha checkout's `sdk/ruby`, with the Ruby
-you run the runner with, build a gem for this platform (it needs cargo and git)
-and install it once:
+To run the project against a Flezha checkout instead of the published gem, build
+a gem for this platform in the checkout's `sdk/ruby`, with the Ruby you run the
+runner with (it needs cargo and git), and install it once:
 
 ```sh
 rake native gem

@@ -51,8 +51,8 @@ Start it from this folder. The runner names its relay by module specifier,
 
 ## Building from a checkout
 
-`@flezha/sdk` is not on npm yet. From the repository root, build the SDK and
-link it into this folder once:
+To run the example against a Flezha checkout instead of the published package, build
+the SDK from the repository root and link it into this folder once:
 
 ```sh
 scripts/build-node-sdk.sh --release
@@ -61,7 +61,7 @@ scripts/build-node-sdk.sh --release
 ```
 
 `npm install` in this folder then keeps the link, and `package.json` stays as it
-is. Once the package is published, the step goes away.
+is.
 
 ## Where to go next
 

@@ -44,10 +44,11 @@ Nothing inside the files is renamed for you. Change the package
 `starter` is the name `flz relay start` takes. `count` is the name the
 tasklet's state is saved under, so choose it before the first run.
 
-## Before the SDK is published
+## Building from a checkout
 
-The SDK is not on Maven Central yet, so `com.flezha:flezha-sdk:0.1.0` has to be
-in your local Maven repository first. From the root of a Flezha checkout, once:
+To run the project against a Flezha checkout instead of the published SDK, install
+the checkout's `com.flezha:flezha-sdk:0.1.0` into your local Maven repository, which
+Maven reads before Maven Central. From the root of the checkout:
 
 ```sh
 scripts/build-native.sh --output sdk/java/flezha-sdk-native/src/main/resources/native

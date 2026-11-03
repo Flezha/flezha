@@ -47,10 +47,11 @@ Nothing inside the files is renamed for you. `starter` is the name
 `flz relay start` takes. `count` is the name the tasklet's state is saved under,
 so choose it before the first run.
 
-## Before the SDK is published
+## Building from a checkout
 
-The package is not on PyPI yet. In a Flezha checkout's `sdk/python`, build a
-wheel for this platform once (it needs a Rust toolchain):
+To run the project against a Flezha checkout instead of the published package,
+build a wheel for this platform once in the checkout's `sdk/python` (it needs a
+Rust toolchain):
 
 ```sh
 pip install "maturin>=1.9,<2.0"

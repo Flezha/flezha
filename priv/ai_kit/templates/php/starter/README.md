@@ -47,10 +47,11 @@ namespaces in `composer.json`, and the namespace in each file. `starter` is the
 name `flz relay start` takes. `count` is the name the tasklet's state is saved
 under, so choose it before the first run.
 
-## Before the SDK is published
+## Building from a checkout
 
-The package is not on Packagist yet. From the root of a Flezha checkout, stage
-the native library it loads (it needs a Rust toolchain):
+To run the project against a Flezha checkout instead of the published package,
+stage the native library it loads from the root of the checkout (it needs a Rust
+toolchain):
 
 ```sh
 scripts/build-php-sdk.sh --release
@@ -58,7 +59,7 @@ scripts/build-php-sdk.sh --release
 
 Then tell Composer where the package is, once, with the checkout's absolute
 path. The entry lives in Composer's global configuration, so `composer.json`
-stays as it is:
+stays as it is; remove the entry to use the published package again:
 
 ```sh
 composer config --global repositories.flezha-sdk \

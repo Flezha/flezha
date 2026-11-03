@@ -46,10 +46,10 @@ Nothing inside the files is renamed for you. Change the `name` in
 `package.json`. `starter` is the name `flz relay start` takes. `count` is the
 name the tasklet's state is saved under, so choose it before the first run.
 
-## Before the SDK is published
+## Building from a checkout
 
-`@flezha/sdk` is not on npm yet. From the root of a Flezha checkout, build it
-once:
+To run the project against a Flezha checkout instead of the published package,
+build the SDK from the root of the checkout once:
 
 ```sh
 scripts/build-node-sdk.sh --release

@@ -300,6 +300,7 @@ $ MIX_ENV=prod mix release
 ### Go
 
 ```sh
+$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
 $ go build
 ```
 
