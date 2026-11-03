@@ -53,7 +53,9 @@ runs:
 
     # One key spelling for the whole repository. The OTP version is in it
     # because a beam file compiled by one OTP is not loadable by another, and
-    # mix.lock is what decides which deps are in there.
+    # mix.lock is what decides which deps are in there. The project's own app
+    # is left out: compiling it is what builds its native library into
+    # priv/native, which the cache does not hold.
     - if: inputs.cache == 'true'
       uses: actions/cache@v5
       with:
@@ -61,6 +63,7 @@ runs:
           deps
           _build
           !_build/.target
+          !_build/*/lib/flezha
         key: elixir-${{ runner.os }}-otp${{ steps.resolve.outputs.otp }}-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
           elixir-${{ runner.os }}-otp${{ steps.resolve.outputs.otp }}-
