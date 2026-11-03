@@ -82,12 +82,13 @@ in whichever terminal you use, so go there and start the controller:
 
 ```sh
 $ cd flezha
-$ FLEZHA_AUTHZ_ENABLED=false ./bin/flz controller start
+$ FLEZHA_AUTHZ_ENABLED=false ./bin/flz controller start --mode daemon
 ```
 
-It runs in the foreground of this terminal. Leave it open, and run everything
-after this from a second terminal, in the `flezha` directory. Check that it is
-ready:
+`--mode daemon` starts it in the background and returns, so this terminal stays
+yours: run every `./bin/flz` command after this here, in the `flezha` directory.
+The controller logs to `storage/logs/flezha.log`. Without `--mode daemon` it runs
+in the foreground of this terminal instead. Check that it is ready:
 
 ```sh
 $ ./bin/flz boot await
@@ -731,8 +732,8 @@ If the controller runs in Docker, set
 `FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock` in front of the command, the folder
 the controller's socket is mounted on.
 
-The runner keeps that terminal. Leave it running. From another terminal, in the
-`flezha` directory, check that it connected:
+The runner keeps that terminal. Leave it running. Back in the first terminal, in
+the `flezha` directory, check that it connected:
 
 ```sh
 $ ./bin/flz runner list
@@ -759,7 +760,7 @@ a name and state of its own.
 [Running and testing](../topics/core/running_and_testing.md) covers starting,
 watching and stopping relays in full, from `flz` and from your own code.
 
-> From a third terminal, in the `flezha` directory, start a relay from the
+> In the first terminal, in the `flezha` directory, start a relay from the
 > `echo` factory and name it `my_echo`. The controller and your runner have to be running.
 > {: .step}
 
