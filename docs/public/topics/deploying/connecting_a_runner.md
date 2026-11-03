@@ -210,8 +210,10 @@ Three things matter when a supervisor runs it:
 
 Each runner takes the namespace it serves when it starts
 ([`namespaces.md`](../core/namespaces.md)). In the example runners it is the first
-argument, `default` when omitted. One way to start each language's echo
-runner, from its example folder:
+argument, `default` when omitted. Each example names its language's published SDK
+([Add the SDK to a project](../../getting_started/up_and_running.md#add-the-sdk-to-a-project)
+lists the packages). One way to start each language's echo runner, from its
+example folder:
 
 <!-- tabs-open -->
 

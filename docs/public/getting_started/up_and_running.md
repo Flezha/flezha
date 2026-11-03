@@ -25,16 +25,20 @@ ids, tokens and times will differ.
 >   Docker to run its image.
 > - **For your runner**, one language, and only what its row lists:
 >
-> | Language | You need |
-> |---|---|
-> | Java | Java 21 and Maven |
-> | Rust | Rust with Cargo |
-> | Node | Node.js 20 or later, with npm |
-> | Python | Python 3.11 or later, with pip |
-> | Ruby | Ruby 3.3 or later, with Bundler |
-> | PHP | PHP 8.4 or later with `ext-ffi`, and Composer |
-> | Elixir | Elixir 1.17 or later |
-> | Go | Go 1.26 or later, a C toolchain, and Rust with Cargo to build the core library |
+> | Language | You need | Its native library |
+> |---|---|---|
+> | Java | Java 21 and Maven | inside the package |
+> | Rust | Rust with Cargo | compiled with your crate |
+> | Node | Node.js 20 or later, with npm | a per-platform package npm adds |
+> | Python | Python 3.11 or later, with pip | inside the wheel, free-threaded 3.14 included |
+> | Ruby | Ruby 3.3 or 3.4, with Bundler | inside the platform gem |
+> | PHP | PHP 8.4 or later with `ext-ffi`, and Composer | downloaded by the package as Composer installs it |
+> | Elixir | Elixir 1.17 or later | downloaded on the first compile |
+> | Go | Go 1.26 or later, and a C toolchain | downloaded by `flz-native`, which the run step calls |
+>
+> The prebuilt libraries cover Linux x86-64 and arm64 with glibc (2.34 or later
+> for the Python wheel on x86-64), macOS x86-64 and arm64, and Windows x86-64
+> (except Go's). Anywhere else, the SDK's README says how to build it.
 >
 > - **git**, to get the example.
 
@@ -144,6 +148,97 @@ the three pieces every runner has: a tasklet, a relay and the runner itself.
 [Building blocks](../topics/core/building_blocks.md) explains each one, and
 [Connecting a runner](../topics/deploying/connecting_a_runner.md) covers how a
 runner finds its controller.
+
+### Add the SDK to a project
+
+Each SDK is a package on its language's registry. In a project of your own,
+add it with the line in your language's tab. The echo example's manifest
+already names the package, so the run step below fetches it and there is
+nothing to add here.
+
+<!-- tabs-open -->
+
+### Java
+
+```xml
+<dependency>
+  <groupId>com.flezha</groupId>
+  <artifactId>flezha-sdk</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+[`com.flezha:flezha-sdk` on Maven Central](https://central.sonatype.com/artifact/com.flezha/flezha-sdk).
+The echo's `pom.xml` names it.
+
+### Rust
+
+```sh
+$ cargo add flezha_runner
+```
+
+[`flezha_runner` on crates.io](https://crates.io/crates/flezha_runner).
+The echo's `Cargo.toml` names it.
+
+### Node
+
+```sh
+$ npm install @flezha/sdk
+```
+
+[`@flezha/sdk` on npm](https://www.npmjs.com/package/@flezha/sdk).
+The echo's `package.json` names it.
+
+### Python
+
+```sh
+$ pip install flezha
+```
+
+[`flezha` on PyPI](https://pypi.org/project/flezha/).
+The echo's `requirements.txt` names it.
+
+### Ruby
+
+```sh
+$ bundle add flezha
+```
+
+Or `gem install flezha` outside Bundler.
+[`flezha` on RubyGems](https://rubygems.org/gems/flezha).
+The echo's `Gemfile` names it.
+
+### PHP
+
+```sh
+$ composer require flezha/sdk
+```
+
+[`flezha/sdk` on Packagist](https://packagist.org/packages/flezha/sdk).
+The echo's `composer.json` names it.
+
+### Elixir
+
+```elixir
+{:flezha_sdk, "~> 0.1.0"}
+```
+
+In `deps` in `mix.exs`.
+[`flezha_sdk` on Hex](https://hex.pm/packages/flezha_sdk).
+The echo's `mix.exs` names it.
+
+### Go
+
+```sh
+$ go get github.com/flezha/flezha_go_sdk
+```
+
+[`github.com/flezha/flezha_go_sdk` on pkg.go.dev](https://pkg.go.dev/github.com/flezha/flezha_go_sdk).
+The echo's `go.mod` names it.
+
+<!-- tabs-close -->
+
+### The echo runner
 
 The three files, in your language. The tasklet emits `echo: ` plus what it
 got; the relay routes the channel `in` into it and names its output

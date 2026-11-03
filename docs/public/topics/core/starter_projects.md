@@ -104,5 +104,6 @@ write SDK code from memory. A language or example there is no template for is re
 - **One starter.** `starter` is the only example for now.
 - **Nothing is renamed.** The package, module and project names stay the starter's until you
   change them; the README says what to rename.
-- **Each starter names the published 0.1.0 SDK.** Its README says how to run it against a
-  Flezha checkout instead.
+- **Each starter names the published 0.1.0 SDK**, the package
+  [Add the SDK to a project](../../getting_started/up_and_running.md#add-the-sdk-to-a-project)
+  lists. Its README says how to run it against a Flezha checkout instead.

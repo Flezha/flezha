@@ -573,8 +573,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 `Split` and `Tally` are ordinary tasklets with nothing local about them. The
-crate is `flezha_runner` from crates.io (`flezha_runner = "0.1.0"`). The example
-is in the SDK's repository; from a checkout:
+crate is the published Rust SDK
+([Add the SDK to a project](../../getting_started/up_and_running.md#add-the-sdk-to-a-project)).
+The example is in the SDK's repository; from a checkout:
 
 ```sh
 $ cargo run -p flezha_runner --example local_word_count

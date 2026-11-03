@@ -12,7 +12,7 @@
 # gets turned off, and the repository has already paid for one that went red on
 # correct prose.
 #
-# Eight citation kinds, each judged against the tracked tree:
+# Nine citation kinds, each judged against the tracked tree:
 #
 #   module     `Flezha.A.B` — live when the tracked Elixir source names it, or
 #              names something below it. `#{__MODULE__}` is resolved first, so a
@@ -34,6 +34,12 @@
 #   telemetry  `[:flezha, …]` — live when the source carries the literal, or
 #              carries the prefix and the final atom, which is how an event
 #              assembled from a variable is written.
+#   version    the Java SDK's Maven dependency (`com.flezha:flezha-sdk:X`, or a
+#              `<version>` right after `<artifactId>flezha-sdk</artifactId>`)
+#              and the Elixir SDK's Hex requirement (`{:flezha_sdk, "~> X"}`)
+#              — live when X is the version `sdk/java/pom.xml` and
+#              `sdk/elixir/mix.exs` declare. An install line is copied as is,
+#              so a stale one installs an old SDK.
 #   rust enum  `RestoreError::CrcMismatch`, `RestoreError::{A, B}` — live when
 #              the one tracked Rust file declaring `enum RestoreError` declares
 #              that variant. Only a name exactly one file declares as an enum is
@@ -132,6 +138,28 @@ if not MAVEN_MODULES:
     print(f"{MAVEN_POM} lists no <module> entries, so no Maven module can be judged",
           file=sys.stderr)
     sys.exit(gate_support.NO_ANSWER)
+
+# The published SDK versions install lines are judged against.
+def declared_version(path, pattern):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            found = re.search(pattern, fh.read())
+    except OSError as exc:
+        print(f"cannot read {path}, so no install line can be judged: {exc}", file=sys.stderr)
+        sys.exit(gate_support.NO_ANSWER)
+    if not found:
+        print(f"{path} declares no version, so no install line can be judged", file=sys.stderr)
+        sys.exit(gate_support.NO_ANSWER)
+    return found.group(1).strip()
+
+
+JAVA_SDK_VERSION = declared_version(
+    MAVEN_POM, r"<artifactId>flezha-sdk-parent</artifactId>\s*<version>([^<]+)</version>")
+ELIXIR_SDK_VERSION = declared_version("sdk/elixir/mix.exs", r'@version "([^"]+)"')
+MAVEN_COORDINATE = re.compile(r"\bcom\.flezha:flezha-sdk:(\d[\w.-]*)")
+MAVEN_ARTIFACT = re.compile(r"<artifactId>flezha-sdk</artifactId>")
+MAVEN_VERSION = re.compile(r"^\s*<version>([^<]+)</version>")
+HEX_REQUIREMENT = re.compile(r"\{:flezha_sdk,\s*\"[~>=<\s]*(\d[\w.-]*)\"")
 
 SOURCE_EXT_SKIP = {".md"}
 NAME = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")
@@ -397,6 +425,23 @@ def check_telemetry(line):
     return out
 
 
+# A Maven `<version>` belongs to the `<artifactId>` on the line before it.
+after_sdk_artifact = {}
+
+
+def check_versions(rel, line):
+    named = [("Java", v, JAVA_SDK_VERSION, MAVEN_POM) for v in MAVEN_COORDINATE.findall(line)]
+    version = MAVEN_VERSION.match(line)
+    if version and after_sdk_artifact.get(rel):
+        named.append(("Java", version.group(1).strip(), JAVA_SDK_VERSION, MAVEN_POM))
+    after_sdk_artifact[rel] = bool(MAVEN_ARTIFACT.search(line))
+    named += [("Elixir", v, ELIXIR_SDK_VERSION, "sdk/elixir/mix.exs")
+              for v in HEX_REQUIREMENT.findall(line)]
+    tally["citations"] += len(named)
+    return [f"installs the {lang} SDK at `{cited}`, but `{source}` declares `{declared}`"
+            for lang, cited, declared, source in named if cited != declared]
+
+
 allowlist = gate_support.load_allowlist(ALLOWLIST)
 scoped = {}
 
@@ -409,7 +454,7 @@ def check(rel, line):
         line = rule.sub("", line)
     return (check_paths(rel, line) + check_elixir(line) + check_env(line)
             + check_maven_modules(line) + check_telemetry(line)
-            + check_rust_variants(line))
+            + check_rust_variants(line) + check_versions(rel, line))
 
 
 # `priv/ai_kit/` holds generated copies of pages and SDK examples the gate

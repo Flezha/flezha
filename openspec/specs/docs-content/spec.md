@@ -74,7 +74,9 @@ link that page instead of restating it: local mode and testing a tasklet
 (`docs/public/topics/core/running_and_testing.md`), a relay's API, answering and calling
 (`docs/public/topics/core/sending_and_calling.md`), cell timers
 (`docs/public/topics/core/timers.md`), installing a plugin
-(`docs/public/topics/plugins/installing_plugins.md`), environment variables and application
+(`docs/public/topics/plugins/installing_plugins.md`), adding an SDK to a project (the "Add the
+SDK to a project" section of `docs/public/getting_started/up_and_running.md`; each SDK's README
+keeps its own install line, being that package's registry page), environment variables and application
 settings (the generated tables of `docs/public/configuration/`), every `flz` verb (the rendered
 help and `docs/public/topics/cli/command_reference.md`), and the list of pages (the sidebar for
 published pages, `docs/internal/README.md` for internal ones).
@@ -84,6 +86,12 @@ published pages, `docs/internal/README.md` for internal ones).
 - **WHEN** a reader opens any SDK's `README.md` looking for local mode
 - **THEN** it SHALL find one line naming the SDK's local-mode entry point and a link to the
   "Local mode" section of `running_and_testing.md`, not a second explanation
+
+#### Scenario: A page that needs an SDK package links the one install section
+
+- **WHEN** a published page other than `up_and_running.md` names how to get an SDK package
+- **THEN** it SHALL link `up_and_running.md#add-the-sdk-to-a-project` and SHALL NOT restate the
+  install line
 
 #### Scenario: The test harnesses are listed once and truly
 
