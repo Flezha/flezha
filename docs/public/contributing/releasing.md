@@ -56,8 +56,9 @@ npm (the `@flezha` organisation), PyPI, RubyGems, Maven Central (the
    cargo publish -p flezha_runner
    ```
 3. **The Elixir SDK.** Copy `dist/checksum-Elixir.Flezha.SDK.Native.exs` into
-   `sdk/elixir`, commit it there, then run `mix hex.publish` in `sdk/elixir`.
-   The package downloads its native library from the core's release.
+   `sdk/elixir`, then run `mix hex.publish` there. Git ignores the file: the Hex
+   package carries it, and the package downloads its native library from the
+   core's release.
 4. **The Node SDK.** The five platform packages first, then the package that
    names them:
    ```sh
