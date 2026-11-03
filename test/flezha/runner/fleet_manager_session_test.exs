@@ -28,6 +28,7 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
   alias Flezha.Identificator
   alias Flezha.Relay.Builder
   alias Flezha.Relay.Overwatch
+  alias Flezha.Runner.FleetManager.Session
   alias Flezha.Runner.DropMarks
   alias Flezha.Runner.FleetManager
   alias FlezhaTest.Helper.FleetStateHelper
@@ -202,6 +203,31 @@ defmodule FlezhaTest.Runner.FleetManagerSessionTest do
       send(FleetManager, {:handshake_timeout, session})
 
       assert_receive {:tcp_closed, ^sdk}, 5_000
+      refute session in FleetManager.active_runners(ns)
+    end
+
+    test "a reply its closed stream could not carry ends the session as a disconnect", %{
+      ns: ns
+    } do
+      {sdk, session} = stand_in_runner(ns, fn _ -> :silent end)
+
+      # The command's failed reply can beat the disconnect notice, which ends
+      # the same session quietly; arriving first must not make it an error.
+      log =
+        capture_log([level: :error], fn ->
+          :sys.replace_state(FleetManager, fn state ->
+            Session.handshake_answered(
+              state,
+              session,
+              :command_assign_runner_id,
+              {:reply, {:error, :no_connection_available}}
+            )
+          end)
+
+          assert_receive {:tcp_closed, ^sdk}, 5_000
+        end)
+
+      refute log =~ "did not complete its handshake"
       refute session in FleetManager.active_runners(ns)
     end
 

@@ -365,6 +365,16 @@ defmodule Flezha.Runner.FleetManager.Session do
     end
   end
 
+  # A reply the runner's closed stream could not carry is its disconnect,
+  # arriving before the disconnect notice does.
+  def handshake_answered(
+        state,
+        session_token,
+        _command,
+        {:reply, {:error, :no_connection_available}}
+      ),
+      do: end_handshake(state, session_token, :disconnected)
+
   def handshake_answered(state, session_token, command, {:reply, {:error, reason}}),
     do: end_handshake(state, session_token, {command, reason})
 
