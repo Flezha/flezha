@@ -49,7 +49,7 @@
 #   coordinate. A link that leaves the repository has no answer here.
 #
 #   A path rooted where the repository carries nothing — `deps/`,
-#   `flezha_market/`, `META-INF/` — cannot be checked against this tree. So can
+#   `../sibling/`, `META-INF/` — cannot be checked against this tree. So can
 #   a path the repository ignores by policy (`openspec/changes/`,
 #   `local_dev/`): those directories are working material kept out of git,
 #   and a citation into one is unresolvable here rather than wrong.

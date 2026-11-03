@@ -19,10 +19,13 @@ path = [
   "crates/flz_core_ffi/**",
   "crates/flz_transport/**",
   "crates/protobufs/**",
-  # The example plugin and the project templates are meant to be copied into a
-  # user's own project, so they carry the SDK's licence rather than the controller's.
+  # The example plugin, the project templates and the getting-started and
+  # tutorial pages are meant to be copied into a user's own project, so they
+  # carry the SDK's licence rather than the controller's.
   "test/apps/example_plugin/**",
   "priv/ai_kit/templates/**",
+  "docs/public/getting_started/**",
+  "docs/public/tutorials/**",
 ]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "Apache-2.0"

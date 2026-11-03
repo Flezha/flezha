@@ -88,11 +88,11 @@ The Rust SDK's command-frame decode path (`crates/flz_core/src/command/mod.rs`) 
 
 `get_handler` (or its successor) SHALL return `Result<(CommandActionType, String), CommandDecodeError>`. Every call site within `sdk/rust/src/command/` and adjacent modules SHALL propagate the `Result` or map `Err` to the existing reconnect path; no call site SHALL `.unwrap()` or `.expect()` the result. The literal `.expect("Failed to decode message")` SHALL NOT exist anywhere on this path.
 
-This requirement is a precondition for the existing "Runner → Controller data streams SHALL automatically heal across a Controller restart" requirement: if the SDK panics on the disconnect that immediately precedes reconnect, the 5-second resume contract is unreachable. The production trace `thread '<unnamed>' panicked at /flezha-sdk/sdk/rust/src/command/mod.rs:54:52: Failed to decode message: DecodeError { description: "buffer underflow", stack: [("CommandRequest", "command")] }` observed at 07:40:01 in the flezha_market dev cluster is a violation of this requirement.
+This requirement is a precondition for the existing "Runner → Controller data streams SHALL automatically heal across a Controller restart" requirement: if the SDK panics on the disconnect that immediately precedes reconnect, the 5-second resume contract is unreachable. The production trace `thread '<unnamed>' panicked at /flezha-sdk/sdk/rust/src/command/mod.rs:54:52: Failed to decode message: DecodeError { description: "buffer underflow", stack: [("CommandRequest", "command")] }` observed at 07:40:01 in a downstream dev cluster is a violation of this requirement.
 
 #### Scenario: Controller closes the control socket cleanly, SDK reconnects without panic
 - **GIVEN** the dev compose stack is up with one Controller, one Rust Runner, and Relays steadily streaming
-- **AND** `$MARKET_COMPOSE` names `deploy/docker/dev/docker-compose.yml` in the user's own checkout of the separate `flezha_market` repository — the stack every `docker compose ...` in this scenario selects
+- **AND** `$MARKET_COMPOSE` names `deploy/docker/dev/docker-compose.yml` in the user's own checkout of a separate application that owns that stack — the stack every `docker compose ...` in this scenario selects
 - **AND** the user captures the Runner's PID before the test: `RUNNER_PID=$(docker compose -f "$MARKET_COMPOSE" exec -T market-executor cat /var/run/market-executor.pid)`
 - **WHEN** the user runs `docker compose -f "$MARKET_COMPOSE" restart flezha-controller`
 - **AND** the new Controller process reaches ready
@@ -100,7 +100,7 @@ This requirement is a precondition for the existing "Runner → Controller data 
 - **AND** the Runner's stderr SHALL NOT contain `thread '<unnamed>' panicked` or `Failed to decode message: DecodeError`
 - **AND** within 5 seconds of the new Controller reaching ready, the Kafka topic end-offset for `btc_demo.ohlc.v1` SHALL advance past its pre-restart value (verified via `kafka-get-offsets.sh`)
 
-Note: the `market-executor` container/PID-file name above is owned by the separate `flezha_market` repository and is unchanged by this proposal — see this change's design.md Open Questions.
+Note: the `market-executor` container/PID-file name above is owned by that separate application and is unchanged by this proposal — see this change's design.md Open Questions.
 
 #### Scenario: Decoder receives 0-byte input on socket EOF and returns a clean signal
 - **GIVEN** a unit test in `crates/flz_core/src/command/mod.rs`'s `#[cfg(test)] mod tests`
@@ -197,7 +197,7 @@ The SDK SHALL wait at most 2 s per relay for the ack (with parallelism across re
 - **AND** the AddRelay reissue path SHALL still ship that snapshot to a reconnecting runner — just up to `overwatch_state_snapshot_interval_ms` stale, exactly as `heal-connections-on-restart` ships
 
 #### Scenario: Disabled-snapshot runners still benefit from the shutdown notification
-- **GIVEN** a runner's relay is configured with `snapshot_interval: 0` (periodic snapshots disabled — e.g. flezha_market where Postgres is authoritative)
+- **GIVEN** a runner's relay is configured with `snapshot_interval: 0` (periodic snapshots disabled — e.g. an application whose Postgres is authoritative)
 - **WHEN** the runner shuts down gracefully and emits `RunnerShutdownNotification` for the relay
 - **THEN** the agent's `Overwatch` SHALL still accept the notification and store the binary in `state.snapshot`
 - **AND** the snapshot SHALL be available for the next AddRelay reissue, even though no periodic snapshots were ever taken

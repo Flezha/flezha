@@ -20,6 +20,16 @@ Flezha is pre-1.0 alpha software. Until 1.0, the compatibility promise means tha
 change to a stable interface is named in the changelog, not that no change happens: as the
 README says, interfaces may still change between releases.
 
+Version numbers follow semantic versioning below 1.0. A patch release (0.1.0 to 0.1.1)
+fixes things and changes no interface. A minor release (0.1 to 0.2) may change the on-disk
+format, the protocol between the controller and the SDKs, CLI commands and flags, settings,
+environment variables or metric names; its changelog says what changed and how to upgrade.
+From 1.0 on, a breaking change needs a major release.
+
+Two spellings are deliberate. Packages, repositories and the container image are named
+`flezha` (`@flezha/sdk`, `flezha_sdk`, `flezha/flezha`); the CLI and the shared core crates
+use the short `flz` (`flz`, `flz_core`, `flz_transport`). Neither will be renamed.
+
 ## Three labels
 
 The record uses three labels. They answer different questions and are kept apart on

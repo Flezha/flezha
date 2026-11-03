@@ -139,7 +139,7 @@ It SHALL `FROM flezha/flezha:latest` (the prod runtime), then layer:
 2. The testnet TypeScript app at `test/apps/testnet/`, COPYed into `/flezha/testnet` and built at image-build time (`npm ci --omit=dev && npm run build`) so consumers do NOT rebuild it on container start.
 3. No additional ENTRYPOINT or CMD — both are inherited from `:latest`. The shared agent entrypoint launches the testnet WS server iff `FLEZHA_TESTNET_WS_PORT` is set in the environment.
 
-The image's purpose is to give downstream consumers (e.g. `flezha_market`) a single image they can pull as `:latest-dev` to get the prod runtime plus the testnet driver, without having to maintain their own wrapper Dockerfile.
+The image's purpose is to give downstream consumers a single image they can pull as `:latest-dev` to get the prod runtime plus the testnet driver, without having to maintain their own wrapper Dockerfile.
 
 The image inherits the prod image's HEALTHCHECK (control-socket readiness, see the prod-image entrypoint requirement below).
 

@@ -24,6 +24,12 @@ rules a contribution follows. The pages after it cover the practical side:
   [`REUSE.toml`](https://github.com/flezha/flezha/blob/main/REUSE.toml) maps
   them.
 
+## Reporting a security issue
+
+Please do not open a public issue for a security problem. Use **Report a
+vulnerability** on the affected repository's **Security** tab instead: the
+report reaches only the maintainer, and stays private until a fix is released.
+
 ## A pull request
 
 - **One concern per pull request.** A fix does not carry an unrelated

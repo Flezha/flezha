@@ -1,7 +1,10 @@
 # Flezha Individual Contributor License Agreement
 
 Thank you for your interest in contributing to Flezha (the "Project"),
-maintained by Anuar Alfetahe (the "Maintainer"). This agreement clarifies the
+maintained by Anuar Alfetahe (the "Maintainer"). The Maintainer includes any
+successor to whom the Project is transferred, such as a company, and the
+licenses granted to the Maintainer here pass to that successor. This agreement
+clarifies the
 intellectual property license granted with Contributions from any person or
 entity. It protects you as a contributor as well as the Project and its users;
 it does not change your rights to use your own Contributions for any other

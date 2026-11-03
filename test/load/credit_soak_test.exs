@@ -30,8 +30,8 @@ defmodule Flezha.Load.CreditSoakTest do
   Environment variables:
 
     * `CREDIT_SOAK_DURATION_MIN` — measurement window (default 10).
-    * `CREDIT_SOAK_MOCK_DIR` — checkout of the mock exchange feed from the
-      `flezha_market` repository, with `npm install` run. Required.
+    * `CREDIT_SOAK_MOCK_DIR` — checkout of a mock exchange feed (a `server.js`
+      with `npm install` run). Required.
     * `CREDIT_SOAK_BOOK_RATE` — book updates/s per pair (default 600;
       two pairs + trades ≈ 1220 msg/s offered).
   """
@@ -309,7 +309,7 @@ defmodule Flezha.Load.CreditSoakTest do
     unless File.exists?(Path.join(dir, "server.js")) do
       flunk(
         "no mock exchange feed at #{inspect(dir)}: set CREDIT_SOAK_MOCK_DIR to a checkout " <>
-          "of the mock exchange feed from the flezha_market repository (npm install run)."
+          "of a mock exchange feed with a server.js (npm install run)."
       )
     end
 

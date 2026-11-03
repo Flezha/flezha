@@ -15,7 +15,7 @@ cd "${repo_root}"
 
 # Guard: only ever operate on this project's storage. Identity, not location —
 # a path says where a tree sits, which a clone or a worktree changes; mix.exs
-# says which project it is. Anchored at both ends so `:flezha_market` cannot
+# says which project it is. Anchored at both ends so `:flezha_other` cannot
 # pass, and the trailing comma is optional so reordering the keyword list does
 # not break the guard.
 if ! grep -Eq '^[[:space:]]*app:[[:space:]]*:flezha[[:space:]]*,?[[:space:]]*$' mix.exs 2>/dev/null; then
