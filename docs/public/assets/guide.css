@@ -1,0 +1,91 @@
+/*
+ * A guide step is a one-paragraph blockquote classed `{: .step}`, right above
+ * the command or code it introduces, saying what that block does. The `:has`
+ * on the paragraph's rule outranks ExDoc's padding under a blockquote's last
+ * paragraph. A command's output goes in an `output` fence of its own, drawn as
+ * the lower half of the command's block, so the command's copy button copies
+ * the command alone. ExDoc highlights an `output` fence in the page's
+ * language, so it is left uncoloured.
+ * A table is as wide as its content, up to the page; a wider one scrolls with
+ * a scrollbar styled so it stays visible, since an overlay scrollbar hides.
+ * Chromium ignores `::-webkit-scrollbar` on an element that sets
+ * `scrollbar-color`, so the standard properties are for Firefox alone.
+ */
+
+body.dark .sidebar-projectImage img {
+  content: url("flezha-badger-white.svg");
+}
+.content-inner blockquote:has(> p.step) {
+  margin: var(--baseLineHeight) 0 0.5rem;
+  padding: 0.7rem 1rem;
+  background-color: hsl(250, 68%, 97%);
+  border-left: 4px solid var(--main);
+  border-radius: 0 var(--borderRadius-base) var(--borderRadius-base) 0;
+}
+body.dark .content-inner blockquote:has(> p.step) {
+  background-color: hsl(250, 25%, 15%);
+}
+.content-inner blockquote:has(> p.step) > p.step {
+  position: relative;
+  margin: 0;
+  padding: 0 0 0 1.7rem;
+}
+.content-inner blockquote > p.step::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.15em;
+  width: 1.15rem;
+  height: 1.15rem;
+  background-color: var(--main);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+.content-inner pre:has(+ pre > code.output) {
+  margin-bottom: 0;
+}
+.content-inner pre:has(+ pre > code.output) > code {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.content-inner pre:has(> code.output) {
+  margin-top: -1px;
+}
+.content-inner pre code.output {
+  margin: 0;
+  border-top-style: dashed;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.content-inner pre code.output::before {
+  content: none;
+}
+.content-inner pre code.output span {
+  color: inherit;
+}
+.content-inner pre:has(> code.output) .copy-button {
+  display: none;
+}
+.content-inner table {
+  width: fit-content;
+  max-width: 100%;
+}
+.content-inner table::-webkit-scrollbar {
+  height: 12px;
+}
+.content-inner table::-webkit-scrollbar-track {
+  background: var(--codeScrollBackground);
+  border-radius: 6px;
+}
+.content-inner table::-webkit-scrollbar-thumb {
+  background: var(--codeScrollThumb);
+  border-radius: 6px;
+}
+.content-inner table::-webkit-scrollbar-thumb:hover {
+  background: var(--textBody);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .content-inner table {
+    scrollbar-width: auto;
+    scrollbar-color: var(--codeScrollThumb) var(--codeScrollBackground);
+  }
+}

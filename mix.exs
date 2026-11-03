@@ -37,206 +37,21 @@ defmodule Flezha.MixProject do
   # carry ExDoc tabsets (`<!-- tabs-open -->`), which are inert HTML comments
   # anywhere else, so one file serves both GitHub and this.
   # `mermaid` code fences render as diagrams. GitHub draws them itself; ExDoc
-  # needs the library, injected here so one fence serves both.
-  # Picking a tab picks the same-labelled tab in every tabset on the page and
-  # on later pages. Tabs switch without ExDoc's click, which focuses the tab and
-  # would scroll to it; the scroll correction keeps the clicked tab in place
-  # while tabsets above it change height.
-  # Links that leave the docs open in a new tab.
-  # A table column is no narrower than its average cell, up to 14em, so a prose
-  # column is not squeezed to one word a line; a table that grows too wide scrolls.
+  # needs the library, injected here so one fence serves both. The rest of the
+  # pages' behaviour and look is in `docs/public/assets/guide.js` and `guide.css`.
   defp guide_scripts(:html) do
     """
     <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10.2.3/dist/mermaid.min.js"></script>
-    <script>
-      let flezhaMermaidReady = false;
-
-      window.addEventListener("exdoc:loaded", () => {
-        if (!flezhaMermaidReady) {
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: document.body.className.includes("dark") ? "dark" : "default"
-          });
-          flezhaMermaidReady = true;
-        }
-
-        let id = 0;
-
-        for (const codeEl of document.querySelectorAll("pre code.mermaid")) {
-          const preEl = codeEl.parentElement;
-          const graphEl = document.createElement("div");
-
-          mermaid.render("mermaid-graph-" + id++, codeEl.textContent).then(({svg, bindFunctions}) => {
-            graphEl.innerHTML = svg;
-            bindFunctions?.(graphEl);
-            preEl.insertAdjacentElement("afterend", graphEl);
-            preEl.remove();
-          });
-        }
-      });
-    </script>
-    <script>
-      {
-        const storageKey = "flezha-tab";
-
-        const selectTab = (label, except) => {
-          for (const tab of document.querySelectorAll(".tabset-tab")) {
-            if (tab === except || tab.textContent.trim() !== label) continue;
-
-            for (const other of tab.parentNode.children) {
-              const selected = other === tab;
-              const panel = document.getElementById(other.getAttribute("aria-controls"));
-              other.setAttribute("aria-selected", selected);
-              other.tabIndex = selected ? 0 : -1;
-              panel.hidden = !selected;
-              panel.tabIndex = selected ? 0 : -1;
-            }
-          }
-        };
-
-        const syncTabs = (event) => {
-          const tablist = event.target.closest?.(".tabset-tablist");
-          if (!tablist) return;
-
-          const selected = tablist.querySelector("[aria-selected=true]");
-          const label = selected.textContent.trim();
-          const top = selected.getBoundingClientRect().top;
-          selectTab(label, selected);
-          window.scrollBy(0, selected.getBoundingClientRect().top - top);
-          try { localStorage.setItem(storageKey, label); } catch {}
-        };
-
-        document.addEventListener("click", syncTabs);
-        document.addEventListener("keydown", syncTabs);
-
-        // ExDoc builds the tabsets in its own `exdoc:loaded` listener, which runs after this one.
-        window.addEventListener("exdoc:loaded", () => setTimeout(() => {
-          let label = null;
-          try { label = localStorage.getItem(storageKey); } catch {}
-          if (label) selectTab(label);
-        }));
-      }
-    </script>
-    <script>
-      window.addEventListener("exdoc:loaded", () => {
-        for (const link of document.querySelectorAll("a[href^='http']")) {
-          if (link.host === location.host) continue;
-          link.target = "_blank";
-          link.relList.add("noopener", "noreferrer");
-        }
-      });
-    </script>
-    <script>
-      window.addEventListener("exdoc:loaded", () => {
-        for (const table of document.querySelectorAll(".content-inner table")) {
-          const [head, ...rows] = table.rows;
-
-          for (const [i, cell] of [...head.cells].entries()) {
-            const lengths = rows.map(row => row.cells[i]?.textContent.trim().length ?? 0);
-            const average = lengths.reduce((sum, length) => sum + length, 0) / lengths.length;
-            cell.style.minWidth = `min(14em, ${Math.round(average)}ch)`;
-          }
-        }
-      });
-    </script>
+    <script src="assets/guide.js"></script>
     """
   end
 
   defp guide_scripts(:epub), do: ""
 
-  # A guide step is a one-paragraph blockquote classed `{: .step}`, right above
-  # the command or code it introduces, saying what that block does. The `:has`
-  # on the paragraph's rule outranks ExDoc's padding under a blockquote's last
-  # paragraph. A command's output goes in an `output` fence of its own, drawn as
-  # the lower half of the command's block, so the command's copy button copies
-  # the command alone. ExDoc highlights an `output` fence in the page's
-  # language, so it is left uncoloured.
-  # A table is as wide as its content, up to the page; a wider one scrolls with
-  # a scrollbar styled so it stays visible, since an overlay scrollbar hides.
-  # Chromium ignores `::-webkit-scrollbar` on an element that sets
-  # `scrollbar-color`, so the standard properties are for Firefox alone.
   defp guide_styles(:html) do
     """
     <link rel="icon" type="image/svg+xml" href="assets/flezha-favicon-badger-adaptive.svg" />
-    <style>
-      body.dark .sidebar-projectImage img {
-        content: url("assets/flezha-badger-white.svg");
-      }
-      .content-inner blockquote:has(> p.step) {
-        margin: var(--baseLineHeight) 0 0.5rem;
-        padding: 0.7rem 1rem;
-        background-color: hsl(250, 68%, 97%);
-        border-left: 4px solid var(--main);
-        border-radius: 0 var(--borderRadius-base) var(--borderRadius-base) 0;
-      }
-      body.dark .content-inner blockquote:has(> p.step) {
-        background-color: hsl(250, 25%, 15%);
-      }
-      .content-inner blockquote:has(> p.step) > p.step {
-        position: relative;
-        margin: 0;
-        padding: 0 0 0 1.7rem;
-      }
-      .content-inner blockquote > p.step::before {
-        content: "";
-        position: absolute;
-        left: 0;
-        top: 0.15em;
-        width: 1.15rem;
-        height: 1.15rem;
-        background-color: var(--main);
-        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z'/%3E%3C/svg%3E") no-repeat center / contain;
-      }
-      .content-inner pre:has(+ pre > code.output) {
-        margin-bottom: 0;
-      }
-      .content-inner pre:has(+ pre > code.output) > code {
-        border-bottom-left-radius: 0;
-        border-bottom-right-radius: 0;
-      }
-      .content-inner pre:has(> code.output) {
-        margin-top: -1px;
-      }
-      .content-inner pre code.output {
-        margin: 0;
-        border-top-style: dashed;
-        border-top-left-radius: 0;
-        border-top-right-radius: 0;
-      }
-      .content-inner pre code.output::before {
-        content: none;
-      }
-      .content-inner pre code.output span {
-        color: inherit;
-      }
-      .content-inner pre:has(> code.output) .copy-button {
-        display: none;
-      }
-      .content-inner table {
-        width: fit-content;
-        max-width: 100%;
-      }
-      .content-inner table::-webkit-scrollbar {
-        height: 12px;
-      }
-      .content-inner table::-webkit-scrollbar-track {
-        background: var(--codeScrollBackground);
-        border-radius: 6px;
-      }
-      .content-inner table::-webkit-scrollbar-thumb {
-        background: var(--codeScrollThumb);
-        border-radius: 6px;
-      }
-      .content-inner table::-webkit-scrollbar-thumb:hover {
-        background: var(--textBody);
-      }
-      @supports not selector(::-webkit-scrollbar) {
-        .content-inner table {
-          scrollbar-width: auto;
-          scrollbar-color: var(--codeScrollThumb) var(--codeScrollBackground);
-        }
-      }
-    </style>
+    <link rel="stylesheet" href="assets/guide.css" />
     """
   end
 
