@@ -1,8 +1,13 @@
 # Flezha
 
+[![CI](https://github.com/Flezha/flezha/actions/workflows/elixir.yml/badge.svg?branch=main)](https://github.com/Flezha/flezha/actions/workflows/elixir.yml)
+[![Release](https://img.shields.io/github/v/release/Flezha/flezha)](https://github.com/Flezha/flezha/releases/latest)
+[![Docker](https://img.shields.io/docker/v/flezha/flezha?label=docker&sort=semver)](https://hub.docker.com/r/flezha/flezha)
+[![License](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
+
 A durable runtime for streams, workflows and agents.
 
-> Flezha is pre-1.0 alpha software: interfaces may still change between releases.
+> Flezha 0.1.0 is an early release: interfaces may still change between versions until 1.0.
 
 Code that processes data tends to grow the same scaffolding around it: somewhere
 to keep state, a way to recover after a crash, retries, a way to spread the work

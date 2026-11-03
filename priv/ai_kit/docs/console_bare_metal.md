@@ -8,7 +8,7 @@ release on the same machine, reaching it over the controller's HTTP API on loopb
 >
 > - A controller release running on this machine
 >   ([Deploying a controller](../topics/deploying/deploying_a_controller.md)), version 0.1.0 or
->   later; the 0.1.0-alpha.1 pre-release has no channel for the console.
+>   later.
 > - The HTTP API's plugin package, `flezha_http-0.1.0.fpz`
 >   ([Installing plugins](../topics/plugins/installing_plugins.md#example)).
 > - To build the release from source instead of downloading it: Elixir 1.14 or later with

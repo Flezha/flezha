@@ -65,7 +65,7 @@ application.
 Download the release and unpack it:
 
 ```sh
-$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-0.1.0-linux-x86_64.tar.gz
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-0.1.0-linux-x86_64.tar.gz
 $ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
 ```
 

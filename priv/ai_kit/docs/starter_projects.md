@@ -38,49 +38,49 @@ downloads and unpacks it into a new folder, `flezha-<language>-starter/`:
 ### Java
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-java-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-starter.tar.gz | tar xz
 ```
 
 ### Rust
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-rust-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-starter.tar.gz | tar xz
 ```
 
 ### Node
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-node-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-starter.tar.gz | tar xz
 ```
 
 ### Python
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-python-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-starter.tar.gz | tar xz
 ```
 
 ### Ruby
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-ruby-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-starter.tar.gz | tar xz
 ```
 
 ### PHP
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-php-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-starter.tar.gz | tar xz
 ```
 
 ### Elixir
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-elixir-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-starter.tar.gz | tar xz
 ```
 
 ### Go
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-go-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-starter.tar.gz | tar xz
 ```
 
 <!-- tabs-close -->

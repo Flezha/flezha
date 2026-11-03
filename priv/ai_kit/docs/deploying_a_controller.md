@@ -50,8 +50,8 @@ The three ways give you the same controller:
 Download yours with its checksum file, check it, and unpack it:
 
 ```sh
-$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/flezha-0.1.0-linux-x86_64.tar.gz
-$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0-alpha.1/SHA256SUMS.txt
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-0.1.0-linux-x86_64.tar.gz
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0/SHA256SUMS.txt
 $ sha256sum --check --ignore-missing SHA256SUMS.txt
 $ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
 $ cd flezha

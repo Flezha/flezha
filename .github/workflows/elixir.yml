@@ -11,6 +11,8 @@ name: Elixir
 # `scripts/build-native.sh`; no build artefact is tracked in git.
 
 on:
+  # Also by hand, from the Actions tab or `gh workflow run elixir.yml`.
+  workflow_dispatch:
   pull_request:
     paths:
       - "lib/**"

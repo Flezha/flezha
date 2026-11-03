@@ -16,7 +16,7 @@ compatibility break, announced as one. The relay model, effectively-once deliver
 correction window, the dead-letter queue, cell timers, state persistence and schema
 evolution are all unnamed here, and therefore stable.
 
-Flezha is pre-1.0 alpha software. Until 1.0, the compatibility promise means that every
+Flezha is at 0.1.0, an early release. Until 1.0, the compatibility promise means that every
 change to a stable interface is named in the changelog, not that no change happens: as the
 README says, interfaces may still change between releases.
 
