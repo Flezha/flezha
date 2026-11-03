@@ -106,11 +106,17 @@ defmodule FlezhaTest.OutboxCase do
     })
   end
 
-  # Point the global DLQ store at a per-test tmp dir.
+  # Point the global DLQ store at a per-test dir beside the state root `base`,
+  # never inside it: a directory there reads as a namespace holding the class.
   def redirect_dlq_dir(base) do
+    dir = base <> "_dlq"
     original = Application.get_env(:flezha, :dlq, [])
-    Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, Path.join(base, "dlq")))
-    on_exit(fn -> Application.put_env(:flezha, :dlq, original) end)
+    Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, dir))
+
+    on_exit(fn ->
+      Application.put_env(:flezha, :dlq, original)
+      File.rm_rf(dir)
+    end)
   end
 
   # This test process stands in for the Overwatch: the plugin chain run is what

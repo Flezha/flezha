@@ -798,8 +798,10 @@ defmodule Flezha.State.DurabilityTierTest do
     setup ctx do
       Stub.install()
 
-      dlq_dir = Path.join(ctx.base, "dlq")
+      # Beside the state root, never inside it, where it would read as a namespace.
+      dlq_dir = ctx.base <> "_dlq"
       on_exit(TestHelpers.override_env(:dlq, dir: dlq_dir))
+      on_exit(fn -> File.rm_rf(dlq_dir) end)
 
       auth = AuthTestHelper.setup_auth_stores(prefix: "flz_dur_authz")
       store = start_supervised!({Dlq.Store, name: :"dlq_#{System.unique_integer([:positive])}"})
