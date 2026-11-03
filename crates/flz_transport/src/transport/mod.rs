@@ -18,7 +18,9 @@ use std::net::Shutdown;
 use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::{Mutex, TryLockError};
 use std::time::Duration;
 
 use quic::QuicBidiStream;
