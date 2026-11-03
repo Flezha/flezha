@@ -1,0 +1,59 @@
+name: State diagnostic
+
+# Temporary: the three state tests that fail only on CI runners, run alone and
+# with their suite, beside the runner facts that could explain the difference.
+on:
+  push:
+    branches: [release-0.1.0]
+    paths: [".github/workflows/state-diagnostic.yml"]
+
+permissions:
+  contents: read
+
+env:
+  MIX_ENV: test
+
+jobs:
+  state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Runner facts
+        run: |
+          nproc; free -m; df -hT . /tmp; ulimit -a; mount | grep -E ' / | /tmp '
+          echo "TMPDIR=${TMPDIR:-unset} RUNNER_TEMP=$RUNNER_TEMP"
+
+      - name: Set up Erlang + Elixir
+        uses: ./.github/actions/setup-beam
+
+      - name: Install Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+
+      - name: Compile
+        run: python3 scripts/run_gates.py --run @deps,core-compile-test,core-prep-certs
+
+      - name: The three tests alone
+        continue-on-error: true
+        run: |
+          mix test --trace \
+            test/flezha/state/wal_writer_outbox_test.exs:349 \
+            test/flezha/state/wal_writer_outbox_test.exs:455 \
+            test/flezha/state/durability_tier_test.exs:811
+
+      - name: Their two files with the CI seed
+        continue-on-error: true
+        run: |
+          mix test --trace --seed 426197 --max-cases 4 \
+            test/flezha/state/wal_writer_outbox_test.exs \
+            test/flezha/state/durability_tier_test.exs
+
+      - name: The whole state suite with the CI seed
+        continue-on-error: true
+        run: mix test --seed 426197 --max-cases 4 test/flezha/state
