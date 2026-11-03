@@ -35,6 +35,50 @@ Pushing a `v*` tag, or creating a GitHub release with a new one, runs
 lists what has to be settled before a release, and
 [Maturity](../publishing/maturity.md) what each part of Flezha promises.
 
+## Publishing a release
+
+The release workflow builds and attaches every artifact; uploading them to the
+package registries is done by hand, in this order, because each step needs the
+one before it. Each registry needs its account and token first: crates.io, Hex,
+npm (the `@flezha` organisation), PyPI, RubyGems, Maven Central (the
+`com.flezha` namespace and a GPG key) and Packagist.
+
+1. **Tag the core.** On `main`, `git tag v<version> && git push origin v<version>`,
+   then wait for the workflow to attach the release. Fetch what it attached:
+   `gh release download v<version> -R flezha/flezha -D dist`.
+2. **The Rust crates**, from the core at the tag. Each one needs the ones before
+   it on crates.io:
+   ```sh
+   cargo publish -p flz_transport
+   cargo publish -p flz_core
+   cargo publish -p flz_core_ffi
+   cargo publish -p flezha-macros
+   cargo publish -p flezha_runner
+   ```
+3. **The Elixir SDK.** Copy `dist/checksum-Elixir.Flezha.SDK.Native.exs` into
+   `sdk/elixir`, commit it there, then run `mix hex.publish` in `sdk/elixir`.
+   The package downloads its native library from the core's release.
+4. **The Node SDK.** The five platform packages first, then the package that
+   names them:
+   ```sh
+   for p in dist/flezha-sdk-*-<version>.tgz; do npm publish "$p" --access public; done
+   (cd sdk/node && npm ci && npm run build && npm publish --access public)
+   ```
+5. **The Python SDK:** `twine upload dist/flezha-<version>-*.whl`.
+6. **The Ruby SDK:** `for g in dist/flezha-<version>-*.gem; do gem push "$g"; done`.
+7. **The Java SDK.** Put each `dist/libflz_core_ffi-<platform>.<ext>` into
+   `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/` as
+   `libflz_core_ffi.<ext>`, then run `mvn -P release -DskipTests deploy` in
+   `sdk/java`, with a `central` server holding the Central Portal token in
+   `~/.m2/settings.xml`. The upload waits in the Central Portal: check it there,
+   then publish it.
+8. **Tag every SDK repository** `v<version>`. The tag is the whole release for
+   the Go SDK (its `cmd/flz-native` fetches the core library from the core's
+   release) and for the PHP SDK, whose Composer plugin does the same; submit the
+   PHP repository to Packagist once, the first time.
+9. **The container image:** `scripts/publish-image.sh` on an amd64 and on an
+   arm64 host.
+
 ## Building them yourself
 
 ```sh
