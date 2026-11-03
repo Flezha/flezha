@@ -3,11 +3,13 @@
 [![CI](https://github.com/Flezha/flezha/actions/workflows/elixir.yml/badge.svg?branch=main)](https://github.com/Flezha/flezha/actions/workflows/elixir.yml)
 [![Release](https://img.shields.io/github/v/release/Flezha/flezha)](https://github.com/Flezha/flezha/releases/latest)
 [![Docker](https://img.shields.io/docker/v/flezha/flezha?label=docker&sort=semver)](https://hub.docker.com/r/flezha/flezha)
-[![License](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MPL--2.0%20%2F%20Apache--2.0-blue)](#license)
 
 A durable runtime for streams, workflows and agents.
 
 > Flezha 0.1.0 is an early release: interfaces may still change between versions until 1.0.
+
+![The flz CLI starting a relay, sending to it, plugging in a file writer and listening live](docs/public/assets/flz-cli-demo.svg)
 
 Code that processes data tends to grow the same scaffolding around it: somewhere
 to keep state, a way to recover after a crash, retries, a way to spread the work
@@ -178,7 +180,7 @@ next to it cover [setting up a checkout](docs/public/contributing/setting_up.md)
 | Path | License |
 |---|---|
 | Everything not listed below: the controller (`lib/`), `crates/cli/`, `crates/flz_nif/`, `config/`, `rel/`, `deploy/`, `test/`, `docs/`, `scripts/` | [MPL-2.0](LICENSE) |
-| The SDK side: `sdk/`, `crates/flz_core/`, `crates/flz_core_ffi/`, `crates/flz_transport/`, `crates/protobufs/`; and the example plugin, `test/apps/example_plugin/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
+| The SDK side: `sdk/`, `crates/flz_core/`, `crates/flz_core_ffi/`, `crates/flz_transport/`, `crates/protobufs/`; the example plugin, `test/apps/example_plugin/`; and what is meant to be copied into your own project: the project templates, `priv/ai_kit/templates/`, and the getting-started and tutorial pages, `docs/public/getting_started/` and `docs/public/tutorials/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
 | The plugins that ship with Flezha, `plugins/`: each is its own repository with its own license file | Apache-2.0 |
 
 In short: build on the SDKs, the plugins and the examples freely, and copy
