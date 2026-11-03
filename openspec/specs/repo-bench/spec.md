@@ -108,15 +108,11 @@ The metric `Average time per relay` SHALL be removed. It divides total elapsed t
 - **WHEN** any bench shape completes
 - **THEN** no output line and no report field reports total elapsed time divided by relay count
 
-### Requirement: Every bench run writes a structured report, and CI reads that report
+### Requirement: Every bench run writes a structured report
 
 Every bench run SHALL write a JSON report through one shared writer, carrying the `run`, `system`, `artifacts` and `warnings` blocks of the header plus a `metrics` block holding every measured value, and SHALL print the report path. The destination path SHALL be supplied by the calling task.
 
-The report SHALL be the only machine-readable contract for a bench number. The `bench-regression` CI job SHALL read the recorded throughput from the report's named field rather than matching a line of printed prose, so that the printed rendering can change without breaking a merge-blocking gate.
-
-#### Scenario: CI reads a field, not a sentence
-- **WHEN** the `bench-regression` job runs the regression bench
-- **THEN** it reads the end-to-end throughput from the report's `metrics` block, and no step greps the printed output for a throughput value
+The report SHALL be the only machine-readable contract for a bench number: a tool that reads a bench number SHALL read the report's named field rather than a line of printed prose, so that the printed rendering can change freely.
 
 #### Scenario: A report is written even when the output is redirected
 - **WHEN** a bench is run with its stdout piped to a file

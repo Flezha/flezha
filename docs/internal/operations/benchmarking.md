@@ -3,15 +3,15 @@
 For contributors running and interpreting Flezha benches: the `mix bench`
 harness and its `./scripts/bench.sh` wrapper, the `mix bench.steps`
 steps relay bench, the Rust SDK Criterion microbenches, the controller-side
-microbenches, the recorded floors, the CI jobs that run benches, and how to
-triage a failed `bench-regression` job.
+microbenches, the recorded floors, and how to localise a throughput drop. No
+CI job runs a bench: benches are run by hand.
 
 - Single entry point: `./scripts/bench.sh` (wraps `mix bench`, sets
   `FLEZHA_TRANSPORT`, defaults `MIX_ENV=prod` and
   `FLEZHA_DURABILITY_BACKEND=none`).
 - Independent axes: **runtime** (rust/java/elixir/node/php/python/ruby/go) × **transport**
   (uds/quic/native) × **shape** (regression/cell/dynamic).
-- No CI job fails on an absolute throughput number; see [CI gates](#ci-gates).
+- No CI job runs a bench; see [CI](#ci).
 - Two different kinds of floor live here: the **absolute** reference figures
   under [Recorded floors](#recorded-floors), which are informational, and the
   **measured run-to-run spreads** that decide whether a row can resolve an
@@ -21,7 +21,7 @@ triage a failed `bench-regression` job.
 
 ```sh
 ./scripts/bench.sh                                # rust + uds, 100 relays x 100 msg
-./scripts/bench.sh -n 100 -m 10000                # the CI job's dimensions
+./scripts/bench.sh -n 100 -m 10000                # the reference workload
 ./scripts/bench.sh -r java                        # java SDK
 ./scripts/bench.sh -t quic                        # quic transport
 ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # any combination
@@ -182,9 +182,9 @@ It carries the `run`, `system`,
 `artifacts` and `warnings` blocks plus a `metrics` block with every measured
 value.
 
-**The report is the machine contract.** CI reads its named fields rather than
-matching printed prose, so the rendering above can change without touching a
-CI job: `metrics.throughput_msg_per_sec` (the end-to-end headline) and
+**The report is the machine contract.** A tool reads its named fields rather
+than matching printed prose, so the rendering above can change freely:
+`metrics.throughput_msg_per_sec` (the end-to-end headline) and
 `metrics.receive_window_msg_per_sec` for the regression run,
 `metrics.scaling_ratio` for the cell sweep. Every `mix bench` run also carries
 `metrics.payload_bytes` and `metrics.persisted`; a `--latency` run carries
@@ -201,15 +201,15 @@ classifier is wrong.
 ### `regression` (default)
 
 `-n` relays × 1 tasklet × 1 cell × `-m` msg, factory `do_nothing`,
-end-to-end through controller + NIF + SDK. The `bench-regression` CI job runs
-it at `-n 100 -m 10000` and reports both windows; no rate fails the job.
+end-to-end through controller + NIF + SDK. The reference workload is
+`-n 100 -m 10000`, reported in both windows.
 
 ### `cell` (scaling check, informational)
 
 8 relays × 20K msg against factory `cell_stress` (4 tasklets, 8 cell
 keys, fan-out then fan-in). Sweeps `--pool-sizes` and prints a `scaling` table
 ending with `ratio (max/min)`; the same ratio is the report's
-`metrics.scaling_ratio`, which the informational CI job reads.
+`metrics.scaling_ratio`.
 
 A small worker pool cannot drain this shape's 8× fan-out: on a 4-core box
 `--pool-sizes 1` and `2` stall partway through the drain and the run times out,
@@ -259,7 +259,7 @@ The `elixir` runtime runs all three shapes over UDS and QUIC. Against
 `rust × uds` it is a same-transport, same-core measurement of what the BEAM
 host costs: the native-library hop and the worker pool.
 
-No CI job benches the elixir runtime. Use `-n 100 -m 10000` after
+For the elixir runtime, use `-n 100 -m 10000` after
 pre-building the standalone app; small runs are setup-dominated.
 
 ## Steps relay bench (`mix bench.steps`)
@@ -379,13 +379,10 @@ The dynamic-cell steady-state floor (`steady_state_1k_cells`) is
 **~520K inputs/s** (median ~383 ms for 200K inputs) on the reference host. It
 is a trend signal, not a CI gate.
 
-## CI gates
+## CI
 
-| Workflow                    | Trigger                                                                                                                                                            | What it runs                                                                                                                                                                                                                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bench.yml`                 | PRs touching `sdk/rust/**`, `crates/flz_transport/**`, `crates/flz_nif/**`, `lib/flezha/**`, `lib/mix/tasks/bench**`, `crates/protobufs/**`, `test/apps/rust_runner/**`, the workflow | **`bench-regression`**: `mix bench --runtime rust --shape regression -n 100 -m 10000`; reads `metrics.throughput_msg_per_sec` and `metrics.receive_window_msg_per_sec` from the run's JSON report (not from printed output) and writes both to the job summary, re-emits every preflight warning as a job annotation, and uploads `local_dev/bench/reports/` with the log. No throughput number fails it: it fails only when the bench run fails, writes no report, or writes one with no rate. **`bench-cell-scaling`** (informational, `continue-on-error`): `--shape cell --pool-sizes 1,8`, reads `metrics.scaling_ratio`; GitHub runners do not reliably expose 8 physical cores, so the 4× target is validated on real hardware. |
-| `rust-sdk-perf.yml`         | PRs and `main` pushes touching `sdk/rust/**`, `crates/flz_transport/**`, `Cargo.toml`, `Cargo.lock`                                                                         | Runs the `correctness` bench (any invariant violation fails) and the `dispatch` bench with `--save-baseline`; on PRs compares against the cached `main` baseline and fails if any bench's estimated change exceeds 10%.                                                                      |
-| `rust-sdk-bench-cron.yml`   | Mondays 03:00 UTC, `workflow_dispatch`                                                                                                                              | Non-blocking drift detector: `mix bench -n 100 -m 10000` across rust/java × uds/quic, plus Criterion `dispatch` (`regression_` group only) and `dynamic_cell_steady_state`; posts a step summary.                                                                                             |
+No CI job runs a bench. Shared CI runners are too small and too noisy to
+measure on, so benches run by hand on a known host.
 
 ## Settling a series
 
@@ -417,7 +414,7 @@ Every recorded number, on any instrument:
 | --- | --- | --- | --- |
 | `mix bench.steps --scenario chain --tasks 4 -n 1000 -c 100` | ~4x the plateau, and run 2 is still ~1.4x | first **2** | Six runs of one identical arm on a quiet box: 94.5 / 31.8 / 23.0 / 22.9 / 23.0 / 22.7 steps/s. **316 %** over the six; **1.3 %** over the four plateau samples. An earlier five-run series read 93.2 / 33.3 / 23.1 / 24.2 / 23.1 — the same shape. |
 | `mix bench.extension` | inside the plateau | **none** | Five runs: run 1 within **3.6 %** of the plateau on the four rows above 100 ns. The 60 ns row spreads 16.7 % and resolves nothing. |
-| `./scripts/bench.sh -n 100 -m 10000` (the `bench-regression` workload) | not separated from the noise | first **1** | Five runs: receive window spread **12.1 %**, end-to-end **5.1 %**. |
+| `./scripts/bench.sh -n 100 -m 10000` (the regression workload) | not separated from the noise | first **1** | Five runs: receive window spread **12.1 %**, end-to-end **5.1 %**. |
 
 **Two runs, not one, is what the steps relay measurement establishes.** Run 1 sits
 at 4.1x the plateau and run 2 at 1.4x, so a series that discards only its first
@@ -451,7 +448,7 @@ single-run number as a verdict.
 | `host_loop` (erased) | 4.13 % | guard | unrecorded |
 | whole-system round trip | ~18 % | direction only | 5 s runs within one arm, no settled floor |
 | veneer round trip (node) | 11.89 % | paired rounds only | single-run floor |
-| `bench-regression` receive window / end-to-end | 12.1 % / 5.1 % | see below | 5 runs, 2026-08-30; confirmed 2026-09-03 |
+| regression receive window / end-to-end | 12.1 % / 5.1 % | see below | 5 runs, 2026-08-30; confirmed 2026-09-03 |
 
 **The two gate floors hold on a cold box and not on a working one.** Both were
 taken on an idle machine, and they did not survive a session that had just run
@@ -507,7 +504,7 @@ default dimensions.**
 
 ### Two ways an A/B harness reports its own shape as an effect
 
-Both were measured on `bench-regression` while comparing two controller trees, and
+Both were measured on the regression workload while comparing two controller trees, and
 both produced a *consistent, statistically strong* reading of an effect that could
 not exist.
 
@@ -621,24 +618,9 @@ the image the pin costs nothing, and on a newer ERTS it returns the difference.
 The same measurement on the CLI's node, which the release sizes separately, is
 64.9 MB down to 49.6 MB with a startup 11% shorter (5 runs each).
 
-## Triage when `bench-regression` fails
+## Localising a throughput drop
 
-No throughput number fails the job. It fails in three ways, and the uploaded
-artifact (`bench-regression.log` and `local_dev/bench/reports/`) carries the evidence for
-each:
-
-1. **The bench run failed.** A build that failed, a runner that never
-   connected, every relay start refused, or `Timeout waiting for messages`.
-   The reason is in `bench-regression.log`, and the preflight warnings at the
-   top of the run say what was unusual about the host.
-2. **No report was written.** The step's `ls` of `local_dev/bench/reports/` fails: the
-   run ended before it wrote its report. Read the log for why.
-3. **The report carries no rate.** The job names the report and prints the last
-   50 lines of the log.
-
-### Localising a throughput drop
-
-A rate that moved fails nothing, but when the job summary shows one drop:
+When a run shows a drop:
 
 1. **Transport / NIF changes?** If the PR touches `crates/flz_transport/`, `crates/flz_nif/`,
    `crates/flz_core/src/command/streams_connect.rs` or the framing path, compare
@@ -649,10 +631,10 @@ A rate that moved fails nothing, but when the job summary shows one drop:
    `crates/flz_core/src/cell.rs`, run `throughput_single_cell` against
    `SINGLE_CELL_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot
    path itself.
-3. **Runner drift?** Rerun the job on `main`. If `main` reads the same on the
-   same runner image, the runner pool shifted, not the tree.
-4. **Cell ratio dropped?** If `bench-cell-scaling`'s `ratio (max/min)` fell
-   from ~4× to below 2× on the same PR, the regression is in the cell
+3. **Host drift?** Run the same bench on `main` on the same host. If `main`
+   reads the same, the host shifted, not the tree.
+4. **Cell ratio dropped?** If the `cell` shape's `ratio (max/min)` fell
+   from ~4× to below 2× with the change, the regression is in the cell
    fan-out, not single-cell dispatch.
 
 ## Round-trip bench

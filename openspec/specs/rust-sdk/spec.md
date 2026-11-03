@@ -698,29 +698,18 @@ compile-time edge refusals and their `tests/ui` fixtures SHALL stay as they are.
 
 ### Requirement: Dispatch Throughput Reported on Reference Workload
 
-The regression bench (`100 relays × 1 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default worker-pool size; see `relay-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it, and no CI job fails because a rate is low.
+The regression bench (`100 relays × 1 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default worker-pool size; see `relay-architecture/design.md` Decision 16), invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, SHALL report the Rust SDK's message-processing throughput and SHALL NOT be held to an absolute throughput number: no floor is recorded for it.
 
 The bench SHALL report the **end-to-end** window (first input dispatched to last response received) as its headline throughput and the **receive** window (send loop returning to last response received) beside it, and SHALL name the window on every rate it reports. The two are not interchangeable, since they differ by the send window, and a figure quoted without its window is not attributable. Both SHALL be written to the run's structured report, as `metrics.throughput_msg_per_sec` and `metrics.receive_window_msg_per_sec`.
-
-The `bench-regression` GitHub Actions job SHALL run that bench, SHALL read both rates from the run's structured report rather than from printed prose, and SHALL report both in its output. It SHALL fail when the bench run fails, writes no report, or writes a report missing either rate, and SHALL NOT fail on the value of either rate.
 
 #### Scenario: Reference bench reports both windows
 - **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime rust --shape regression -n 100 -m 10000`
 - **THEN** the run's structured report SHALL carry the end-to-end rate as `metrics.throughput_msg_per_sec` and the receive-window rate as `metrics.receive_window_msg_per_sec`
 - **AND** the run's printed output SHALL lead with the end-to-end throughput, each rate naming its window
 
-#### Scenario: A low rate does not fail the job
-- **WHEN** a PR's `bench-regression` job completes a bench run whose report carries both rates, however low they are
-- **THEN** the job SHALL pass and SHALL report both rates, each naming its window, in its output
-
-#### Scenario: A run with no rate fails the job
-- **WHEN** a PR's `bench-regression` job runs a bench that exits non-zero, writes no report, or writes a report missing either rate
-- **THEN** the job SHALL fail
-
 #### Scenario: Cell-stress bench scales with worker pool size
 - **WHEN** the cell-stress bench (`8 relays × 4 tasklets × 8 cells × 20K msg/relay`, fan-out per input to all 8 cells of the entry tasklet; invoked via `mix bench --shape cell --pool-sizes 1,8`) is run on an 8-core host
 - **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that cell-mode dispatch is not the bottleneck
-- **AND** the `bench-cell-scaling` CI job SHALL read the measured ratio from the run's structured report and report it to the PR check output without blocking the merge (informational gate)
 
 ### Requirement: `FlezhaError` SHALL expose the error model's fields
 

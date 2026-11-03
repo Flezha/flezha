@@ -196,9 +196,8 @@ the throughput floor (in messages/second) measured against the v1
 implementation at merge time on the regression bench (`100 relays × 1
 tasklet × 1 cell × 10K msg`, no-op Tasklet, UDS transport, default
 worker-pool size; see `relay-mvp-java/design.md` Decision 7) invoked via
-`mix bench --runtime java --shape regression -n 100 -m 10000`. The
-bench-regression-java CI job is informational in v1; the literal floor value
-is recorded in this requirement once `mix bench --runtime java` has been
+`mix bench --runtime java --shape regression -n 100 -m 10000`. The literal
+floor value is recorded in this requirement once `mix bench --runtime java` has been
 measured 3× on the reference host (median, rounded down to a clean number) —
 until then the recorded floor is "TBD pending v1 measurement".
 
