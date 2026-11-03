@@ -14,7 +14,16 @@ fn main() {
     // from the `ruby` on PATH. Gated so a build without the feature never
     // looks for an interpreter.
     #[cfg(feature = "ruby")]
-    rb_sys_env::activate().expect("rb-sys could not read the Ruby on PATH");
+    {
+        rb_sys_env::activate().expect("rb-sys could not read the Ruby on PATH");
+        // This crate's own `cdylib` references Ruby's symbols, which macOS
+        // leaves to the interpreter only under dynamic lookup. rb-sys adds that
+        // by the OS its build script runs on, so a macOS gem cross-built on
+        // Linux would link without it; the target decides here.
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            println!("cargo:rustc-cdylib-link-arg=-Wl,-undefined,dynamic_lookup");
+        }
+    }
 
     // pyo3 derives `Py_GIL_DISABLED`, `Py_3_13` and the rest from the
     // interpreter it is building against, and the veneer reads the first of
