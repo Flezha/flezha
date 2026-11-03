@@ -112,7 +112,7 @@ $ docker run -d --name flezha-controller \
   flezha/flezha:0.1.0
 ```
 
-The image is amd64 only for now. One volume is enough: every durable tree the
+The image runs on amd64 and arm64. One volume is enough: every durable tree the
 controller owns (state, authorization, plugins, schedules, the hub registry,
 the dead-letter queue, logs and the socket directory) lives under
 `/flezha/storage/app`. Mount it, or the controller starts cold after every
