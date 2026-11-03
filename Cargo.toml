@@ -16,10 +16,11 @@ members = [
 ]
 resolver = "2"
 
-# The Rust SDK and the Elixir SDK's native library take the core from its git
-# tag, which is what their own repositories build against. Here the same source resolves to the crates in this tree, so a
-# core change is seen by the SDK at once and nothing is fetched.
-[patch."https://github.com/flezha/flezha"]
+# The Rust SDK and the Elixir SDK's native library take the core crates from
+# crates.io, which is what their own repositories build against. Here the same
+# versions resolve to the crates in this tree, so a core change is seen by the
+# SDK at once and nothing is fetched, offline builds such as trybuild's included.
+[patch.crates-io]
 flz_core = { path = "crates/flz_core" }
 flz_core_ffi = { path = "crates/flz_core_ffi" }
 flz_transport = { path = "crates/flz_transport" }
