@@ -573,12 +573,7 @@ defmodule Flezha.MixProject do
       {:elixir_runner, path: "sdk/elixir/test_app", runtime: false},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"},
-      # Pinned to the dev branch until 0.7.1 is published: 0.7.0 ignores
-      # `cluster_settle_ms` without a word and restarts a replayed row with no
-      # metadata. A path dep could not reach the release build, which runs in a
-      # container that mounts no sibling checkout, so a release silently shipped
-      # 0.7.0. Back to `~> 0.7.0` once the release is on hex.
-      {:process_hub, github: "alfetahe/process-hub", branch: "dev"},
+      {:process_hub, "~> 0.8.0"},
       # process_hub declares elector `runtime: false`, which keeps it out of
       # every release. Declared here so the namespace hubs' leader election
       # reaches the assembled release.
