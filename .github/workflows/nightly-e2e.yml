@@ -118,9 +118,19 @@ jobs:
         if: matrix.runtime == 'java'
         uses: ./.github/actions/setup-java
 
+      # Every runtime: the testnet bundle the system cases connect to is built
+      # with Node.
       - name: Set up Node
-        if: matrix.runtime == 'node'
         uses: ./.github/actions/setup-node
+        with:
+          deps-dir: test/apps/testnet
+
+      # The Java build refreshes the third-party notices its jar carries.
+      - name: Install cargo-about
+        if: matrix.runtime == 'java'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
 
       - name: Set up Ruby
         if: matrix.runtime == 'ruby'
@@ -145,16 +155,22 @@ jobs:
         if: matrix.runtime == 'ruby'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
 
+      # The layout cases run the `flz` CLI.
+      - name: Build the flz CLI
+        run: cargo build --quiet -p flz
+
       - name: The system and multi-node tiers under this runtime
         # The third-party dependencies, the warnings-as-errors compile and the
-        # reference runner every case boots, then the rows of `@e2e-<runtime>`
+        # reference runner every case boots, what the system cases need beside
+        # it (the testnet bundle, the Elixir runner and the QUIC certificates),
+        # then the rows of `@e2e-<runtime>`
         # in scripts/gate_rows.py (the runtime's runner built by its manifest,
         # the `:system` files in shards of six, on rust the plugin package
         # release test and on java the cross-SDK interop scenario) and the
         # multi-node tier.
         run: |
           python3 scripts/run_gates.py \
-            --run @deps,core-compile,core-prep-runner,@e2e-${{ matrix.runtime }},e2e-multi-node
+            --run @deps,core-compile,core-testnet,core-prep-runner,core-prep-elixir-deps,core-prep-elixir-deps-compile-dev,core-prep-elixir,core-prep-certs,@e2e-${{ matrix.runtime }},e2e-multi-node
 
       - name: Upload the conformance report
         if: always()
