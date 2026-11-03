@@ -384,6 +384,9 @@ PY
     bin_ext="${TRIPLE_TO_BIN_EXT[${t}]}"
     stage_asset "${NATIVE_OUT}/${dir}/libflz_core_ffi.${ext}" \
                 "$(release_asset_name "${dir}" "${ext}")"
+    if go_static_triple "${t}"; then
+      stage_asset "${NATIVE_OUT}/${dir}/libflz_core_ffi.a" "$(release_asset_name "${dir}" a)"
+    fi
     stage_asset "${TOOLS_OUT}/${dir}/flz-fake-controller${bin_ext}" \
                 "$(release_binary_name "${dir}" "${bin_ext}")"
     gem="flezha-${RELEASE_VERSION}-${TRIPLE_TO_GEM_PLATFORM[${t}]}.gem"
@@ -476,6 +479,10 @@ for t in "${ALL_TRIPLES[@]}"; do
   cargo_for_triple "${t}" -p flz_core_ffi --features jni
   stage_built "${t}" "${TRIPLE_TO_PREFIX[${t}]}flz_core_ffi.${TRIPLE_TO_EXT[${t}]}" \
               "${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}/libflz_core_ffi.${TRIPLE_TO_EXT[${t}]}"
+  # The Go SDK links the static library through cgo, on Linux and macOS.
+  if go_static_triple "${t}"; then
+    stage_built "${t}" "libflz_core_ffi.a" "${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}/libflz_core_ffi.a"
+  fi
 done
 
 # ---------------------------------------------------------------------------

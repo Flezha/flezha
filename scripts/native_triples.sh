@@ -69,6 +69,12 @@ release_asset_name() {
   echo "libflz_core_ffi-${dir}.${ext}"
 }
 
+# Whether a release publishes `t`'s static library for the Go SDK, whose cgo
+# directives cover Linux and macOS (`sdk/go/cmd/flz-native` fetches it).
+go_static_triple() {
+  [[ "$1" != *windows* ]]
+}
+
 # The published name of one triple's fake controller. An SDK repository's CI
 # fetches it by this name.
 release_binary_name() {
