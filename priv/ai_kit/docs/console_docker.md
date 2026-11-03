@@ -10,25 +10,30 @@ The console reaches the controller over its HTTP API with a client certificate a
 > - A checkout of the Flezha repository, for `deploy/dist-tls/make-certs.sh`.
 > - The HTTP API's plugin package, `flezha_http-0.1.0.fpz`, built as
 >   [Installing plugins](../topics/plugins/installing_plugins.md#example) shows.
-> - The console's image. Until it is published, build it from the console's repository, with
->   the stylebook checkout beside it, as below.
+> - The console's image, `flezha/flezha-console:0.1.0` on Docker Hub, for amd64 and arm64.
 
-## Build the image
+## The image
 
-> Clone the console and the stylebook side by side, and build the image from the console's
-> folder.
+> Pull the console's image.
 > {: .step}
 
 ```sh
-$ git clone https://github.com/flezha/flezha_console.git
-$ git clone https://github.com/flezha/flezha_stylebook.git
-$ cd flezha_console
-$ docker build -f deploy/Dockerfile --build-context stylebook=../flezha_stylebook -t flezha-console:0.1.0 .
+$ docker pull flezha/flezha-console:0.1.0
 ```
 
 The image holds the console as a release. On every start it runs its migrations, makes the
 account in `FLEZHA_CONSOLE_ADMIN_EMAIL` exist with the password in `FLEZHA_CONSOLE_ADMIN_PASSWORD`,
 and serves on port 4000.
+
+To build the image yourself, clone the console and the stylebook side by side and build it
+from the console's folder:
+
+```sh
+$ git clone https://github.com/flezha/flezha_console.git
+$ git clone https://github.com/flezha/flezha_stylebook.git
+$ cd flezha_console
+$ docker build -f deploy/Dockerfile --build-context stylebook=../flezha_stylebook -t flezha/flezha-console:0.1.0 .
+```
 
 ## The channel's certificates
 
@@ -81,7 +86,7 @@ services:
       - db_data:/var/lib/postgresql/data
 
   console:
-    image: flezha-console:0.1.0
+    image: flezha/flezha-console:0.1.0
     depends_on:
       db: { condition: service_healthy }
       controller: { condition: service_healthy }
