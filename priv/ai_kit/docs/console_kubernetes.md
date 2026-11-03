@@ -12,7 +12,7 @@ so a controller pod that is replaced under a new address is found again.
 >   HTTP API's package `flezha_http` in their `FLEZHA_PLUGINS`
 >   ([Plugins in the Kubernetes README](https://github.com/flezha/flezha/blob/main/deploy/kubernetes/README.md#plugins)).
 > - A checkout of the Flezha repository, for `deploy/dist-tls/make-certs.sh`, and `openssl`.
-> - The cluster can pull `flezha/flezha-console:0.1.0` from Docker Hub. To run an image you
+> - The cluster can pull `flezha/flezha_console:0.1.0` from Docker Hub. To run an image you
 >   built yourself ([Docker](console_docker.md#the-image) shows how), import it into k3s, or
 >   push it to your registry and change `image:` in the manifest.
 
@@ -251,7 +251,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: console
-          image: flezha/flezha-console:0.1.0
+          image: flezha/flezha_console:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -10,7 +10,7 @@ The console reaches the controller over its HTTP API with a client certificate a
 > - A checkout of the Flezha repository, for `deploy/dist-tls/make-certs.sh`.
 > - The HTTP API's plugin package, `flezha_http-0.1.0.fpz`, built as
 >   [Installing plugins](../topics/plugins/installing_plugins.md#example) shows.
-> - The console's image, `flezha/flezha-console:0.1.0` on Docker Hub, for amd64 and arm64.
+> - The console's image, `flezha/flezha_console:0.1.0` on Docker Hub, for amd64 and arm64.
 
 ## The image
 
@@ -18,7 +18,7 @@ The console reaches the controller over its HTTP API with a client certificate a
 > {: .step}
 
 ```sh
-$ docker pull flezha/flezha-console:0.1.0
+$ docker pull flezha/flezha_console:0.1.0
 ```
 
 The image holds the console as a release. On every start it runs its migrations, makes the
@@ -32,7 +32,7 @@ from the console's folder:
 $ git clone https://github.com/flezha/flezha_console.git
 $ git clone https://github.com/flezha/flezha_stylebook.git
 $ cd flezha_console
-$ docker build -f deploy/Dockerfile --build-context stylebook=../flezha_stylebook -t flezha/flezha-console:0.1.0 .
+$ docker build -f deploy/Dockerfile --build-context stylebook=../flezha_stylebook -t flezha/flezha_console:0.1.0 .
 ```
 
 ## The channel's certificates
@@ -86,7 +86,7 @@ services:
       - db_data:/var/lib/postgresql/data
 
   console:
-    image: flezha/flezha-console:0.1.0
+    image: flezha/flezha_console:0.1.0
     depends_on:
       db: { condition: service_healthy }
       controller: { condition: service_healthy }
