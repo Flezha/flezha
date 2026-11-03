@@ -39,6 +39,10 @@ jobs:
       - name: Compile
         run: python3 scripts/run_gates.py --run @deps,core-compile-test,core-prep-certs
 
+      - name: The park re-drive, step by step
+        continue-on-error: true
+        run: mix test test/diag/state_diag_test.exs
+
       - name: The three tests alone
         continue-on-error: true
         run: |
