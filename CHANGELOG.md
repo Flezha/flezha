@@ -20,6 +20,9 @@
 - A PHP runner on a PHP built with Zend signal handling now drains and ships its relays' final
   state on SIGTERM or SIGINT, where it used to end at once; a `pcntl` handler the application
   set still runs.
+- A Node runner with worker threads (`FLEZHA_NODE_WORKERS`) no longer hands a relay started
+  again under the same id the Cell state of the instance it just stopped: every worker now
+  drops the stopped relay's Cells, not only one.
 
 ## 0.1.0 (2026-11-03)
 

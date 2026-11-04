@@ -4,14 +4,24 @@
 //! nothing handed out for what left is still running.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::cell::CellSlot;
-use crate::poll_core::{CommandReply, EnginePayload};
+use crate::poll_core::{CommandReply, EnginePayload, PollCore};
 use crate::relay::instance::RelayInstance;
 use crate::schema;
 use crate::util::LockRecover;
+
+/// Told of every relay leave as it is submitted, with its target and class:
+/// a host that keeps cells on several loops of its own reaches the loops the
+/// leave itself does not. First install wins.
+static RELAY_LEAVE_HOOK: OnceLock<fn(&schema::CellRef, &'static str)> = OnceLock::new();
+
+/// Install the hook every relay leave is told to as it is submitted.
+pub fn install_relay_leave_hook(hook: fn(&schema::CellRef, &'static str)) {
+    let _ = RELAY_LEAVE_HOOK.set(hook);
+}
 
 /// Relay leaves the host has not answered yet, by relay id.
 static PENDING: LazyLock<Mutex<HashMap<String, Arc<PendingLeave>>>> =
@@ -153,8 +163,7 @@ pub fn relay_left(instance: &RelayInstance) {
         })
         .collect();
     if running.is_empty() {
-        core.submit_direct(leave);
-        return;
+        return submit(core, leave);
     }
     // Unspawned, the leave is dropped: its reply reports it refused and
     // releases any start held behind it.
@@ -164,8 +173,23 @@ pub fn relay_left(instance: &RelayInstance) {
             for slot in &running {
                 core.with_cell_exclusive(slot, || ());
             }
-            core.submit_direct(leave);
+            submit(core, leave);
         });
+}
+
+/// Submit a relay's leave once nothing handed out for it still runs, the
+/// hook told first, so what it hands the host is queued ahead of anything
+/// handed out once the leave is answered.
+fn submit(core: &PollCore, leave: EnginePayload) {
+    if let Some(hook) = RELAY_LEAVE_HOOK.get() {
+        if let EnginePayload::Leave {
+            target, factory, ..
+        } = &leave
+        {
+            hook(target, factory);
+        }
+    }
+    core.submit_direct(leave);
 }
 
 /// A refused leave is only reported: the host may still hold the state.

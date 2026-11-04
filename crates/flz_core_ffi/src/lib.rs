@@ -194,6 +194,23 @@ unsafe fn hand_out(bytes: Vec<u8>, buf_out: *mut *mut u8, len_out: *mut usize) {
     std::mem::forget(bytes);
 }
 
+impl FlzContext {
+    /// Hold an activation no poll handed out, as outstanding until the host
+    /// answers it: a host's own copy of a leave the core already submitted.
+    #[cfg(feature = "napi")]
+    pub(crate) fn hold(&self, activation: EngineActivation) {
+        let outstanding = Outstanding {
+            activation,
+            spawns: Vec::new(),
+            positions: HashMap::new(),
+            effects: Vec::new(),
+            part_sequences: HashMap::new(),
+        };
+        self.outstanding
+            .insert(outstanding.activation.token, outstanding);
+    }
+}
+
 impl Outstanding {
     /// The effect running in `item`, which no longer is.
     fn take_effect(&mut self, item: u32) -> Option<Running> {

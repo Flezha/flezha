@@ -564,6 +564,10 @@ Exclusivity makes either selection safe for concurrency; only one of them is saf
 A cell that carries no key is still a cell: a single-cell tasklet holds state exactly as a
 keyed one does, and an absent key SHALL NOT be read as an absent cell.
 
+A whole-relay leave names every cell of its relay, which sit on whichever loops their keys
+selected, so it SHALL reach every loop before any activation handed out after it, and the core
+SHALL be answered once.
+
 #### Scenario: A cell's activations reach the loop holding its state
 - **WHEN** a cell's restore fold has run on one dispatch loop under a multi-loop configuration
 - **THEN** its later activations SHALL be dispatched to that same loop
@@ -572,6 +576,11 @@ keyed one does, and an absent key SHALL NOT be read as an absent cell.
 - **WHEN** successive activations reach a tasklet that declares no keys under a multi-loop
   configuration
 - **THEN** they SHALL all be dispatched to the loop holding that tasklet's one cell
+
+#### Scenario: A relay started again after a stop starts its cells from initial state
+- **WHEN** a relay whose cells sit on several loops is stopped and started again under its id
+- **THEN** every loop SHALL have dropped the stopped relay's cells before the new start's first
+  activation reaches it
 
 #### Scenario: The tiers share one dispatch path
 - **WHEN** the same handler module is run under the single-loop and multi-loop configurations

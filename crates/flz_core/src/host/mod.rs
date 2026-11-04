@@ -51,7 +51,9 @@ pub use decl::{
 pub use handout::to_schema;
 pub use issue::{render_issues, TopologyIssue};
 pub(crate) use leave::{begin_leave, end_leave};
-pub use leave::{cell_left_locked, pending_leave, relay_left, PendingLeave};
+pub use leave::{
+    cell_left_locked, install_relay_leave_hook, pending_leave, relay_left, PendingLeave,
+};
 pub(crate) use prepare::Crossed;
 pub use prepare::{
     deferred_end_replay_slice, prepare_wants, stage_prepare, HostPrepareState, PrepareCrossing,

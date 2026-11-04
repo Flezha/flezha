@@ -17,10 +17,11 @@
 
 mod pool;
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use flz_core::poll_core::{CommandReply, EngineActivation, EnginePayload};
 use flz_core::poll_pool::{self, Governor};
 use flz_core::schema;
 use flz_core::util::LockRecover;
@@ -247,6 +248,74 @@ fn hand_off(token: u64, activation: schema::Activation) -> bool {
     false
 }
 
+/// Marks the token of a whole-relay leave's copy. The core numbers its
+/// activations from 1 upward and never reaches this bit.
+const LEAVE_COPY: u64 = 1 << 63;
+static NEXT_COPY: AtomicU64 = AtomicU64::new(1);
+
+/// The loops a whole-relay leave's copies go to: every loop but `home`, the
+/// one the leave itself reaches.
+fn copy_loops(home: usize, loops: usize) -> impl Iterator<Item = usize> {
+    (0..loops).filter(move |index| *index != home)
+}
+
+/// Hand a copy of a whole-relay leave to every loop the leave itself does
+/// not reach: each holds the cells of the relay its keys picked. Run as the
+/// core submits the leave, so every copy is queued ahead of anything handed
+/// out once the leave is answered.
+fn hand_leave_copies(target: &schema::CellRef, factory: &'static str) {
+    let Ok(ctx) = context() else { return };
+    // SAFETY: a context the glue answers is live until the host stops.
+    let ctx = unsafe { &*ctx.get() };
+    let live = targets();
+    let ids: Vec<u32> = live.iter().map(|t| t.id).collect();
+    leave_copies(ctx, target, factory, &ids, |index, copy| {
+        live[index]
+            .call
+            .call(copy, ThreadsafeFunctionCallMode::NonBlocking)
+            == Status::Ok
+    });
+}
+
+/// [`hand_leave_copies`] over the loops `ids`, `deliver` handing loop
+/// `index` its copy. A copy is held as an outstanding leave whose answer goes
+/// nowhere, so the core is answered once, by the original. No loop, as once
+/// the host stopped, holds nothing to drop.
+fn leave_copies(
+    ctx: &crate::FlzContext,
+    target: &schema::CellRef,
+    factory: &'static str,
+    ids: &[u32],
+    mut deliver: impl FnMut(usize, schema::Activation) -> bool,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    let leave = |token| EngineActivation {
+        token,
+        payload: EnginePayload::Leave {
+            target: target.clone(),
+            factory,
+            reply: CommandReply::new(|_| ()),
+        },
+    };
+    let shape = flz_core::host::to_schema(&leave(0));
+    for index in copy_loops(pick_loop(&shape, ids.len()), ids.len()) {
+        let act = leave(LEAVE_COPY | NEXT_COPY.fetch_add(1, Ordering::Relaxed));
+        let token = act.token;
+        let copy = schema::Activation {
+            token,
+            ..shape.clone()
+        };
+        ctx.hold(act);
+        held().insert(token, ids[index]);
+        if !deliver(index, copy) {
+            held().remove(&token);
+            ctx.outstanding.remove(&token);
+        }
+    }
+}
+
 /// One fetcher turn: `None` ends the thread, else whether the poll timed out.
 fn fetch_turn(ctx: CtxPtr) -> Option<bool> {
     match veneer::poll(ctx, poll_pool::POLL_TIMEOUT.as_millis() as u64) {
@@ -324,6 +393,7 @@ pub fn start_host(fetchers: Option<u32>) -> Result<()> {
             "the native host is already running",
         ));
     }
+    flz_core::host::install_relay_leave_hook(hand_leave_copies);
     let base = fetchers.filter(|n| *n > 0).unwrap_or(DEFAULT_FETCHERS);
     let governor = Governor::from_env(base as usize);
     if let Some(previous) = GOVERNOR.lock_recover().replace(Arc::clone(&governor)) {
@@ -623,5 +693,90 @@ mod tests {
             .map(|p| pick_loop(&activation("op", p, None), 4))
             .collect();
         assert!(others.len() > 1, "every unkeyed tasklet landed on one loop");
+    }
+
+    /// Copies [`four_loops`] handed out, by loop.
+    static DELIVERED: Mutex<Vec<(usize, schema::Activation)>> = Mutex::new(Vec::new());
+
+    /// The relay leave hook over four loops, as the host installs it.
+    fn four_loops(target: &schema::CellRef, factory: &'static str) {
+        let ctx = context().expect("a context");
+        // SAFETY: the test's context stays live until it ends.
+        let ctx = unsafe { &*ctx.get() };
+        leave_copies(ctx, target, factory, &[1, 2, 3, 4], |index, copy| {
+            DELIVERED.lock_recover().push((index, copy));
+            true
+        });
+    }
+
+    /// A whole-relay leave names no cell, yet each cell of the relay sits on
+    /// the loop its key picked. Stopping the relay reaches every loop, the
+    /// original's and a copy on each other, and the core is answered once,
+    /// by the original: a copy's answer, or its abandon, goes nowhere.
+    #[test]
+    fn a_stopped_relay_leaves_every_loop_and_is_answered_once() {
+        crate::napi_glue::context_new(flz_core::SCHEMA_VERSION).expect("a context");
+        let ctx = context().expect("a context");
+        flz_core::host::install_relay_leave_hook(four_loops);
+        let (id, relay) = (format!("napi_leave_{}", std::process::id()), "napi-leave-1");
+        let json = format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"sdk_version":"0.1.0","durable":false,"run":"flow",
+                 "channels":[{{"name":"in","kind":"entry","chains":[[{{"link":"key"}},{{"link":"into","tasklet":0}}]]}}],
+                 "tasklets":[{{"name":"p0","cells_for_overridden":true}}]}}"#
+        );
+        flz_core::host::register_host_class_json(json.as_bytes()).expect("class registers");
+        let node = flz_core::runner::RunnerNode::new("test-ns".to_string());
+        let partition = flz_core::relay::instance::KeyGroupRange::UNPARTITIONED;
+        node.start_relay(id, relay.to_string(), partition, Default::default())
+            .expect("the relay starts");
+
+        assert!(node.stop_relay(relay));
+        let copies = std::mem::take(&mut *DELIVERED.lock_recover());
+        let Ok(Polled::Activation(original)) = veneer::poll(ctx, 10_000) else {
+            panic!("the relay's leave is handed out");
+        };
+        assert_eq!(original.target.relay, relay);
+        let mut reached: Vec<usize> = copies.iter().map(|(index, _)| *index).collect();
+        reached.push(pick_loop(&original, 4));
+        reached.sort_unstable();
+        assert_eq!(
+            reached,
+            [0, 1, 2, 3],
+            "a loop keeps the stopped relay's cells"
+        );
+
+        let answer = |token| schema::ActivationResult {
+            token,
+            outcome: schema::ActivationOutcome::StateApplied,
+        };
+        let (abandoned, completed) = copies.split_first().expect("copies");
+        veneer::abandon(ctx, abandoned.1.token).expect("a copy abandons");
+        for (_, copy) in completed {
+            veneer::complete(ctx, &answer(copy.token)).expect("a copy completes");
+        }
+        assert!(
+            flz_core::host::pending_leave(relay).is_some(),
+            "a copy answered the core"
+        );
+        veneer::complete(ctx, &answer(original.token)).expect("the leave completes");
+        assert!(flz_core::host::pending_leave(relay).is_none());
+        crate::napi_glue::context_free();
+    }
+
+    /// Once the host stopped no loop is left, and a leave submitted then
+    /// has nothing to reach.
+    #[test]
+    fn a_leave_with_no_loop_registered_hands_out_no_copy() {
+        let ctx = crate::veneer::context_new(flz_core::SCHEMA_VERSION).expect("a context");
+        let target = schema::CellRef {
+            relay: "op".to_string(),
+            tasklet: 0,
+            cell_key: None,
+        };
+        // SAFETY: freed below, after its last use.
+        leave_copies(unsafe { &*ctx }, &target, "f", &[], |_, _| {
+            panic!("no loop to deliver to")
+        });
+        crate::veneer::context_free(CtxPtr::of(ctx));
     }
 }
