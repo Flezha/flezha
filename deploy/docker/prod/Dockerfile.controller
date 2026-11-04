@@ -185,7 +185,8 @@ RUN mkdir -p /flezha/storage/app/state \
              /flezha/storage/app/process_hub \
     && chown -R flezha:flezha /flezha
 
-USER flezha
+# No USER: the entrypoint starts as root only to fix the ownership of bind
+# mounts Docker created, then runs the controller as flezha.
 
 # Readiness = the controller's own verdict, evaluated once. A bound control
 # socket is not it: the socket appears before any hub has replayed anything.

@@ -27,6 +27,19 @@ SOCKET_DIR="${FLEZHA_SOCKET_FILES_PATH:-/flezha/storage/app/sockets}"
 READY_WAIT_TIMEOUT_S="${FLEZHA_RESTORE_WAIT_TIMEOUT_S:-60}"
 FLZ="${FLZ:-/flezha/bin/flz}"
 
+# Docker creates a missing bind-mount folder owned by root, which the
+# controller's own user cannot write. Started as root, hand such folders to
+# that user, then run everything below as it. A folder someone else owns is
+# left as it is.
+if [ "$(id -u)" = 0 ]; then
+  mkdir -p "$SOCKET_DIR"
+  for dir in /flezha/storage/app "$SOCKET_DIR"; do
+    [ "$(stat -c %u "$dir")" = 0 ] && chown flezha:flezha "$dir"
+  done
+  export HOME="$(getent passwd flezha | cut -d: -f6)"
+  exec setpriv --reuid=flezha --regid=flezha --init-groups -- "$0" "$@"
+fi
+
 # 1) Optional testnet WS server. The :latest image does not ship the
 #    bundle; the :latest-dev image does. Either way, only start it when
 #    FLEZHA_TESTNET_WS_PORT is explicitly set.
