@@ -301,6 +301,11 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     assert wait_until(fn -> attempt({:seq_gap, cell}) == 0 end, 30_000)
 
     # --- a compaction request never answered for four sweeps ----------------
+    # The resync above shipped a real compaction: its snapshot landing between
+    # the four sweeps below would reset their strikes before the give-up.
+    assert wait_until(fn -> not compacting?(cell) end, 30_000),
+           "the resync's compaction never answered"
+
     on_exit(TestHelpers.override_env(:compaction_timeout_ms, 50))
 
     gave_up = ~r/\[flezha_state\] compaction_gave_up key=\S* relay=#{id} .*attempts=4/
@@ -612,6 +617,8 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     wait_until(fn -> match?({:ok, _}, WriterRegistry.lookup(cell)) end, 30_000)
     WriterRegistry.lookup(cell)
   end
+
+  defp compacting?(cell_id), do: Map.has_key?(:sys.get_state(Watchdog).compactions, cell_id)
 
   defp age_compaction(cell_id, ms) do
     :sys.replace_state(Watchdog, fn state ->
