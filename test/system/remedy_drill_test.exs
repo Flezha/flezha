@@ -308,6 +308,18 @@ defmodule FlezhaTest.System.RemedyDrillTest do
 
     on_exit(TestHelpers.override_env(:compaction_timeout_ms, 50))
 
+    # The give-up's own resync is held back: its compaction, landing a few ms
+    # after the heal, would close the episode before the key could be read.
+    test_pid = self()
+
+    restore_resync =
+      TestHelpers.override_env(:state_resync_fun, fn cell_id, opts ->
+        send(test_pid, {:resynced, cell_id, opts})
+        {:ok, make_ref()}
+      end)
+
+    on_exit(restore_resync)
+
     gave_up = ~r/\[flezha_state\] compaction_gave_up key=\S* relay=#{id} .*attempts=4/
 
     with_only_logged([{gave_up, :always}], fn ->
@@ -319,7 +331,11 @@ defmodule FlezhaTest.System.RemedyDrillTest do
     end)
 
     assert_receive {:heal, %{primitive: :resync_runner, target: ^cell}}, 30_000
-    assert wait_until(fn -> attempt({:compaction_gave_up, cell}) >= 1 end, 10_000)
+    assert_receive {:resynced, ^cell, resync_opts}, 30_000
+    assert resync_opts[:reason] == :compaction_gave_up
+    # The key is advanced in the tick that asked for the resync.
+    assert attempt({:compaction_gave_up, cell}) >= 1
+    restore_resync.()
     # A real compaction completing is the counter-fact.
     {:ok, _ref} = Commands.dispatch_compact_cell(runner, cell)
     assert wait_until(fn -> attempt({:compaction_gave_up, cell}) == 0 end, 30_000)
