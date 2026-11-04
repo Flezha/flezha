@@ -106,13 +106,13 @@ SHALL only increment a counter.
 
 ### Requirement: Missing persistence degrades to fresh-identity-per-boot, never a hard failure
 
-When the persistence path is unavailable (unset, unwritable, or not mounted), the SDK SHALL generate a fresh stable identity for the current boot, log the condition once at `warn`, and operate normally for the lifetime of the process. A subsequent restart SHALL present a new stable identity; the prior binding SHALL age out via `FLEZHA_RUNNER_REMOVAL_GRACE_MS`. The runner SHALL NOT refuse to start, and SHALL NOT crash, due to missing persistence.
+When the persistence path is unavailable (unset, unwritable, or not mounted), the SDK SHALL generate a fresh stable identity for the current boot, log nothing about it, and operate normally for the lifetime of the process. A subsequent restart SHALL present a new stable identity; the prior binding SHALL age out via `FLEZHA_RUNNER_REMOVAL_GRACE_MS`. The runner SHALL NOT refuse to start, and SHALL NOT crash, due to missing persistence.
 
 #### Scenario: ephemeral runner with no mounted volume still runs
 
 - **GIVEN** a runner started with no writable `FLEZHA_RUNNER_ID_PATH` (e.g. a dev container with no volume)
 - **WHEN** it boots
-- **THEN** it SHALL generate a fresh stable identity, log a single `warn`, and connect and run normally
+- **THEN** it SHALL generate a fresh stable identity, log nothing about it, and connect and run normally
 - **AND** on restart it SHALL present a new stable identity and its prior binding SHALL age out via the keepalive window
 
 ### Requirement: Rust and Java SDKs present identity identically

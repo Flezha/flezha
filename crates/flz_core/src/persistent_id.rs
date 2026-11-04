@@ -55,15 +55,10 @@ fn load_or_derive(path: &Path, namespace: &str, factory_ids: &[String]) -> Strin
 
     let id = derive_id(namespace, factory_ids);
 
-    if let Err(e) = persist_to(path, &id) {
-        // Degradation per the runner-identity capability: no binding
-        // continuity across restart, but the runner runs normally.
-        flz_transport::notice!(
-            Warn,
-            "runner stable-id persist failed at {path:?}: {e} — using a fresh per-boot id \
-             (no binding continuity across restart)"
-        );
-    }
+    // Without persistence the runner still runs, with a fresh id each boot
+    // and so no binding continuity across a restart. The default path is a
+    // system directory an ordinary user cannot write, so this is not reported.
+    let _ = persist_to(path, &id);
 
     id
 }

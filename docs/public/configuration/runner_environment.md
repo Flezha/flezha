@@ -11,7 +11,7 @@ What each variable does is below; the type and default of every one is in
 [Every variable](#every-variable), generated from the configuration table.
 
 - `FLEZHA_RUNNER_START_WAIT_MS`: How long a runner's start waits for the controller to confirm or refuse its connect; past it the start fails with `runtime.connect_unconfirmed` and leaves no runner dialling. An unregister after start waits as long for the runner's answer; past it the unregister fails with `runtime.runner_unavailable` and the factory stays registered. `0` waits for ever. The Elixir SDK reads it as `config :flezha_sdk, runner_start_wait_ms: ...` too and hands it to the core. Default: `10000` (10 s).
-- `FLEZHA_RUNNER_ID_PATH`: The durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal.
+- `FLEZHA_RUNNER_ID_PATH`: The durable stable identity; an unwritable path degrades silently to a fresh per-boot id, never a refusal.
 - `FLEZHA_MAILBOX_CAPACITY`: The per-Cell mailbox bound for a Tasklet that declares none, in every SDK: the core reads it when a class registers (the Elixir SDK resolves it from its own configuration and hands the value over). A Tasklet that overrides `mailbox_capacity()` wins over it. The range is `1..1_048_576`.
 - `FLEZHA_SOCKET_FILES_PATH`: Read through the `flz_transport` path helper, which every SDK reaches. Default: resolved by the [socket-directory ladder](files_and_sockets.md#the-socket-directory-ladder).
 - `FLEZHA_TRANSPORT`: `uds` or `quic`, which is [experimental: quic](../publishing/maturity.md#quic).
