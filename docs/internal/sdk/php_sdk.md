@@ -636,9 +636,7 @@ controller each have their own: end of file on standard input, `SIGINT` /
 from its next poll. All three drain in-flight activations before the process
 exits.
 
-Signals need **`ext-pcntl`**, which ships with PHP and is enabled on most
-distribution CLI builds but not in the official Docker images
-(`docker-php-ext-install pcntl`). Without it the runner says so at startup and
-SIGTERM ends the process immediately: nothing is lost — the core re-hands
-unanswered work on the next bind — but in-flight activations are abandoned
-rather than drained. Closing standard input drains either way.
+Signals need no extension: the core's own thread handles them. A PHP built
+with Zend signal handling has a handler of its own that would end the process
+first, so the runner puts `SIGTERM` and `SIGINT` back to the system default
+before the core starts, unless the application set a `pcntl` handler.

@@ -422,6 +422,9 @@ v0.1.0-alpha.1 pre-release.
   hosted by another. The disable now waits until every controller of the
   namespace has dropped the plugin's record before it tells the relays, so a
   convergence tick on a slower controller cannot bring the binding up again.
+- A PHP runner on a PHP built with Zend signal handling now drains and ships its relays' final
+  state on SIGTERM or SIGINT, where it used to end at once; a `pcntl` handler the application
+  set still runs.
 
 ### Security
 

@@ -332,8 +332,8 @@ spawns a worker and what the worker runs.
 What a host keeps beside that is small: a registry its executor serves from,
 which a factory change after start updates as it tells the core, and handing
 SIGTERM and SIGINT to the core where its runtime would end the process first
-(Ruby, Node and Java replace that default handler before the core starts; one
-the application installed stays. Go tells the core to install none and hands
+(Ruby, Node, Java and PHP replace that default handler before the core starts;
+one the application installed stays. Go tells the core to install none and hands
 it the signal through `flz_core_terminate`).
 
 Two places remain where the in-process Rust SDK runs its own code on a core
