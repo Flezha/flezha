@@ -1,0 +1,4 @@
+# The runner's image needs the Python files and vendor/, not the rest of the project.
+*
+!*.py
+!vendor/

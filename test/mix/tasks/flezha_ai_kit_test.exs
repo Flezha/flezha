@@ -30,12 +30,16 @@ defmodule Mix.Tasks.Flezha.AiKitTest do
     assert AiKit.stale(tmp) == ["docs/running_and_testing.md", "sdk/python.md"]
   end
 
-  test "every SDK's starter is copied, and a changed or extra copy is stale", %{tmp: tmp} do
+  test "every SDK's examples are copied, and a changed or extra copy is stale", %{tmp: tmp} do
     File.cp_r!("priv/ai_kit", tmp)
     manifest = Jason.decode!(File.read!(Path.join(tmp, "templates/manifest.json")))
 
     assert for(t <- manifest["templates"], do: {t["language"], t["example"]}) ==
-             for(language <- Flezha.Mcp.Knowledge.languages(), do: {language, "starter"})
+             for(
+               language <- Flezha.Mcp.Knowledge.languages(),
+               example <- ["starter", "echo", "tradedesk", "agentdesk"],
+               do: {language, example}
+             )
 
     File.write!(Path.join(tmp, "templates/java/starter/pom.xml"), "<!-- edited -->\n", [:append])
     File.write!(Path.join(tmp, "templates/rust/starter/notes.txt"), "a stray file\n")

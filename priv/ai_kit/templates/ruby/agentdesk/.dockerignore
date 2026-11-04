@@ -1,0 +1,7 @@
+# The runner's image needs the Ruby files, the Gemfile and its lock, and vendor/cache, not the
+# rest of the project.
+*
+!*.rb
+!Gemfile
+!Gemfile.lock
+!vendor/cache/

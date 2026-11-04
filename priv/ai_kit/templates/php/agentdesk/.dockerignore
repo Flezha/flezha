@@ -1,0 +1,5 @@
+# The runner's image needs the runner, its classes and vendor/, not the rest of the project.
+*
+!runner.php
+!src/
+!vendor/

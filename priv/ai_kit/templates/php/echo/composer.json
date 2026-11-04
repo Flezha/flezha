@@ -1,0 +1,20 @@
+{
+    "name": "flezha/echo-example",
+    "description": "One message in, one message out: a tasklet, a relay and a runner.",
+    "type": "project",
+    "license": "Apache-2.0",
+    "require": {
+        "php": ">=8.4",
+        "flezha/sdk": "0.1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Flezha\\Examples\\Echo\\": "src/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "flezha/sdk": true
+        }
+    }
+}

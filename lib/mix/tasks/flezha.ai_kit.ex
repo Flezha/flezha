@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Flezha.AiKit do
     each template's files with their executable bit, its `.gitignore` text
     and the commands of its README's "Run it" section, which
     `flezha_new_project` serves and a release packs as one download per
-    language;
+    language and example;
   - `llms.txt`: the assistant map `mix flezha.llms` wrote into `doc_dir`, less
     the published API pages and the catalogue, which the operation tools carry;
   - `docs/<page>.md`: each guide page that map links, copied from its source.
@@ -34,7 +34,7 @@ defmodule Mix.Tasks.Flezha.AiKit do
   @root "priv/ai_kit"
 
   # Each a directory of `examples/` in every SDK.
-  @examples ~w(starter)
+  @examples ~w(starter echo tradedesk agentdesk)
 
   @fences %{
     ".ex" => "elixir",

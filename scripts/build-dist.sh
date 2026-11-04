@@ -12,12 +12,15 @@
 #      carries -> _build/.dist/elixir-nifs/
 #   1b. The contract set (test/fixtures/contract.txt) as one archive, staged
 #      by --stage-release only: it is files already in the tree, not a build.
-#   1g. Each SDK language's starter project (priv/ai_kit/templates/) as
-#      flezha-<language>-starter.tar.gz, staged by --stage-release only, for
-#      the same reason.
+#   1g. Each SDK language's example projects (priv/ai_kit/templates/), the
+#      starter and the guides' examples, as flezha-<language>-<example>.tar.gz,
+#      staged by --stage-release only, for the same reason.
 #   1h. The controller release archive of each platform, built and smoke-tested
 #      natively by CI's release workflow (scripts/release-archive.sh) and
 #      staged by --stage-release only -> _build/.dist/controller/
+#   1i. Each bundled plugin's package (plugins/*) as <plugin>-<version>.fpz,
+#      built in the controller image's plugin-builder stage ->
+#      _build/.dist/plugins/
 #   1c. flz_core_ffi cdylib (feature "napi") for every platform the Node
 #      package's own table declares -> _build/.dist/node-addons/<suffix>/, packed into
 #      the per-platform packages at _build/.dist/node-packages/
@@ -143,7 +146,7 @@ fi
 # ---------------------------------------------------------------------------
 # The contract set an SDK vendors: the list, and the archive staged from it.
 CONTRACT_MANIFEST="test/fixtures/contract.txt"
-STARTER_MANIFEST="priv/ai_kit/templates/manifest.json"
+TEMPLATE_MANIFEST="priv/ai_kit/templates/manifest.json"
 NATIVE_OUT="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
 # The PHP package loads the same libraries through ext-ffi, from directories
 # named the same way. Not committed: they are build output the release job
@@ -181,6 +184,8 @@ CONTROLLER_OUT="${REPO_ROOT}/_build/.dist/controller"
 # The precompiled Ruby gems, and the Ruby minors each one carries a library for.
 RUBY_GEMS_OUT="${REPO_ROOT}/_build/.dist/ruby-gems"
 RUBY_GEM_MINORS="3.3,3.4"
+# The bundled plugins' packages, one per submodule under plugins/.
+PLUGINS_OUT="${REPO_ROOT}/_build/.dist/plugins"
 RELEASE_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "${REPO_ROOT}/Cargo.toml")"
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
 TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
@@ -328,27 +333,25 @@ if [[ "${MODE}" == "stage-release" ]]; then
     echo "  -> ${archive} (${#members[@]} members)"
   }
 
-  # One starter project per language, packed from the copy `flezha_new_project`
+  # One archive per example project per language, packed from the copy `flezha_new_project`
   # answers from, so the download and the assistant's answer cannot differ.
   # Like the contract set, its members come from the manifest, never a glob.
   # The `.gitignore` exists only as manifest text and each mode comes from the
   # manifest, which is why `tarfile` packs it rather than `tar`. Written even
   # when other assets are missing: it depends on nothing that is built.
-  stage_starter_archives() {
+  stage_template_archives() {
     local packed kind value
     # Captured before it is read, so a failure ends the script under `set -e`
-    # rather than staging a release without its starters.
-    packed="$(python3 -I - "${REPO_ROOT}" "${STARTER_MANIFEST}" "${STAGE_RELEASE_DIR}" <<'PY'
+    # rather than staging a release without its example projects.
+    packed="$(python3 -I - "${REPO_ROOT}" "${TEMPLATE_MANIFEST}" "${STAGE_RELEASE_DIR}" <<'PY'
 import io, json, os, sys, tarfile, time
 
 repo, manifest, out = sys.argv[1:]
 now = int(time.time())
 
 for t in json.load(open(os.path.join(repo, manifest)))["templates"]:
-    if t["example"] != "starter":
-        continue
-    folder = f"flezha-{t['language']}-starter"
-    src = os.path.join(os.path.dirname(manifest), t["language"], "starter")
+    folder = f"flezha-{t['language']}-{t['example']}"
+    src = os.path.join(os.path.dirname(manifest), t["language"], t["example"])
     files = [(".gitignore", t["gitignore"].encode(), False)] if t.get("gitignore") else []
     complete = True
     for f in t["files"]:
@@ -373,7 +376,7 @@ PY
     while IFS=$'\t' read -r kind value; do
       case "${kind}" in
         asset)   assets+=("${value}"); echo "  -> ${value}" ;;
-        missing) missing+=("${value} (named by ${STARTER_MANIFEST})") ;;
+        missing) missing+=("${value} (named by ${TEMPLATE_MANIFEST})") ;;
       esac
     done <<< "${packed}"
   }
@@ -402,9 +405,19 @@ PY
       archive="$("${SCRIPT_DIR}/release-archive.sh" name "${platform}")"
       stage_asset "${CONTROLLER_OUT}/${archive}" "${archive}"
     done
+    shopt -s nullglob
+    packages=("${PLUGINS_OUT}"/*.fpz)
+    plugin_dirs=("${REPO_ROOT}"/plugins/*/)
+    shopt -u nullglob
+    if (( ${#packages[@]} != ${#plugin_dirs[@]} )); then
+      missing+=("${#packages[@]} of ${#plugin_dirs[@]} plugin packages in ${PLUGINS_OUT}")
+    fi
+    for src in "${packages[@]}"; do
+      stage_asset "${src}" "$(basename "${src}")"
+    done
   fi
   stage_fixture_archive
-  stage_starter_archives
+  stage_template_archives
   stage_node_packages
   stage_wheels
 
@@ -720,6 +733,37 @@ mkdir -p "${TEST_APP_DIST}"
 cp -f test/apps/java_runner/target/java_runner.jar \
       "${TEST_APP_DIST}/java_runner.jar"
 echo "  -> ${TEST_APP_DIST}/java_runner.jar"
+
+# ---------------------------------------------------------------------------
+# 7. Each bundled plugin's package, left out of a --triples set like the jars.
+#
+#     A package records the Erlang and Elixir versions it was built with, so it
+#     is built in the controller image's plugin-builder stage, the release's
+#     own toolchain. A plugin compiles against the Flezha checkout it is a
+#     submodule of, so like the Ruby gems it builds from an export of what is
+#     committed, which keeps local edits out of a release. The container runs
+#     as root, so it hands what it wrote back to this user.
+# ---------------------------------------------------------------------------
+if [[ -z "${TRIPLES}" ]]; then
+  step "packaging the bundled plugins"
+  require_cmd docker "install Docker"
+  PLUGIN_SOURCE="${REPO_ROOT}/_build/.dist/plugin-source"
+  PLUGIN_BUILDER="flezha/plugin-builder:${RELEASE_VERSION}"
+  rm -rf "${PLUGIN_SOURCE}" "${PLUGINS_OUT}"
+  mkdir -p "${PLUGIN_SOURCE}" "${PLUGINS_OUT}"
+  git -C "${REPO_ROOT}" archive HEAD | tar -x -C "${PLUGIN_SOURCE}"
+  PLUGIN_SOURCE="${PLUGIN_SOURCE}" git -C "${REPO_ROOT}" submodule --quiet foreach \
+    'mkdir -p "${PLUGIN_SOURCE}/${sm_path}" && git archive HEAD | tar -x -C "${PLUGIN_SOURCE}/${sm_path}"'
+  docker build --target plugin-builder -t "${PLUGIN_BUILDER}" \
+    -f "${REPO_ROOT}/deploy/docker/prod/Dockerfile.controller" "${REPO_ROOT}"
+  for dir in plugins/*/; do
+    docker run --rm -v "${PLUGIN_SOURCE}:/src" -v "${PLUGINS_OUT}:/out" -w "/src/${dir}" \
+      "${PLUGIN_BUILDER}" \
+      sh -c 'mix deps.get && mix flezha.plugin.package --output /out; built=$?; chown -R "$0" /src /out; exit $built' \
+      "$(id -u):$(id -g)"
+  done
+  ls -1 "${PLUGINS_OUT}" | sed 's/^/  -> /'
+fi
 
 # ---------------------------------------------------------------------------
 # Done.

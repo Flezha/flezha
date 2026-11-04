@@ -1,0 +1,3 @@
+# The runner's image needs the binary only, not the sources.
+*
+!agentdesk

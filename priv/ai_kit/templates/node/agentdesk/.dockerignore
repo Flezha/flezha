@@ -1,0 +1,6 @@
+# The runner's image needs the JavaScript files, package.json and node_modules/, not the rest of
+# the project.
+*
+!*.mjs
+!package.json
+!node_modules/

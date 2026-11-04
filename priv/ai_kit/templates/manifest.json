@@ -44,6 +44,181 @@
     },
     {
       "run": [
+        "mix deps.get",
+        "mix run --no-halt",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "elixir",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "lib/echo/application.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/echo/relay.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/echo/tasklet.ex",
+          "executable": false
+        },
+        {
+          "path": "mix.exs",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": "/_build/\n/deps/\n/mix.lock\n"
+    },
+    {
+      "run": [
+        "mix deps.get",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> mix run --no-halt",
+        "flz runner list --namespace trading"
+      ],
+      "language": "elixir",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/application.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/buy_above_average.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/confirm_fill.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/order_executor.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/place_order.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/record_order.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/reserve_funds.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/track_prices.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/tradedesk/trade_watcher.ex",
+          "executable": false
+        },
+        {
+          "path": "mix.exs",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": "/_build/\n/deps/\n/mix.lock\n"
+    },
+    {
+      "run": [
+        "mix deps.get",
+        "MIX_ENV=prod mix release",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "elixir",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/admit.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/agent_relay.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/application.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/budget.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/demo_model.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/gateway_relay.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/reply.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/request.ex",
+          "executable": false
+        },
+        {
+          "path": "lib/agentdesk/watch.ex",
+          "executable": false
+        },
+        {
+          "path": "mix.exs",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "/_build/\n/deps/\n/mix.lock\ncontroller/plugins/*.fpz\n"
+    },
+    {
+      "run": [
         "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
         "go test ./...",
         "go run .",
@@ -82,6 +257,185 @@
     },
     {
       "run": [
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "go run .",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "go",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "go.mod",
+          "executable": false
+        },
+        {
+          "path": "main.go",
+          "executable": false
+        },
+        {
+          "path": "relay.go",
+          "executable": false
+        },
+        {
+          "path": "tasklet.go",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": "/echo\n/go.work\n/go.work.sum\n"
+    },
+    {
+      "run": [
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> go run .",
+        "flz runner list --namespace trading"
+      ],
+      "language": "go",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "buy_above_average.go",
+          "executable": false
+        },
+        {
+          "path": "confirm_fill.go",
+          "executable": false
+        },
+        {
+          "path": "go.mod",
+          "executable": false
+        },
+        {
+          "path": "main.go",
+          "executable": false
+        },
+        {
+          "path": "order_executor.go",
+          "executable": false
+        },
+        {
+          "path": "place_order.go",
+          "executable": false
+        },
+        {
+          "path": "record_order.go",
+          "executable": false
+        },
+        {
+          "path": "reserve_funds.go",
+          "executable": false
+        },
+        {
+          "path": "track_prices.go",
+          "executable": false
+        },
+        {
+          "path": "trade_watcher.go",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": "/tradedesk\n/go.work\n/go.work.sum\n"
+    },
+    {
+      "run": [
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "go build",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "go",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "admit.go",
+          "executable": false
+        },
+        {
+          "path": "agent.go",
+          "executable": false
+        },
+        {
+          "path": "budget.go",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "demo_model.go",
+          "executable": false
+        },
+        {
+          "path": "gateway.go",
+          "executable": false
+        },
+        {
+          "path": "go.mod",
+          "executable": false
+        },
+        {
+          "path": "http.go",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "main.go",
+          "executable": false
+        },
+        {
+          "path": "reply.go",
+          "executable": false
+        },
+        {
+          "path": "request.go",
+          "executable": false
+        },
+        {
+          "path": "watch.go",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "/agentdesk\n/go.work\n/go.work.sum\ncontroller/plugins/*.fpz\n"
+    },
+    {
+      "run": [
         "mvn -q package",
         "java -jar target/starter.jar",
         "flz relay start starter --id starter",
@@ -116,6 +470,187 @@
       ],
       "example": "starter",
       "gitignore": "/target/\n"
+    },
+    {
+      "run": [
+        "mvn -q package && java -jar target/echo.jar",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "java",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "pom.xml",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/echo/Echo.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/echo/EchoRelay.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/echo/Main.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/echo/package-info.java",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": null
+    },
+    {
+      "run": [
+        "mvn -q package",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> java -jar target/tradedesk.jar",
+        "flz runner list --namespace trading"
+      ],
+      "language": "java",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "pom.xml",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/BuyAboveAverage.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/ConfirmFill.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/Main.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/OrderExecutorRelay.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/PlaceOrder.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/RecordOrder.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/ReserveFunds.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/TrackPrices.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/tradedesk/TradeWatcherRelay.java",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": null
+    },
+    {
+      "run": [
+        "mvn -q package",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "java",
+      "files": [
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "pom.xml",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Admit.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/AgentRelay.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Budget.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/DemoModel.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/GatewayRelay.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Http.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Main.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Message.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Reply.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Request.java",
+          "executable": false
+        },
+        {
+          "path": "src/main/java/com/flezha/examples/agentdesk/Watch.java",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "controller/plugins/*.fpz\n"
     },
     {
       "run": [
@@ -157,6 +692,180 @@
     },
     {
       "run": [
+        "npm install",
+        "node runner.mjs",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "node",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "echo_relay.mjs",
+          "executable": false
+        },
+        {
+          "path": "echo_tasklet.mjs",
+          "executable": false
+        },
+        {
+          "path": "package.json",
+          "executable": false
+        },
+        {
+          "path": "runner.mjs",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": "node_modules/\npackage-lock.json\n"
+    },
+    {
+      "run": [
+        "npm install",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> node runner.mjs",
+        "flz runner list --namespace trading"
+      ],
+      "language": "node",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "buy_above_average.mjs",
+          "executable": false
+        },
+        {
+          "path": "confirm_fill.mjs",
+          "executable": false
+        },
+        {
+          "path": "order_executor_relay.mjs",
+          "executable": false
+        },
+        {
+          "path": "package.json",
+          "executable": false
+        },
+        {
+          "path": "place_order.mjs",
+          "executable": false
+        },
+        {
+          "path": "record_order.mjs",
+          "executable": false
+        },
+        {
+          "path": "reserve_funds.mjs",
+          "executable": false
+        },
+        {
+          "path": "runner.mjs",
+          "executable": false
+        },
+        {
+          "path": "track_prices.mjs",
+          "executable": false
+        },
+        {
+          "path": "trade_watcher_relay.mjs",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": "node_modules/\npackage-lock.json\n"
+    },
+    {
+      "run": [
+        "npm install",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "node",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "admit.mjs",
+          "executable": false
+        },
+        {
+          "path": "agent_relay.mjs",
+          "executable": false
+        },
+        {
+          "path": "budget.mjs",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "demo_model.mjs",
+          "executable": false
+        },
+        {
+          "path": "gateway_relay.mjs",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "package.json",
+          "executable": false
+        },
+        {
+          "path": "reply.mjs",
+          "executable": false
+        },
+        {
+          "path": "request.mjs",
+          "executable": false
+        },
+        {
+          "path": "runner.mjs",
+          "executable": false
+        },
+        {
+          "path": "watch.mjs",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "node_modules/\npackage-lock.json\ncontroller/plugins/*.fpz\n"
+    },
+    {
+      "run": [
         "composer install",
         "vendor/bin/phpunit tests",
         "php runner.php",
@@ -192,6 +901,180 @@
       ],
       "example": "starter",
       "gitignore": "/vendor/\n"
+    },
+    {
+      "run": [
+        "composer install",
+        "php runner.php",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "php",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "composer.json",
+          "executable": false
+        },
+        {
+          "path": "runner.php",
+          "executable": false
+        },
+        {
+          "path": "src/EchoRelay.php",
+          "executable": false
+        },
+        {
+          "path": "src/EchoTasklet.php",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": "/vendor/\n/composer.lock\n"
+    },
+    {
+      "run": [
+        "composer install",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> php runner.php",
+        "flz runner list --namespace trading"
+      ],
+      "language": "php",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "composer.json",
+          "executable": false
+        },
+        {
+          "path": "runner.php",
+          "executable": false
+        },
+        {
+          "path": "src/BuyAboveAverage.php",
+          "executable": false
+        },
+        {
+          "path": "src/ConfirmFill.php",
+          "executable": false
+        },
+        {
+          "path": "src/OrderExecutorRelay.php",
+          "executable": false
+        },
+        {
+          "path": "src/PlaceOrder.php",
+          "executable": false
+        },
+        {
+          "path": "src/RecordOrder.php",
+          "executable": false
+        },
+        {
+          "path": "src/ReserveFunds.php",
+          "executable": false
+        },
+        {
+          "path": "src/TrackPrices.php",
+          "executable": false
+        },
+        {
+          "path": "src/TradeWatcherRelay.php",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": "/vendor/\n/composer.lock\n"
+    },
+    {
+      "run": [
+        "composer install",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "php",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "composer.json",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "runner.php",
+          "executable": false
+        },
+        {
+          "path": "src/Admit.php",
+          "executable": false
+        },
+        {
+          "path": "src/AgentRelay.php",
+          "executable": false
+        },
+        {
+          "path": "src/Budget.php",
+          "executable": false
+        },
+        {
+          "path": "src/DemoModel.php",
+          "executable": false
+        },
+        {
+          "path": "src/GatewayRelay.php",
+          "executable": false
+        },
+        {
+          "path": "src/Reply.php",
+          "executable": false
+        },
+        {
+          "path": "src/Request.php",
+          "executable": false
+        },
+        {
+          "path": "src/Watch.php",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "/vendor/\n/composer.lock\ncontroller/plugins/*.fpz\n"
     },
     {
       "run": [
@@ -234,6 +1117,182 @@
     },
     {
       "run": [
+        "python3 -m venv .venv",
+        ".venv/bin/pip install -r requirements.txt",
+        ".venv/bin/python runner.py",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "python",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "echo_relay.py",
+          "executable": false
+        },
+        {
+          "path": "echo_tasklet.py",
+          "executable": false
+        },
+        {
+          "path": "requirements.txt",
+          "executable": false
+        },
+        {
+          "path": "runner.py",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": ".venv/\n__pycache__/\n"
+    },
+    {
+      "run": [
+        "python3 -m venv .venv",
+        ".venv/bin/pip install -r requirements.txt",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> .venv/bin/python runner.py",
+        "flz runner list --namespace trading"
+      ],
+      "language": "python",
+      "files": [
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "buy_above_average.py",
+          "executable": false
+        },
+        {
+          "path": "confirm_fill.py",
+          "executable": false
+        },
+        {
+          "path": "order_executor.py",
+          "executable": false
+        },
+        {
+          "path": "place_order.py",
+          "executable": false
+        },
+        {
+          "path": "record_order.py",
+          "executable": false
+        },
+        {
+          "path": "requirements.txt",
+          "executable": false
+        },
+        {
+          "path": "reserve_funds.py",
+          "executable": false
+        },
+        {
+          "path": "runner.py",
+          "executable": false
+        },
+        {
+          "path": "track_prices.py",
+          "executable": false
+        },
+        {
+          "path": "trade_watcher.py",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": ".venv/\n__pycache__/\n"
+    },
+    {
+      "run": [
+        "python3 -m pip install --target vendor -r requirements.txt",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "python",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "admit.py",
+          "executable": false
+        },
+        {
+          "path": "agent.py",
+          "executable": false
+        },
+        {
+          "path": "budget.py",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "demo_model.py",
+          "executable": false
+        },
+        {
+          "path": "gateway.py",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "reply.py",
+          "executable": false
+        },
+        {
+          "path": "request.py",
+          "executable": false
+        },
+        {
+          "path": "requirements.txt",
+          "executable": false
+        },
+        {
+          "path": "runner.py",
+          "executable": false
+        },
+        {
+          "path": "watch.py",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": ".venv/\n__pycache__/\n/vendor/\ncontroller/plugins/*.fpz\n"
+    },
+    {
+      "run": [
         "bundle install",
         "bundle exec ruby count_test.rb",
         "bundle exec ruby runner.rb",
@@ -272,6 +1331,180 @@
     },
     {
       "run": [
+        "bundle install",
+        "bundle exec ruby runner.rb",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "ruby",
+      "files": [
+        {
+          "path": "Gemfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "echo_relay.rb",
+          "executable": false
+        },
+        {
+          "path": "echo_tasklet.rb",
+          "executable": false
+        },
+        {
+          "path": "runner.rb",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": "Gemfile.lock\n"
+    },
+    {
+      "run": [
+        "bundle install",
+        "FLEZHA_NAMESPACE_SECRET=<trading key> bundle exec ruby runner.rb",
+        "flz runner list --namespace trading"
+      ],
+      "language": "ruby",
+      "files": [
+        {
+          "path": "Gemfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "buy_above_average.rb",
+          "executable": false
+        },
+        {
+          "path": "confirm_fill.rb",
+          "executable": false
+        },
+        {
+          "path": "order_executor_relay.rb",
+          "executable": false
+        },
+        {
+          "path": "place_order.rb",
+          "executable": false
+        },
+        {
+          "path": "record_order.rb",
+          "executable": false
+        },
+        {
+          "path": "reserve_funds.rb",
+          "executable": false
+        },
+        {
+          "path": "runner.rb",
+          "executable": false
+        },
+        {
+          "path": "track_prices.rb",
+          "executable": false
+        },
+        {
+          "path": "trade_watcher_relay.rb",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": "Gemfile.lock\n"
+    },
+    {
+      "run": [
+        "bundle cache",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "ruby",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "Gemfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "admit.rb",
+          "executable": false
+        },
+        {
+          "path": "agent_relay.rb",
+          "executable": false
+        },
+        {
+          "path": "budget.rb",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "demo_model.rb",
+          "executable": false
+        },
+        {
+          "path": "gateway_relay.rb",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "reply.rb",
+          "executable": false
+        },
+        {
+          "path": "request.rb",
+          "executable": false
+        },
+        {
+          "path": "runner.rb",
+          "executable": false
+        },
+        {
+          "path": "watch.rb",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "Gemfile.lock\n/vendor/\ncontroller/plugins/*.fpz\n"
+    },
+    {
+      "run": [
         "cargo test",
         "cargo run --release",
         "flz relay start starter --id starter",
@@ -302,6 +1535,182 @@
       ],
       "example": "starter",
       "gitignore": "/target/\n/.cargo/\n"
+    },
+    {
+      "run": [
+        "cargo run --release",
+        "flz relay start echo --id my_echo",
+        "flz relay send my_echo --text 'hello world' --await 2000"
+      ],
+      "language": "rust",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "src/main.rs",
+          "executable": false
+        },
+        {
+          "path": "src/relay.rs",
+          "executable": false
+        },
+        {
+          "path": "src/tasklet.rs",
+          "executable": false
+        }
+      ],
+      "example": "echo",
+      "gitignore": "/target/\n/Cargo.lock\n/.cargo/\n"
+    },
+    {
+      "run": [
+        "FLEZHA_NAMESPACE_SECRET=<trading key> cargo run --release",
+        "flz runner list --namespace trading"
+      ],
+      "language": "rust",
+      "files": [
+        {
+          "path": "Cargo.toml",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "src/buy_above_average.rs",
+          "executable": false
+        },
+        {
+          "path": "src/confirm_fill.rs",
+          "executable": false
+        },
+        {
+          "path": "src/main.rs",
+          "executable": false
+        },
+        {
+          "path": "src/order_executor.rs",
+          "executable": false
+        },
+        {
+          "path": "src/place_order.rs",
+          "executable": false
+        },
+        {
+          "path": "src/record_order.rs",
+          "executable": false
+        },
+        {
+          "path": "src/reserve_funds.rs",
+          "executable": false
+        },
+        {
+          "path": "src/track_prices.rs",
+          "executable": false
+        },
+        {
+          "path": "src/trade_watcher.rs",
+          "executable": false
+        }
+      ],
+      "example": "tradedesk",
+      "gitignore": "/target/\n/Cargo.lock\n/.cargo/\n"
+    },
+    {
+      "run": [
+        "cargo build --release --target-dir target",
+        "docker compose up -d --build --wait",
+        "alias flz='docker compose exec controller bin/flz'",
+        "flz runner list --namespace agents"
+      ],
+      "language": "rust",
+      "files": [
+        {
+          "path": ".dockerignore",
+          "executable": false
+        },
+        {
+          "path": "Cargo.toml",
+          "executable": false
+        },
+        {
+          "path": "Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "README.md",
+          "executable": false
+        },
+        {
+          "path": "cluster.yaml",
+          "executable": false
+        },
+        {
+          "path": "compose.yaml",
+          "executable": false
+        },
+        {
+          "path": "controller/Dockerfile",
+          "executable": false
+        },
+        {
+          "path": "controller/plugins/.gitkeep",
+          "executable": false
+        },
+        {
+          "path": "k8s/agentdesk.yaml",
+          "executable": false
+        },
+        {
+          "path": "src/admit.rs",
+          "executable": false
+        },
+        {
+          "path": "src/agent.rs",
+          "executable": false
+        },
+        {
+          "path": "src/budget.rs",
+          "executable": false
+        },
+        {
+          "path": "src/demo_model.rs",
+          "executable": false
+        },
+        {
+          "path": "src/gateway.rs",
+          "executable": false
+        },
+        {
+          "path": "src/http.rs",
+          "executable": false
+        },
+        {
+          "path": "src/main.rs",
+          "executable": false
+        },
+        {
+          "path": "src/reply.rs",
+          "executable": false
+        },
+        {
+          "path": "src/request.rs",
+          "executable": false
+        },
+        {
+          "path": "src/watch.rs",
+          "executable": false
+        }
+      ],
+      "example": "agentdesk",
+      "gitignore": "/target/\n/Cargo.lock\n/.cargo/\ncontroller/plugins/*.fpz\n"
     }
   ]
 }

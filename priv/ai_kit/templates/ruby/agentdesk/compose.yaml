@@ -1,0 +1,27 @@
+# agentdesk in Docker Compose: one controller and one runner.
+services:
+  controller:
+    build: controller
+    environment:
+      FLEZHA_AUTHZ_ENABLED: "false"
+      FLEZHA_DURABILITY_BACKEND: none
+    ports:
+      - "127.0.0.1:8080:8080"              # the gateway's HTTP port, on this machine only
+    volumes:
+      - app_data:/flezha/storage/app
+      - sockets:/flezha/storage/app/sockets
+
+  runner:
+    build: .
+    environment:
+      FLEZHA_SOCKET_FILES_PATH: /flezha/storage/app/sockets
+    volumes:
+      - sockets:/flezha/storage/app/sockets
+    depends_on:
+      controller:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  app_data:
+  sockets:
