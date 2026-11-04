@@ -18,7 +18,7 @@ crates/flz_core/src/host/activation.rs::settle_item 67
 crates/flz_core/src/host/activation.rs::settle_items 60
 crates/flz_core/src/host/issue.rs::details 166
 crates/flz_core/src/host/issue.rs::kind 66
-crates/flz_core/src/host/leave.rs::relay_left 55
+crates/flz_core/src/host/leave.rs::relay_left 54
 crates/flz_core/src/poll_core/assembly.rs::assemble_batch 64
 crates/flz_core/src/poll_core/mod.rs::host_command_within 53
 crates/flz_core/src/relay/instance.rs::with_options 70
