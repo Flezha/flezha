@@ -102,11 +102,14 @@ Stopping flezha controller...
 
 ### Docker
 
+Leave the container's shell with `exit`, then stop it:
+
 ```sh
 $ docker stop flezha-controller
 ```
 
-`docker stop` runs the same `flz controller stop` inside the container.
+`docker stop` runs the same `flz controller stop` inside the container, then
+`--rm` removes the container.
 
 <!-- tabs-close -->
 
@@ -172,7 +175,6 @@ The files the file plugins wrote are yours, so it leaves them.
 ### Docker
 
 ```sh
-$ docker rm flezha-controller
 $ docker volume rm flezha_data
 ```
 

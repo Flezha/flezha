@@ -23,7 +23,7 @@ File plugins read and write only inside one folder, `storage/app/files` under th
 directory the controller was started from (`/flezha/storage/app/files` in the
 Docker volume), and in it only in their namespace's folder: `storage/app/files/default`
 here. Run the commands below from the directory the controller was
-started in.
+started in, or with Docker in the container's shell.
 
 ## Write the output to a file
 

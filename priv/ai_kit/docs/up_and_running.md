@@ -115,20 +115,30 @@ controller reachable
 ### Docker
 
 ```sh
-$ docker run -d --name flezha-controller \
+$ docker run -d --rm --name flezha-controller \
   -e FLEZHA_AUTHZ_ENABLED=false \
   -v flezha_data:/flezha/storage/app \
-  -v /tmp/flz_sock:/flezha/storage/app/sockets \
+  -v /run/flezha:/flezha/storage/app/sockets \
   flezha/flezha:0.1.0
 ```
 
 The first volume holds everything the controller keeps. The second puts its
-socket in `/tmp/flz_sock` on the host, where your runner finds it; the image
-runs as uid 1000, so your host user needs that uid to reach it. Check that it
-is ready:
+socket in `/run/flezha` on the host, where your runner finds it unasked; the
+controller runs as uid 1000, so your host user needs that uid to reach it.
+`--rm` removes the container when it stops, so the same command starts it
+again.
+
+Every `./bin/flz` command in these pages runs inside the container, in its
+`/flezha` directory. Open a shell there and keep this terminal for them:
 
 ```sh
-$ docker exec flezha-controller /flezha/bin/flz boot await
+$ docker exec -it flezha-controller bash
+```
+
+Check that the controller is ready:
+
+```sh
+$ ./bin/flz boot await
 ```
 
 ```output
@@ -728,12 +738,8 @@ says.
 
 <!-- tabs-close -->
 
-If the controller runs in Docker, set
-`FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock` in front of the command, the folder
-the controller's socket is mounted on.
-
 The runner keeps that terminal. Leave it running. Back in the first terminal, in
-the `flezha` directory, check that it connected:
+the `flezha` directory or the container's shell, check that it connected:
 
 ```sh
 $ ./bin/flz runner list
@@ -760,8 +766,9 @@ a name and state of its own.
 [Running and testing](../topics/core/running_and_testing.md) covers starting,
 watching and stopping relays in full, from `flz` and from your own code.
 
-> In the first terminal, in the `flezha` directory, start a relay from the
-> `echo` factory and name it `my_echo`. The controller and your runner have to be running.
+> In the first terminal, in the `flezha` directory or the container's shell,
+> start a relay from the `echo` factory and name it `my_echo`. The controller
+> and your runner have to be running.
 > {: .step}
 
 ```sh
