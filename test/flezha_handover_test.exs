@@ -5,8 +5,10 @@ defmodule FlezhaTest.Handover do
   from the copy it pulls; in a namespace set to hot, the destination starts
   first and takes the state live.
   """
+  alias Flezha.Cluster.GroupedHashing
   alias Flezha.Identificator
   alias Flezha.Payloader
+  alias Flezha.Process.Hub
   alias Flezha.Relay.ClassRegistry
   alias Flezha.Service.RelayManager
   alias Flezha.State.Commands
@@ -18,6 +20,7 @@ defmodule FlezhaTest.Handover do
   alias FlezhaTest.Helper.TierE2EHarness
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
+  alias ProcessHub.Worker.WorkerQueue
 
   use ExUnit.Case
   use Flezha.Constant
@@ -58,6 +61,48 @@ defmodule FlezhaTest.Handover do
     # converges just after, so poll for it.
     assert arrived?(relay_id), "expected live HotSwap handover, not a WAL cold restore"
 
+    assert "before_drain" in text_inputs(relay_id)
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # fails when: a redistribution pass that runs while the drain's hot swap is
+  # still in flight takes the relay's state again, after its runner has given
+  # it up, and that empty answer is the one the destination receives.
+  @tag :multi_node
+  @tag :drain_recheck_in_flight
+  test "a recheck during a drain's live handover does not hand the relay over again" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_recheck_node, @hot)
+    relay_id = start_relay_on_peer(peer_node, "drain_recheck")
+    RelayTestHelper.send_sync_io(relay_id, @default_namespace, "before_drain", %{})
+    hub_id = Identificator.hub(@default_namespace)
+    peer_hub = :erpc.call(peer_node, ProcessHub.Hub, :get, [hub_id])
+    test_pid = self()
+
+    # This node starts the moved relay on its hub's worker queue: held, the
+    # move stays in flight while the peer runs its recheck.
+    here = ProcessHub.Hub.get(hub_id).procs.worker_queue
+    :ok = :sys.suspend(here)
+
+    try do
+      shutdown = Task.async(fn -> shutdown_peer(peer_node, 30_000, test_pid) end)
+
+      assert NodeTestHelper.wait_until(
+               fn -> relay_id in :erpc.call(peer_node, Hub, :pending_handovers, [hub_id]) end,
+               10_000
+             )
+
+      :ok = :erpc.call(peer_node, GroupedHashing, :run_recheck, [peer_hub])
+      # The recheck runs on the peer's worker queue; this call returns behind it.
+      :erpc.call(peer_node, WorkerQueue, :run_on, [peer_hub.procs.worker_queue, &:erlang.self/0])
+      :ok = :sys.resume(here)
+
+      assert :ok = Task.await(shutdown, 45_000)
+    after
+      :sys.resume(here)
+    end
+
+    assert arrived?(relay_id), "the destination took an empty second handover"
     assert "before_drain" in text_inputs(relay_id)
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)

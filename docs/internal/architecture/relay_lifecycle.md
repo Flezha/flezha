@@ -196,7 +196,7 @@ What an Overwatch refuses or holds while a transition is under way:
 | `Rebind.session_replaced/4` | `bind_task != nil` | leaves a restarted runner's binding to the bind under way |
 | `Suspend.wake/2` | `phase != :suspended` | does nothing; with a bind in flight it carries `then` onto it |
 | `Rebind.apply_bind_result/2` | `phase != bind_task.from` | does not adopt the bound state |
-| `Handover.consent/1` | corrections pending, an awake durable steps instance, or an effectively-once outbox owing output | defers the move |
+| `Handover.consent/1` | state already handed over, corrections pending, an awake durable steps instance, or an effectively-once outbox owing output | defers the move |
 
 ## Adding a transition
 

@@ -256,6 +256,7 @@ relay whose input is journaled SHALL stop as before.
 - `:defer` while a late-input correction is pending (`corrections != %{}`),
 - `:defer` while the instance journals its progress stage by stage and is awake (a persistent steps relay that is not sleeping: `durable_steps and not suspended`), because a pass in flight is not a state document a handover can ship,
 - `:defer` while an effectively-once instance has pending (unflushed) outbox items in any of its live WalWriters,
+- `:defer` once the Overwatch has handed its state over for a move that has not yet ended it (`handed_over?`), because its runner has dropped the relay and a second read would ship an empty state in place of the first,
 - `:ready` otherwise, including for a sleeping instance of either run, and for an awake flow relay whether or not its class sleeps, which migrates in place through the handover.
 
 A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: worst case equals pre-consent behaviour). While the Overwatch is synchronously executing a correction/replay transaction it cannot answer the consent query; the protocol's no-reply-within-`consent_timeout` path SHALL be relied upon to defer it — no additional in-flight marker is introduced.
@@ -284,6 +285,12 @@ A failure of the pending-outbox query SHALL be treated as `:ready` (fail-open: w
 - **WHEN** it is asked for migration consent
 - **THEN** it returns `:defer`
 - **AND** after the outbox drains, the next consent re-query (retry tick) receives `:ready` and the child migrates
+
+#### Scenario: A relay whose move is in flight is not moved again
+
+- **GIVEN** a hot-swap Overwatch that handed its state over to a move whose destination has not yet started it
+- **WHEN** a later redistribution pass on the same node asks it for migration consent
+- **THEN** it returns `:defer`, and the destination receives the state the first move took
 
 #### Scenario: Idle flow relay migrates immediately
 

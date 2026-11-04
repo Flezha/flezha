@@ -504,7 +504,9 @@ defmodule Flezha.Cluster.GroupedHashing do
   # the migration strategy, consent and handover included. Off the coordinator,
   # so a table write never waits on a migration, and on the hub's worker queue,
   # where a drain's own pass and ProcessHub's redistribution run, so two passes
-  # never migrate the same child at once and hand over its state twice.
+  # never migrate the same child at once. A child whose move an earlier pass
+  # started is still registered here until it lands; its consent keeps this
+  # pass from handing its state over a second time.
   #
   # Runs in the coordinator. The pending mark names the coordinator that armed
   # it, so one restarted before its pass ran arms a new one.

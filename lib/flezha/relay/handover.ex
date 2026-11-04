@@ -241,6 +241,9 @@ defmodule Flezha.Relay.Handover do
   outbox still owes output that would strand on this node — queued behind the
   flush, or dispatched and not yet confirmed by a sink. A sleeping instance of
   either kind consents, and so does an awake stream, whether or not it sleeps.
+  A relay whose state already left defers too: its move is in flight, and a
+  later redistribution pass would read it again off a runner that has dropped
+  it and ship that empty answer in place of the first.
 
   The synchronous correction transaction needs no clause — mid-run this process
   cannot answer, and consent's no-reply timeout defers it.
@@ -248,6 +251,7 @@ defmodule Flezha.Relay.Handover do
   @spec consent(Overwatch.t()) :: :ready | :defer
   def consent(%Overwatch{} = state) do
     cond do
+      state.handed_over? -> :defer
       state.corrections != %{} -> :defer
       state.durable_steps and state.phase != :suspended -> :defer
       state.effectively_once and outbox_pending?(state) -> :defer
