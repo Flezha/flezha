@@ -11,7 +11,7 @@ so a controller pod that is replaced under a new address is found again.
 > - The controllers running from `deploy/kubernetes/`, version 0.1.0 or later, with the
 >   HTTP API's package `flezha_http` in their `FLEZHA_PLUGINS`
 >   ([Plugins in the Kubernetes README](https://github.com/flezha/flezha/blob/main/deploy/kubernetes/README.md#plugins)).
-> - A checkout of the Flezha repository, for `deploy/dist-tls/make-certs.sh`, and `openssl`.
+> - `openssl`, which `make-certs.sh` runs.
 > - The cluster can pull `flezha/flezha_console:0.1.0` from Docker Hub. To run an image you
 >   built yourself ([Docker](console_docker.md#the-image) shows how), import it into k3s, or
 >   push it to your registry and change `image:` in the manifest.
@@ -23,9 +23,10 @@ so a controller pod that is replaced under a new address is found again.
 > {: .step}
 
 ```sh
-$ deploy/dist-tls/make-certs.sh ca channel
-$ deploy/dist-tls/make-certs.sh node channel controllers --dns flezha-controllers.flezha.svc.cluster.local
-$ deploy/dist-tls/make-certs.sh node channel console --dns console.flezha.svc.cluster.local
+$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.0/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
+$ ./make-certs.sh ca channel
+$ ./make-certs.sh node channel controllers --dns flezha-controllers.flezha.svc.cluster.local
+$ ./make-certs.sh node channel console --dns console.flezha.svc.cluster.local
 ```
 
 Keep `channel/ca.key` off the cluster. The authority is the channel's alone: never use the

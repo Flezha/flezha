@@ -205,30 +205,11 @@ Their types and defaults are in [Controller environment variables](../../configu
 
 ## Example
 
-In the agentdesk example, the controller gets the HTTP server plugin, a package built in
-its own repository and carried as the submodule `plugins/flezha_http_plugin`. A package
-records the Erlang and Elixir versions it was built with, so it is built in the controller
-image's builder stage, which has the same toolchain. From a checkout of the Flezha
-repository with its submodules:
-
-```sh
-$ git clone --recurse-submodules https://github.com/flezha/flezha
-$ cd flezha
-$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f deploy/docker/prod/Dockerfile.controller .
-$ docker run --rm -v "$PWD:/src" -w /src/plugins/flezha_http_plugin flezha/plugin-builder:0.1.0 sh -c 'mix deps.get && mix flezha.plugin.package'
-```
-
-```output
-...
-==> flezha_http
-Compiling 6 files (.ex)
-Generated flezha_http app
-Wrote /src/plugins/flezha_http_plugin/_build/flezha_http-0.1.0.fpz
-```
-
-The whole checkout is mounted, because the plugin builds against the Flezha checkout it is
-a submodule of. The package holds the plugin and the libraries it needs that the
-controller does not ship, Bandit and Plug among them.
+In the agentdesk example, the controller gets the HTTP server plugin. Each release
+publishes the package of every bundled plugin beside the controller, built with the
+controller's own Erlang and Elixir, which a package records. The package holds the plugin
+and the libraries it needs that the controller does not ship, Bandit and Plug among them.
+[Writing a plugin](writing_a_plugin.md) shows how to build a package of your own.
 
 agentdesk's controller image is a derived image that copies the project's
 `controller/plugins/` folder into its plugin root:
@@ -242,11 +223,11 @@ ENV FLEZHA_PLUGIN_ROOT=/flezha/plugins
 
 [Full file](https://github.com/flezha/flezha_java_sdk/blob/main/examples/agentdesk/controller/Dockerfile)
 
-The package is copied into that folder, and the image rebuilt and its container replaced,
-from agentdesk's folder:
+The package is downloaded into that folder, and the image rebuilt and its container
+replaced, from agentdesk's folder:
 
 ```sh
-$ cp <the plugin's folder>/_build/flezha_http-0.1.0.fpz controller/plugins/
+$ curl -fsSL -o controller/plugins/flezha_http-0.1.0.fpz https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz
 $ docker compose up -d --build --wait controller
 $ flz plugin list --installed
 ```

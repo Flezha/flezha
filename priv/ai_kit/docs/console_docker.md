@@ -7,9 +7,6 @@ The console reaches the controller over its HTTP API with a client certificate a
 > #### What you need {: .tip}
 >
 > - Docker with Compose, and `openssl`.
-> - A checkout of the Flezha repository, for `deploy/dist-tls/make-certs.sh`.
-> - The HTTP API's plugin package, `flezha_http-0.1.0.fpz`, built as
->   [Installing plugins](../topics/plugins/installing_plugins.md#example) shows.
 > - The console's image, `flezha/flezha_console:0.1.0` on Docker Hub, for amd64 and arm64.
 
 ## The image
@@ -43,10 +40,11 @@ $ docker build -f deploy/Dockerfile --build-context stylebook=../flezha_styleboo
 
 ```sh
 $ mkdir console-stack && cd console-stack
-$ <flezha checkout>/deploy/dist-tls/make-certs.sh ca channel
-$ <flezha checkout>/deploy/dist-tls/make-certs.sh node channel controller --dns controller
-$ <flezha checkout>/deploy/dist-tls/make-certs.sh node channel console --dns console
-$ mkdir plugins && cp <the plugin's folder>/_build/flezha_http-0.1.0.fpz plugins/
+$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.0/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
+$ ./make-certs.sh ca channel
+$ ./make-certs.sh node channel controller --dns controller
+$ ./make-certs.sh node channel console --dns console
+$ mkdir plugins && curl -fsSL -o plugins/flezha_http-0.1.0.fpz https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz
 ```
 
 `channel/controller/` and `channel/console/` each hold `node.pem`, `node.key` and `ca.pem`.

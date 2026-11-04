@@ -1,32 +1,17 @@
 # Add your own plugin
 
-On this page you build the HTTP plugin's package and install it by rebuilding
-the controller's image. A plugin package (`.fpz`) is loaded when the controller
+On this page you download the HTTP plugin's package and install it by
+rebuilding the controller's image. A plugin package (`.fpz`) is loaded when the controller
 boots. [Installing plugins](../installing_plugins.html) covers packages,
 and [Writing a plugin](../writing_a_plugin.html) how to write your own.
 
-> From the root of your clone, build the plugin builder image, then package the
-> HTTP plugin in it.
+> Download the HTTP plugin's package into the agentdesk's `controller/plugins/`
+> folder, then rebuild the controller's image and replace its container, from
+> the agentdesk folder.
 > {: .step}
 
 ```sh
-$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 -f deploy/docker/prod/Dockerfile.controller .
-$ docker run --rm -v "$PWD:/src" -w /src/plugins/flezha_http_plugin flezha/plugin-builder:0.1.0 sh -c 'mix deps.get && mix flezha.plugin.package'
-```
-
-```output
-...
-Generated flezha_http app
-Wrote /src/plugins/flezha_http_plugin/_build/flezha_http-0.1.0.fpz
-```
-
-> Copy the package into the agentdesk's `controller/plugins/` folder, then
-> rebuild the controller's image and replace its container, from the agentdesk
-> folder.
-> {: .step}
-
-```sh
-$ cp ../../../../plugins/flezha_http_plugin/_build/flezha_http-0.1.0.fpz controller/plugins/
+$ curl -fsSL -o controller/plugins/flezha_http-0.1.0.fpz https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz
 $ docker compose up -d --build --wait controller
 $ flz plugin list --installed
 ```

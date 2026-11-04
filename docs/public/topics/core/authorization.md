@@ -452,13 +452,14 @@ and the cookie is still checked. Point `FLEZHA_DIST_TLS_OPTFILE` at an options
 file and the release starts with `-proto_dist inet_tls` for every command, the
 controller and `flzvm` alike.
 
-`deploy/dist-tls/` holds a tested setup. `dist_tls.conf` is the options file,
+[`deploy/dist-tls/`](https://github.com/flezha/flezha/tree/main/deploy/dist-tls) holds a tested setup. `dist_tls.conf` is the options file,
 reading `/etc/flezha/dist/node.pem`, `node.key` and `ca.pem`; `make-certs.sh`
 makes the authority and one folder of those three files per node:
 
 ```sh
-$ deploy/dist-tls/make-certs.sh ca ./dist-ca
-$ deploy/dist-tls/make-certs.sh node ./dist-ca node1 --ip 10.0.0.5 --dns node1.internal
+$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.0/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
+$ ./make-certs.sh ca ./dist-ca
+$ ./make-certs.sh node ./dist-ca node1 --ip 10.0.0.5 --dns node1.internal
 ```
 
 Copy `dist-ca/node1/` to `/etc/flezha/dist/` on that machine. The names you give

@@ -39,16 +39,6 @@ ids, tokens and times will differ.
 > The prebuilt libraries cover Linux x86-64 and arm64 with glibc (2.34 or later
 > for the Python wheel on x86-64), macOS x86-64 and arm64, and Windows x86-64
 > (except Go's). Anywhere else, the SDK's README says how to build it.
->
-> - **git**, to get the example.
-
-> Get the example: clone the repository. The echo of each language is in
-> `sdk/<language>/examples/echo`.
-> {: .step}
-
-```sh
-$ git clone --recurse-submodules https://github.com/flezha/flezha.git
-```
 
 ## Start the controller
 
@@ -260,7 +250,7 @@ serves.
 
 ### Java
 
-In your clone: `sdk/java/examples/echo` ([on GitHub](https://github.com/flezha/flezha_java_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_java_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```java
 // Echo.java: the tasklet
@@ -314,7 +304,7 @@ public final class Main {
 
 ### Rust
 
-In your clone: `sdk/rust/examples/echo` ([on GitHub](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_rust_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```rust
 // src/tasklet.rs: the tasklet
@@ -374,7 +364,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Node
 
-In your clone: `sdk/node/examples/echo` ([on GitHub](https://github.com/flezha/flezha_node_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_node_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```javascript
 // echo_tasklet.mjs: the tasklet
@@ -414,7 +404,7 @@ await runner.run(); // connects to the controller
 
 ### Python
 
-In your clone: `sdk/python/examples/echo` ([on GitHub](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_python_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```python
 # echo_tasklet.py: the tasklet
@@ -460,7 +450,7 @@ if __name__ == "__main__":
 
 ### Ruby
 
-In your clone: `sdk/ruby/examples/echo` ([on GitHub](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_ruby_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```ruby
 # echo_tasklet.rb: the tasklet
@@ -504,7 +494,7 @@ runner.await_termination
 
 ### PHP
 
-In your clone: `sdk/php/examples/echo` ([on GitHub](https://github.com/flezha/flezha_php_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_php_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```php
 // src/EchoTasklet.php: the tasklet
@@ -549,7 +539,7 @@ $runner->awaitTermination();
 
 ### Elixir
 
-In your clone: `sdk/elixir/examples/echo` ([on GitHub](https://github.com/flezha/flezha_elixir_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_elixir_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```elixir
 # lib/echo/tasklet.ex: the tasklet
@@ -610,7 +600,7 @@ end
 
 ### Go
 
-In your clone: `sdk/go/examples/echo` ([on GitHub](https://github.com/flezha/flezha_go_sdk/tree/main/examples/echo)).
+The echo example ([on GitHub](https://github.com/flezha/flezha_go_sdk/tree/main/examples/echo)), which the run step below downloads.
 
 ```go
 // tasklet.go: the tasklet
@@ -675,9 +665,9 @@ func main() {
 <!-- tabs-close -->
 
 
-> Start the echo runner: open a new terminal on the controller's machine, go to
-> your language's echo example folder in your clone, and run the command in its
-> tab.
+> Start the echo runner: open a new terminal on the controller's machine and
+> run the commands in your language's tab. They download the echo into a folder
+> of its own, go there and start it.
 > {: .step}
 
 <!-- tabs-open -->
@@ -685,48 +675,64 @@ func main() {
 ### Java
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-echo.tar.gz | tar xz
+$ cd flezha-java-echo
 $ mvn -q package && java -jar target/echo.jar
 ```
 
 ### Rust
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-echo.tar.gz | tar xz
+$ cd flezha-rust-echo
 $ cargo run --release
 ```
 
 ### Node
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-echo.tar.gz | tar xz
+$ cd flezha-node-echo
 $ npm install && node runner.mjs
 ```
 
 ### Python
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-echo.tar.gz | tar xz
+$ cd flezha-python-echo
 $ pip install -r requirements.txt && python3 runner.py
 ```
 
 ### Ruby
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-echo.tar.gz | tar xz
+$ cd flezha-ruby-echo
 $ bundle install && bundle exec ruby runner.rb
 ```
 
 ### PHP
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-echo.tar.gz | tar xz
+$ cd flezha-php-echo
 $ composer install && php runner.php
 ```
 
 ### Elixir
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-echo.tar.gz | tar xz
+$ cd flezha-elixir-echo
 $ mix deps.get && mix run --no-halt
 ```
 
 ### Go
 
 ```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-echo.tar.gz | tar xz
+$ cd flezha-go-echo
 $ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
 $ go run .
 ```

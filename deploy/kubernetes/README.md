@@ -271,11 +271,14 @@ The declared list is the only truth on such a node: `flz plugin install` and
 sync would undo them.
 
 Every entry is a path inside the container or an `https://` URL the pods can reach,
-verified against the operating system's CA store. Nothing is published before
-go-live, so serve the archive from a host of your own, or mount it: a ConfigMap
-holding the archive under `binaryData`, mounted read-only at `/pkgs`, is named as
-`/pkgs/<file>.fpz#sha256=<hex>`. `docs/public/topics/plugins/installing_plugins.md` covers building a
-package with the `plugin-builder` image, statuses, errors and signing.
+verified against the operating system's CA store. Each release publishes the bundled
+plugins' packages, such as
+`https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz`. Serve
+a package of your own from a host of your own, or mount it: a ConfigMap holding the
+archive under `binaryData`, mounted read-only at `/pkgs`, is named as
+`/pkgs/<file>.fpz#sha256=<hex>`. `docs/public/topics/plugins/writing_a_plugin.md` covers
+building a package, and `docs/public/topics/plugins/installing_plugins.md` statuses,
+errors and signing.
 
 ## Logs
 

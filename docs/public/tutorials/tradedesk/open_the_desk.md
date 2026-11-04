@@ -226,8 +226,8 @@ func main() {
 
 <!-- tabs-close -->
 
-> Start the desk's runner from your language's `tradedesk` folder, with your
-> runner key in place of the one here. Leave it running.
+> Start the desk's runner from your `flezha-<language>-tradedesk` folder, with
+> your runner key in place of the one here. Leave it running.
 > {: .step}
 
 <!-- tabs-open -->

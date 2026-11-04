@@ -6,13 +6,13 @@ On this page you start the demo exchange, feed its live trades into
 bound, and [the WebSocket plugin](../websocket_subscription.html) lists
 its options.
 
-> Clone the demo exchange and start it in a terminal of its own. It runs until
-> you press Ctrl-C.
+> Download the demo exchange and start it in a terminal of its own. It runs
+> until you press Ctrl-C.
 > {: .step}
 
 ```sh
-$ git clone https://github.com/flezha/flezha_testnet.git
-$ cd flezha_testnet
+$ curl -fsSL https://github.com/flezha/flezha_testnet/archive/refs/heads/main.tar.gz | tar xz
+$ cd flezha_testnet-main
 $ npm ci
 $ npm run build
 $ npm run start

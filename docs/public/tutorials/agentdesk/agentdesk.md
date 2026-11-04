@@ -23,16 +23,71 @@ flowchart LR
 > - **For the runner**, one language's toolchain, as
 >   [Up and running](../up_and_running.html) lists it.
 > - **A Kubernetes cluster, such as k3s, and `kubectl`**, for the last page.
-> - **git**, to get the example and the HTTP plugin.
 
-> Get the example: clone the repository with its submodules. The agentdesk
-> of each language is in `sdk/<language>/examples/agentdesk`, and every
-> command in this tutorial runs from that folder.
+> Get the example: run the commands in your language's tab. They download the
+> agentdesk into a folder of its own, `flezha-<language>-agentdesk`, and go
+> there. Every command in this tutorial runs from that folder.
 > {: .step}
 
+<!-- tabs-open -->
+
+### Java
+
 ```sh
-$ git clone --recurse-submodules https://github.com/flezha/flezha.git
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-agentdesk.tar.gz | tar xz
+$ cd flezha-java-agentdesk
 ```
+
+### Rust
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-agentdesk.tar.gz | tar xz
+$ cd flezha-rust-agentdesk
+```
+
+### Node
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-agentdesk.tar.gz | tar xz
+$ cd flezha-node-agentdesk
+```
+
+### Python
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-agentdesk.tar.gz | tar xz
+$ cd flezha-python-agentdesk
+```
+
+### Ruby
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-agentdesk.tar.gz | tar xz
+$ cd flezha-ruby-agentdesk
+```
+
+### PHP
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-agentdesk.tar.gz | tar xz
+$ cd flezha-php-agentdesk
+```
+
+### Elixir
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-agentdesk.tar.gz | tar xz
+$ cd flezha-elixir-agentdesk
+```
+
+### Go
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-agentdesk.tar.gz | tar xz
+$ cd flezha-go-agentdesk
+```
+
+<!-- tabs-close -->
 
 | Page | What you do |
 |---|---|

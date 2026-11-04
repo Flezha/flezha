@@ -109,7 +109,8 @@ docker save -o flezha-0.1.0.tar flezha/flezha:0.1.0
 
 A plugin package (`.fpz`) is data beside the immutable image: the controller
 loads every archive in `/flezha/storage/app/plugins` when it starts, and a change
-takes effect at the next start. Build a package for this image in the builder:
+takes effect at the next start. Each release publishes the bundled plugins' packages
+beside the controller. Build a package of your own for this image in the builder:
 
 ```bash
 docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 \

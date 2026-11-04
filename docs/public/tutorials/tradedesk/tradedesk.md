@@ -23,15 +23,62 @@ flowchart LR
 > - What [Up and running](../up_and_running.html) needed: a controller
 >   release or Docker, and one language's toolchain for the runner.
 > - **Node.js, with npm**, to run the demo exchange.
-> - **git**, to get the example and the demo exchange.
 
-> Get the example: clone the repository. The tradedesk of each language is in
-> `sdk/<language>/examples/tradedesk`.
+> Get the example: run the command in your language's tab. It downloads the
+> tradedesk into a folder of its own, `flezha-<language>-tradedesk`.
 > {: .step}
 
+<!-- tabs-open -->
+
+### Java
+
 ```sh
-$ git clone --recurse-submodules https://github.com/flezha/flezha.git
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-tradedesk.tar.gz | tar xz
 ```
+
+### Rust
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-tradedesk.tar.gz | tar xz
+```
+
+### Node
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-tradedesk.tar.gz | tar xz
+```
+
+### Python
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-tradedesk.tar.gz | tar xz
+```
+
+### Ruby
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-tradedesk.tar.gz | tar xz
+```
+
+### PHP
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-tradedesk.tar.gz | tar xz
+```
+
+### Elixir
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-tradedesk.tar.gz | tar xz
+```
+
+### Go
+
+```sh
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-tradedesk.tar.gz | tar xz
+```
+
+<!-- tabs-close -->
 
 | Page | What you do |
 |---|---|
