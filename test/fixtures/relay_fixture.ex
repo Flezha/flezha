@@ -100,20 +100,25 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
         }
       end)
 
-    Enum.each(plugins, fn plugin ->
-      ExUnit.Callbacks.on_exit(fn -> PluginManager.disable_plugin(namespace, plugin.id) end)
-    end)
+    Enum.each(plugins, &disable_at_exit(namespace, &1.id))
 
     {:ok, bindings} = PluginManager.start_bindings(namespace, nil, plugins)
     bindings
   end
 
+  @doc """
+  Forward the outputs of the relay `start_res` names to the calling test, through
+  a plugin enabled as `<relay_id>_output_msg_handler` and disabled again when
+  the test ends: an enable of a name already enabled keeps its options, so a
+  later test reusing the relay id would forward to this one's exited process.
+  """
   def attach_output_msg(
         {:ok, %{relay_id: cid}} = start_res,
         namespace \\ @default_namespace,
         opts \\ %{}
       ) do
     plugin_id = cid <> "_output_msg_handler"
+    disable_at_exit(namespace, plugin_id)
 
     {:ok, "plugin enabled"} =
       PluginManager.enable_plugin(
@@ -130,4 +135,7 @@ defmodule FlezhaTest.Fixtures.RelayFixture do
 
     start_res
   end
+
+  defp disable_at_exit(namespace, plugin_id),
+    do: ExUnit.Callbacks.on_exit(fn -> PluginManager.disable_plugin(namespace, plugin_id) end)
 end

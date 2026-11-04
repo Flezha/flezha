@@ -1,6 +1,7 @@
 defmodule FlezhaTest do
   alias Flezha.Payloader
   alias Flezha.Runner.FleetManager
+  alias Flezha.Service.HubManager
   alias Flezha.Service.RelayManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.TestHelpers
@@ -235,5 +236,26 @@ defmodule FlezhaTest do
                "text_inputs" => ["state_1", "state_2"]
              }
            }
+  end
+
+  # fails when: the output sink a test attached outlives it, so a later test
+  # attaching one to a relay of the same id keeps the earlier test's receiver
+  # and its outputs go to a process that has exited.
+  for run <- 1..2 do
+    test "an attached output sink answers the test that attached it, run #{run} of 2" do
+      relay_id = "sink_owner_test"
+
+      {:ok, _} =
+        relay_id
+        |> RelayFixture.get(@test_store_input_factory)
+        |> RelayFixture.start()
+        |> RelayFixture.attach_output_msg()
+
+      assert {:ok, %Flezha.Plugin{opts: %{recv_pid: receiver}}} =
+               HubManager.plugin_entry(@default_namespace, relay_id <> "_output_msg_handler")
+
+      assert receiver == self()
+      assert RelayTestHelper.send_sync_io(relay_id, @default_namespace, "owned", %{})
+    end
   end
 end
