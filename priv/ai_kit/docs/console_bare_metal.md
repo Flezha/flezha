@@ -9,7 +9,7 @@ release on the same machine, reaching it over the controller's HTTP API on loopb
 > - A controller release running on this machine
 >   ([Deploying a controller](../topics/deploying/deploying_a_controller.md)), version 0.1.0 or
 >   later.
-> - The HTTP API's plugin package, `flezha_http-0.1.0.fpz`
+> - The HTTP API's plugin package, `flezha_http-0.1.1.fpz`
 >   ([Installing plugins](../topics/plugins/installing_plugins.md#example)).
 > - To build the release from source instead of downloading it: Elixir 1.14 or later with
 >   Erlang/OTP, and Node.js with npm.
@@ -83,7 +83,7 @@ machine. A console on another machine needs the API over TLS with a client certi
 > {: .step}
 
 ```sh
-$ ./bin/flz plugin install ./flezha_http-0.1.0.fpz
+$ ./bin/flz plugin install ./flezha_http-0.1.1.fpz
 ```
 
 > Claim the admin, if no one has yet, and enable the HTTP API on loopback with the admin

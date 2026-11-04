@@ -102,7 +102,7 @@ base image or toolchain.
 docker save -o flezha-latest.tar flezha/flezha:latest
 
 # Export specific version
-docker save -o flezha-0.1.0.tar flezha/flezha:0.1.0
+docker save -o flezha-0.1.1.tar flezha/flezha:0.1.1
 ```
 
 ## Plugins
@@ -113,9 +113,9 @@ takes effect at the next start. Each release publishes the bundled plugins' pack
 beside the controller. Build a package of your own for this image in the builder:
 
 ```bash
-docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 \
+docker build --target plugin-builder -t flezha/plugin-builder:0.1.1 \
   -f deploy/docker/prod/Dockerfile.controller .
-docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.0 \
+docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.1 \
   sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
 

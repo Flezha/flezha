@@ -133,7 +133,7 @@ the `requirements.txt` line:
 ```sh
 cd examples/tradedesk
 python3 -m venv .venv
-.venv/bin/pip install ../../dist/flezha-0.1.0-*.whl
+.venv/bin/pip install ../../dist/flezha-0.1.1-*.whl
 ```
 
 ## Where to go next

@@ -96,7 +96,7 @@ builds the images and deploys `k8s/agentdesk.yaml` on k3s.
 
 ## Building from a checkout
 
-Docker pulls the controller's image `flezha/flezha:0.1.0` from Docker Hub; the
+Docker pulls the controller's image `flezha/flezha:0.1.1` from Docker Hub; the
 commands below build it from the checkout instead.
 To run the project against
 a Flezha checkout instead of the published package, first build a wheel with maturin from
@@ -111,14 +111,14 @@ maturin build --release --out dist --features python-extension,python-abi3 --off
 It needs a Rust toolchain. Build the controller's image from the repository root:
 
 ```sh
-docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
+docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.1 .
 ```
 
 Then, in this folder, install the wheel into `vendor/` instead of the
 `requirements.txt` line:
 
 ```sh
-python3 -m pip install --target vendor ../../dist/flezha-0.1.0-*.whl
+python3 -m pip install --target vendor ../../dist/flezha-0.1.1-*.whl
 ```
 
 ## Where to go next

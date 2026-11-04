@@ -219,7 +219,7 @@
     },
     {
       "run": [
-        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)\"",
         "go test ./...",
         "go run .",
         "flz relay start starter --id starter",
@@ -257,7 +257,7 @@
     },
     {
       "run": [
-        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)\"",
         "go run .",
         "flz relay start echo --id my_echo",
         "flz relay send my_echo --text 'hello world' --await 2000"
@@ -290,7 +290,7 @@
     },
     {
       "run": [
-        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)\"",
         "FLEZHA_NAMESPACE_SECRET=<trading key> go run .",
         "flz runner list --namespace trading"
       ],
@@ -346,7 +346,7 @@
     },
     {
       "run": [
-        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)\"",
+        "eval \"$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)\"",
         "go build",
         "docker compose up -d --build --wait",
         "alias flz='docker compose exec controller bin/flz'",

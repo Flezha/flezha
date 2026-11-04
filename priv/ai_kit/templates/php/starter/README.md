@@ -63,5 +63,5 @@ stays as it is; remove the entry to use the published package again:
 
 ```sh
 composer config --global repositories.flezha-sdk \
-  '{"type": "path", "url": "/path/to/flezha/sdk/php", "options": {"versions": {"flezha/sdk": "0.1.0"}}}'
+  '{"type": "path", "url": "/path/to/flezha/sdk/php", "options": {"versions": {"flezha/sdk": "0.1.1"}}}'
 ```

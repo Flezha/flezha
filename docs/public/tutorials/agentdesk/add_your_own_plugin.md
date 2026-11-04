@@ -11,13 +11,13 @@ and [Writing a plugin](../writing_a_plugin.html) how to write your own.
 > {: .step}
 
 ```sh
-$ curl -fsSL -o controller/plugins/flezha_http-0.1.0.fpz https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz
+$ curl -fsSL -o controller/plugins/flezha_http-0.1.1.fpz https://github.com/flezha/flezha/releases/download/v0.1.1/flezha_http-0.1.1.fpz
 $ docker compose up -d --build --wait controller
 $ flz plugin list --installed
 ```
 
 ```output
-flezha_http 0.1.0  loaded  providers: http_server
+flezha_http 0.1.1  loaded  providers: http_server
 ```
 
 The sessions survived the new controller. They are asleep, and wake on the

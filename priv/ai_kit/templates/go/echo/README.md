@@ -17,7 +17,7 @@ You need a controller running and reachable first
 ([Up and running](https://github.com/flezha/flezha/blob/main/docs/public/getting_started/up_and_running.md)).
 
 ```sh
-eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
+eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)"
 go run .
 ```
 

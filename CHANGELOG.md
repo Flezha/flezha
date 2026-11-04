@@ -1,9 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-11-04)
 
-Nothing has been published yet. The first entry is written when 0.1.0 is
-released; until then, this section names what changes for a user of the
+### Changed
+
+- A release now carries each guide's example (echo, tradedesk and agentdesk) for every SDK
+  as one archive per language, beside the starters, and the bundled plugins' packages
+  (`flezha_http`, `flezha_kafka`, `flezha_postgres_cdc`, `flezha_rabbitmq`). The guides
+  download what they need from the release instead of cloning the repository.
+
+### Fixed
+
+- A relay moved by live handover during a drain no longer arrives with empty state when a
+  second redistribution pass runs while the move is still in flight.
+- The controller image starts on a bind mount whose host folder Docker created owned by root,
+  which is what the guide's own `docker run` did on a fresh machine.
+- A runner that cannot keep its id on disk, as on a desktop where `/var/lib/flezha-runner` is
+  not writable, no longer warns on its first start; it uses a fresh id for the boot as before.
+- A PHP runner on a PHP built with Zend signal handling now drains and ships its relays' final
+  state on SIGTERM or SIGINT, where it used to end at once; a `pcntl` handler the application
+  set still runs.
+
+## 0.1.0 (2026-11-03)
+
+The first public release. This section names what changed for a user of the
 v0.1.0-alpha.1 pre-release.
 
 ### Added
@@ -422,9 +442,6 @@ v0.1.0-alpha.1 pre-release.
   hosted by another. The disable now waits until every controller of the
   namespace has dropped the plugin's record before it tells the relays, so a
   convergence tick on a slower controller cannot bring the binding up again.
-- A PHP runner on a PHP built with Zend signal handling now drains and ships its relays' final
-  state on SIGTERM or SIGINT, where it used to end at once; a `pcntl` handler the application
-  set still runs.
 
 ### Security
 

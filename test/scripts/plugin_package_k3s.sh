@@ -57,7 +57,7 @@ note "starting ${K3S_IMAGE}"
 k3s_up "$RUN_ID"
 
 note "importing ${RUNTIME_IMAGE} as the manifests' image"
-k3s_import "$RUNTIME_IMAGE" flezha/flezha:0.1.0
+k3s_import "$RUNTIME_IMAGE" flezha/flezha:0.1.1
 
 note "applying the reference manifests with the plugin patch"
 for manifest in namespace role serviceaccount rolebinding configmap; do

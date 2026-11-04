@@ -149,7 +149,7 @@ The release's VM flags are in the image. `ERL_FLAGS` overrides them without a re
 $ docker run -d --name flezha-controller \
   -e ERL_FLAGS="+S 4:4" \
   -v flezha_data:/flezha/storage/app \
-  flezha/flezha:0.1.0
+  flezha/flezha:0.1.1
 ```
 
 A flag the VM does not accept stops the boot, so the container exits instead of running

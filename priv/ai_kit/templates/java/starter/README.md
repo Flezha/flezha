@@ -47,7 +47,7 @@ tasklet's state is saved under, so choose it before the first run.
 ## Building from a checkout
 
 To run the project against a Flezha checkout instead of the published SDK, install
-the checkout's `com.flezha:flezha-sdk:0.1.0` into your local Maven repository, which
+the checkout's `com.flezha:flezha-sdk:0.1.1` into your local Maven repository, which
 Maven reads before Maven Central. From the root of the checkout:
 
 ```sh

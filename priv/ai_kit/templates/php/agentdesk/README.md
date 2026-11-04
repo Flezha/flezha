@@ -95,7 +95,7 @@ builds the images and deploys `k8s/agentdesk.yaml` on k3s.
 
 ## Building from a checkout
 
-Docker pulls the controller's image `flezha/flezha:0.1.0` from Docker Hub; the
+Docker pulls the controller's image `flezha/flezha:0.1.1` from Docker Hub; the
 commands below build it from the checkout instead.
 To run the project against
 a Flezha checkout instead of the published package, also stage the native library the
@@ -103,7 +103,7 @@ package loads. From the repository root:
 
 ```sh
 scripts/build-php-sdk.sh --release
-docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
+docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.1 .
 ```
 
 The first needs a Rust toolchain. Then tell Composer where the package is, once, naming
@@ -111,7 +111,7 @@ your checkout's absolute path:
 
 ```sh
 composer config --global repositories.flezha-sdk \
-  '{"type": "path", "url": "/path/to/flezha/sdk/php", "options": {"symlink": false, "versions": {"flezha/sdk": "0.1.0"}}}'
+  '{"type": "path", "url": "/path/to/flezha/sdk/php", "options": {"symlink": false, "versions": {"flezha/sdk": "0.1.1"}}}'
 ```
 
 After that, `composer install` in this folder copies the checkout's package into

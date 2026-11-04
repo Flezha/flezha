@@ -7,7 +7,7 @@
 
 A durable runtime for streams, workflows and agents.
 
-> Flezha 0.1.0 is an early release: interfaces may still change between versions until 1.0.
+> Flezha 0.1.1 is an early release: interfaces may still change between versions until 1.0.
 
 ![The flz CLI starting a relay, sending to it, plugging in a file writer and listening live](docs/public/assets/flz-cli-demo.svg)
 

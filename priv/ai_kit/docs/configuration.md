@@ -55,7 +55,7 @@ With the image:
 $ docker run -d --name flezha-controller \
   -e FLEZHA_HEALTHZ_ENABLED=true \
   -v flezha_data:/flezha/storage/app \
-  flezha/flezha:0.1.0
+  flezha/flezha:0.1.1
 ```
 
 On [Kubernetes](topics/deploying/kubernetes.md) the same variables go in the

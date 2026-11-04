@@ -98,7 +98,7 @@ builds the images and deploys `k8s/agentdesk.yaml` on k3s.
 
 ## Building from a checkout
 
-Docker pulls the controller's image `flezha/flezha:0.1.0` from Docker Hub; the
+Docker pulls the controller's image `flezha/flezha:0.1.1` from Docker Hub; the
 commands below build it from the checkout instead.
 To run the project against
 a Flezha checkout instead of the published package, also build the SDK and its native
@@ -106,7 +106,7 @@ part. From the repository root:
 
 ```sh
 scripts/build-node-sdk.sh --release
-docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
+docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.1 .
 ```
 
 The first needs a Rust toolchain. Then, in this folder, install the checkout's package

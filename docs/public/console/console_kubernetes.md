@@ -23,7 +23,7 @@ so a controller pod that is replaced under a new address is found again.
 > {: .step}
 
 ```sh
-$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.0/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
+$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.1/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
 $ ./make-certs.sh ca channel
 $ ./make-certs.sh node channel controllers --dns flezha-controllers.flezha.svc.cluster.local
 $ ./make-certs.sh node channel console --dns console.flezha.svc.cluster.local

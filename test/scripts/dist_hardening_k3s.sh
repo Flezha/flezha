@@ -21,7 +21,7 @@
 # runtime image built from this tree and the HTTP API's package built against
 # it; pass them in, or it builds both:
 #
-#   RUNTIME_IMAGE=flezha/flezha:x HTTP_ARCHIVE=/path/flezha_http-0.1.0.fpz \
+#   RUNTIME_IMAGE=flezha/flezha:x HTTP_ARCHIVE=/path/flezha_http-0.1.1.fpz \
 #     test/scripts/dist_hardening_k3s.sh
 
 set -euo pipefail
@@ -58,12 +58,12 @@ if [ -z "${RUNTIME_IMAGE:-}" ] || [ -z "${HTTP_ARCHIVE:-}" ]; then
   docker build -q --target plugin-builder -f "$REPO_ROOT/deploy/docker/prod/Dockerfile.controller" \
     -t "$BUILDER" "$REPO_ROOT" >/dev/null
   k3s_package "$BUILDER" plugins/flezha_http_plugin "$WORK/pkg"
-  HTTP_ARCHIVE="$WORK/pkg/flezha_http-0.1.0.fpz"
+  HTTP_ARCHIVE="$WORK/pkg/flezha_http-0.1.1.fpz"
 fi
 
 note "starting a two-node ${K3S_IMAGE} cluster"
 k3s_up "$RUN_ID" 1
-k3s_import "$RUNTIME_IMAGE" flezha/flezha:0.1.0
+k3s_import "$RUNTIME_IMAGE" flezha/flezha:0.1.1
 
 COOKIE="$(head -c 48 /dev/urandom | base64 | tr -d '\n/+=')"
 note "applying the reference manifests"
@@ -218,7 +218,7 @@ spec:
     runAsUser: 1000
   containers:
     - name: dial
-      image: flezha/flezha:0.1.0
+      image: flezha/flezha:0.1.1
       imagePullPolicy: IfNotPresent
       env:
         # The eval VM writes a cookie file of its own before the real one is set.

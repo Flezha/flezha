@@ -53,7 +53,7 @@ runner with (it needs cargo and git), and install it once:
 
 ```sh
 rake native gem
-gem install pkg/flezha-0.1.0-*.gem
+gem install pkg/flezha-0.1.1-*.gem
 ```
 
 `bundle install` in this folder then finds it.

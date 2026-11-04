@@ -26,7 +26,7 @@ flz_core_ffi = { path = "crates/flz_core_ffi" }
 flz_transport = { path = "crates/flz_transport" }
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/flezha/flezha"

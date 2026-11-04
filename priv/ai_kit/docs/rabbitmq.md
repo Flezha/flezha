@@ -97,7 +97,7 @@ $ flz plugin enable rates-out rabbitmq_producer --relay_id=pricer --hook=on_outp
 ## Installing
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
-`flezha_rabbitmq-0.1.0.fpz` on the controller as
+`flezha_rabbitmq-0.1.1.fpz` on the controller as
 [`installing_plugins.md`](../topics/plugins/installing_plugins.md#install-uninstall-and-sync)
 describes.
 

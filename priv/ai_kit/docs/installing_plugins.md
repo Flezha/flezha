@@ -216,7 +216,7 @@ agentdesk's controller image is a derived image that copies the project's
 
 ```dockerfile
 # The controller's image: Flezha's own, with the plugin packages in plugins/.
-FROM flezha/flezha:0.1.0
+FROM flezha/flezha:0.1.1
 COPY --chown=flezha:flezha plugins/ /flezha/plugins/
 ENV FLEZHA_PLUGIN_ROOT=/flezha/plugins
 ```
@@ -227,13 +227,13 @@ The package is downloaded into that folder, and the image rebuilt and its contai
 replaced, from agentdesk's folder:
 
 ```sh
-$ curl -fsSL -o controller/plugins/flezha_http-0.1.0.fpz https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz
+$ curl -fsSL -o controller/plugins/flezha_http-0.1.1.fpz https://github.com/flezha/flezha/releases/download/v0.1.1/flezha_http-0.1.1.fpz
 $ docker compose up -d --build --wait controller
 $ flz plugin list --installed
 ```
 
 ```output
-flezha_http 0.1.0  loaded  providers: http_server
+flezha_http 0.1.1  loaded  providers: http_server
 ```
 
 The new controller starts the relays again once the runner has connected to it, within

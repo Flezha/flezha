@@ -9,7 +9,7 @@ Every file of `sdk/ruby/examples/echo`, the runner Up and running builds. Its de
 
 source "https://rubygems.org"
 
-gem "flezha", "0.1.0"
+gem "flezha", "0.1.1"
 ````
 
 ## examples/echo/README.md
@@ -64,7 +64,7 @@ the runner with, and install it once:
 
 ```sh
 rake native gem
-gem install pkg/flezha-0.1.0-*.gem
+gem install pkg/flezha-0.1.1-*.gem
 ```
 
 `rake native gem` compiles the SDK's native library from the core's git tag, so

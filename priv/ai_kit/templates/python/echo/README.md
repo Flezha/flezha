@@ -58,7 +58,7 @@ install the wheel into this folder's environment instead of the
 ```sh
 cd examples/echo
 python3 -m venv .venv
-.venv/bin/pip install ../../dist/flezha-0.1.0-*.whl
+.venv/bin/pip install ../../dist/flezha-0.1.1-*.whl
 ```
 
 ## Where to go next

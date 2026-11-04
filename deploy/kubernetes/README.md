@@ -27,7 +27,7 @@ what the Secret is. Nothing about minting removes the need for it.
 The Flezha controller is a multi-architecture (`linux/amd64`, `linux/arm64`) Docker
 image on Docker Hub.
 
-The DaemonSet pins an **immutable version tag** — `flezha/flezha:0.1.0` — not
+The DaemonSet pins an **immutable version tag** — `flezha/flezha:0.1.1` — not
 `:latest`. This is deliberate: the pull policy is `IfNotPresent`, so a mutable tag
 means a node that already has a layer cached keeps running the controller it pulled
 weeks ago, and two nodes silently run different code. **Bump the tag on every
@@ -273,7 +273,7 @@ sync would undo them.
 Every entry is a path inside the container or an `https://` URL the pods can reach,
 verified against the operating system's CA store. Each release publishes the bundled
 plugins' packages, such as
-`https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz`. Serve
+`https://github.com/flezha/flezha/releases/download/v0.1.1/flezha_http-0.1.1.fpz`. Serve
 a package of your own from a host of your own, or mount it: a ConfigMap holding the
 archive under `binaryData`, mounted read-only at `/pkgs`, is named as
 `/pkgs/<file>.fpz#sha256=<hex>`. `docs/public/topics/plugins/writing_a_plugin.md` covers

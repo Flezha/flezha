@@ -137,7 +137,7 @@ export const EchoTasklet = defineTasklet({
     "start": "node runner.mjs"
   },
   "dependencies": {
-    "@flezha/sdk": "0.1.0"
+    "@flezha/sdk": "0.1.1"
   }
 }
 ````

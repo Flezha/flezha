@@ -10,7 +10,7 @@ repository.workspace = true
 serde.workspace = true
 postcard.workspace = true
 prost.workspace = true
-flz_transport = { version = "0.1.0", path = "../flz_transport" }
+flz_transport = { version = "0.1.1", path = "../flz_transport" }
 signal-hook.workspace = true
 tracing.workspace = true
 crc32fast.workspace = true

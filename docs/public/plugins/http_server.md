@@ -60,7 +60,7 @@ $ flz plugin enable web http_server \
 
 ## Install and enable
 
-Install `flezha_http-0.1.0.fpz` on the controller and restart it, as
+Install `flezha_http-0.1.1.fpz` on the controller and restart it, as
 [Installing plugins](../topics/plugins/installing_plugins.md#install-uninstall-and-sync)
 describes. Once it has loaded, the list names both of its providers:
 
@@ -69,7 +69,7 @@ $ flz plugin list --installed
 ```
 
 ```output
-flezha_http 0.1.0  loaded  providers: http_api, http_server
+flezha_http 0.1.1  loaded  providers: http_api, http_server
 ```
 
 The package loads at boot. Once it is loaded, the plugin can also be declared at start

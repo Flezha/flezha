@@ -34,56 +34,56 @@ flowchart LR
 ### Java
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-java-agentdesk.tar.gz | tar xz
 $ cd flezha-java-agentdesk
 ```
 
 ### Rust
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-rust-agentdesk.tar.gz | tar xz
 $ cd flezha-rust-agentdesk
 ```
 
 ### Node
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-node-agentdesk.tar.gz | tar xz
 $ cd flezha-node-agentdesk
 ```
 
 ### Python
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-python-agentdesk.tar.gz | tar xz
 $ cd flezha-python-agentdesk
 ```
 
 ### Ruby
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-ruby-agentdesk.tar.gz | tar xz
 $ cd flezha-ruby-agentdesk
 ```
 
 ### PHP
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-php-agentdesk.tar.gz | tar xz
 $ cd flezha-php-agentdesk
 ```
 
 ### Elixir
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-elixir-agentdesk.tar.gz | tar xz
 $ cd flezha-elixir-agentdesk
 ```
 
 ### Go
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-agentdesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-go-agentdesk.tar.gz | tar xz
 $ cd flezha-go-agentdesk
 ```
 

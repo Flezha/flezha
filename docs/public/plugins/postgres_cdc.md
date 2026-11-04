@@ -53,7 +53,7 @@ $ flz plugin enable rates-cdc postgres_cdc --relay_id=pricer \
 ## Installing
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
-`flezha_postgres_cdc-0.1.0.fpz` on the controller as
+`flezha_postgres_cdc-0.1.1.fpz` on the controller as
 [`installing_plugins.md`](../topics/plugins/installing_plugins.md#install-uninstall-and-sync)
 describes.
 

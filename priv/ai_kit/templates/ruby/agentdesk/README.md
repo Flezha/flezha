@@ -95,7 +95,7 @@ builds the images and deploys `k8s/agentdesk.yaml` on k3s.
 
 ## Building from a checkout
 
-Docker pulls the controller's image `flezha/flezha:0.1.0` from Docker Hub; the
+Docker pulls the controller's image `flezha/flezha:0.1.1` from Docker Hub; the
 commands below build it from the checkout instead.
 To run the project against
 a Flezha checkout instead of the published gem, first build a gem for this platform from
@@ -112,14 +112,14 @@ the Ruby that builds it, which is why the image runs the same Ruby. Build the
 controller's image from the repository root:
 
 ```sh
-docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
+docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.1 .
 ```
 
 Then, in this folder, put the gem into `vendor/cache` before `bundle cache`, which
 finds it there:
 
 ```sh
-mkdir -p vendor/cache && cp ../../pkg/flezha-0.1.0-*.gem vendor/cache/
+mkdir -p vendor/cache && cp ../../pkg/flezha-0.1.1-*.gem vendor/cache/
 bundle cache
 ```
 

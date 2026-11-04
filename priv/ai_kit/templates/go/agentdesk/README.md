@@ -39,7 +39,7 @@ the session's answer as it is written, and each user has a daily token budget.
 You need Go with a C toolchain, and Docker with Docker Compose.
 
 ```sh
-eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
+eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)"
 go build
 docker compose up -d --build --wait
 alias flz='docker compose exec controller bin/flz'
@@ -97,7 +97,7 @@ builds the images and deploys `k8s/agentdesk.yaml` on k3s.
 
 ## Building from a checkout
 
-Docker pulls the controller's image `flezha/flezha:0.1.0` from Docker Hub; the
+Docker pulls the controller's image `flezha/flezha:0.1.1` from Docker Hub; the
 commands below build it from the checkout instead.
 Running the project against a Flezha checkout instead of the published module, or on a
 platform with no prebuilt core library, needs the core built there. From the root of
@@ -105,7 +105,7 @@ the checkout, build the core and the image once:
 
 ```sh
 scripts/build-go-sdk.sh --release
-docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
+docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.1 .
 ```
 
 Then, from this folder, point Go at the checkout, with its absolute path:

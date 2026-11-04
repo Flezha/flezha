@@ -126,7 +126,7 @@ If the runner is also a container, a named volume is the whole answer:
 $ docker run -d --name flezha-controller \
   -v flezha_data:/flezha/storage/app \
   -v flezha_sockets:/flezha/storage/app/sockets \
-  flezha/flezha:0.1.0
+  flezha/flezha:0.1.1
 
 $ docker run -d --name my-runner \
   -e FLEZHA_SOCKET_FILES_PATH=/flezha/storage/app/sockets \
@@ -151,7 +151,7 @@ of the named volume:
 $ docker run -d --name flezha-controller \
   -v flezha_data:/flezha/storage/app \
   -v /tmp/flz_sock:/flezha/storage/app/sockets \
-  flezha/flezha:0.1.0
+  flezha/flezha:0.1.1
 
 $ FLEZHA_SOCKET_FILES_PATH=/tmp/flz_sock flz runner check
 ```
@@ -289,7 +289,7 @@ starts. A runner in the controller's own BEAM starts with that application:
 ### Go
 
 ```sh
-$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
+$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)"
 $ go run .
 ```
 

@@ -50,10 +50,10 @@ The three ways give you the same controller:
 Download yours with its checksum file, check it, and unpack it:
 
 ```sh
-$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-0.1.0-linux-x86_64.tar.gz
-$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0/SHA256SUMS.txt
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-0.1.1-linux-x86_64.tar.gz
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.1/SHA256SUMS.txt
 $ sha256sum --check --ignore-missing SHA256SUMS.txt
-$ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
+$ tar -xzf flezha-0.1.1-linux-x86_64.tar.gz
 $ cd flezha
 ```
 
@@ -103,13 +103,13 @@ $ flz controller start
 ### Docker
 
 ```sh
-$ docker pull flezha/flezha:0.1.0
+$ docker pull flezha/flezha:0.1.1
 ```
 
 ```sh
 $ docker run -d --name flezha-controller \
   -v flezha_data:/flezha/storage/app \
-  flezha/flezha:0.1.0
+  flezha/flezha:0.1.1
 ```
 
 The image runs on amd64 and arm64. One volume is enough: every durable tree the
@@ -126,7 +126,7 @@ $ docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
 ```
 
 ```output
-flezha-controller	flezha/flezha:0.1.0	Up 20 seconds (healthy)
+flezha-controller	flezha/flezha:0.1.1	Up 20 seconds (healthy)
 ```
 
 Expect `health: starting` for the first seconds while the hubs replay. To
@@ -134,7 +134,7 @@ build the image yourself, the version goes before `make`; without it the tag
 is `flezha/flezha:` and Docker refuses it:
 
 ```sh
-$ VERSION=0.1.0 make docker-build
+$ VERSION=0.1.1 make docker-build
 ```
 
 That builds the production image for the host's architecture.

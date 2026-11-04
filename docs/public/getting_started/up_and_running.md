@@ -59,8 +59,8 @@ application.
 Download the release and unpack it:
 
 ```sh
-$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-0.1.0-linux-x86_64.tar.gz
-$ tar -xzf flezha-0.1.0-linux-x86_64.tar.gz
+$ curl -fLO https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-0.1.1-linux-x86_64.tar.gz
+$ tar -xzf flezha-0.1.1-linux-x86_64.tar.gz
 ```
 
 That gives you a `flezha/` directory, with `bin/flz`, the CLI. The release
@@ -109,7 +109,7 @@ $ docker run -d --rm --name flezha-controller \
   -e FLEZHA_AUTHZ_ENABLED=false \
   -v flezha_data:/flezha/storage/app \
   -v /run/flezha:/flezha/storage/app/sockets \
-  flezha/flezha:0.1.0
+  flezha/flezha:0.1.1
 ```
 
 The first volume holds everything the controller keeps. The second puts its
@@ -165,7 +165,7 @@ nothing to add here.
 <dependency>
   <groupId>com.flezha</groupId>
   <artifactId>flezha-sdk</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 
@@ -221,7 +221,7 @@ The echo's `composer.json` names it.
 ### Elixir
 
 ```elixir
-{:flezha_sdk, "~> 0.1.0"}
+{:flezha_sdk, "~> 0.1.1"}
 ```
 
 In `deps` in `mix.exs`.
@@ -675,7 +675,7 @@ func main() {
 ### Java
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-java-echo.tar.gz | tar xz
 $ cd flezha-java-echo
 $ mvn -q package && java -jar target/echo.jar
 ```
@@ -683,7 +683,7 @@ $ mvn -q package && java -jar target/echo.jar
 ### Rust
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-rust-echo.tar.gz | tar xz
 $ cd flezha-rust-echo
 $ cargo run --release
 ```
@@ -691,7 +691,7 @@ $ cargo run --release
 ### Node
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-node-echo.tar.gz | tar xz
 $ cd flezha-node-echo
 $ npm install && node runner.mjs
 ```
@@ -699,7 +699,7 @@ $ npm install && node runner.mjs
 ### Python
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-python-echo.tar.gz | tar xz
 $ cd flezha-python-echo
 $ pip install -r requirements.txt && python3 runner.py
 ```
@@ -707,7 +707,7 @@ $ pip install -r requirements.txt && python3 runner.py
 ### Ruby
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-ruby-echo.tar.gz | tar xz
 $ cd flezha-ruby-echo
 $ bundle install && bundle exec ruby runner.rb
 ```
@@ -715,7 +715,7 @@ $ bundle install && bundle exec ruby runner.rb
 ### PHP
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-php-echo.tar.gz | tar xz
 $ cd flezha-php-echo
 $ composer install && php runner.php
 ```
@@ -723,7 +723,7 @@ $ composer install && php runner.php
 ### Elixir
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-elixir-echo.tar.gz | tar xz
 $ cd flezha-elixir-echo
 $ mix deps.get && mix run --no-halt
 ```
@@ -731,9 +731,9 @@ $ mix deps.get && mix run --no-halt
 ### Go
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-echo.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-go-echo.tar.gz | tar xz
 $ cd flezha-go-echo
-$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
+$ eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)"
 $ go run .
 ```
 

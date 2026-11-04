@@ -33,49 +33,49 @@ flowchart LR
 ### Java
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-java-tradedesk.tar.gz | tar xz
 ```
 
 ### Rust
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-rust-tradedesk.tar.gz | tar xz
 ```
 
 ### Node
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-node-tradedesk.tar.gz | tar xz
 ```
 
 ### Python
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-python-tradedesk.tar.gz | tar xz
 ```
 
 ### Ruby
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-ruby-tradedesk.tar.gz | tar xz
 ```
 
 ### PHP
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-php-tradedesk.tar.gz | tar xz
 ```
 
 ### Elixir
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-elixir-tradedesk.tar.gz | tar xz
 ```
 
 ### Go
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-tradedesk.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-go-tradedesk.tar.gz | tar xz
 ```
 
 <!-- tabs-close -->

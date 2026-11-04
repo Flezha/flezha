@@ -318,7 +318,7 @@ in short:
 - **Resources and security.** The controller declares CPU and memory requests and limits as
   starting points to size to the workload, runs as uid 1000 with a read-only root filesystem
   and no capabilities, and mounts every path it writes.
-- **An immutable image tag**, `flezha/flezha:0.1.0`, so that two nodes do not run different
+- **An immutable image tag**, `flezha/flezha:0.1.1`, so that two nodes do not run different
   controllers from a cached `latest`.
 
 ## Limits and gotchas

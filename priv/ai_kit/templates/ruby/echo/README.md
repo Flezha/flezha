@@ -47,7 +47,7 @@ the runner with, and install it once:
 
 ```sh
 rake native gem
-gem install pkg/flezha-0.1.0-*.gem
+gem install pkg/flezha-0.1.1-*.gem
 ```
 
 `rake native gem` compiles the SDK's native library from the core's git tag, so

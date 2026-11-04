@@ -84,7 +84,7 @@ covers building and testing it. The controller release does not carry Kafka: a c
 produces to Kafka once the package is installed.
 
 Build the archive from the package (its README: `mix flezha.plugin.package`), then install
-`flezha_kafka-0.1.0.fpz` on the controller as
+`flezha_kafka-0.1.1.fpz` on the controller as
 [`installing_plugins.md`](../topics/plugins/installing_plugins.md#install-uninstall-and-sync)
 describes.
 

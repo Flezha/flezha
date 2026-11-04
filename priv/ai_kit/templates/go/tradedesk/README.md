@@ -29,7 +29,7 @@ You need a controller running, the `trading` namespace created and a key for it
 ([Open the desk](https://github.com/flezha/flezha/blob/main/docs/public/tutorials/tradedesk/open_the_desk.md) does both).
 
 ```sh
-eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.0)"
+eval "$(go run github.com/flezha/flezha_go_sdk/cmd/flz-native@v0.1.1)"
 FLEZHA_NAMESPACE_SECRET=<trading key> go run .
 ```
 

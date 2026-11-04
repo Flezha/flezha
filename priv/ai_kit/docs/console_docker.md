@@ -40,11 +40,11 @@ $ docker build -f deploy/Dockerfile --build-context stylebook=../flezha_styleboo
 
 ```sh
 $ mkdir console-stack && cd console-stack
-$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.0/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
+$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.1/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
 $ ./make-certs.sh ca channel
 $ ./make-certs.sh node channel controller --dns controller
 $ ./make-certs.sh node channel console --dns console
-$ mkdir plugins && curl -fsSL -o plugins/flezha_http-0.1.0.fpz https://github.com/flezha/flezha/releases/download/v0.1.0/flezha_http-0.1.0.fpz
+$ mkdir plugins && curl -fsSL -o plugins/flezha_http-0.1.1.fpz https://github.com/flezha/flezha/releases/download/v0.1.1/flezha_http-0.1.1.fpz
 ```
 
 `channel/controller/` and `channel/console/` each hold `node.pem`, `node.key` and `ca.pem`.
@@ -64,7 +64,7 @@ services:
     image: flezha/flezha:latest
     environment:
       FLEZHA_DURABILITY_BACKEND: none
-      FLEZHA_PLUGINS: /flezha/packages/flezha_http-0.1.0.fpz   # the HTTP API
+      FLEZHA_PLUGINS: /flezha/packages/flezha_http-0.1.1.fpz   # the HTTP API
     stop_grace_period: 75s
     volumes:
       - controller_data:/flezha/storage/app

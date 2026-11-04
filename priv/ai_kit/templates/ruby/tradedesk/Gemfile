@@ -2,4 +2,4 @@
 
 source "https://rubygems.org"
 
-gem "flezha", "0.1.0"
+gem "flezha", "0.1.1"

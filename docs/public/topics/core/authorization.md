@@ -457,7 +457,7 @@ reading `/etc/flezha/dist/node.pem`, `node.key` and `ca.pem`; `make-certs.sh`
 makes the authority and one folder of those three files per node:
 
 ```sh
-$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.0/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
+$ curl -fsSLO https://raw.githubusercontent.com/flezha/flezha/v0.1.1/deploy/dist-tls/make-certs.sh && chmod +x make-certs.sh
 $ ./make-certs.sh ca ./dist-ca
 $ ./make-certs.sh node ./dist-ca node1 --ip 10.0.0.5 --dns node1.internal
 ```

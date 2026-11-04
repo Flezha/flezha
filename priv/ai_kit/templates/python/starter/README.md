@@ -62,5 +62,5 @@ Then install that wheel into this folder's environment instead of the
 `requirements.txt` line, with the checkout's absolute path:
 
 ```sh
-.venv/bin/pip install /path/to/flezha/sdk/python/dist/flezha-0.1.0-*.whl
+.venv/bin/pip install /path/to/flezha/sdk/python/dist/flezha-0.1.1-*.whl
 ```

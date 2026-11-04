@@ -64,7 +64,7 @@ your checkout's absolute path:
 
 ```sh
 composer config --global repositories.flezha-sdk \
-  '{"type": "path", "url": "/path/to/flezha/sdk/php", "options": {"versions": {"flezha/sdk": "0.1.0"}}}'
+  '{"type": "path", "url": "/path/to/flezha/sdk/php", "options": {"versions": {"flezha/sdk": "0.1.1"}}}'
 ```
 
 After that, `composer install` in this folder links the checkout's package. The
@@ -90,7 +90,7 @@ SDK, including the threaded executor.
     "license": "Apache-2.0",
     "require": {
         "php": ">=8.4",
-        "flezha/sdk": "0.1.0"
+        "flezha/sdk": "0.1.1"
     },
     "autoload": {
         "psr-4": {

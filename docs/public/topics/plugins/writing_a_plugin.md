@@ -339,9 +339,9 @@ build it with the controller's toolchain. For the Docker image, that is the
 `plugin-builder` target of the controller's Dockerfile:
 
 ```sh
-$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.0 \
+$ docker build --target plugin-builder -t flezha/plugin-builder:0.1.1 \
   -f deploy/docker/prod/Dockerfile.controller .
-$ docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.0 \
+$ docker run --rm -v "$PWD/my_plugin:/src" flezha/plugin-builder:0.1.1 \
   sh -c 'mix deps.get && mix flezha.plugin.package'
 ```
 

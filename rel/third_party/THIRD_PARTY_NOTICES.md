@@ -592,7 +592,7 @@ limitations under the License.
 ### Apache License 2.0
 
 Used by:
-- `flezha_runner` 0.1.0 — https://github.com/flezha/flezha_rust_sdk
+- `flezha_runner` 0.1.1 — https://github.com/flezha/flezha_rust_sdk
 
 ```
 Apache License
@@ -673,10 +673,10 @@ limitations under the License.
 ### Apache License 2.0
 
 Used by:
-- `flz_core` 0.1.0 — https://github.com/flezha/flezha
-- `flz_core_ffi` 0.1.0 — https://github.com/flezha/flezha
-- `flz_transport` 0.1.0 — https://github.com/flezha/flezha
-- `flezha-macros` 0.1.0 — https://github.com/flezha/flezha_rust_sdk
+- `flz_core` 0.1.1 — https://github.com/flezha/flezha
+- `flz_core_ffi` 0.1.1 — https://github.com/flezha/flezha
+- `flz_transport` 0.1.1 — https://github.com/flezha/flezha
+- `flezha-macros` 0.1.1 — https://github.com/flezha/flezha_rust_sdk
 
 ```
 Apache License

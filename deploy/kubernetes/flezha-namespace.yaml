@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/instance: flezha
     app.kubernetes.io/part-of: flezha
     app.kubernetes.io/managed-by: kubectl
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     app.kubernetes.io/component: controller
     # Pod Security Standards. The default DaemonSet uses hostPath volumes,
     # which no profile above `privileged` permits — so the label below is

@@ -2,10 +2,10 @@
 # Uses the built prod image — no source bind-mounts.
 #
 # Usage:
-#   VERSION=0.1.0 docker compose -f deploy/docker/prod/docker-compose.yml up
+#   VERSION=0.1.1 docker compose -f deploy/docker/prod/docker-compose.yml up
 #
 # Build the image first:
-#   VERSION=0.1.0 make docker-build
+#   VERSION=0.1.1 make docker-build
 
 services:
   controller:

@@ -38,49 +38,49 @@ downloads and unpacks it into a new folder, `flezha-<language>-starter/`:
 ### Java
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-java-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-java-starter.tar.gz | tar xz
 ```
 
 ### Rust
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-rust-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-rust-starter.tar.gz | tar xz
 ```
 
 ### Node
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-node-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-node-starter.tar.gz | tar xz
 ```
 
 ### Python
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-python-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-python-starter.tar.gz | tar xz
 ```
 
 ### Ruby
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-ruby-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-ruby-starter.tar.gz | tar xz
 ```
 
 ### PHP
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-php-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-php-starter.tar.gz | tar xz
 ```
 
 ### Elixir
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-elixir-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-elixir-starter.tar.gz | tar xz
 ```
 
 ### Go
 
 ```sh
-$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.0/flezha-go-starter.tar.gz | tar xz
+$ curl -fsSL https://github.com/flezha/flezha/releases/download/v0.1.1/flezha-go-starter.tar.gz | tar xz
 ```
 
 <!-- tabs-close -->
@@ -104,6 +104,6 @@ write SDK code from memory. A language or example there is no template for is re
 - **One starter.** `starter` is the only example for now.
 - **Nothing is renamed.** The package, module and project names stay the starter's until you
   change them; the README says what to rename.
-- **Each starter names the published 0.1.0 SDK**, the package
+- **Each starter names the published 0.1.1 SDK**, the package
   [Add the SDK to a project](../../getting_started/up_and_running.md#add-the-sdk-to-a-project)
   lists. Its README says how to run it against a Flezha checkout instead.
